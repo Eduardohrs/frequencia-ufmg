@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+
+# Flutter / Dart
+.dart_tool/
+.packages
+build/
+coverage/
+
+# Environment and credentials
+.env
+.env.*
+!.env.example
+firebase-debug.log
+firebase-debug.*.log
+**/service-account*.json
+**/firebase-adminsdk-*.json
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
