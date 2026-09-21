@@ -34,5 +34,8 @@ Consulte CONTRIBUTING.md para o fluxo de desenvolvimento.
 
 ### Firebase
 
-    firebase emulators:start
+O projeto usa `frequencia-ufmg-eduardo`. As configurações públicas dos clientes
+Android e web ficam versionadas; credenciais administrativas permanecem fora do
+repositório.
 
+    firebase emulators:start

@@ -61,6 +61,7 @@ jobs:
       - run: dart format --output=none --set-exit-if-changed .
       - run: flutter analyze
       - run: flutter build web
+      - run: flutter build apk --debug
       - run: flutter test --coverage
       - name: Require 100% line coverage
         run: |

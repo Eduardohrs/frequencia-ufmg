@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "932945721608",
+    "project_id": "frequencia-ufmg-eduardo",
+    "storage_bucket": "frequencia-ufmg-eduardo.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:932945721608:android:2002f4db3d2942cab8d4bd",
+        "android_client_info": {
+          "package_name": "br.ufmg.frequencia.frequencia_ufmg"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDfVSpbDRoyPZP0aZB-6eBsEP_YUl0akn4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
