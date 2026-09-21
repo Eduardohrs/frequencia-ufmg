@@ -33,7 +33,7 @@ jobs:
       - run: ruff check .
       - run: mypy src
       - run: pytest
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         if: env.CODECOV_TOKEN != ''
         with:
           files: backend/coverage.xml
@@ -76,7 +76,7 @@ jobs:
               raise SystemExit(f"Line coverage must be 100%: {hit}/{found}")
           print(f"Line coverage: {hit}/{found} (100%)")
           PY
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         if: env.CODECOV_TOKEN != ''
         with:
           files: apps/client/coverage/lcov.info
