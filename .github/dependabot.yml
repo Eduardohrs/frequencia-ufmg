@@ -4,12 +4,20 @@ updates:
     directory: /backend
     schedule:
       interval: weekly
+    groups:
+      python-dependencies:
+        patterns: ["*"]
   - package-ecosystem: pub
     directory: /apps/client
     schedule:
       interval: weekly
+    groups:
+      flutter-dependencies:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-
+    groups:
+      github-actions:
+        patterns: ["*"]
