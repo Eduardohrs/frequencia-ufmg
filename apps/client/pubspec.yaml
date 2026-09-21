@@ -38,7 +38,7 @@ dependencies:
   firebase_core: ^2.24.2
   firebase_auth: ^4.16.0
   cloud_firestore: ^4.14.0
-  google_sign_in: ^6.1.6
+  google_sign_in: ^7.2.0
   geolocator: ^11.1.0
   http: ^1.1.0
 
