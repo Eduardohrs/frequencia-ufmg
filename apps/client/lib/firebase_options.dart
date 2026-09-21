@@ -14,8 +14,8 @@ abstract final class DefaultFirebaseOptions {
     return switch (defaultTargetPlatform) {
       TargetPlatform.android => android,
       _ => throw UnsupportedError(
-          'Firebase ainda não foi configurado para esta plataforma.',
-        ),
+        'Firebase ainda não foi configurado para esta plataforma.',
+      ),
     };
   }
 
