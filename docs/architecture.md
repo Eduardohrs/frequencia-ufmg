@@ -34,3 +34,14 @@ localização. Cada requisição recebe apenas um identificador aleatório de co
 
 Serviços que exigem faturamento, como Cloud Run, não devem ser habilitados sem uma
 decisão explícita de arquitetura e autorização do responsável pelo projeto.
+
+## CI, builds e releases
+
+As pull requests executam verificações rápidas, cobertura, scanner de segredos e o
+build web. O build Android, mais demorado, fica no workflow manual `Build test
+artifacts`, executado pela aba Actions do GitHub. Os artefatos de teste expiram em
+um dia para limitar o uso de armazenamento.
+
+Uma GitHub Release de produção só deve ser ativada após configurar uma chave de
+assinatura Android guardada em GitHub Secrets. APKs de teste usam assinatura de
+debug e não devem ser distribuídos como versão final.

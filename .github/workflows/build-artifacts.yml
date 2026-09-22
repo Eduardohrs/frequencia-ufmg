@@ -1,0 +1,40 @@
+name: Build test artifacts
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: build-test-artifacts
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Android and web test builds
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/client
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build web
+      - run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frequencia-ufmg-web-${{ github.sha }}
+          path: apps/client/build/web
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frequencia-ufmg-android-debug-${{ github.sha }}
+          path: apps/client/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 1
