@@ -13,9 +13,27 @@ permissions:
   contents: read
 
 jobs:
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: backend
@@ -34,18 +52,18 @@ jobs:
       - run: mypy src
       - run: pytest
       - uses: codecov/codecov-action@v7
-        if: env.CODECOV_TOKEN != ''
         with:
           files: backend/coverage.xml
           flags: backend
-          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: true
           fail_ci_if_error: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   client:
     name: Flutter client
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: apps/client
@@ -78,22 +96,20 @@ jobs:
           print(f"Line coverage: {hit}/{found} (100%)")
           PY
       - uses: codecov/codecov-action@v7
-        if: env.CODECOV_TOKEN != ''
         with:
           files: apps/client/coverage/lcov.info
           flags: flutter
-          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: true
           fail_ci_if_error: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   quality-gate:
     name: Quality Gate
     if: always()
-    needs: [backend, client]
+    needs: [secret-scan, backend, client]
     runs-on: ubuntu-latest
     steps:
       - name: Verify required jobs
         run: |
+          test "${{ needs.secret-scan.result }}" = "success"
           test "${{ needs.backend.result }}" = "success"
           test "${{ needs.client.result }}" = "success"
