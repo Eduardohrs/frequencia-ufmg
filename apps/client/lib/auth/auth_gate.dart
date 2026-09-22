@@ -129,10 +129,7 @@ class _AuthGateState extends State<AuthGate> {
         OutlinedButton(
           onPressed: _busy
               ? null
-              : () => _run(
-                  AuditedOperation.logout,
-                  widget.authGateway.signOut,
-                ),
+              : () => _run(AuditedOperation.logout, widget.authGateway.signOut),
           child: const Text('Sair'),
         ),
       ],
