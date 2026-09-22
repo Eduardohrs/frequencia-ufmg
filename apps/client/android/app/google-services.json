@@ -12,7 +12,20 @@
           "package_name": "br.ufmg.frequencia.frequencia_ufmg"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "932945721608-jujkkrloeob2mcjk4963n6b6mgmtikah.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "br.ufmg.frequencia.frequencia_ufmg",
+            "certificate_hash": "fbd5f4711a3714ed90e9ada4aadd6e818f77dcf4"
+          }
+        },
+        {
+          "client_id": "932945721608-f5ciglrg5dlb870thoi78gk49scrq7vs.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyDfVSpbDRoyPZP0aZB-6eBsEP_YUl0akn4"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "932945721608-f5ciglrg5dlb870thoi78gk49scrq7vs.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
