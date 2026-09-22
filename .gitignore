@@ -24,6 +24,16 @@ firebase-debug.log
 firebase-debug.*.log
 **/service-account*.json
 **/firebase-adminsdk-*.json
+**/credentials*.json
+**/client_secret*.json
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+
+# Local secret-scanner reports
+gitleaks-report.*
 
 # IDE / OS
 .idea/

@@ -11,7 +11,10 @@ Sistema pessoal para acompanhamento de frequência e rotina acadêmica de estuda
 
 ## Qualidade
 
-Toda alteração deve ser feita em uma branch e enviada por pull request. O CI executa análise estática, testes e exige 100% de cobertura no backend e no cliente. O Codecov complementa a verificação com relatório e cobertura do código alterado.
+Toda alteração deve ser feita em uma branch e enviada por pull request. O CI executa
+análise estática, testes, varredura de segredos e exige 100% de cobertura no backend
+e no cliente. O Codecov recebe os relatórios por OIDC, sem token armazenado no
+repositório, e complementa a verificação com a cobertura do código alterado.
 
 Consulte CONTRIBUTING.md para o fluxo de desenvolvimento.
 

@@ -1,0 +1,16 @@
+[extend]
+useDefault = true
+
+# Firebase client API keys identify the public Android/web app and are not
+# authentication credentials. Only Google API-key findings on the two generated
+# client configuration lines are exempted; every other detector still applies.
+[[allowlists]]
+description = "Public Firebase client configuration"
+condition = "AND"
+targetRules = ["gcp-api-key", "generic-api-key"]
+regexTarget = "line"
+paths = [
+  '''^apps/client/android/app/google-services\.json$''',
+  '''^apps/client/lib/firebase_options\.dart$''',
+]
+regexes = ['''(current_key|apiKey)''']
