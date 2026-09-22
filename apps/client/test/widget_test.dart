@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/auth/auth_gateway.dart';
 import 'package:frequencia_ufmg/auth/auth_user.dart';
 import 'package:frequencia_ufmg/main.dart' as app;
+import 'package:frequencia_ufmg/observability/app_logger.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -16,8 +17,12 @@ void main() {
     tester,
   ) async {
     final gateway = _FakeAuthGateway();
+    final logger = _FakeAppLogger();
     addTearDown(gateway.close);
     app.authGatewayFactory = () => gateway;
+    app.appLoggerFactory = () => logger;
+    final previousFlutterHandler = FlutterError.onError;
+    final previousPlatformHandler = PlatformDispatcher.instance.onError;
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     try {
       await app.main();
@@ -25,16 +30,22 @@ void main() {
 
       expect(find.text('Frequência UFMG'), findsOneWidget);
       expect(find.text('Entrar com Google'), findsOneWidget);
+      expect(logger.events, ['app_started']);
     } finally {
       debugDefaultTargetPlatformOverride = null;
+      FlutterError.onError = previousFlutterHandler;
+      PlatformDispatcher.instance.onError = previousPlatformHandler;
     }
   });
 
   testWidgets('signs in and presents the authenticated user', (tester) async {
     final completer = Completer<void>();
     final gateway = _FakeAuthGateway(signInCompleter: completer);
+    final logger = _FakeAppLogger();
     addTearDown(gateway.close);
-    await tester.pumpWidget(app.FrequenciaUFMGApp(authGateway: gateway));
+    await tester.pumpWidget(
+      app.FrequenciaUFMGApp(authGateway: gateway, logger: logger),
+    );
 
     await tester.tap(find.text('Entrar com Google'));
     await tester.pump();
@@ -45,12 +56,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Olá, Eduardo!'), findsOneWidget);
     expect(find.text('eduardo@ufmg.br'), findsOneWidget);
+    expect(logger.events, [
+      'google_sign_in_started',
+      'google_sign_in_succeeded',
+    ]);
   });
 
   testWidgets('shows a friendly message when sign-in fails', (tester) async {
     final gateway = _FakeAuthGateway(signInFails: true);
+    final logger = _FakeAppLogger();
     addTearDown(gateway.close);
-    await tester.pumpWidget(app.FrequenciaUFMGApp(authGateway: gateway));
+    await tester.pumpWidget(
+      app.FrequenciaUFMGApp(authGateway: gateway, logger: logger),
+    );
 
     await tester.tap(find.text('Entrar com Google'));
     await tester.pumpAndSettle();
@@ -60,14 +78,19 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Entrar com Google'), findsOneWidget);
+    expect(logger.events, ['google_sign_in_started', 'google_sign_in_failed']);
+    expect(logger.errorContexts, ['google_sign_in']);
   });
 
   testWidgets('signs out and returns to the login screen', (tester) async {
     final gateway = _FakeAuthGateway(
       initialUser: const AuthUser(id: '1', email: 'aluno@ufmg.br'),
     );
+    final logger = _FakeAppLogger();
     addTearDown(gateway.close);
-    await tester.pumpWidget(app.FrequenciaUFMGApp(authGateway: gateway));
+    await tester.pumpWidget(
+      app.FrequenciaUFMGApp(authGateway: gateway, logger: logger),
+    );
 
     expect(find.text('Login concluído'), findsOneWidget);
     await tester.tap(find.text('Sair'));
@@ -75,7 +98,28 @@ void main() {
 
     expect(gateway.signOutCalls, 1);
     expect(find.text('Entrar com Google'), findsOneWidget);
+    expect(logger.events, ['sign_out_started', 'sign_out_succeeded']);
   });
+}
+
+class _FakeAppLogger implements AppLogger {
+  final events = <String>[];
+  final errorContexts = <String>[];
+
+  @override
+  Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
+    events.add(name);
+  }
+
+  @override
+  Future<void> recordError(
+    Object error,
+    StackTrace stackTrace, {
+    required String context,
+    bool fatal = false,
+  }) async {
+    errorContexts.add(context);
+  }
 }
 
 class _FakeAuthGateway implements AuthGateway {

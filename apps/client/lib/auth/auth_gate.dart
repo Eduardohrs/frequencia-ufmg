@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 
 import 'auth_gateway.dart';
 import 'auth_user.dart';
+import '../observability/app_logger.dart';
 
 class AuthGate extends StatefulWidget {
-  const AuthGate({required this.authGateway, super.key});
+  const AuthGate({required this.authGateway, required this.logger, super.key});
 
   final AuthGateway authGateway;
+  final AppLogger logger;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -16,14 +18,18 @@ class _AuthGateState extends State<AuthGate> {
   bool _busy = false;
   String? _error;
 
-  Future<void> _run(Future<void> Function() action) async {
+  Future<void> _run(String operation, Future<void> Function() action) async {
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
+      await widget.logger.logEvent('${operation}_started');
       await action();
-    } catch (_) {
+      await widget.logger.logEvent('${operation}_succeeded');
+    } catch (error, stackTrace) {
+      await widget.logger.recordError(error, stackTrace, context: operation);
+      await widget.logger.logEvent('${operation}_failed');
       if (mounted) {
         setState(() => _error = 'Não foi possível entrar. Tente novamente.');
       }
@@ -78,7 +84,8 @@ class _AuthGateState extends State<AuthGate> {
         FilledButton.icon(
           onPressed: _busy
               ? null
-              : () => _run(widget.authGateway.signInWithGoogle),
+              : () =>
+                    _run('google_sign_in', widget.authGateway.signInWithGoogle),
           icon: _busy
               ? const SizedBox.square(
                   dimension: 18,
@@ -114,7 +121,9 @@ class _AuthGateState extends State<AuthGate> {
         Text(user.email),
         const SizedBox(height: 24),
         OutlinedButton(
-          onPressed: _busy ? null : () => _run(widget.authGateway.signOut),
+          onPressed: _busy
+              ? null
+              : () => _run('sign_out', widget.authGateway.signOut),
           child: const Text('Sair'),
         ),
       ],

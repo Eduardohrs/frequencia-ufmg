@@ -37,6 +37,8 @@ dependencies:
   cupertino_icons: ^1.0.9
   firebase_core: ^4.15.0
   firebase_auth: ^6.7.0
+  firebase_analytics: ^12.4.3
+  firebase_crashlytics: ^5.2.4
   cloud_firestore: ^6.10.0
   google_sign_in: ^7.2.0
   geolocator: ^14.0.3
