@@ -78,6 +78,8 @@ jobs:
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed .
       - run: flutter analyze
+      - name: Verify observability contract
+        run: flutter test test/audited_operation_test.dart
       - run: flutter test --coverage
       - name: Require 100% line coverage
         run: |

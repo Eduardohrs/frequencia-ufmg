@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'auth_gateway.dart';
 import 'auth_user.dart';
 import '../observability/app_logger.dart';
+import '../observability/audited_operation.dart';
 
 class AuthGate extends StatefulWidget {
   const AuthGate({required this.authGateway, required this.logger, super.key});
@@ -18,18 +19,21 @@ class _AuthGateState extends State<AuthGate> {
   bool _busy = false;
   String? _error;
 
-  Future<void> _run(String operation, Future<void> Function() action) async {
+  Future<void> _run(
+    AuditedOperation operation,
+    Future<void> Function() action,
+  ) async {
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      await widget.logger.logEvent('${operation}_started');
-      await action();
-      await widget.logger.logEvent('${operation}_succeeded');
-    } catch (error, stackTrace) {
-      await widget.logger.recordError(error, stackTrace, context: operation);
-      await widget.logger.logEvent('${operation}_failed');
+      await runAuditedOperation(
+        logger: widget.logger,
+        operation: operation,
+        action: action,
+      );
+    } catch (_) {
       if (mounted) {
         setState(() => _error = 'Não foi possível entrar. Tente novamente.');
       }
@@ -84,8 +88,10 @@ class _AuthGateState extends State<AuthGate> {
         FilledButton.icon(
           onPressed: _busy
               ? null
-              : () =>
-                    _run('google_sign_in', widget.authGateway.signInWithGoogle),
+              : () => _run(
+                  AuditedOperation.googleSignIn,
+                  widget.authGateway.signInWithGoogle,
+                ),
           icon: _busy
               ? const SizedBox.square(
                   dimension: 18,
@@ -123,7 +129,10 @@ class _AuthGateState extends State<AuthGate> {
         OutlinedButton(
           onPressed: _busy
               ? null
-              : () => _run('sign_out', widget.authGateway.signOut),
+              : () => _run(
+                  AuditedOperation.logout,
+                  widget.authGateway.signOut,
+                ),
           child: const Text('Sair'),
         ),
       ],
