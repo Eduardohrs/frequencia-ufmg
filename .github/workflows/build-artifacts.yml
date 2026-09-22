@@ -47,11 +47,16 @@ jobs:
           expected=$(keytool -list -v \
             -keystore "$ANDROID_DEBUG_KEYSTORE_PATH" \
             -storepass "$ANDROID_DEBUG_KEYSTORE_PASSWORD" \
-            -alias "$ANDROID_DEBUG_KEY_ALIAS" | sed -n 's/.*SHA256: //p' | head -n 1 | tr -d ':')
-          actual=$(keytool -printcert \
-            -jarfile build/app/outputs/flutter-apk/app-debug.apk | \
-            sed -n 's/.*SHA256: //p' | head -n 1 | tr -d ':')
+            -alias "$ANDROID_DEBUG_KEY_ALIAS" | \
+            sed -n -E 's/.*SHA-?256:[[:space:]]*//p' | head -n 1 | \
+            tr -d ':' | tr '[:upper:]' '[:lower:]')
+          apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
+          actual=$("$apksigner" verify --print-certs \
+            build/app/outputs/flutter-apk/app-debug.apk | \
+            sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1 | \
+            tr '[:upper:]' '[:lower:]')
           test -n "$expected"
+          test -n "$actual"
           test "$actual" = "$expected"
       - uses: actions/upload-artifact@v4
         with:
