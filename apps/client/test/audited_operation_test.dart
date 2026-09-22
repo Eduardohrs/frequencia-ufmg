@@ -17,6 +17,10 @@ void main() {
         '${operation.eventPrefix}_started',
         '${operation.eventPrefix}_succeeded',
       ]);
+      expect(logger.parameters, [
+        {'operation': operation.eventPrefix, 'outcome': 'started'},
+        {'operation': operation.eventPrefix, 'outcome': 'succeeded'},
+      ]);
       expect(logger.errorContexts, isEmpty);
     });
 
@@ -36,6 +40,10 @@ void main() {
         '${operation.eventPrefix}_started',
         '${operation.eventPrefix}_failed',
       ]);
+      expect(logger.parameters, [
+        {'operation': operation.eventPrefix, 'outcome': 'started'},
+        {'operation': operation.eventPrefix, 'outcome': 'failed'},
+      ]);
       expect(logger.errorContexts, [operation.eventPrefix]);
     });
   }
@@ -43,11 +51,13 @@ void main() {
 
 class _FakeAppLogger implements AppLogger {
   final events = <String>[];
+  final parameters = <Map<String, Object>?>[];
   final errorContexts = <String>[];
 
   @override
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
     events.add(name);
+    this.parameters.add(parameters);
   }
 
   @override

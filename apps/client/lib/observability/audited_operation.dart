@@ -15,13 +15,22 @@ Future<void> runAuditedOperation({
   required Future<void> Function() action,
 }) async {
   final eventPrefix = operation.eventPrefix;
-  await logger.logEvent('${eventPrefix}_started');
+  await logger.logEvent(
+    '${eventPrefix}_started',
+    parameters: {'operation': eventPrefix, 'outcome': 'started'},
+  );
   try {
     await action();
-    await logger.logEvent('${eventPrefix}_succeeded');
+    await logger.logEvent(
+      '${eventPrefix}_succeeded',
+      parameters: {'operation': eventPrefix, 'outcome': 'succeeded'},
+    );
   } catch (error, stackTrace) {
     await logger.recordError(error, stackTrace, context: eventPrefix);
-    await logger.logEvent('${eventPrefix}_failed');
+    await logger.logEvent(
+      '${eventPrefix}_failed',
+      parameters: {'operation': eventPrefix, 'outcome': 'failed'},
+    );
     rethrow;
   }
 }
