@@ -17,6 +17,7 @@ void configureErrorReporting(
         details.stack ?? StackTrace.current,
         context: 'flutter_framework',
         fatal: true,
+        parameters: {'error_id': _errorId('flutter')},
       ),
     );
   };
@@ -27,8 +28,12 @@ void configureErrorReporting(
         stackTrace,
         context: 'uncaught_async',
         fatal: true,
+        parameters: {'error_id': _errorId('async')},
       ),
     );
     return true;
   };
 }
+
+String _errorId(String source) =>
+    '${DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(36)}-$source';

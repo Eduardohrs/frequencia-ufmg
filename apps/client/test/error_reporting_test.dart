@@ -32,12 +32,15 @@ void main() {
     expect(handled, isTrue);
     expect(logger.contexts, ['flutter_framework', 'uncaught_async']);
     expect(logger.fatalValues, [true, true]);
+    expect(logger.parameters[0]!['error_id'], endsWith('-flutter'));
+    expect(logger.parameters[1]!['error_id'], endsWith('-async'));
   });
 }
 
 class _FakeAppLogger implements AppLogger {
   final contexts = <String>[];
   final fatalValues = <bool>[];
+  final parameters = <Map<String, Object>?>[];
 
   @override
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {}
@@ -48,8 +51,10 @@ class _FakeAppLogger implements AppLogger {
     StackTrace stackTrace, {
     required String context,
     bool fatal = false,
+    Map<String, Object>? parameters,
   }) async {
     contexts.add(context);
     fatalValues.add(fatal);
+    this.parameters.add(parameters);
   }
 }
