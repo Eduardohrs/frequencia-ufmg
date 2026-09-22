@@ -14,6 +14,11 @@ jobs:
   build:
     name: Android and web test builds
     runs-on: ubuntu-latest
+    env:
+      ANDROID_DEBUG_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEYSTORE_PASSWORD }}
+      ANDROID_DEBUG_KEY_ALIAS: ${{ secrets.ANDROID_DEBUG_KEY_ALIAS }}
+      ANDROID_DEBUG_KEY_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEY_PASSWORD }}
+      ANDROID_DEBUG_CERT_SHA256: ${{ secrets.ANDROID_DEBUG_CERT_SHA256 }}
     defaults:
       run:
         working-directory: apps/client
@@ -30,10 +35,30 @@ jobs:
           ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
         run: |
           test -n "$ANDROID_DEBUG_KEYSTORE_BASE64"
-          mkdir -p "$HOME/.android"
-          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
-          chmod 600 "$HOME/.android/debug.keystore"
+          test -n "$ANDROID_DEBUG_KEYSTORE_PASSWORD"
+          test -n "$ANDROID_DEBUG_KEY_ALIAS"
+          test -n "$ANDROID_DEBUG_KEY_PASSWORD"
+          keystore_path="$RUNNER_TEMP/frequencia-ufmg-debug.keystore"
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          chmod 600 "$keystore_path"
+          echo "ANDROID_DEBUG_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
       - run: flutter build apk --debug
+      - name: Verify APK signing certificate
+        run: |
+          apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
+          certificates=$("$apksigner" verify --print-certs \
+            build/app/outputs/flutter-apk/app-debug.apk)
+          printf '%s\n' "$certificates"
+          actual=$(printf '%s\n' "$certificates" | \
+            sed -n -E 's/.*SHA-256 digest:[[:space:]]*//p' | \
+            head -n 1 | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')
+          expected=$(printf '%s' "$ANDROID_DEBUG_CERT_SHA256" | \
+            tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')
+          echo "APK signer SHA-256: $actual"
+          echo "Certificate lengths: actual=${#actual}, expected=${#expected}"
+          test -n "$expected"
+          test -n "$actual"
+          test "$actual" = "$expected"
       - uses: actions/upload-artifact@v4
         with:
           name: frequencia-ufmg-web-${{ github.sha }}

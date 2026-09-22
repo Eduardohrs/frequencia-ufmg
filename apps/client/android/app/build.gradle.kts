@@ -23,6 +23,16 @@ android {
         versionName = flutter.versionName
     }
 
+    val ciKeystorePath = System.getenv("ANDROID_DEBUG_KEYSTORE_PATH")
+    if (ciKeystorePath != null) {
+        signingConfigs.getByName("debug") {
+            storeFile = file(ciKeystorePath)
+            storePassword = System.getenv("ANDROID_DEBUG_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("ANDROID_DEBUG_KEY_ALIAS")
+            keyPassword = System.getenv("ANDROID_DEBUG_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("debug")
