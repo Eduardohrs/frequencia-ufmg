@@ -57,3 +57,6 @@ seja removida; os artefatos temporários de teste continuam expirando em um dia.
 
 Consulte `SECURITY.md` e `docs/observability.md` para os contratos de segurança e
 telemetria.
+
+As regras funcionais de presença, atraso, saída antecipada e faltas por sessão estão
+definidas em `docs/attendance-rules.md`.
