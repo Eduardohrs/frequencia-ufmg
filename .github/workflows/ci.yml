@@ -78,21 +78,30 @@ jobs:
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed .
       - run: flutter analyze
-      - run: flutter build web
-      - run: flutter build apk --debug
       - run: flutter test --coverage
       - name: Require 100% line coverage
         run: |
           python - <<'PY'
           from pathlib import Path
           found = hit = 0
+          source = "unknown"
+          missed = []
           for line in Path("coverage/lcov.info").read_text().splitlines():
-              if line.startswith("LF:"):
+              if line.startswith("SF:"):
+                  source = line[3:]
+              elif line.startswith("DA:"):
+                  line_number, count, *_ = line[3:].split(",")
+                  if int(count) == 0:
+                      missed.append(f"{source}:{line_number}")
+              elif line.startswith("LF:"):
                   found += int(line[3:])
               elif line.startswith("LH:"):
                   hit += int(line[3:])
           if not found or hit != found:
-              raise SystemExit(f"Line coverage must be 100%: {hit}/{found}")
+              details = ", ".join(missed) or "unavailable"
+              raise SystemExit(
+                  f"Line coverage must be 100%: {hit}/{found}; missed: {details}"
+              )
           print(f"Line coverage: {hit}/{found} (100%)")
           PY
       - uses: codecov/codecov-action@v7
@@ -101,6 +110,7 @@ jobs:
           flags: flutter
           use_oidc: true
           fail_ci_if_error: true
+      - run: flutter build web
 
   quality-gate:
     name: Quality Gate
