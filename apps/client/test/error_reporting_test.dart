@@ -16,6 +16,7 @@ void main() {
       PlatformDispatcher.instance.onError = previousPlatformHandler;
     });
 
+    configureErrorReporting(logger);
     configureErrorReporting(logger, presentError: presented.add);
     final frameworkDetails = FlutterErrorDetails(
       exception: StateError('framework test'),
