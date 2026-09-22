@@ -57,8 +57,8 @@ void main() {
     expect(find.text('Olá, Eduardo!'), findsOneWidget);
     expect(find.text('eduardo@ufmg.br'), findsOneWidget);
     expect(logger.events, [
-      'google_sign_in_started',
-      'google_sign_in_succeeded',
+      'auth_google_sign_in_started',
+      'auth_google_sign_in_succeeded',
     ]);
   });
 
@@ -78,8 +78,11 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Entrar com Google'), findsOneWidget);
-    expect(logger.events, ['google_sign_in_started', 'google_sign_in_failed']);
-    expect(logger.errorContexts, ['google_sign_in']);
+    expect(logger.events, [
+      'auth_google_sign_in_started',
+      'auth_google_sign_in_failed',
+    ]);
+    expect(logger.errorContexts, ['auth_google_sign_in']);
   });
 
   testWidgets('signs out and returns to the login screen', (tester) async {
@@ -98,7 +101,7 @@ void main() {
 
     expect(gateway.signOutCalls, 1);
     expect(find.text('Entrar com Google'), findsOneWidget);
-    expect(logger.events, ['sign_out_started', 'sign_out_succeeded']);
+    expect(logger.events, ['auth_logout_started', 'auth_logout_succeeded']);
   });
 }
 
