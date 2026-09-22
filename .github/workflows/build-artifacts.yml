@@ -14,6 +14,11 @@ jobs:
   build:
     name: Android and web test builds
     runs-on: ubuntu-latest
+    env:
+      ANDROID_DEBUG_KEYSTORE_PATH: ${{ runner.temp }}/frequencia-ufmg-debug.keystore
+      ANDROID_DEBUG_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEYSTORE_PASSWORD }}
+      ANDROID_DEBUG_KEY_ALIAS: ${{ secrets.ANDROID_DEBUG_KEY_ALIAS }}
+      ANDROID_DEBUG_KEY_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEY_PASSWORD }}
     defaults:
       run:
         working-directory: apps/client
@@ -30,10 +35,23 @@ jobs:
           ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
         run: |
           test -n "$ANDROID_DEBUG_KEYSTORE_BASE64"
-          mkdir -p "$HOME/.android"
-          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
-          chmod 600 "$HOME/.android/debug.keystore"
+          test -n "$ANDROID_DEBUG_KEYSTORE_PASSWORD"
+          test -n "$ANDROID_DEBUG_KEY_ALIAS"
+          test -n "$ANDROID_DEBUG_KEY_PASSWORD"
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_DEBUG_KEYSTORE_PATH"
+          chmod 600 "$ANDROID_DEBUG_KEYSTORE_PATH"
       - run: flutter build apk --debug
+      - name: Verify APK signing certificate
+        run: |
+          expected=$(keytool -list -v \
+            -keystore "$ANDROID_DEBUG_KEYSTORE_PATH" \
+            -storepass "$ANDROID_DEBUG_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_DEBUG_KEY_ALIAS" | sed -n 's/.*SHA256: //p' | head -n 1 | tr -d ':')
+          actual=$(keytool -printcert \
+            -jarfile build/app/outputs/flutter-apk/app-debug.apk | \
+            sed -n 's/.*SHA256: //p' | head -n 1 | tr -d ':')
+          test -n "$expected"
+          test "$actual" = "$expected"
       - uses: actions/upload-artifact@v4
         with:
           name: frequencia-ufmg-web-${{ github.sha }}
