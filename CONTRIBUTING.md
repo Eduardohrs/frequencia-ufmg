@@ -20,4 +20,9 @@ administradores do repositório.
 - Análise estática sem erros.
 - Secret Scan passando sem nenhum segredo, credencial, chave privada, keystore ou
   arquivo de conta de serviço versionado.
+- Auditoria de dependências sem vulnerabilidade crítica ou alta não tratada.
+- Toda operação relevante emitindo eventos estruturados, correlacionáveis e sem PII.
 - Descrição da PR preenchida com comportamento, testes e riscos.
+
+Dependências devem ser atualizadas individualmente. Não use correções forçadas de
+auditoria nem agrupe atualizações sem revisar o lockfile e o changelog de cada pacote.

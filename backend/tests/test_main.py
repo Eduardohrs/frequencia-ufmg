@@ -29,6 +29,26 @@ def test_health_endpoint(caplog: pytest.LogCaptureFixture) -> None:
     assert "must-not-be-logged" not in JsonFormatter().format(request_record)
 
 
+def test_valid_request_id_is_propagated(caplog: pytest.LogCaptureFixture) -> None:
+    """A safe caller-provided ID correlates client, service, and logs."""
+
+    response = TestClient(app).get("/health", headers={"x-request-id": "client_request-42"})
+
+    assert response.headers["x-request-id"] == "client_request-42"
+    request_record = next(record for record in caplog.records if record.msg == "request_completed")
+    assert request_record.request_id == "client_request-42"  # type: ignore[attr-defined]
+
+
+def test_invalid_request_id_is_replaced() -> None:
+    """Unbounded or malformed correlation values never enter structured logs."""
+
+    invalid_request_id = "x" * 65
+    response = TestClient(app).get("/health", headers={"x-request-id": invalid_request_id})
+
+    assert response.headers["x-request-id"] != invalid_request_id
+    assert len(response.headers["x-request-id"]) == 32
+
+
 def test_request_failures_are_logged_without_request_content(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -46,6 +66,8 @@ def test_request_failures_are_logged_without_request_content(
     )
 
     assert response.status_code == 500
+    assert len(response.headers["x-request-id"]) == 32
+    assert response.json() == {"detail": "Internal Server Error"}
     failure_record = next(record for record in caplog.records if record.msg == "request_failed")
     assert failure_record.status_code == 500  # type: ignore[attr-defined]
     assert "never-log-this" not in JsonFormatter().format(failure_record)

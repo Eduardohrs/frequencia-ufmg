@@ -4,20 +4,14 @@ updates:
     directory: /backend
     schedule:
       interval: weekly
-    groups:
-      python-dependencies:
-        patterns: ["*"]
+    open-pull-requests-limit: 5
   - package-ecosystem: pub
     directory: /apps/client
     schedule:
       interval: weekly
-    groups:
-      flutter-dependencies:
-        patterns: ["*"]
+    open-pull-requests-limit: 5
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    groups:
-      github-actions:
-        patterns: ["*"]
+    open-pull-requests-limit: 5

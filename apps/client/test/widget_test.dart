@@ -120,6 +120,7 @@ class _FakeAppLogger implements AppLogger {
     StackTrace stackTrace, {
     required String context,
     bool fatal = false,
+    Map<String, Object>? parameters,
   }) async {
     errorContexts.add(context);
   }

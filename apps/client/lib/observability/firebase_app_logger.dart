@@ -2,6 +2,8 @@
 // tested through AppLogger fakes; delivery is smoke-tested against Firebase.
 // coverage:ignore-file
 
+import 'dart:convert';
+
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
@@ -19,9 +21,10 @@ class FirebaseAppLogger implements AppLogger {
 
   @override
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
-    await _analytics.logEvent(name: name, parameters: parameters);
+    final safeParameters = _sanitizeParameters(parameters);
+    await _analytics.logEvent(name: name, parameters: safeParameters);
     await _crashlytics?.log(
-      'event=$name parameters=${sanitizeLogText(parameters?.toString()) ?? '{}'}',
+      jsonEncode({'event': name, 'parameters': ?safeParameters}),
     );
   }
 
@@ -31,11 +34,16 @@ class FirebaseAppLogger implements AppLogger {
     StackTrace stackTrace, {
     required String context,
     bool fatal = false,
+    Map<String, Object>? parameters,
   }) async {
     final details = ErrorLogDetails.from(error);
+    final safeParameters = _sanitizeParameters(parameters);
     await _analytics.logEvent(
       name: 'app_exception',
-      parameters: details.analyticsParameters(context: context, fatal: fatal),
+      parameters: {
+        ...details.analyticsParameters(context: context, fatal: fatal),
+        ...?safeParameters,
+      },
     );
     await _crashlytics?.recordError(
       SanitizedAppException(details),
@@ -46,8 +54,17 @@ class FirebaseAppLogger implements AppLogger {
         if (details.code != null) 'code=${details.code}',
         if (details.message != null) 'message=${details.message}',
         if (details.details != null) 'details=${details.details}',
+        if (safeParameters != null) 'parameters=${jsonEncode(safeParameters)}',
       ],
       fatal: fatal,
     );
   }
+}
+
+Map<String, Object>? _sanitizeParameters(Map<String, Object>? parameters) {
+  if (parameters == null) return null;
+  return parameters.map(
+    (key, value) =>
+        MapEntry(key, value is String ? sanitizeLogText(value) ?? '' : value),
+  );
 }

@@ -1,20 +1,21 @@
-name: Build test artifacts
+name: Release
 
 on:
-  workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 concurrency:
-  group: build-test-artifacts
-  cancel-in-progress: true
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build:
-    name: Android and web test builds
+  release:
+    name: Build signed release
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     env:
       ANDROID_DEBUG_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEYSTORE_PASSWORD }}
       ANDROID_DEBUG_KEY_ALIAS: ${{ secrets.ANDROID_DEBUG_KEY_ALIAS }}
@@ -26,14 +27,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           cache: true
       - run: flutter pub get --enforce-lockfile
-      - run: flutter build web
-      - name: Restore stable Android test signing key
+      - name: Validate release tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Restore stable Android signing key
         env:
           ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
         run: |
@@ -41,36 +49,39 @@ jobs:
           test -n "$ANDROID_DEBUG_KEYSTORE_PASSWORD"
           test -n "$ANDROID_DEBUG_KEY_ALIAS"
           test -n "$ANDROID_DEBUG_KEY_PASSWORD"
-          keystore_path="$RUNNER_TEMP/frequencia-ufmg-debug.keystore"
+          keystore_path="$RUNNER_TEMP/frequencia-ufmg-release.keystore"
           printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
           chmod 600 "$keystore_path"
           echo "ANDROID_DEBUG_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
-      - run: flutter build apk --debug
+      - name: Build web and signed Android release
+        run: |
+          flutter build web --build-name "$APP_VERSION" --build-number "$GITHUB_RUN_NUMBER"
+          flutter build apk --release --build-name "$APP_VERSION" --build-number "$GITHUB_RUN_NUMBER"
       - name: Verify APK signing certificate
         run: |
           apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
           certificates=$("$apksigner" verify --print-certs \
-            build/app/outputs/flutter-apk/app-debug.apk)
-          printf '%s\n' "$certificates"
+            build/app/outputs/flutter-apk/app-release.apk)
           actual=$(printf '%s\n' "$certificates" | \
             sed -n -E 's/.*SHA-256 digest:[[:space:]]*//p' | \
             head -n 1 | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')
           expected=$(printf '%s' "$ANDROID_DEBUG_CERT_SHA256" | \
             tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')
-          echo "APK signer SHA-256: $actual"
-          echo "Certificate lengths: actual=${#actual}, expected=${#expected}"
           test -n "$expected"
           test -n "$actual"
           test "$actual" = "$expected"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: frequencia-ufmg-web-${{ github.sha }}
-          path: apps/client/build/web
-          if-no-files-found: error
-          retention-days: 1
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: frequencia-ufmg-android-debug-${{ github.sha }}
-          path: apps/client/build/app/outputs/flutter-apk/app-debug.apk
-          if-no-files-found: error
-          retention-days: 1
+      - name: Package release files
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "frequencia-ufmg-$APP_VERSION.apk"
+          (cd build/web && zip -qr "../../frequencia-ufmg-web-$APP_VERSION.zip" .)
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "frequencia-ufmg-$APP_VERSION.apk" \
+            "frequencia-ufmg-web-$APP_VERSION.zip" \
+            --repo "$GITHUB_REPOSITORY" \
+            --generate-notes \
+            --title "Frequência UFMG $APP_VERSION"

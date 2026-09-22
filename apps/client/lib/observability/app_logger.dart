@@ -6,5 +6,6 @@ abstract interface class AppLogger {
     StackTrace stackTrace, {
     required String context,
     bool fatal = false,
+    Map<String, Object>? parameters,
   });
 }

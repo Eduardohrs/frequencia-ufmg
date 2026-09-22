@@ -1,6 +1,7 @@
 """HTTP entrypoint for the Frequência UFMG backend."""
 
 import logging
+import re
 from time import monotonic
 from typing import Literal
 from uuid import uuid4
@@ -16,6 +17,7 @@ from frequencia_ufmg.logging_config import configure_logging
 APP_VERSION = "0.1.0"
 configure_logging()
 logger = logging.getLogger(__name__)
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class HealthResponse(BaseModel):
@@ -33,7 +35,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         """Attach a correlation ID and emit one structured completion record."""
 
         started_at = monotonic()
-        request_id = uuid4().hex
+        request_id = request.headers.get("x-request-id", "")
+        if REQUEST_ID_PATTERN.fullmatch(request_id) is None:
+            request_id = uuid4().hex
+        request.state.request_id = request_id
         try:
             response = await call_next(request)
         except Exception:
@@ -41,7 +46,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "request_failed",
                 extra=_request_fields(request, request_id, 500, started_at),
             )
-            raise
+            return Response(
+                content='{"detail":"Internal Server Error"}',
+                status_code=500,
+                media_type="application/json",
+                headers={"x-request-id": request_id},
+            )
         logger.info(
             "request_completed",
             extra=_request_fields(request, request_id, response.status_code, started_at),
