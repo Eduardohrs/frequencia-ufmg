@@ -84,7 +84,7 @@ void main() {
 
   testWidgets('signs out and returns to the login screen', (tester) async {
     final gateway = _FakeAuthGateway(
-      initialUser: const AuthUser(id: '1', email: 'aluno@ufmg.br'),
+      initialUser: AuthUser(id: '1', email: 'aluno@ufmg.br'),
     );
     final logger = _FakeAppLogger();
     addTearDown(gateway.close);
@@ -147,7 +147,7 @@ class _FakeAuthGateway implements AuthGateway {
     signInCalls++;
     if (signInFails) throw Exception('test failure');
     await signInCompleter?.future;
-    _currentUser = const AuthUser(
+    _currentUser = AuthUser(
       id: '1',
       email: 'eduardo@ufmg.br',
       displayName: 'Eduardo',
