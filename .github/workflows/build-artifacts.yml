@@ -18,6 +18,7 @@ jobs:
       ANDROID_DEBUG_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEYSTORE_PASSWORD }}
       ANDROID_DEBUG_KEY_ALIAS: ${{ secrets.ANDROID_DEBUG_KEY_ALIAS }}
       ANDROID_DEBUG_KEY_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEY_PASSWORD }}
+      ANDROID_DEBUG_CERT_SHA256: ${{ secrets.ANDROID_DEBUG_CERT_SHA256 }}
     defaults:
       run:
         working-directory: apps/client
@@ -44,20 +45,14 @@ jobs:
       - run: flutter build apk --debug
       - name: Verify APK signing certificate
         run: |
-          expected=$(keytool -list -v \
-            -keystore "$ANDROID_DEBUG_KEYSTORE_PATH" \
-            -storepass "$ANDROID_DEBUG_KEYSTORE_PASSWORD" \
-            -alias "$ANDROID_DEBUG_KEY_ALIAS" | \
-            sed -n -E 's/.*SHA-?256:[[:space:]]*//p' | head -n 1 | \
-            tr -d ':' | tr '[:upper:]' '[:lower:]')
           apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
           actual=$("$apksigner" verify --print-certs \
             build/app/outputs/flutter-apk/app-debug.apk | \
             sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1 | \
             tr '[:upper:]' '[:lower:]')
-          test -n "$expected"
+          test -n "$ANDROID_DEBUG_CERT_SHA256"
           test -n "$actual"
-          test "$actual" = "$expected"
+          test "$actual" = "$ANDROID_DEBUG_CERT_SHA256"
       - uses: actions/upload-artifact@v4
         with:
           name: frequencia-ufmg-web-${{ github.sha }}
