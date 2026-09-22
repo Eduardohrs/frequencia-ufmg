@@ -15,7 +15,6 @@ jobs:
     name: Android and web test builds
     runs-on: ubuntu-latest
     env:
-      ANDROID_DEBUG_KEYSTORE_PATH: ${{ runner.temp }}/frequencia-ufmg-debug.keystore
       ANDROID_DEBUG_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEYSTORE_PASSWORD }}
       ANDROID_DEBUG_KEY_ALIAS: ${{ secrets.ANDROID_DEBUG_KEY_ALIAS }}
       ANDROID_DEBUG_KEY_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEY_PASSWORD }}
@@ -38,8 +37,10 @@ jobs:
           test -n "$ANDROID_DEBUG_KEYSTORE_PASSWORD"
           test -n "$ANDROID_DEBUG_KEY_ALIAS"
           test -n "$ANDROID_DEBUG_KEY_PASSWORD"
-          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_DEBUG_KEYSTORE_PATH"
-          chmod 600 "$ANDROID_DEBUG_KEYSTORE_PATH"
+          keystore_path="$RUNNER_TEMP/frequencia-ufmg-debug.keystore"
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          chmod 600 "$keystore_path"
+          echo "ANDROID_DEBUG_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
       - run: flutter build apk --debug
       - name: Verify APK signing certificate
         run: |
