@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/auth/auth_user.dart';
@@ -140,7 +141,10 @@ void main() {
       updatedAt: now,
     );
     final repository = _FakeCourseRepository(courses: [course, otherCourse])
-      ..saveError = StateError('offline')
+      ..saveError = FirebaseException(
+        plugin: 'cloud_firestore',
+        code: 'permission-denied',
+      )
       ..deleteError = StateError('offline');
 
     await tester.pumpWidget(_app(repository, user, now));
@@ -149,7 +153,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
-    expect(find.text('Não foi possível salvar a disciplina.'), findsOneWidget);
+    expect(find.textContaining('Código: permission-denied'), findsOneWidget);
 
     await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();

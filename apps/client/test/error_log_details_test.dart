@@ -35,6 +35,20 @@ void main() {
     expect(details.message, 'password=[REDACTED] for [REDACTED]');
   });
 
+  test('extracts Firestore error codes without exposing secrets', () {
+    final details = ErrorLogDetails.from(
+      FirebaseException(
+        plugin: 'cloud_firestore',
+        code: 'permission-denied',
+        message: 'api_key=secret for pessoa@example.com',
+      ),
+    );
+
+    expect(details.type, 'FirebaseException');
+    expect(details.code, 'permission-denied');
+    expect(details.message, 'api_key=[REDACTED] for [REDACTED]');
+  });
+
   test('extracts platform error code, message, and safe details', () {
     final details = ErrorLogDetails.from(
       PlatformException(
