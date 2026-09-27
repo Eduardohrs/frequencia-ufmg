@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/auth/auth_user.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
+import 'package:frequencia_ufmg/data/document_store.dart';
 import 'package:frequencia_ufmg/features/courses/course_page.dart';
+import 'package:frequencia_ufmg/observability/app_logger.dart';
 
 void main() {
   final user = AuthUser(
@@ -214,6 +218,36 @@ void main() {
     expect(repository.courses.single.createdAt.isUtc, isTrue);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('saving reaches Firestore when analytics delivery stalls', (
+    tester,
+  ) async {
+    final store = _RecordingDocumentStore();
+    final logger = _SelectivelyBlockingLogger('firestore_course_save_started');
+    final repository = FirestoreCourseRepository(
+      userId: user.id,
+      store: store,
+      logger: logger,
+    );
+
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('add-course')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('course-code')), 'DCC203');
+    await tester.enterText(find.byKey(const Key('course-name')), 'POO');
+    await tester.enterText(find.byKey(const Key('course-workload')), '60');
+    await tester.enterText(find.byKey(const Key('course-term')), '2026-2');
+    await tester.tap(find.text('Salvar'));
+    await tester.pump();
+
+    final reachedFirestoreBeforeAnalytics = store.savedPaths.isNotEmpty;
+    logger.release();
+    await tester.pumpAndSettle();
+
+    expect(reachedFirestoreBeforeAnalytics, isTrue);
+    expect(find.text('DCC203'), findsOneWidget);
+  });
 }
 
 Widget _app(CourseRepository repository, AuthUser user, DateTime now) =>
@@ -254,4 +288,47 @@ final class _FakeCourseRepository implements CourseRepository {
     courses.removeWhere((item) => item.id == course.id);
     courses.add(course);
   }
+}
+
+final class _RecordingDocumentStore implements DocumentStore {
+  final savedPaths = <String>[];
+  final documents = <StoredDocument>[];
+
+  @override
+  Future<void> deleteAll(Iterable<String> documentPaths) async {}
+
+  @override
+  Future<List<StoredDocument>> list(String collectionPath) async =>
+      List.of(documents);
+
+  @override
+  Future<void> set(String documentPath, Map<String, Object?> data) async {
+    savedPaths.add(documentPath);
+    documents
+      ..clear()
+      ..add(StoredDocument(id: documentPath.split('/').last, data: data));
+  }
+}
+
+final class _SelectivelyBlockingLogger implements AppLogger {
+  _SelectivelyBlockingLogger(this.blockedEvent);
+
+  final String blockedEvent;
+  final Completer<void> _delivery = Completer<void>();
+
+  void release() => _delivery.complete();
+
+  @override
+  Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
+    if (name == blockedEvent) await _delivery.future;
+  }
+
+  @override
+  Future<void> recordError(
+    Object error,
+    StackTrace stackTrace, {
+    required String context,
+    bool fatal = false,
+    Map<String, Object>? parameters,
+  }) async {}
 }

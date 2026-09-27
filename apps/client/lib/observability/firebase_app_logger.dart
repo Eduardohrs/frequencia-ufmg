@@ -22,10 +22,13 @@ class FirebaseAppLogger implements AppLogger {
   @override
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
     final safeParameters = _sanitizeParameters(parameters);
-    await _analytics.logEvent(name: name, parameters: safeParameters);
-    await _crashlytics?.log(
-      jsonEncode({'event': name, 'parameters': ?safeParameters}),
-    );
+    await Future.wait([
+      _analytics.logEvent(name: name, parameters: safeParameters),
+      if (_crashlytics case final crashlytics?)
+        crashlytics.log(
+          jsonEncode({'event': name, 'parameters': ?safeParameters}),
+        ),
+    ]);
   }
 
   @override
@@ -38,26 +41,30 @@ class FirebaseAppLogger implements AppLogger {
   }) async {
     final details = ErrorLogDetails.from(error);
     final safeParameters = _sanitizeParameters(parameters);
-    await _analytics.logEvent(
-      name: 'app_exception',
-      parameters: {
-        ...details.analyticsParameters(context: context, fatal: fatal),
-        ...?safeParameters,
-      },
-    );
-    await _crashlytics?.recordError(
-      SanitizedAppException(details),
-      stackTrace,
-      reason: 'context=$context',
-      information: [
-        'type=${details.type}',
-        if (details.code != null) 'code=${details.code}',
-        if (details.message != null) 'message=${details.message}',
-        if (details.details != null) 'details=${details.details}',
-        if (safeParameters != null) 'parameters=${jsonEncode(safeParameters)}',
-      ],
-      fatal: fatal,
-    );
+    await Future.wait([
+      _analytics.logEvent(
+        name: 'app_exception',
+        parameters: {
+          ...details.analyticsParameters(context: context, fatal: fatal),
+          ...?safeParameters,
+        },
+      ),
+      if (_crashlytics case final crashlytics?)
+        crashlytics.recordError(
+          SanitizedAppException(details),
+          stackTrace,
+          reason: 'context=$context',
+          information: [
+            'type=${details.type}',
+            if (details.code != null) 'code=${details.code}',
+            if (details.message != null) 'message=${details.message}',
+            if (details.details != null) 'details=${details.details}',
+            if (safeParameters != null)
+              'parameters=${jsonEncode(safeParameters)}',
+          ],
+          fatal: fatal,
+        ),
+    ]);
   }
 }
 
