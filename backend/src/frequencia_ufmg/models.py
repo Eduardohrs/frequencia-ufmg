@@ -182,10 +182,71 @@ class SessaoAula:
         return politica.calcular_faltas(self._configuracao.aulas, situacao)
 
 
+class RegistroFrequencia:
+    """Resultado atual de uma sessão, automático ou corrigido manualmente."""
+
+    __slots__ = ("_faltas", "_sessao", "_situacao")
+
+    def __init__(self, sessao: SessaoAula, situacao: SituacaoFrequencia) -> None:
+        if not isinstance(sessao, SessaoAula):
+            raise TypeError("sessão deve ser uma SessaoAula")
+        if not isinstance(situacao, SituacaoFrequencia):
+            raise TypeError("situação deve usar SituacaoFrequencia")
+        self._sessao = sessao
+        self._situacao = situacao
+        self._faltas = sessao.calcular_faltas(situacao)
+
+    @property
+    def sessao(self) -> SessaoAula:
+        """Sessão à qual o resultado pertence."""
+
+        return self._sessao
+
+    @property
+    def situacao(self) -> SituacaoFrequencia:
+        """Situação atualmente considerada nos relatórios."""
+
+        return self._situacao
+
+    @property
+    def faltas(self) -> int | None:
+        """Faltas atuais, ou ausência de valor enquanto estiver pendente."""
+
+        return self._faltas
+
+    def corrigir(self, situacao: SituacaoFrequencia, faltas: int | None) -> None:
+        """Substitua o resultado atual sem manter motivo ou histórico."""
+
+        if not isinstance(situacao, SituacaoFrequencia):
+            raise TypeError("situação deve usar SituacaoFrequencia")
+        if situacao is SituacaoFrequencia.PENDENTE:
+            if faltas is not None:
+                raise ValueError("uma situação pendente não pode ter faltas")
+        else:
+            if not isinstance(faltas, int) or isinstance(faltas, bool):
+                raise TypeError("faltas devem ser um número inteiro")
+            if not 0 <= faltas <= int(self._sessao.configuracao.aulas):
+                raise ValueError("faltas devem respeitar a quantidade de aulas da sessão")
+        self._situacao = situacao
+        self._faltas = faltas
+
+
+@dataclass(frozen=True, slots=True)
+class ResumoDisciplina:
+    """Retrato imutável da frequência atual de uma disciplina."""
+
+    codigo: str
+    total_sessoes: int
+    sessoes_pendentes: int
+    faltas_consumidas: int
+    limite_faltas: int
+    faltas_restantes: int
+
+
 class Disciplina:
     """Agregado que controla as sessões de uma disciplina."""
 
-    __slots__ = ("_carga_horaria", "_codigo", "_nome", "_sessoes")
+    __slots__ = ("_carga_horaria", "_codigo", "_nome", "_registros", "_sessoes")
 
     def __init__(self, codigo: str, nome: str, carga_horaria: int) -> None:
         self._codigo = _texto_obrigatorio(codigo, "código")
@@ -196,6 +257,7 @@ class Disciplina:
             raise ValueError("carga horária deve ser positiva")
         self._carga_horaria = carga_horaria
         self._sessoes: list[SessaoAula] = []
+        self._registros: dict[str, RegistroFrequencia] = {}
 
     @property
     def codigo(self) -> str:
@@ -227,6 +289,16 @@ class Disciplina:
 
         return tuple(self._sessoes)
 
+    @property
+    def registros(self) -> tuple[RegistroFrequencia, ...]:
+        """Resultados atuais na mesma ordem das sessões cadastradas."""
+
+        return tuple(
+            self._registros[sessao.identificador]
+            for sessao in self._sessoes
+            if sessao.identificador in self._registros
+        )
+
     def adicionar_sessao(self, sessao: SessaoAula) -> None:
         """Adicione uma sessão cuja identidade ainda não pertence à disciplina."""
 
@@ -244,6 +316,47 @@ class Disciplina:
         if faltas_consumidas < 0:
             raise ValueError("faltas consumidas não podem ser negativas")
         return max(self.limite_faltas - faltas_consumidas, 0)
+
+    def registrar_frequencia(
+        self,
+        identificador_sessao: str,
+        situacao: SituacaoFrequencia,
+    ) -> RegistroFrequencia:
+        """Crie ou substitua o resultado atual de uma sessão cadastrada."""
+
+        sessao = self._buscar_sessao(identificador_sessao)
+        registro = RegistroFrequencia(sessao, situacao)
+        self._registros[sessao.identificador] = registro
+        return registro
+
+    def resumo(self) -> ResumoDisciplina:
+        """Consolide apenas os valores atuais de todas as sessões."""
+
+        registros = self.registros
+        faltas_consumidas = sum(
+            registro.faltas for registro in registros if registro.faltas is not None
+        )
+        sessoes_resolvidas = sum(registro.faltas is not None for registro in registros)
+        sessoes_pendentes = len(self._sessoes) - sessoes_resolvidas
+        return ResumoDisciplina(
+            codigo=self._codigo,
+            total_sessoes=len(self._sessoes),
+            sessoes_pendentes=sessoes_pendentes,
+            faltas_consumidas=faltas_consumidas,
+            limite_faltas=self.limite_faltas,
+            faltas_restantes=self.faltas_restantes(faltas_consumidas),
+        )
+
+    def _buscar_sessao(self, identificador: str) -> SessaoAula:
+        """Encontre uma sessão pertencente ao agregado."""
+
+        if not isinstance(identificador, str):
+            raise TypeError("identificador da sessão deve ser texto")
+        normalizado = identificador.strip()
+        for sessao in self._sessoes:
+            if sessao.identificador == normalizado:
+                return sessao
+        raise ValueError("sessão não cadastrada na disciplina")
 
 
 def _texto_obrigatorio(valor: object, campo: str) -> str:

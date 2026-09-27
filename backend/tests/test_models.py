@@ -8,6 +8,8 @@ from frequencia_ufmg.models import (
     EstadoPing,
     NumeroChamadas,
     QuantidadeAulas,
+    RegistroFrequencia,
+    ResumoDisciplina,
     SessaoAula,
     SituacaoFrequencia,
 )
@@ -370,3 +372,174 @@ def test_remaining_absences_reject_invalid_consumed_totals(
 
     with pytest.raises((TypeError, ValueError), match="faltas consumidas"):
         disciplina.faltas_restantes(faltas_consumidas)  # type: ignore[arg-type]
+
+
+def test_course_registers_attendance_and_reports_current_totals() -> None:
+    """A registered session immediately participates in the course summary."""
+
+    disciplina = Disciplina("DCC203", "POO", 60)
+    sessao = SessaoAula(
+        "aula-01",
+        ConfiguracaoSessao(QuantidadeAulas.QUATRO, NumeroChamadas.DUAS),
+    )
+    disciplina.adicionar_sessao(sessao)
+
+    registro = disciplina.registrar_frequencia(
+        "aula-01",
+        SituacaoFrequencia.CHEGOU_ATRASADO,
+    )
+
+    assert registro.sessao is sessao
+    assert registro.situacao is SituacaoFrequencia.CHEGOU_ATRASADO
+    assert registro.faltas == 2
+    assert disciplina.registros == (registro,)
+    assert disciplina.resumo() == ResumoDisciplina(
+        codigo="DCC203",
+        total_sessoes=1,
+        sessoes_pendentes=0,
+        faltas_consumidas=2,
+        limite_faltas=15,
+        faltas_restantes=13,
+    )
+
+
+def test_manual_correction_overwrites_status_and_absences_without_history() -> None:
+    """Only the latest personal correction contributes to the report."""
+
+    disciplina = Disciplina("DCC203", "POO", 60)
+    disciplina.adicionar_sessao(
+        SessaoAula(
+            "aula-01",
+            ConfiguracaoSessao(QuantidadeAulas.QUATRO, NumeroChamadas.UMA),
+        )
+    )
+    registro = disciplina.registrar_frequencia("aula-01", SituacaoFrequencia.AUSENTE)
+
+    registro.corrigir(SituacaoFrequencia.PRESENTE, 0)
+    registro.corrigir(SituacaoFrequencia.SAIU_MAIS_CEDO, 1)
+
+    assert registro.situacao is SituacaoFrequencia.SAIU_MAIS_CEDO
+    assert registro.faltas == 1
+    assert disciplina.resumo().faltas_consumidas == 1
+
+
+def test_registering_the_same_session_again_replaces_its_current_result() -> None:
+    """Reprocessing a session keeps one current record rather than an audit trail."""
+
+    disciplina = Disciplina("DCC203", "POO", 60)
+    disciplina.adicionar_sessao(
+        SessaoAula(
+            "aula-01",
+            ConfiguracaoSessao(QuantidadeAulas.DUAS, NumeroChamadas.UMA),
+        )
+    )
+
+    primeiro = disciplina.registrar_frequencia("aula-01", SituacaoFrequencia.AUSENTE)
+    atual = disciplina.registrar_frequencia("aula-01", SituacaoFrequencia.PRESENTE)
+
+    assert primeiro is not atual
+    assert disciplina.registros == (atual,)
+    assert disciplina.resumo().faltas_consumidas == 0
+
+
+def test_summary_counts_missing_and_pending_sessions_without_consuming_absences() -> None:
+    """Unresolved sessions remain visible but do not change absence totals."""
+
+    disciplina = Disciplina("DCC203", "POO", 60)
+    configuracao = ConfiguracaoSessao(QuantidadeAulas.DUAS, NumeroChamadas.UMA)
+    disciplina.adicionar_sessao(SessaoAula("aula-01", configuracao))
+    disciplina.adicionar_sessao(SessaoAula("aula-02", configuracao))
+    registro = disciplina.registrar_frequencia("aula-01", SituacaoFrequencia.PENDENTE)
+
+    assert registro.faltas is None
+    assert disciplina.resumo() == ResumoDisciplina(
+        codigo="DCC203",
+        total_sessoes=2,
+        sessoes_pendentes=2,
+        faltas_consumidas=0,
+        limite_faltas=15,
+        faltas_restantes=15,
+    )
+
+
+@pytest.mark.parametrize(
+    ("situacao", "faltas", "erro"),
+    [
+        (object(), 0, TypeError),
+        (SituacaoFrequencia.PRESENTE, None, TypeError),
+        (SituacaoFrequencia.PRESENTE, True, TypeError),
+        (SituacaoFrequencia.PRESENTE, -1, ValueError),
+        (SituacaoFrequencia.PRESENTE, 5, ValueError),
+        (SituacaoFrequencia.PENDENTE, 0, ValueError),
+    ],
+)
+def test_manual_correction_rejects_inconsistent_or_out_of_range_values(
+    situacao: object,
+    faltas: object,
+    erro: type[Exception],
+) -> None:
+    """Manual freedom cannot violate the session's basic invariants."""
+
+    sessao = SessaoAula(
+        "aula-01",
+        ConfiguracaoSessao(QuantidadeAulas.QUATRO, NumeroChamadas.UMA),
+    )
+    registro = RegistroFrequencia(sessao, SituacaoFrequencia.PRESENTE)
+
+    with pytest.raises(erro):
+        registro.corrigir(situacao, faltas)  # type: ignore[arg-type]
+
+
+def test_manual_correction_can_restore_a_pending_result() -> None:
+    """A resolved record can be returned to pending without inventing absences."""
+
+    sessao = SessaoAula(
+        "aula-01",
+        ConfiguracaoSessao(QuantidadeAulas.DUAS, NumeroChamadas.UMA),
+    )
+    registro = RegistroFrequencia(sessao, SituacaoFrequencia.AUSENTE)
+
+    registro.corrigir(SituacaoFrequencia.PENDENTE, None)
+
+    assert registro.situacao is SituacaoFrequencia.PENDENTE
+    assert registro.faltas is None
+
+
+@pytest.mark.parametrize("identificador", ["desconhecida", " "])
+def test_course_rejects_attendance_for_an_unknown_session(identificador: str) -> None:
+    """A course cannot own an attendance record for a session it does not own."""
+
+    disciplina = Disciplina("DCC203", "POO", 60)
+
+    with pytest.raises(ValueError, match="sessão não cadastrada"):
+        disciplina.registrar_frequencia(identificador, SituacaoFrequencia.PRESENTE)
+
+
+def test_attendance_record_requires_session_and_status_domain_objects() -> None:
+    """Record construction validates both sides of its domain relationship."""
+
+    sessao = SessaoAula(
+        "aula-01",
+        ConfiguracaoSessao(QuantidadeAulas.DUAS, NumeroChamadas.UMA),
+    )
+
+    with pytest.raises(TypeError, match="SessaoAula"):
+        RegistroFrequencia(object(), SituacaoFrequencia.PRESENTE)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="SituacaoFrequencia"):
+        RegistroFrequencia(sessao, object())  # type: ignore[arg-type]
+
+
+def test_course_finds_a_later_session_and_rejects_non_text_identity() -> None:
+    """Session lookup traverses owned sessions and validates its boundary."""
+
+    disciplina = Disciplina("DCC203", "POO", 60)
+    configuracao = ConfiguracaoSessao(QuantidadeAulas.DUAS, NumeroChamadas.UMA)
+    disciplina.adicionar_sessao(SessaoAula("aula-01", configuracao))
+    segunda_sessao = SessaoAula("aula-02", configuracao)
+    disciplina.adicionar_sessao(segunda_sessao)
+
+    registro = disciplina.registrar_frequencia(" aula-02 ", SituacaoFrequencia.PRESENTE)
+
+    assert registro.sessao is segunda_sessao
+    with pytest.raises(TypeError, match="identificador"):
+        disciplina.registrar_frequencia(2, SituacaoFrequencia.PRESENTE)  # type: ignore[arg-type]
