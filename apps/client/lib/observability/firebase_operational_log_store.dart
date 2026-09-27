@@ -9,18 +9,42 @@ final class FirebaseOperationalLogStore implements OperationalLogStore {
   FirebaseOperationalLogStore(this._firestore);
 
   final FirebaseFirestore _firestore;
+  final Set<String> _cleanedUsers = {};
 
   @override
-  Future<void> add(String userId, Map<String, Object?> document) {
+  Future<void> add(String userId, Map<String, Object?> document) async {
     final firestoreDocument = Map<String, Object?>.of(document);
     firestoreDocument['occurredAt'] = FieldValue.serverTimestamp();
     firestoreDocument['expiresAt'] = Timestamp.fromDate(
       document['expiresAt']! as DateTime,
     );
-    return _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('logs')
-        .add(firestoreDocument);
+    final logs = _firestore.collection('users').doc(userId).collection('logs');
+    await logs.add(firestoreDocument);
+    if (!_cleanedUsers.add(userId)) return;
+    try {
+      await _deleteExpired(logs);
+    } catch (_) {
+      _cleanedUsers.remove(userId);
+      rethrow;
+    }
+  }
+
+  Future<void> _deleteExpired(
+    CollectionReference<Map<String, dynamic>> logs,
+  ) async {
+    const batchSize = 100;
+    while (true) {
+      final expired = await logs
+          .where('expiresAt', isLessThanOrEqualTo: Timestamp.now())
+          .limit(batchSize)
+          .get();
+      if (expired.docs.isEmpty) return;
+      final batch = _firestore.batch();
+      for (final document in expired.docs) {
+        batch.delete(document.reference);
+      }
+      await batch.commit();
+      if (expired.docs.length < batchSize) return;
+    }
   }
 }

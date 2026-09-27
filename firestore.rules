@@ -217,7 +217,10 @@ service cloud.firestore {
       allow read: if owns(userId);
       allow create: if owns(userId)
         && isValidOperationalLog(request.resource.data);
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if owns(userId)
+        && resource.data.expiresAt is timestamp
+        && resource.data.expiresAt <= request.time;
     }
 
     match /{document=**} {
