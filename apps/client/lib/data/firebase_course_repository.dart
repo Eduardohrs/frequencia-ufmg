@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../observability/app_logger.dart';
 import 'academic_repositories.dart';
+import 'document_store.dart';
 import 'firebase_document_store.dart';
 
 CourseRepository createFirebaseCourseRepository(
@@ -13,6 +14,8 @@ CourseRepository createFirebaseCourseRepository(
   AppLogger logger,
 ) => FirestoreCourseRepository(
   userId: userId,
-  store: FirebaseDocumentStore(FirebaseFirestore.instance),
+  store: TimeoutDocumentStore(
+    FirebaseDocumentStore(FirebaseFirestore.instance),
+  ),
   logger: logger,
 );

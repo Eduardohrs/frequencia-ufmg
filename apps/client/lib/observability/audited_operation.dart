@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'app_logger.dart';
 
 enum AuditedOperation {
@@ -23,43 +25,59 @@ Future<T> runAuditedOperation<T>({
   required AuditedOperation operation,
   required Future<T> Function() action,
 }) async {
+  final stopwatch = Stopwatch()..start();
   final eventPrefix = operation.eventPrefix;
   final operationId =
       '${DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(36)}-${operation.name}';
-  await logger.logEvent(
-    '${eventPrefix}_started',
-    parameters: {
-      'operation': eventPrefix,
-      'operation_id': operationId,
-      'outcome': 'started',
-    },
+  _deliver(
+    logger.logEvent(
+      '${eventPrefix}_started',
+      parameters: {
+        'operation': eventPrefix,
+        'operation_id': operationId,
+        'outcome': 'started',
+      },
+    ),
   );
   try {
     final result = await action();
-    await logger.logEvent(
-      '${eventPrefix}_succeeded',
-      parameters: {
-        'operation': eventPrefix,
-        'operation_id': operationId,
-        'outcome': 'succeeded',
-      },
+    _deliver(
+      logger.logEvent(
+        '${eventPrefix}_succeeded',
+        parameters: {
+          'operation': eventPrefix,
+          'operation_id': operationId,
+          'outcome': 'succeeded',
+          'duration_ms': stopwatch.elapsedMilliseconds,
+        },
+      ),
     );
     return result;
   } catch (error, stackTrace) {
-    await logger.recordError(
-      error,
-      stackTrace,
-      context: eventPrefix,
-      parameters: {'operation_id': operationId},
+    final duration = stopwatch.elapsedMilliseconds;
+    _deliver(
+      logger.recordError(
+        error,
+        stackTrace,
+        context: eventPrefix,
+        parameters: {'operation_id': operationId, 'duration_ms': duration},
+      ),
     );
-    await logger.logEvent(
-      '${eventPrefix}_failed',
-      parameters: {
-        'operation': eventPrefix,
-        'operation_id': operationId,
-        'outcome': 'failed',
-      },
+    _deliver(
+      logger.logEvent(
+        '${eventPrefix}_failed',
+        parameters: {
+          'operation': eventPrefix,
+          'operation_id': operationId,
+          'outcome': 'failed',
+          'duration_ms': duration,
+        },
+      ),
     );
     rethrow;
   }
+}
+
+void _deliver(Future<void> delivery) {
+  unawaited(delivery.catchError((_) {}));
 }

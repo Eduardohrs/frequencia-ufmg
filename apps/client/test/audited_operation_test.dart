@@ -23,6 +23,7 @@ void main() {
       expect(logger.parameters[0]!['operation_id'], isNotEmpty);
       expect(logger.parameters[1]!['operation'], operation.eventPrefix);
       expect(logger.parameters[1]!['outcome'], 'succeeded');
+      expect(logger.parameters[1]!['duration_ms'], isA<int>());
       expect(
         logger.parameters[1]!['operation_id'],
         logger.parameters[0]!['operation_id'],
@@ -51,16 +52,36 @@ void main() {
       expect(logger.parameters[0]!['operation_id'], isNotEmpty);
       expect(logger.parameters[1]!['operation'], operation.eventPrefix);
       expect(logger.parameters[1]!['outcome'], 'failed');
+      expect(logger.parameters[1]!['duration_ms'], isA<int>());
       expect(
         logger.parameters[1]!['operation_id'],
         logger.parameters[0]!['operation_id'],
       );
       expect(logger.errorContexts, [operation.eventPrefix]);
       expect(logger.errorParameters, [
-        {'operation_id': logger.parameters[0]!['operation_id']},
+        {
+          'operation_id': logger.parameters[0]!['operation_id'],
+          'duration_ms': isA<int>(),
+        },
       ]);
     });
   }
+
+  test('logging delivery failures never block the audited action', () async {
+    var actionCalls = 0;
+
+    final result = await runAuditedOperation(
+      logger: _FailingAppLogger(),
+      operation: AuditedOperation.courseSave,
+      action: () async {
+        actionCalls++;
+        return 42;
+      },
+    );
+
+    expect(result, 42);
+    expect(actionCalls, 1);
+  });
 }
 
 class _FakeAppLogger implements AppLogger {
@@ -85,5 +106,23 @@ class _FakeAppLogger implements AppLogger {
   }) async {
     errorContexts.add(context);
     errorParameters.add(parameters);
+  }
+}
+
+final class _FailingAppLogger implements AppLogger {
+  @override
+  Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
+    throw StateError('analytics unavailable');
+  }
+
+  @override
+  Future<void> recordError(
+    Object error,
+    StackTrace stackTrace, {
+    required String context,
+    bool fatal = false,
+    Map<String, Object>? parameters,
+  }) async {
+    throw StateError('crash reporting unavailable');
   }
 }

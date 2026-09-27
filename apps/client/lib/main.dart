@@ -10,6 +10,7 @@ import 'firebase_options.dart';
 import 'observability/app_logger.dart';
 import 'observability/error_reporting.dart';
 import 'observability/firebase_app_logger.dart';
+import 'observability/resilient_app_logger.dart';
 
 typedef AuthGatewayFactory = AuthGateway Function();
 typedef AppLoggerFactory = AppLogger Function();
@@ -29,7 +30,7 @@ MainCourseRepositoryFactory courseRepositoryFactory =
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  final logger = appLoggerFactory();
+  final logger = ResilientAppLogger(appLoggerFactory());
   configureErrorReporting(logger);
   runApp(
     FrequenciaUFMGApp(
