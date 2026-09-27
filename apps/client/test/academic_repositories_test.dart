@@ -37,13 +37,22 @@ void main() {
 
     final courses = await repository.listCourses();
     await repository.saveCourse(course);
+    store.documents = [const StoredDocument(id: 'child-1', data: {})];
     await repository.deleteCourse(course.id);
 
     expect(courses.single.code, 'DCC203');
-    expect(store.listedPaths, ['users/user-1/courses']);
+    expect(store.listedPaths, [
+      'users/user-1/courses',
+      'users/user-1/courses/poo/meetings',
+      'users/user-1/courses/poo/sessions',
+    ]);
     expect(store.savedPaths, ['users/user-1/courses/poo']);
     expect(store.savedData.single, course.toFirestore());
-    expect(store.deletedPaths, ['users/user-1/courses/poo']);
+    expect(store.deletedPaths, [
+      'users/user-1/courses/poo/meetings/child-1',
+      'users/user-1/courses/poo/sessions/child-1',
+      'users/user-1/courses/poo',
+    ]);
     expect(logger.events, [
       'firestore_course_list_started',
       'firestore_course_list_succeeded',
@@ -219,8 +228,8 @@ final class _FakeDocumentStore implements DocumentStore {
   final deletedPaths = <String>[];
 
   @override
-  Future<void> delete(String documentPath) async {
-    deletedPaths.add(documentPath);
+  Future<void> deleteAll(Iterable<String> documentPaths) async {
+    deletedPaths.addAll(documentPaths);
   }
 
   @override

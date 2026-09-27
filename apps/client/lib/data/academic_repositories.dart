@@ -74,8 +74,21 @@ final class FirestoreCourseRepository implements CourseRepository {
   Future<void> deleteCourse(String courseId) => runAuditedOperation(
     logger: _logger,
     operation: AuditedOperation.courseDelete,
-    action: () =>
-        _store.delete(FirestoreSchema.courseDocument(_userId, courseId)),
+    action: () async {
+      final meetings = await _store.list(
+        FirestoreSchema.meetingsCollection(_userId, courseId),
+      );
+      final sessions = await _store.list(
+        FirestoreSchema.sessionsCollection(_userId, courseId),
+      );
+      await _store.deleteAll([
+        for (final meeting in meetings)
+          FirestoreSchema.meetingDocument(_userId, courseId, meeting.id),
+        for (final session in sessions)
+          FirestoreSchema.sessionDocument(_userId, courseId, session.id),
+        FirestoreSchema.courseDocument(_userId, courseId),
+      ]);
+    },
   );
 }
 
@@ -128,9 +141,9 @@ final class FirestoreMeetingRepository implements MeetingRepository {
       runAuditedOperation(
         logger: _logger,
         operation: AuditedOperation.meetingDelete,
-        action: () => _store.delete(
+        action: () => _store.deleteAll([
           FirestoreSchema.meetingDocument(_userId, courseId, meetingId),
-        ),
+        ]),
       );
 }
 
@@ -183,8 +196,8 @@ final class FirestoreSessionRepository implements SessionRepository {
       runAuditedOperation(
         logger: _logger,
         operation: AuditedOperation.sessionDelete,
-        action: () => _store.delete(
+        action: () => _store.deleteAll([
           FirestoreSchema.sessionDocument(_userId, courseId, sessionId),
-        ),
+        ]),
       );
 }

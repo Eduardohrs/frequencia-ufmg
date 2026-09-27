@@ -10,5 +10,5 @@ abstract interface class DocumentStore {
 
   Future<void> set(String documentPath, Map<String, Object?> data);
 
-  Future<void> delete(String documentPath);
+  Future<void> deleteAll(Iterable<String> documentPaths);
 }
