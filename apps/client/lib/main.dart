@@ -1,4 +1,6 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'auth/auth_gate.dart';
@@ -6,6 +8,7 @@ import 'auth/auth_gateway.dart';
 import 'auth/firebase_auth_gateway.dart';
 import 'data/academic_repositories.dart';
 import 'data/firebase_course_repository.dart';
+import 'data/firestore_configuration.dart';
 import 'firebase_options.dart';
 import 'observability/app_logger.dart';
 import 'observability/error_reporting.dart';
@@ -30,6 +33,9 @@ MainCourseRepositoryFactory courseRepositoryFactory =
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  if (kIsWeb) {
+    FirebaseFirestore.instance.settings = firestoreWebSettings; // coverage:ignore-line
+  }
   final logger = ResilientAppLogger(appLoggerFactory());
   configureErrorReporting(logger);
   runApp(

@@ -248,6 +248,58 @@ void main() {
     expect(reachedFirestoreBeforeAnalytics, isTrue);
     expect(find.text('DCC203'), findsOneWidget);
   });
+
+  testWidgets('stops saving when course creation throws unexpectedly', (
+    tester,
+  ) async {
+    final repository = _FakeCourseRepository();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: repository,
+          user: user,
+          onSignOut: () async {},
+          now: () => now,
+          idGenerator: () => throw StateError('identifier unavailable'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _fillNewCourse(tester);
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('Não foi possível salvar a disciplina.'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Salvar'), findsOneWidget);
+  });
+
+  testWidgets('closes the editor after saving without waiting for a reload', (
+    tester,
+  ) async {
+    final repository = _ReloadBlockingCourseRepository();
+
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+    await _fillNewCourse(tester);
+    await tester.tap(find.text('Salvar'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(repository.savedCourse?.code, 'DCC203');
+    expect(find.byKey(const Key('course-code')), findsNothing);
+    expect(find.text('DCC203'), findsOneWidget);
+  });
+}
+
+Future<void> _fillNewCourse(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('add-course')));
+  await tester.pumpAndSettle();
+  await tester.enterText(find.byKey(const Key('course-code')), 'DCC203');
+  await tester.enterText(find.byKey(const Key('course-name')), 'POO');
+  await tester.enterText(find.byKey(const Key('course-workload')), '60');
+  await tester.enterText(find.byKey(const Key('course-term')), '2026-2');
 }
 
 Widget _app(CourseRepository repository, AuthUser user, DateTime now) =>
@@ -307,6 +359,26 @@ final class _RecordingDocumentStore implements DocumentStore {
     documents
       ..clear()
       ..add(StoredDocument(id: documentPath.split('/').last, data: data));
+  }
+}
+
+final class _ReloadBlockingCourseRepository implements CourseRepository {
+  CourseRecord? savedCourse;
+  var _listCalls = 0;
+
+  @override
+  Future<void> deleteCourse(String courseId) async {}
+
+  @override
+  Future<List<CourseRecord>> listCourses() {
+    _listCalls++;
+    if (_listCalls == 1) return Future.value([]);
+    return Completer<List<CourseRecord>>().future;
+  }
+
+  @override
+  Future<void> saveCourse(CourseRecord course) async {
+    savedCourse = course;
   }
 }
 
