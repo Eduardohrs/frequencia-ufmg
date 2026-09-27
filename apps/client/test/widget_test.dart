@@ -41,6 +41,37 @@ void main() {
     }
   });
 
+  testWidgets('renders before startup analytics delivery completes', (
+    tester,
+  ) async {
+    final gateway = _FakeAuthGateway();
+    final delivery = Completer<void>();
+    final logger = _FakeAppLogger(logCompleter: delivery);
+    addTearDown(gateway.close);
+    app.authGatewayFactory = () => gateway;
+    app.appLoggerFactory = () => logger;
+    app.courseRepositoryFactory = (_, _) => _FakeCourseRepository();
+    final previousFlutterHandler = FlutterError.onError;
+    final previousPlatformHandler = PlatformDispatcher.instance.onError;
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      final startup = app.main();
+      await tester.pump();
+
+      final renderedBeforeDelivery = find
+          .text('Entrar com Google')
+          .evaluate()
+          .isNotEmpty;
+      delivery.complete();
+      await startup;
+      expect(renderedBeforeDelivery, isTrue);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+      FlutterError.onError = previousFlutterHandler;
+      PlatformDispatcher.instance.onError = previousPlatformHandler;
+    }
+  });
+
   testWidgets('bootstraps the repository for an authenticated user', (
     tester,
   ) async {
@@ -153,12 +184,16 @@ void main() {
 }
 
 class _FakeAppLogger implements AppLogger {
+  _FakeAppLogger({this.logCompleter});
+
+  final Completer<void>? logCompleter;
   final events = <String>[];
   final errorContexts = <String>[];
 
   @override
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
     events.add(name);
+    await logCompleter?.future;
   }
 
   @override

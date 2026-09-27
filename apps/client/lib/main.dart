@@ -31,7 +31,6 @@ Future<void> main() async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   final logger = appLoggerFactory();
   configureErrorReporting(logger);
-  await logger.logEvent('app_started');
   runApp(
     FrequenciaUFMGApp(
       authGateway: authGatewayFactory(),
@@ -40,6 +39,7 @@ Future<void> main() async {
           courseRepositoryFactory(userId, logger),
     ),
   );
+  await logger.logEvent('app_started');
 }
 
 class FrequenciaUFMGApp extends StatelessWidget {
