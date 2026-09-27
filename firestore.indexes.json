@@ -1,11 +1,4 @@
 {
   "indexes": [],
-  "fieldOverrides": [
-    {
-      "collectionGroup": "logs",
-      "fieldPath": "expiresAt",
-      "indexes": [],
-      "ttl": true
-    }
-  ]
+  "fieldOverrides": []
 }

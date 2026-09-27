@@ -209,6 +209,18 @@ describe("operational logs", () => {
     await assertFails(deleteDoc(reference));
   });
 
+  test("owner can delete only an expired log", async () => {
+    const expiredPath = logPath("alice", "expired");
+    const expiredAt = Timestamp.fromDate(new Date(Date.now() - 60 * 1000));
+    const oldOccurredAt = Timestamp.fromDate(new Date(Date.now() - 31 * 24 * 60 * 60 * 1000));
+    await seed(
+      expiredPath,
+      operationalLog({ occurredAt: oldOccurredAt, expiresAt: expiredAt }),
+    );
+
+    await assertSucceeds(deleteDoc(doc(dbFor("alice"), expiredPath)));
+  });
+
   test("anonymous and other users cannot access a user's logs", async () => {
     const path = logPath("alice");
     await seed(path, operationalLog({ occurredAt: updatedAt }));
