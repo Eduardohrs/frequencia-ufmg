@@ -34,7 +34,9 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   if (kIsWeb) {
-    FirebaseFirestore.instance.settings = firestoreWebSettings; // coverage:ignore-line
+    // coverage:ignore-start
+    FirebaseFirestore.instance.settings = firestoreWebSettings;
+    // coverage:ignore-end
   }
   final logger = ResilientAppLogger(appLoggerFactory());
   configureErrorReporting(logger);
