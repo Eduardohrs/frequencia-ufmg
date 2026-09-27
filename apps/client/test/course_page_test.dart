@@ -91,10 +91,58 @@ void main() {
     expect(find.text('Nenhuma disciplina cadastrada'), findsOneWidget);
   });
 
+  testWidgets('creates a distinct course when another course already exists', (
+    tester,
+  ) async {
+    final existing = CourseRecord(
+      id: 'existing-course',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final repository = _FakeCourseRepository(courses: [existing]);
+    final logger = _RecordingAppLogger();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: repository,
+          user: user,
+          logger: logger,
+          onSignOut: () async {},
+          now: () => now,
+          idGenerator: () => 'new-course',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _fillNewCourse(tester, code: 'DCC204', name: 'Algoritmos');
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(repository.courses, hasLength(2));
+    expect(repository.courses.map((course) => course.id), {
+      'existing-course',
+      'new-course',
+    });
+    expect(
+      logger.events,
+      containsAllInOrder([
+        'course_create_editor_opened',
+        'course_create_started',
+        'course_create_succeeded',
+      ]),
+    );
+  });
+
   testWidgets('validates fields and keeps the form open', (tester) async {
     final repository = _FakeCourseRepository();
+    final logger = _RecordingAppLogger();
 
-    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpWidget(_app(repository, user, now, logger: logger));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('add-course')));
     await tester.pumpAndSettle();
@@ -106,6 +154,7 @@ void main() {
     expect(find.text('Use um número maior que zero.'), findsOneWidget);
     expect(find.text('Use o formato AAAA-S, como 2026-2.'), findsOneWidget);
     expect(repository.courses, isEmpty);
+    expect(logger.events, contains('course_create_validation_failed'));
 
     await tester.enterText(find.byKey(const Key('course-code')), 'x' * 33);
     await tester.enterText(find.byKey(const Key('course-name')), 'x' * 161);
@@ -174,6 +223,7 @@ void main() {
         home: CoursePage(
           repository: repository,
           user: user,
+          logger: _RecordingAppLogger(),
           onSignOut: () async => logoutCalls++,
           now: () => now,
           idGenerator: () => 'course-1',
@@ -201,6 +251,7 @@ void main() {
         home: CoursePage(
           repository: repository,
           user: user,
+          logger: _RecordingAppLogger(),
           onSignOut: () async {},
         ),
       ),
@@ -263,6 +314,7 @@ void main() {
         home: CoursePage(
           repository: repository,
           user: user,
+          logger: _RecordingAppLogger(),
           onSignOut: () async {},
           now: () => now,
           idGenerator: () => throw StateError('identifier unavailable'),
@@ -297,25 +349,34 @@ void main() {
   });
 }
 
-Future<void> _fillNewCourse(WidgetTester tester) async {
+Future<void> _fillNewCourse(
+  WidgetTester tester, {
+  String code = 'DCC203',
+  String name = 'POO',
+}) async {
   await tester.tap(find.byKey(const Key('add-course')));
   await tester.pumpAndSettle();
-  await tester.enterText(find.byKey(const Key('course-code')), 'DCC203');
-  await tester.enterText(find.byKey(const Key('course-name')), 'POO');
+  await tester.enterText(find.byKey(const Key('course-code')), code);
+  await tester.enterText(find.byKey(const Key('course-name')), name);
   await tester.enterText(find.byKey(const Key('course-workload')), '60');
   await tester.enterText(find.byKey(const Key('course-term')), '2026-2');
 }
 
-Widget _app(CourseRepository repository, AuthUser user, DateTime now) =>
-    MaterialApp(
-      home: CoursePage(
-        repository: repository,
-        user: user,
-        onSignOut: () async {},
-        now: () => now,
-        idGenerator: () => 'course-1',
-      ),
-    );
+Widget _app(
+  CourseRepository repository,
+  AuthUser user,
+  DateTime now, {
+  AppLogger? logger,
+}) => MaterialApp(
+  home: CoursePage(
+    repository: repository,
+    user: user,
+    logger: logger ?? _RecordingAppLogger(),
+    onSignOut: () async {},
+    now: () => now,
+    idGenerator: () => 'course-1',
+  ),
+);
 
 final class _FakeCourseRepository implements CourseRepository {
   _FakeCourseRepository({List<CourseRecord>? courses})
@@ -397,6 +458,24 @@ final class _SelectivelyBlockingLogger implements AppLogger {
   @override
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
     if (name == blockedEvent) await _delivery.future;
+  }
+
+  @override
+  Future<void> recordError(
+    Object error,
+    StackTrace stackTrace, {
+    required String context,
+    bool fatal = false,
+    Map<String, Object>? parameters,
+  }) async {}
+}
+
+final class _RecordingAppLogger implements AppLogger {
+  final events = <String>[];
+
+  @override
+  Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
+    events.add(name);
   }
 
   @override
