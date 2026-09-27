@@ -18,6 +18,13 @@ void main() {
   );
   final now = DateTime.utc(2026, 9, 27, 12);
 
+  test('derives the academic term from the calendar half-year', () {
+    expect(academicTermFor(DateTime(2026, 1, 1)), '2026-1');
+    expect(academicTermFor(DateTime(2026, 6, 30)), '2026-1');
+    expect(academicTermFor(DateTime(2026, 7, 1)), '2026-2');
+    expect(academicTermFor(DateTime(2026, 12, 31)), '2026-2');
+  });
+
   testWidgets('shows loading, empty state, and reloads after an error', (
     tester,
   ) async {
@@ -54,11 +61,11 @@ void main() {
       'Programação Orientada a Objetos',
     );
     await tester.enterText(find.byKey(const Key('course-workload')), '60');
-    await tester.enterText(find.byKey(const Key('course-term')), '2026-2');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
 
     expect(repository.courses.single.id, 'course-1');
+    expect(repository.courses.single.term, '2026-2');
     expect(repository.courses.single.createdAt, now);
     expect(find.text('DCC203'), findsOneWidget);
     expect(find.text('Programação Orientada a Objetos'), findsOneWidget);
@@ -138,6 +145,107 @@ void main() {
     );
   });
 
+  testWidgets('rejects duplicate course codes ignoring letter case', (
+    tester,
+  ) async {
+    final existing = CourseRecord(
+      id: 'existing-course',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final repository = _FakeCourseRepository(courses: [existing]);
+    final logger = _RecordingAppLogger();
+
+    await tester.pumpWidget(_app(repository, user, now, logger: logger));
+    await tester.pumpAndSettle();
+    await _fillNewCourse(tester, code: 'dcc203', name: 'Outra disciplina');
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(repository.courses, [existing]);
+    expect(
+      find.text('Já existe uma disciplina com o código DCC203.'),
+      findsOneWidget,
+    );
+    expect(logger.events, contains('course_create_duplicate_code'));
+  });
+
+  testWidgets('hides the automatic term on creation and allows editing it', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final repository = _FakeCourseRepository(courses: [course]);
+
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('add-course')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-term')), findsNothing);
+    await tester.tap(find.text('Cancelar'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Editar DCC203'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-term')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('course-term')), '2027-1');
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(repository.courses.single.term, '2027-1');
+  });
+
+  testWidgets('rejects changing a course to another existing code', (
+    tester,
+  ) async {
+    final first = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final second = CourseRecord(
+      id: 'course-2',
+      code: 'DCC204',
+      name: 'Algoritmos',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final repository = _FakeCourseRepository(courses: [first, second]);
+    final logger = _RecordingAppLogger();
+
+    await tester.pumpWidget(_app(repository, user, now, logger: logger));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Editar DCC204'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('course-code')), 'dcc203');
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(repository.courses, [first, second]);
+    expect(
+      find.text('Já existe uma disciplina com o código DCC203.'),
+      findsOneWidget,
+    );
+    expect(logger.events, contains('course_update_duplicate_code'));
+  });
+
   testWidgets('validates fields and keeps the form open', (tester) async {
     final repository = _FakeCourseRepository();
     final logger = _RecordingAppLogger();
@@ -152,7 +260,6 @@ void main() {
     expect(find.text('Informe o código.'), findsOneWidget);
     expect(find.text('Informe o nome.'), findsOneWidget);
     expect(find.text('Use um número maior que zero.'), findsOneWidget);
-    expect(find.text('Use o formato AAAA-S, como 2026-2.'), findsOneWidget);
     expect(repository.courses, isEmpty);
     expect(logger.events, contains('course_create_validation_failed'));
 
@@ -265,7 +372,6 @@ void main() {
     await tester.enterText(find.byKey(const Key('course-code')), 'DCC204');
     await tester.enterText(find.byKey(const Key('course-name')), 'Algoritmos');
     await tester.enterText(find.byKey(const Key('course-workload')), '60');
-    await tester.enterText(find.byKey(const Key('course-term')), '2026-2');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
 
@@ -292,7 +398,6 @@ void main() {
     await tester.enterText(find.byKey(const Key('course-code')), 'DCC203');
     await tester.enterText(find.byKey(const Key('course-name')), 'POO');
     await tester.enterText(find.byKey(const Key('course-workload')), '60');
-    await tester.enterText(find.byKey(const Key('course-term')), '2026-2');
     await tester.tap(find.text('Salvar'));
     await tester.pump();
 
@@ -359,7 +464,6 @@ Future<void> _fillNewCourse(
   await tester.enterText(find.byKey(const Key('course-code')), code);
   await tester.enterText(find.byKey(const Key('course-name')), name);
   await tester.enterText(find.byKey(const Key('course-workload')), '60');
-  await tester.enterText(find.byKey(const Key('course-term')), '2026-2');
 }
 
 Widget _app(

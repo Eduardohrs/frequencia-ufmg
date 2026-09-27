@@ -20,6 +20,7 @@ class CourseEditorDialog extends StatefulWidget {
   const CourseEditorDialog({
     required this.onSave,
     required this.onValidationFailed,
+    required this.initialTerm,
     this.course,
     super.key,
   });
@@ -27,6 +28,7 @@ class CourseEditorDialog extends StatefulWidget {
   final CourseRecord? course;
   final Future<String?> Function(CourseInput input) onSave;
   final VoidCallback onValidationFailed;
+  final String initialTerm;
 
   @override
   State<CourseEditorDialog> createState() => _CourseEditorDialogState();
@@ -48,7 +50,7 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
     _code = TextEditingController(text: course?.code);
     _name = TextEditingController(text: course?.name);
     _workload = TextEditingController(text: course?.workload.toString());
-    _term = TextEditingController(text: course?.term);
+    _term = TextEditingController(text: widget.initialTerm);
   }
 
   @override
@@ -144,20 +146,22 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
                         : null;
                   },
                 ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  key: const Key('course-term'),
-                  controller: _term,
-                  enabled: !_saving,
-                  decoration: const InputDecoration(
-                    labelText: 'Período letivo',
-                    hintText: '2026-2',
+                if (widget.course != null) ...[
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    key: const Key('course-term'),
+                    controller: _term,
+                    enabled: !_saving,
+                    decoration: const InputDecoration(
+                      labelText: 'Período letivo',
+                      hintText: '2026-2',
+                    ),
+                    validator: (value) =>
+                        RegExp(r'^\d{4}-[12]$').hasMatch(value?.trim() ?? '')
+                        ? null
+                        : 'Use o formato AAAA-S, como 2026-2.',
                   ),
-                  validator: (value) =>
-                      RegExp(r'^\d{4}-[12]$').hasMatch(value?.trim() ?? '')
-                      ? null
-                      : 'Use o formato AAAA-S, como 2026-2.',
-                ),
+                ],
                 if (_error != null) ...[
                   const SizedBox(height: 16),
                   Semantics(

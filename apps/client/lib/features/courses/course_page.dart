@@ -77,6 +77,7 @@ class _CoursePageState extends State<CoursePage> {
       barrierDismissible: false,
       builder: (context) => CourseEditorDialog(
         course: course,
+        initialTerm: course?.term ?? academicTermFor(widget.now()),
         onSave: (input) => _save(course, input),
         onValidationFailed: () => unawaited(
           widget.logger.logEvent('course_${mode}_validation_failed'),
@@ -86,6 +87,17 @@ class _CoursePageState extends State<CoursePage> {
   }
 
   Future<String?> _save(CourseRecord? existing, CourseInput input) async {
+    final normalizedCode = input.code.toUpperCase();
+    final duplicate = _courses.any(
+      (course) =>
+          course.id != existing?.id &&
+          course.code.toUpperCase() == normalizedCode,
+    );
+    if (duplicate) {
+      final mode = existing == null ? 'create' : 'update';
+      unawaited(widget.logger.logEvent('course_${mode}_duplicate_code'));
+      return 'Já existe uma disciplina com o código $normalizedCode.';
+    }
     try {
       await runAuditedOperation(
         logger: widget.logger,
@@ -96,7 +108,7 @@ class _CoursePageState extends State<CoursePage> {
           final timestamp = widget.now().toUtc();
           final course = CourseRecord(
             id: existing?.id ?? widget.idGenerator(),
-            code: input.code,
+            code: normalizedCode,
             name: input.name,
             workload: input.workload,
             term: input.term,
@@ -375,3 +387,6 @@ String _newCourseId() {
   return '${DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(36)}-'
       '${random.nextInt(1 << 30).toRadixString(36)}';
 }
+
+String academicTermFor(DateTime date) =>
+    '${date.year}-${date.month <= DateTime.june ? 1 : 2}';
