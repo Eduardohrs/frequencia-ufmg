@@ -75,19 +75,27 @@ class _CoursePageState extends State<CoursePage> {
   }
 
   Future<String?> _save(CourseRecord? existing, CourseInput input) async {
-    final timestamp = widget.now().toUtc();
-    final course = CourseRecord(
-      id: existing?.id ?? widget.idGenerator(),
-      code: input.code,
-      name: input.name,
-      workload: input.workload,
-      term: input.term,
-      createdAt: existing?.createdAt ?? timestamp,
-      updatedAt: timestamp,
-    );
     try {
+      final timestamp = widget.now().toUtc();
+      final course = CourseRecord(
+        id: existing?.id ?? widget.idGenerator(),
+        code: input.code,
+        name: input.name,
+        workload: input.workload,
+        term: input.term,
+        createdAt: existing?.createdAt ?? timestamp,
+        updatedAt: timestamp,
+      );
       await widget.repository.saveCourse(course);
-      await _load();
+      if (mounted) {
+        setState(() {
+          _courses = [
+            for (final item in _courses)
+              if (item.id != course.id) item,
+            course,
+          ]..sort((left, right) => left.code.compareTo(right.code));
+        });
+      }
       return null;
     } catch (_) {
       return 'Não foi possível salvar a disciplina.';
