@@ -373,5 +373,5 @@ class _MessageState extends StatelessWidget {
 String _newCourseId() {
   final random = Random.secure();
   return '${DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(36)}-'
-      '${random.nextInt(1 << 32).toRadixString(36)}';
+      '${random.nextInt(1 << 30).toRadixString(36)}';
 }
