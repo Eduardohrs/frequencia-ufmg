@@ -49,6 +49,14 @@ class PoliticaFrequencia(ABC):
     ) -> SituacaoFrequencia:
         """Classifique duas evidências já validadas."""
 
+    @abstractmethod
+    def calcular_faltas(
+        self,
+        aulas: QuantidadeAulas,
+        situacao: SituacaoFrequencia,
+    ) -> int | None:
+        """Converta uma situação validada em faltas de aulas inteiras."""
+
 
 class PoliticaChamadaUnica(PoliticaFrequencia):
     """Uma confirmação no campus resolve uma sessão de chamada única."""
@@ -66,6 +74,19 @@ class PoliticaChamadaUnica(PoliticaFrequencia):
             return SituacaoFrequencia.PENDENTE
         return _classificar_pings_validos(primeiro_ping, segundo_ping)
 
+    def calcular_faltas(
+        self,
+        aulas: QuantidadeAulas,
+        situacao: SituacaoFrequencia,
+    ) -> int | None:
+        """Conte o bloco inteiro somente quando a sessão estiver ausente."""
+
+        if situacao is SituacaoFrequencia.PENDENTE:
+            return None
+        if situacao is SituacaoFrequencia.AUSENTE:
+            return int(aulas)
+        return 0
+
 
 class PoliticaDuasChamadas(PoliticaFrequencia):
     """Cada ping é obrigatório quando a sessão possui duas chamadas."""
@@ -80,6 +101,21 @@ class PoliticaDuasChamadas(PoliticaFrequencia):
         if EstadoPing.INDISPONIVEL in (primeiro_ping, segundo_ping):
             return SituacaoFrequencia.PENDENTE
         return _classificar_pings_validos(primeiro_ping, segundo_ping)
+
+    def calcular_faltas(
+        self,
+        aulas: QuantidadeAulas,
+        situacao: SituacaoFrequencia,
+    ) -> int | None:
+        """Conte zero, metade ou todas as aulas conforme as duas chamadas."""
+
+        if situacao is SituacaoFrequencia.PENDENTE:
+            return None
+        if situacao is SituacaoFrequencia.PRESENTE:
+            return 0
+        if situacao is SituacaoFrequencia.AUSENTE:
+            return int(aulas)
+        return int(aulas) // 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +173,14 @@ class SessaoAula:
         politica = _politica_frequencia(self._configuracao.chamadas)
         return politica.classificar(primeiro_ping, segundo_ping)
 
+    def calcular_faltas(self, situacao: SituacaoFrequencia) -> int | None:
+        """Converta a situação em faltas conforme a configuração da sessão."""
+
+        if not isinstance(situacao, SituacaoFrequencia):
+            raise TypeError("situação deve usar SituacaoFrequencia")
+        politica = _politica_frequencia(self._configuracao.chamadas)
+        return politica.calcular_faltas(self._configuracao.aulas, situacao)
+
 
 class Disciplina:
     """Agregado que controla as sessões de uma disciplina."""
@@ -167,9 +211,15 @@ class Disciplina:
 
     @property
     def carga_horaria(self) -> int:
-        """Carga horária positiva informada para a disciplina."""
+        """Quantidade positiva de horas-aula de 50 minutos da disciplina."""
 
         return self._carga_horaria
+
+    @property
+    def limite_faltas(self) -> int:
+        """Máximo inteiro que mantém pelo menos 75% de presença."""
+
+        return self._carga_horaria // 4
 
     @property
     def sessoes(self) -> tuple[SessaoAula, ...]:
@@ -185,6 +235,15 @@ class Disciplina:
         if any(item.identificador == sessao.identificador for item in self._sessoes):
             raise ValueError("sessão já cadastrada na disciplina")
         self._sessoes.append(sessao)
+
+    def faltas_restantes(self, faltas_consumidas: int) -> int:
+        """Informe quantas faltas ainda cabem no limite da disciplina."""
+
+        if not isinstance(faltas_consumidas, int) or isinstance(faltas_consumidas, bool):
+            raise TypeError("faltas consumidas devem ser um número inteiro")
+        if faltas_consumidas < 0:
+            raise ValueError("faltas consumidas não podem ser negativas")
+        return max(self.limite_faltas - faltas_consumidas, 0)
 
 
 def _texto_obrigatorio(valor: object, campo: str) -> str:
