@@ -71,6 +71,7 @@ class _AuthGateState extends State<AuthGate> {
           return CoursePage(
             repository: _repositoryFor(user.id),
             user: user,
+            logger: widget.logger,
             onSignOut: () =>
                 _run(AuditedOperation.logout, widget.authGateway.signOut),
           );

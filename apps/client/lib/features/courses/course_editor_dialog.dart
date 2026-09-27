@@ -17,10 +17,16 @@ final class CourseInput {
 }
 
 class CourseEditorDialog extends StatefulWidget {
-  const CourseEditorDialog({required this.onSave, this.course, super.key});
+  const CourseEditorDialog({
+    required this.onSave,
+    required this.onValidationFailed,
+    this.course,
+    super.key,
+  });
 
   final CourseRecord? course;
   final Future<String?> Function(CourseInput input) onSave;
+  final VoidCallback onValidationFailed;
 
   @override
   State<CourseEditorDialog> createState() => _CourseEditorDialogState();
@@ -55,7 +61,10 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
   }
 
   Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (!_formKey.currentState!.validate()) {
+      widget.onValidationFailed();
+      return;
+    }
     setState(() {
       _saving = true;
       _error = null;

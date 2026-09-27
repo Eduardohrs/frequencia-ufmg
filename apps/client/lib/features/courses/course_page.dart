@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,8 @@ import '../../auth/auth_user.dart';
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../observability/error_log_details.dart';
+import '../../observability/app_logger.dart';
+import '../../observability/audited_operation.dart';
 import 'course_editor_dialog.dart';
 
 typedef CourseIdGenerator = String Function();
@@ -18,6 +21,7 @@ class CoursePage extends StatefulWidget {
   CoursePage({
     required this.repository,
     required this.user,
+    required this.logger,
     required this.onSignOut,
     CourseIdGenerator? idGenerator,
     CurrentTime? now,
@@ -27,6 +31,7 @@ class CoursePage extends StatefulWidget {
 
   final CourseRepository repository;
   final AuthUser user;
+  final AppLogger logger;
   final Future<void> Function() onSignOut;
   final CourseIdGenerator idGenerator;
   final CurrentTime now;
@@ -65,38 +70,51 @@ class _CoursePageState extends State<CoursePage> {
   }
 
   Future<void> _openEditor([CourseRecord? course]) async {
+    final mode = course == null ? 'create' : 'update';
+    unawaited(widget.logger.logEvent('course_${mode}_editor_opened'));
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (context) => CourseEditorDialog(
         course: course,
         onSave: (input) => _save(course, input),
+        onValidationFailed: () => unawaited(
+          widget.logger.logEvent('course_${mode}_validation_failed'),
+        ),
       ),
     );
   }
 
   Future<String?> _save(CourseRecord? existing, CourseInput input) async {
     try {
-      final timestamp = widget.now().toUtc();
-      final course = CourseRecord(
-        id: existing?.id ?? widget.idGenerator(),
-        code: input.code,
-        name: input.name,
-        workload: input.workload,
-        term: input.term,
-        createdAt: existing?.createdAt ?? timestamp,
-        updatedAt: timestamp,
+      await runAuditedOperation(
+        logger: widget.logger,
+        operation: existing == null
+            ? AuditedOperation.courseCreate
+            : AuditedOperation.courseUpdate,
+        action: () async {
+          final timestamp = widget.now().toUtc();
+          final course = CourseRecord(
+            id: existing?.id ?? widget.idGenerator(),
+            code: input.code,
+            name: input.name,
+            workload: input.workload,
+            term: input.term,
+            createdAt: existing?.createdAt ?? timestamp,
+            updatedAt: timestamp,
+          );
+          await widget.repository.saveCourse(course);
+          if (mounted) {
+            setState(() {
+              _courses = [
+                for (final item in _courses)
+                  if (item.id != course.id) item,
+                course,
+              ]..sort((left, right) => left.code.compareTo(right.code));
+            });
+          }
+        },
       );
-      await widget.repository.saveCourse(course);
-      if (mounted) {
-        setState(() {
-          _courses = [
-            for (final item in _courses)
-              if (item.id != course.id) item,
-            course,
-          ]..sort((left, right) => left.code.compareTo(right.code));
-        });
-      }
       return null;
     } catch (error) {
       final code = ErrorLogDetails.from(error).code;

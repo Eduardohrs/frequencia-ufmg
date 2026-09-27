@@ -6,6 +6,8 @@ enum AuditedOperation {
   googleSignIn('auth_google_sign_in'),
   logout('auth_logout'),
   courseList('firestore_course_list'),
+  courseCreate('course_create'),
+  courseUpdate('course_update'),
   courseSave('firestore_course_save'),
   courseDelete('firestore_course_delete'),
   meetingList('firestore_meeting_list'),
