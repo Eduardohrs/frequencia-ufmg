@@ -30,6 +30,28 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
 
+  firestore:
+    name: Firestore rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: microsoft
+          java-version: "21"
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=high
+      - run: npm run test:firestore
+
   backend:
     name: Backend
     runs-on: ubuntu-latest
@@ -125,12 +147,13 @@ jobs:
   quality-gate:
     name: Quality Gate
     if: always()
-    needs: [secret-scan, backend, client]
+    needs: [secret-scan, firestore, backend, client]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Verify required jobs
         run: |
           test "${{ needs.secret-scan.result }}" = "success"
+          test "${{ needs.firestore.result }}" = "success"
           test "${{ needs.backend.result }}" = "success"
           test "${{ needs.client.result }}" = "success"
