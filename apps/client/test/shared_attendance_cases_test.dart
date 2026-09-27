@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:frequencia_ufmg/domain/attendance.dart';
 
 void main() {
   test('shared attendance cases cover every supported input combination', () {
@@ -56,6 +57,31 @@ void main() {
           .map((item) => '${item['primeiro_ping']}/${item['segundo_ping']}')
           .toSet();
       expect(actualPingPairs, expectedPingPairs, reason: configuration);
+    }
+
+    for (final item in cases) {
+      final session = SessaoAula(
+        item['id']! as String,
+        ConfiguracaoSessao(
+          aulas: QuantidadeAulas.fromValue(item['aulas']! as int),
+          chamadas: NumeroChamadas.fromValue(item['chamadas']! as int),
+        ),
+      );
+      final situation = session.classificar(
+        EstadoPing.fromCode(item['primeiro_ping']! as String),
+        EstadoPing.fromCode(item['segundo_ping']! as String),
+      );
+
+      expect(
+        situation,
+        SituacaoFrequencia.fromCode(item['situacao']! as String),
+        reason: item['id']! as String,
+      );
+      expect(
+        session.calcularFaltas(situation),
+        item['faltas'],
+        reason: item['id']! as String,
+      );
     }
   });
 }
