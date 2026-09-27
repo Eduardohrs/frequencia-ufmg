@@ -25,6 +25,34 @@ def test_firebase_hosting_declares_baseline_security_headers() -> None:
     assert headers["Cross-Origin-Opener-Policy"] == "same-origin-allow-popups"
 
 
+def test_mutable_web_boot_files_are_never_served_stale() -> None:
+    """A deploy must not leave browsers running the previous Flutter bundle."""
+
+    firebase_config = json.loads(
+        (REPOSITORY_ROOT / "firebase.json").read_text(encoding="utf-8")
+    )
+    cache_control_by_source = {
+        rule["source"]: header["value"]
+        for rule in firebase_config["hosting"]["headers"]
+        for header in rule["headers"]
+        if header["key"].lower() == "cache-control"
+    }
+    mutable_sources = {
+        "/",
+        "/index.html",
+        "/flutter_bootstrap.js",
+        "/flutter_service_worker.js",
+        "/main.dart.js",
+    }
+
+    assert mutable_sources <= cache_control_by_source.keys()
+    assert all(
+        "no-cache" in cache_control_by_source[source]
+        and "no-store" in cache_control_by_source[source]
+        for source in mutable_sources
+    )
+
+
 def test_github_actions_are_pinned_to_immutable_commits() -> None:
     """Third-party workflow code cannot change behind a mutable version tag."""
 
