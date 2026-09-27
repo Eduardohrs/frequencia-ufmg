@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../auth/auth_user.dart';
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
+import '../../observability/error_log_details.dart';
 import 'course_editor_dialog.dart';
 
 typedef CourseIdGenerator = String Function();
@@ -97,8 +98,11 @@ class _CoursePageState extends State<CoursePage> {
         });
       }
       return null;
-    } catch (_) {
-      return 'Não foi possível salvar a disciplina.';
+    } catch (error) {
+      final code = ErrorLogDetails.from(error).code;
+      return code == null
+          ? 'Não foi possível salvar a disciplina.'
+          : 'Não foi possível salvar a disciplina. Código: $code.';
     }
   }
 

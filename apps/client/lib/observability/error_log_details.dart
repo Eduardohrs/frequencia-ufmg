@@ -28,6 +28,13 @@ final class ErrorLogDetails {
         message: sanitizeLogText(error.message),
       );
     }
+    if (error is FirebaseException) {
+      return ErrorLogDetails(
+        type: error.runtimeType.toString(),
+        code: error.code,
+        message: sanitizeLogText(error.message),
+      );
+    }
     if (error is PlatformException) {
       return ErrorLogDetails(
         type: error.runtimeType.toString(),
