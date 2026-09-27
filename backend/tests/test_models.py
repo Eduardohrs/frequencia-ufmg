@@ -257,3 +257,116 @@ def test_classification_rejects_values_outside_the_ping_domain(
             primeiro_ping,
             segundo_ping,
         )
+
+
+@pytest.mark.parametrize(
+    ("aulas", "chamadas", "situacao", "faltas"),
+    [
+        (QuantidadeAulas.UMA, NumeroChamadas.UMA, SituacaoFrequencia.PRESENTE, 0),
+        (QuantidadeAulas.UMA, NumeroChamadas.UMA, SituacaoFrequencia.CHEGOU_ATRASADO, 0),
+        (QuantidadeAulas.UMA, NumeroChamadas.UMA, SituacaoFrequencia.SAIU_MAIS_CEDO, 0),
+        (QuantidadeAulas.UMA, NumeroChamadas.UMA, SituacaoFrequencia.AUSENTE, 1),
+        (QuantidadeAulas.DUAS, NumeroChamadas.UMA, SituacaoFrequencia.PRESENTE, 0),
+        (QuantidadeAulas.DUAS, NumeroChamadas.UMA, SituacaoFrequencia.CHEGOU_ATRASADO, 0),
+        (QuantidadeAulas.DUAS, NumeroChamadas.UMA, SituacaoFrequencia.SAIU_MAIS_CEDO, 0),
+        (QuantidadeAulas.DUAS, NumeroChamadas.UMA, SituacaoFrequencia.AUSENTE, 2),
+        (QuantidadeAulas.DUAS, NumeroChamadas.DUAS, SituacaoFrequencia.PRESENTE, 0),
+        (QuantidadeAulas.DUAS, NumeroChamadas.DUAS, SituacaoFrequencia.CHEGOU_ATRASADO, 1),
+        (QuantidadeAulas.DUAS, NumeroChamadas.DUAS, SituacaoFrequencia.SAIU_MAIS_CEDO, 1),
+        (QuantidadeAulas.DUAS, NumeroChamadas.DUAS, SituacaoFrequencia.AUSENTE, 2),
+        (QuantidadeAulas.QUATRO, NumeroChamadas.UMA, SituacaoFrequencia.PRESENTE, 0),
+        (QuantidadeAulas.QUATRO, NumeroChamadas.UMA, SituacaoFrequencia.CHEGOU_ATRASADO, 0),
+        (QuantidadeAulas.QUATRO, NumeroChamadas.UMA, SituacaoFrequencia.SAIU_MAIS_CEDO, 0),
+        (QuantidadeAulas.QUATRO, NumeroChamadas.UMA, SituacaoFrequencia.AUSENTE, 4),
+        (QuantidadeAulas.QUATRO, NumeroChamadas.DUAS, SituacaoFrequencia.PRESENTE, 0),
+        (QuantidadeAulas.QUATRO, NumeroChamadas.DUAS, SituacaoFrequencia.CHEGOU_ATRASADO, 2),
+        (QuantidadeAulas.QUATRO, NumeroChamadas.DUAS, SituacaoFrequencia.SAIU_MAIS_CEDO, 2),
+        (QuantidadeAulas.QUATRO, NumeroChamadas.DUAS, SituacaoFrequencia.AUSENTE, 4),
+    ],
+)
+def test_session_converts_attendance_status_to_absences(
+    aulas: QuantidadeAulas,
+    chamadas: NumeroChamadas,
+    situacao: SituacaoFrequencia,
+    faltas: int,
+) -> None:
+    """Every valid session configuration follows the agreed absence matrix."""
+
+    sessao = SessaoAula("aula-01", ConfiguracaoSessao(aulas, chamadas))
+
+    assert sessao.calcular_faltas(situacao) == faltas
+
+
+@pytest.mark.parametrize(
+    ("aulas", "chamadas"),
+    [
+        (QuantidadeAulas.UMA, NumeroChamadas.UMA),
+        (QuantidadeAulas.DUAS, NumeroChamadas.UMA),
+        (QuantidadeAulas.DUAS, NumeroChamadas.DUAS),
+        (QuantidadeAulas.QUATRO, NumeroChamadas.UMA),
+        (QuantidadeAulas.QUATRO, NumeroChamadas.DUAS),
+    ],
+)
+def test_pending_session_has_no_automatic_absence_value(
+    aulas: QuantidadeAulas,
+    chamadas: NumeroChamadas,
+) -> None:
+    """Missing evidence is not silently converted into presence or absence."""
+
+    sessao = SessaoAula("aula-01", ConfiguracaoSessao(aulas, chamadas))
+
+    assert sessao.calcular_faltas(SituacaoFrequencia.PENDENTE) is None
+
+
+def test_absence_calculation_rejects_values_outside_the_status_domain() -> None:
+    """Only classified attendance statuses can become absence values."""
+
+    sessao = SessaoAula(
+        "aula-01",
+        ConfiguracaoSessao(QuantidadeAulas.DUAS, NumeroChamadas.UMA),
+    )
+
+    with pytest.raises(TypeError, match="SituacaoFrequencia"):
+        sessao.calcular_faltas(object())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("carga_horaria", "limite_faltas"),
+    [(30, 7), (45, 11), (60, 15)],
+)
+def test_course_limits_absences_to_twenty_five_percent_of_class_hours(
+    carga_horaria: int,
+    limite_faltas: int,
+) -> None:
+    """Fractional limits round down so attendance never drops below 75%."""
+
+    disciplina = Disciplina("DCC203", "POO", carga_horaria)
+
+    assert disciplina.limite_faltas == limite_faltas
+
+
+@pytest.mark.parametrize(
+    ("faltas_consumidas", "faltas_restantes"),
+    [(0, 15), (4, 11), (15, 0), (16, 0)],
+)
+def test_course_reports_non_negative_remaining_absences(
+    faltas_consumidas: int,
+    faltas_restantes: int,
+) -> None:
+    """The remaining allowance reaches zero instead of becoming negative."""
+
+    disciplina = Disciplina("DCC203", "POO", 60)
+
+    assert disciplina.faltas_restantes(faltas_consumidas) == faltas_restantes
+
+
+@pytest.mark.parametrize("faltas_consumidas", [-1, True, 1.5, "1"])
+def test_remaining_absences_reject_invalid_consumed_totals(
+    faltas_consumidas: object,
+) -> None:
+    """Consumed absences must be a non-negative whole class-hour count."""
+
+    disciplina = Disciplina("DCC203", "POO", 60)
+
+    with pytest.raises((TypeError, ValueError), match="faltas consumidas"):
+        disciplina.faltas_restantes(faltas_consumidas)  # type: ignore[arg-type]
