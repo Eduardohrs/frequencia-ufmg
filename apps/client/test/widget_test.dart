@@ -41,6 +41,37 @@ void main() {
     }
   });
 
+  testWidgets('bootstraps the repository for an authenticated user', (
+    tester,
+  ) async {
+    final gateway = _FakeAuthGateway(
+      initialUser: AuthUser(id: 'user-42', email: 'aluno@ufmg.br'),
+    );
+    final logger = _FakeAppLogger();
+    var repositoryUserId = '';
+    addTearDown(gateway.close);
+    app.authGatewayFactory = () => gateway;
+    app.appLoggerFactory = () => logger;
+    app.courseRepositoryFactory = (userId, _) {
+      repositoryUserId = userId;
+      return _FakeCourseRepository();
+    };
+    final previousFlutterHandler = FlutterError.onError;
+    final previousPlatformHandler = PlatformDispatcher.instance.onError;
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      await app.main();
+      await tester.pumpAndSettle();
+
+      expect(repositoryUserId, 'user-42');
+      expect(find.text('Suas disciplinas'), findsOneWidget);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+      FlutterError.onError = previousFlutterHandler;
+      PlatformDispatcher.instance.onError = previousPlatformHandler;
+    }
+  });
+
   testWidgets('signs in and presents the authenticated user', (tester) async {
     final completer = Completer<void>();
     final gateway = _FakeAuthGateway(signInCompleter: completer);

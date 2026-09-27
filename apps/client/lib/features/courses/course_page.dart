@@ -11,6 +11,9 @@ typedef CourseIdGenerator = String Function();
 typedef CurrentTime = DateTime Function();
 
 class CoursePage extends StatefulWidget {
+  // The runtime defaults intentionally prevent callers from needing utility
+  // objects merely to construct the production page.
+  // ignore: prefer_const_constructors_in_immutables
   CoursePage({
     required this.repository,
     required this.user,
@@ -218,21 +221,25 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            'Disciplinas',
-            style: Theme.of(context).textTheme.titleLarge,
+    return LayoutBuilder(
+      builder: (context, constraints) => Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Disciplinas',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
           ),
-        ),
-        FilledButton.icon(
-          key: const Key('add-course'),
-          onPressed: onAdd,
-          icon: const Icon(Icons.add),
-          label: const Text('Adicionar disciplina'),
-        ),
-      ],
+          FilledButton.icon(
+            key: const Key('add-course'),
+            onPressed: onAdd,
+            icon: const Icon(Icons.add),
+            label: Text(
+              constraints.maxWidth < 500 ? 'Adicionar' : 'Adicionar disciplina',
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

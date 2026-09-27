@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
@@ -6,7 +5,7 @@ import 'auth/auth_gate.dart';
 import 'auth/auth_gateway.dart';
 import 'auth/firebase_auth_gateway.dart';
 import 'data/academic_repositories.dart';
-import 'data/firebase_document_store.dart';
+import 'data/firebase_course_repository.dart';
 import 'firebase_options.dart';
 import 'observability/app_logger.dart';
 import 'observability/error_reporting.dart';
@@ -24,12 +23,8 @@ AuthGatewayFactory authGatewayFactory = FirebaseAuthGateway.new;
 AppLoggerFactory appLoggerFactory = FirebaseAppLogger.new;
 
 @visibleForTesting
-MainCourseRepositoryFactory courseRepositoryFactory = (userId, logger) =>
-    FirestoreCourseRepository(
-      userId: userId,
-      store: FirebaseDocumentStore(FirebaseFirestore.instance),
-      logger: logger,
-    );
+MainCourseRepositoryFactory courseRepositoryFactory =
+    createFirebaseCourseRepository;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

@@ -188,7 +188,8 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
 String? _required(String? value, String message, int maxLength) {
   final normalized = value?.trim() ?? '';
   if (normalized.isEmpty) return message;
-  if (normalized.length > maxLength)
+  if (normalized.length > maxLength) {
     return 'Use no máximo $maxLength caracteres.';
+  }
   return null;
 }

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/auth/auth_user.dart';
@@ -75,6 +73,12 @@ void main() {
     await tester.tap(find.byTooltip('Excluir DCC203'));
     await tester.pumpAndSettle();
     expect(find.text('Excluir disciplina?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Cancelar'));
+    await tester.pumpAndSettle();
+    expect(repository.courses, hasLength(1));
+
+    await tester.tap(find.byTooltip('Excluir DCC203'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Excluir'));
     await tester.pumpAndSettle();
 
@@ -98,6 +102,13 @@ void main() {
     expect(find.text('Use o formato AAAA-S, como 2026-2.'), findsOneWidget);
     expect(repository.courses, isEmpty);
 
+    await tester.enterText(find.byKey(const Key('course-code')), 'x' * 33);
+    await tester.enterText(find.byKey(const Key('course-name')), 'x' * 161);
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Use no máximo 32 caracteres.'), findsOneWidget);
+    expect(find.text('Use no máximo 160 caracteres.'), findsOneWidget);
+
     await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('course-code')), findsNothing);
@@ -115,7 +126,16 @@ void main() {
       createdAt: now,
       updatedAt: now,
     );
-    final repository = _FakeCourseRepository(courses: [course])
+    final otherCourse = CourseRecord(
+      id: 'algorithms',
+      code: 'DCC204',
+      name: 'Algoritmos',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final repository = _FakeCourseRepository(courses: [course, otherCourse])
       ..saveError = StateError('offline')
       ..deleteError = StateError('offline');
 
@@ -134,7 +154,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Excluir'));
     await tester.pumpAndSettle();
     expect(find.text('Não foi possível excluir a disciplina.'), findsOneWidget);
-    expect(repository.courses, [course]);
+    expect(repository.courses, [course, otherCourse]);
   });
 
   testWidgets('exposes account details and logout action', (tester) async {
@@ -159,6 +179,40 @@ void main() {
     await tester.tap(find.byTooltip('Sair'));
     await tester.pumpAndSettle();
     expect(logoutCalls, 1);
+  });
+
+  testWidgets('fits a phone viewport and generates an identifier by default', (
+    tester,
+  ) async {
+    final repository = _FakeCourseRepository();
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: repository,
+          user: user,
+          onSignOut: () async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Adicionar'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const Key('add-course')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('course-code')), 'DCC204');
+    await tester.enterText(find.byKey(const Key('course-name')), 'Algoritmos');
+    await tester.enterText(find.byKey(const Key('course-workload')), '60');
+    await tester.enterText(find.byKey(const Key('course-term')), '2026-2');
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(repository.courses.single.id, isNotEmpty);
+    expect(repository.courses.single.createdAt.isUtc, isTrue);
+    expect(tester.takeException(), isNull);
   });
 }
 
