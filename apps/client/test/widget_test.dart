@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/auth/auth_gateway.dart';
 import 'package:frequencia_ufmg/auth/auth_user.dart';
+import 'package:frequencia_ufmg/data/academic_records.dart';
+import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/main.dart' as app;
 import 'package:frequencia_ufmg/observability/app_logger.dart';
 
@@ -21,6 +23,7 @@ void main() {
     addTearDown(gateway.close);
     app.authGatewayFactory = () => gateway;
     app.appLoggerFactory = () => logger;
+    app.courseRepositoryFactory = (_, _) => _FakeCourseRepository();
     final previousFlutterHandler = FlutterError.onError;
     final previousPlatformHandler = PlatformDispatcher.instance.onError;
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -44,7 +47,11 @@ void main() {
     final logger = _FakeAppLogger();
     addTearDown(gateway.close);
     await tester.pumpWidget(
-      app.FrequenciaUFMGApp(authGateway: gateway, logger: logger),
+      app.FrequenciaUFMGApp(
+        authGateway: gateway,
+        logger: logger,
+        courseRepositoryFactory: (_) => _FakeCourseRepository(),
+      ),
     );
 
     await tester.tap(find.text('Entrar com Google'));
@@ -54,8 +61,9 @@ void main() {
 
     completer.complete();
     await tester.pumpAndSettle();
-    expect(find.text('Olá, Eduardo!'), findsOneWidget);
+    expect(find.text('Olá, Eduardo'), findsOneWidget);
     expect(find.text('eduardo@ufmg.br'), findsOneWidget);
+    expect(find.text('Nenhuma disciplina cadastrada'), findsOneWidget);
     expect(logger.events, [
       'auth_google_sign_in_started',
       'auth_google_sign_in_succeeded',
@@ -67,7 +75,11 @@ void main() {
     final logger = _FakeAppLogger();
     addTearDown(gateway.close);
     await tester.pumpWidget(
-      app.FrequenciaUFMGApp(authGateway: gateway, logger: logger),
+      app.FrequenciaUFMGApp(
+        authGateway: gateway,
+        logger: logger,
+        courseRepositoryFactory: (_) => _FakeCourseRepository(),
+      ),
     );
 
     await tester.tap(find.text('Entrar com Google'));
@@ -92,11 +104,15 @@ void main() {
     final logger = _FakeAppLogger();
     addTearDown(gateway.close);
     await tester.pumpWidget(
-      app.FrequenciaUFMGApp(authGateway: gateway, logger: logger),
+      app.FrequenciaUFMGApp(
+        authGateway: gateway,
+        logger: logger,
+        courseRepositoryFactory: (_) => _FakeCourseRepository(),
+      ),
     );
 
-    expect(find.text('Login concluído'), findsOneWidget);
-    await tester.tap(find.text('Sair'));
+    expect(find.text('Suas disciplinas'), findsOneWidget);
+    await tester.tap(find.byTooltip('Sair'));
     await tester.pumpAndSettle();
 
     expect(gateway.signOutCalls, 1);
@@ -124,6 +140,17 @@ class _FakeAppLogger implements AppLogger {
   }) async {
     errorContexts.add(context);
   }
+}
+
+final class _FakeCourseRepository implements CourseRepository {
+  @override
+  Future<void> deleteCourse(String courseId) async {}
+
+  @override
+  Future<List<CourseRecord>> listCourses() async => [];
+
+  @override
+  Future<void> saveCourse(CourseRecord course) async {}
 }
 
 class _FakeAuthGateway implements AuthGateway {

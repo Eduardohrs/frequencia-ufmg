@@ -2,14 +2,22 @@ import 'package:flutter/material.dart';
 
 import 'auth_gateway.dart';
 import 'auth_user.dart';
+import '../data/academic_repositories.dart';
+import '../features/courses/course_page.dart';
 import '../observability/app_logger.dart';
 import '../observability/audited_operation.dart';
 
 class AuthGate extends StatefulWidget {
-  const AuthGate({required this.authGateway, required this.logger, super.key});
+  const AuthGate({
+    required this.authGateway,
+    required this.logger,
+    required this.courseRepositoryFactory,
+    super.key,
+  });
 
   final AuthGateway authGateway;
   final AppLogger logger;
+  final CourseRepository Function(String userId) courseRepositoryFactory;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -18,6 +26,16 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> {
   bool _busy = false;
   String? _error;
+  String? _repositoryUserId;
+  CourseRepository? _courseRepository;
+
+  CourseRepository _repositoryFor(String userId) {
+    if (_repositoryUserId != userId) {
+      _repositoryUserId = userId;
+      _courseRepository = widget.courseRepositoryFactory(userId);
+    }
+    return _courseRepository!;
+  }
 
   Future<void> _run(
     AuditedOperation operation,
@@ -49,6 +67,14 @@ class _AuthGateState extends State<AuthGate> {
       initialData: widget.authGateway.currentUser,
       builder: (context, snapshot) {
         final user = snapshot.data;
+        if (user != null) {
+          return CoursePage(
+            repository: _repositoryFor(user.id),
+            user: user,
+            onSignOut: () =>
+                _run(AuditedOperation.logout, widget.authGateway.signOut),
+          );
+        }
         return Scaffold(
           appBar: AppBar(title: const Text('Frequência UFMG')),
           body: Center(
@@ -56,7 +82,7 @@ class _AuthGateState extends State<AuthGate> {
               constraints: const BoxConstraints(maxWidth: 420),
               child: Padding(
                 padding: const EdgeInsets.all(24),
-                child: user == null ? _signedOut(context) : _signedIn(user),
+                child: _signedOut(context),
               ),
             ),
           ),
@@ -108,30 +134,6 @@ class _AuthGateState extends State<AuthGate> {
             textAlign: TextAlign.center,
           ),
         ],
-      ],
-    );
-  }
-
-  Widget _signedIn(AuthUser user) {
-    final name = user.displayName?.trim();
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Icon(Icons.check_circle_outline, size: 64),
-        const SizedBox(height: 20),
-        Text(
-          name == null || name.isEmpty ? 'Login concluído' : 'Olá, $name!',
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
-        const SizedBox(height: 8),
-        Text(user.email),
-        const SizedBox(height: 24),
-        OutlinedButton(
-          onPressed: _busy
-              ? null
-              : () => _run(AuditedOperation.logout, widget.authGateway.signOut),
-          child: const Text('Sair'),
-        ),
       ],
     );
   }
