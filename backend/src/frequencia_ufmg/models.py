@@ -1,7 +1,8 @@
 """Modelo de domínio avaliável da frequência acadêmica."""
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 
 
 class QuantidadeAulas(IntEnum):
@@ -17,6 +18,68 @@ class NumeroChamadas(IntEnum):
 
     UMA = 1
     DUAS = 2
+
+
+class EstadoPing(StrEnum):
+    """Evidência de localização observada em um momento da sessão."""
+
+    NO_CAMPUS = "no_campus"
+    FORA = "fora"
+    INDISPONIVEL = "indisponivel"
+
+
+class SituacaoFrequencia(StrEnum):
+    """Classificação pessoal produzida a partir dos dois pings."""
+
+    PRESENTE = "presente"
+    CHEGOU_ATRASADO = "chegou_atrasado"
+    SAIU_MAIS_CEDO = "saiu_mais_cedo"
+    AUSENTE = "ausente"
+    PENDENTE = "pendente"
+
+
+class PoliticaFrequencia(ABC):
+    """Contrato polimórfico para classificar os pings de uma sessão."""
+
+    @abstractmethod
+    def classificar(
+        self,
+        primeiro_ping: EstadoPing,
+        segundo_ping: EstadoPing,
+    ) -> SituacaoFrequencia:
+        """Classifique duas evidências já validadas."""
+
+
+class PoliticaChamadaUnica(PoliticaFrequencia):
+    """Uma confirmação no campus resolve uma sessão de chamada única."""
+
+    def classificar(
+        self,
+        primeiro_ping: EstadoPing,
+        segundo_ping: EstadoPing,
+    ) -> SituacaoFrequencia:
+        """Preserve detalhes quando ambos os pings estiverem disponíveis."""
+
+        if EstadoPing.INDISPONIVEL in (primeiro_ping, segundo_ping):
+            if EstadoPing.NO_CAMPUS in (primeiro_ping, segundo_ping):
+                return SituacaoFrequencia.PRESENTE
+            return SituacaoFrequencia.PENDENTE
+        return _classificar_pings_validos(primeiro_ping, segundo_ping)
+
+
+class PoliticaDuasChamadas(PoliticaFrequencia):
+    """Cada ping é obrigatório quando a sessão possui duas chamadas."""
+
+    def classificar(
+        self,
+        primeiro_ping: EstadoPing,
+        segundo_ping: EstadoPing,
+    ) -> SituacaoFrequencia:
+        """Mantenha a sessão pendente enquanto uma das metades não tiver evidência."""
+
+        if EstadoPing.INDISPONIVEL in (primeiro_ping, segundo_ping):
+            return SituacaoFrequencia.PENDENTE
+        return _classificar_pings_validos(primeiro_ping, segundo_ping)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +122,20 @@ class SessaoAula:
         """Configuração validada da sessão."""
 
         return self._configuracao
+
+    def classificar(
+        self,
+        primeiro_ping: EstadoPing,
+        segundo_ping: EstadoPing,
+    ) -> SituacaoFrequencia:
+        """Classifique a sessão conforme sua quantidade de chamadas."""
+
+        if not isinstance(primeiro_ping, EstadoPing) or not isinstance(
+            segundo_ping, EstadoPing
+        ):
+            raise TypeError("os pings devem usar EstadoPing")
+        politica = _politica_frequencia(self._configuracao.chamadas)
+        return politica.classificar(primeiro_ping, segundo_ping)
 
 
 class Disciplina:
@@ -119,3 +196,26 @@ def _texto_obrigatorio(valor: object, campo: str) -> str:
     if not normalizado:
         raise ValueError(f"{campo} é obrigatório")
     return normalizado
+
+
+def _politica_frequencia(chamadas: NumeroChamadas) -> PoliticaFrequencia:
+    """Selecione a política correspondente à configuração validada."""
+
+    if chamadas is NumeroChamadas.UMA:
+        return PoliticaChamadaUnica()
+    return PoliticaDuasChamadas()
+
+
+def _classificar_pings_validos(
+    primeiro_ping: EstadoPing,
+    segundo_ping: EstadoPing,
+) -> SituacaoFrequencia:
+    """Classifique o padrão temporal quando ambos os pings estão disponíveis."""
+
+    if primeiro_ping is EstadoPing.NO_CAMPUS:
+        if segundo_ping is EstadoPing.NO_CAMPUS:
+            return SituacaoFrequencia.PRESENTE
+        return SituacaoFrequencia.SAIU_MAIS_CEDO
+    if segundo_ping is EstadoPing.NO_CAMPUS:
+        return SituacaoFrequencia.CHEGOU_ATRASADO
+    return SituacaoFrequencia.AUSENTE
