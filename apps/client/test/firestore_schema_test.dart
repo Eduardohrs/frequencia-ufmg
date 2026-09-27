@@ -33,7 +33,7 @@ void main() {
     });
 
     test('rejects empty or path-breaking identifiers', () {
-      for (final invalid in ['', '   ', 'user/other']) {
+      for (final invalid in ['', '   ', 'user/other', 'x' * 129]) {
         expect(
           () => FirestoreSchema.courseDocument(invalid, 'course-1'),
           throwsArgumentError,
@@ -193,4 +193,155 @@ void main() {
       },
     );
   });
+
+  group('Firestore document semantics', () {
+    test('accepts valid course, meeting, and unresolved session data', () {
+      expect(
+        () => FirestoreSchema.validateCourse(_courseDocument()),
+        returnsNormally,
+      );
+      expect(
+        () => FirestoreSchema.validateMeeting(_meetingDocument()),
+        returnsNormally,
+      );
+      expect(
+        () => FirestoreSchema.validateSession(_sessionDocument()),
+        returnsNormally,
+      );
+    });
+
+    test('rejects invalid course values and timestamp ordering', () {
+      for (final invalid in [
+        {..._courseDocument(), 'code': ' '},
+        {..._courseDocument(), 'code': 'x' * 33},
+        {..._courseDocument(), 'name': ' '},
+        {..._courseDocument(), 'name': 'x' * 161},
+        {..._courseDocument(), 'term': '2026/2'},
+        {..._courseDocument(), 'workload': 0},
+        {
+          ..._courseDocument(),
+          'updatedAt': Timestamp.fromDate(DateTime.utc(2026, 1, 1)),
+        },
+      ]) {
+        expect(
+          () => FirestoreSchema.validateCourse(invalid),
+          throwsFormatException,
+        );
+      }
+    });
+
+    test('rejects invalid weekly meeting values', () {
+      for (final invalid in [
+        {..._meetingDocument(), 'weekday': 0},
+        {..._meetingDocument(), 'weekday': 8},
+        {..._meetingDocument(), 'startMinutes': -1},
+        {..._meetingDocument(), 'endMinutes': 1441},
+        {..._meetingDocument(), 'startMinutes': 600, 'endMinutes': 600},
+        {..._meetingDocument(), 'lessonCount': 3},
+        {..._meetingDocument(), 'lessonCount': 1, 'callCount': 2},
+        {
+          ..._meetingDocument(),
+          'updatedAt': Timestamp.fromDate(DateTime.utc(2026, 1, 1)),
+        },
+      ]) {
+        expect(
+          () => FirestoreSchema.validateMeeting(invalid),
+          throwsFormatException,
+        );
+      }
+    });
+
+    test('accepts resolved and pending attendance values', () {
+      expect(
+        () => FirestoreSchema.validateSession({
+          ..._sessionDocument(),
+          'firstPing': 'fora',
+          'secondPing': 'no_campus',
+          'attendanceStatus': 'chegou_atrasado',
+          'absences': 1,
+        }),
+        returnsNormally,
+      );
+      expect(
+        () => FirestoreSchema.validateSession({
+          ..._sessionDocument(),
+          'firstPing': 'indisponivel',
+          'secondPing': 'fora',
+          'attendanceStatus': 'pendente',
+          'absences': null,
+        }),
+        returnsNormally,
+      );
+    });
+
+    test('rejects invalid session evidence and attendance values', () {
+      for (final invalid in [
+        {
+          ..._sessionDocument(),
+          'endsAt': Timestamp.fromDate(DateTime.utc(2026, 8, 3, 8)),
+        },
+        {..._sessionDocument(), 'lessonCount': 3},
+        {..._sessionDocument(), 'lessonCount': 1, 'callCount': 2},
+        {..._sessionDocument(), 'firstPing': 'campus_a'},
+        {..._sessionDocument(), 'secondPing': 'unknown'},
+        {..._sessionDocument(), 'attendanceStatus': 'unknown'},
+        {..._sessionDocument(), 'absences': 1},
+        {..._sessionDocument(), 'attendanceStatus': 'pendente', 'absences': 0},
+        {
+          ..._sessionDocument(),
+          'attendanceStatus': 'presente',
+          'absences': null,
+        },
+        {..._sessionDocument(), 'attendanceStatus': 'presente', 'absences': -1},
+        {..._sessionDocument(), 'attendanceStatus': 'presente', 'absences': 3},
+        {
+          ..._sessionDocument(),
+          'updatedAt': Timestamp.fromDate(DateTime.utc(2026, 1, 1)),
+        },
+      ]) {
+        expect(
+          () => FirestoreSchema.validateSession(invalid),
+          throwsFormatException,
+        );
+      }
+    });
+  });
 }
+
+Map<String, Object?> _courseDocument() => {
+  'schemaVersion': 1,
+  'code': 'DCC203',
+  'name': 'Programação Orientada a Objetos',
+  'workload': 60,
+  'term': '2026-2',
+  'createdAt': Timestamp.fromDate(DateTime.utc(2026, 7, 1)),
+  'updatedAt': Timestamp.fromDate(DateTime.utc(2026, 7, 2)),
+};
+
+Map<String, Object?> _meetingDocument() => {
+  'schemaVersion': 1,
+  'weekday': DateTime.monday,
+  'startMinutes': 480,
+  'endMinutes': 580,
+  'lessonCount': 2,
+  'callCount': 1,
+  ..._timestamps(),
+};
+
+Map<String, Object?> _sessionDocument() => {
+  'schemaVersion': 1,
+  'startsAt': Timestamp.fromDate(DateTime.utc(2026, 8, 3, 8)),
+  'endsAt': Timestamp.fromDate(DateTime.utc(2026, 8, 3, 10)),
+  'lessonCount': 2,
+  'callCount': 1,
+  'firstPing': null,
+  'secondPing': null,
+  'attendanceStatus': null,
+  'absences': null,
+  ..._timestamps(),
+};
+
+Map<String, Object?> _timestamps() => {
+  'createdAt': Timestamp.fromDate(DateTime.utc(2026, 7, 1)),
+  'updatedAt': Timestamp.fromDate(DateTime.utc(2026, 7, 2)),
+};
