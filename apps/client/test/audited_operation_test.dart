@@ -7,12 +7,13 @@ void main() {
     test('${operation.name} logs its successful lifecycle', () async {
       final logger = _FakeAppLogger();
 
-      await runAuditedOperation(
+      final result = await runAuditedOperation(
         logger: logger,
         operation: operation,
-        action: () async {},
+        action: () async => 42,
       );
 
+      expect(result, 42);
       expect(logger.events, [
         '${operation.eventPrefix}_started',
         '${operation.eventPrefix}_succeeded',
