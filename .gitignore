@@ -11,6 +11,10 @@ coverage.xml
 htmlcov/
 .venv/
 
+# Node.js / Firebase emulator tests
+node_modules/
+firestore-debug.log
+
 # Flutter / Dart
 .dart_tool/
 .packages

@@ -6,8 +6,160 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
-    match /users/{userId}/{document=**} {
-      allow read, write: if owns(userId);
+    function hasExactFields(data, fields) {
+      return data.keys().hasAll(fields) && data.keys().hasOnly(fields);
+    }
+
+    function hasValidAuditFields(data) {
+      return data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && data.updatedAt >= data.createdAt;
+    }
+
+    function preservesAuditFields() {
+      return request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt >= resource.data.updatedAt;
+    }
+
+    function hasValidConfiguration(data) {
+      return data.lessonCount is int
+        && data.lessonCount in [1, 2, 4]
+        && data.callCount is int
+        && data.callCount in [1, 2]
+        && !(data.lessonCount == 1 && data.callCount == 2);
+    }
+
+    function isValidCourse(data) {
+      let fields = [
+        'schemaVersion',
+        'code',
+        'name',
+        'workload',
+        'term',
+        'createdAt',
+        'updatedAt'
+      ];
+      return hasExactFields(data, fields)
+        && data.schemaVersion == 1
+        && data.code is string
+        && data.code.size() >= 1
+        && data.code.size() <= 32
+        && data.code.matches('^\\S(.*\\S)?$')
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 160
+        && data.name.matches('^\\S(.*\\S)?$')
+        && data.workload is int
+        && data.workload > 0
+        && data.term is string
+        && data.term.matches('^[0-9]{4}-[12]$')
+        && hasValidAuditFields(data);
+    }
+
+    function isValidMeeting(data) {
+      let fields = [
+        'schemaVersion',
+        'weekday',
+        'startMinutes',
+        'endMinutes',
+        'lessonCount',
+        'callCount',
+        'createdAt',
+        'updatedAt'
+      ];
+      return hasExactFields(data, fields)
+        && data.schemaVersion == 1
+        && data.weekday is int
+        && data.weekday >= 1
+        && data.weekday <= 7
+        && data.startMinutes is int
+        && data.startMinutes >= 0
+        && data.endMinutes is int
+        && data.endMinutes <= 1440
+        && data.startMinutes < data.endMinutes
+        && hasValidConfiguration(data)
+        && hasValidAuditFields(data);
+    }
+
+    function isValidPing(value) {
+      return value == null
+        || (value is string && value in ['no_campus', 'fora', 'indisponivel']);
+    }
+
+    function isValidAttendance(data) {
+      let status = data.attendanceStatus;
+      let unresolved = status == null || status == 'pendente';
+      return (
+          status == null
+          || (status is string && status in [
+            'presente',
+            'chegou_atrasado',
+            'saiu_mais_cedo',
+            'ausente',
+            'pendente'
+          ])
+        )
+        && (
+          (unresolved && data.absences == null)
+          || (!unresolved
+            && data.absences is int
+            && data.absences >= 0
+            && data.absences <= data.lessonCount)
+        );
+    }
+
+    function isValidSession(data) {
+      let fields = [
+        'schemaVersion',
+        'startsAt',
+        'endsAt',
+        'lessonCount',
+        'callCount',
+        'firstPing',
+        'secondPing',
+        'attendanceStatus',
+        'absences',
+        'createdAt',
+        'updatedAt'
+      ];
+      return hasExactFields(data, fields)
+        && data.schemaVersion == 1
+        && data.startsAt is timestamp
+        && data.endsAt is timestamp
+        && data.startsAt < data.endsAt
+        && hasValidConfiguration(data)
+        && isValidPing(data.firstPing)
+        && isValidPing(data.secondPing)
+        && isValidAttendance(data)
+        && hasValidAuditFields(data);
+    }
+
+    match /users/{userId}/courses/{courseId} {
+      allow read, delete: if owns(userId);
+      allow create: if owns(userId) && isValidCourse(request.resource.data);
+      allow update: if owns(userId)
+        && isValidCourse(request.resource.data)
+        && preservesAuditFields();
+
+      match /meetings/{meetingId} {
+        allow read, delete: if owns(userId);
+        allow create: if owns(userId)
+          && exists(/databases/$(database)/documents/users/$(userId)/courses/$(courseId))
+          && isValidMeeting(request.resource.data);
+        allow update: if owns(userId)
+          && isValidMeeting(request.resource.data)
+          && preservesAuditFields();
+      }
+
+      match /sessions/{sessionId} {
+        allow read, delete: if owns(userId);
+        allow create: if owns(userId)
+          && exists(/databases/$(database)/documents/users/$(userId)/courses/$(courseId))
+          && isValidSession(request.resource.data);
+        allow update: if owns(userId)
+          && isValidSession(request.resource.data)
+          && preservesAuditFields();
+      }
     }
 
     match /{document=**} {
@@ -15,4 +167,3 @@ service cloud.firestore {
     }
   }
 }
-

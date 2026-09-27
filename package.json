@@ -1,0 +1,16 @@
+{
+  "name": "frequencia-ufmg-firestore-tests",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test:firestore": "firebase emulators:exec --project demo-frequencia-ufmg --only firestore \"node --test tests/firestore.rules.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "5.0.2",
+    "firebase": "12.19.0",
+    "firebase-tools": "15.31.0"
+  }
+}
