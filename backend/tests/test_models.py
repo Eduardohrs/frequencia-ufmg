@@ -5,9 +5,11 @@ import pytest
 from frequencia_ufmg.models import (
     ConfiguracaoSessao,
     Disciplina,
+    EstadoPing,
     NumeroChamadas,
     QuantidadeAulas,
     SessaoAula,
+    SituacaoFrequencia,
 )
 
 
@@ -145,3 +147,113 @@ def test_course_only_accepts_session_objects() -> None:
 
     with pytest.raises(TypeError, match="SessaoAula"):
         disciplina.adicionar_sessao(object())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("aulas", "chamadas"),
+    [
+        (QuantidadeAulas.UMA, NumeroChamadas.UMA),
+        (QuantidadeAulas.DUAS, NumeroChamadas.UMA),
+        (QuantidadeAulas.DUAS, NumeroChamadas.DUAS),
+        (QuantidadeAulas.QUATRO, NumeroChamadas.UMA),
+        (QuantidadeAulas.QUATRO, NumeroChamadas.DUAS),
+    ],
+)
+@pytest.mark.parametrize(
+    ("primeiro_ping", "segundo_ping", "situacao"),
+    [
+        (EstadoPing.NO_CAMPUS, EstadoPing.NO_CAMPUS, SituacaoFrequencia.PRESENTE),
+        (EstadoPing.FORA, EstadoPing.NO_CAMPUS, SituacaoFrequencia.CHEGOU_ATRASADO),
+        (EstadoPing.NO_CAMPUS, EstadoPing.FORA, SituacaoFrequencia.SAIU_MAIS_CEDO),
+        (EstadoPing.FORA, EstadoPing.FORA, SituacaoFrequencia.AUSENTE),
+    ],
+)
+def test_session_classifies_two_valid_pings(
+    aulas: QuantidadeAulas,
+    chamadas: NumeroChamadas,
+    primeiro_ping: EstadoPing,
+    segundo_ping: EstadoPing,
+    situacao: SituacaoFrequencia,
+) -> None:
+    """Valid evidence has the same semantic status for one or two calls."""
+
+    sessao = SessaoAula(
+        "aula-01",
+        ConfiguracaoSessao(aulas, chamadas),
+    )
+
+    assert sessao.classificar(primeiro_ping, segundo_ping) is situacao
+
+
+@pytest.mark.parametrize(
+    ("primeiro_ping", "segundo_ping", "situacao"),
+    [
+        (EstadoPing.NO_CAMPUS, EstadoPing.INDISPONIVEL, SituacaoFrequencia.PRESENTE),
+        (EstadoPing.INDISPONIVEL, EstadoPing.NO_CAMPUS, SituacaoFrequencia.PRESENTE),
+        (EstadoPing.FORA, EstadoPing.INDISPONIVEL, SituacaoFrequencia.PENDENTE),
+        (EstadoPing.INDISPONIVEL, EstadoPing.FORA, SituacaoFrequencia.PENDENTE),
+        (EstadoPing.INDISPONIVEL, EstadoPing.INDISPONIVEL, SituacaoFrequencia.PENDENTE),
+    ],
+)
+def test_single_call_uses_any_available_campus_confirmation(
+    primeiro_ping: EstadoPing,
+    segundo_ping: EstadoPing,
+    situacao: SituacaoFrequencia,
+) -> None:
+    """One call is resolved by any campus confirmation, otherwise it stays pending."""
+
+    sessao = SessaoAula(
+        "aula-01",
+        ConfiguracaoSessao(QuantidadeAulas.DUAS, NumeroChamadas.UMA),
+    )
+
+    assert sessao.classificar(primeiro_ping, segundo_ping) is situacao
+
+
+@pytest.mark.parametrize(
+    ("primeiro_ping", "segundo_ping"),
+    [
+        (EstadoPing.INDISPONIVEL, EstadoPing.NO_CAMPUS),
+        (EstadoPing.INDISPONIVEL, EstadoPing.FORA),
+        (EstadoPing.NO_CAMPUS, EstadoPing.INDISPONIVEL),
+        (EstadoPing.FORA, EstadoPing.INDISPONIVEL),
+        (EstadoPing.INDISPONIVEL, EstadoPing.INDISPONIVEL),
+    ],
+)
+def test_two_calls_require_both_pings(
+    primeiro_ping: EstadoPing,
+    segundo_ping: EstadoPing,
+) -> None:
+    """Each ping represents one half of a two-call session."""
+
+    sessao = SessaoAula(
+        "aula-01",
+        ConfiguracaoSessao(QuantidadeAulas.DUAS, NumeroChamadas.DUAS),
+    )
+
+    assert sessao.classificar(primeiro_ping, segundo_ping) is SituacaoFrequencia.PENDENTE
+
+
+@pytest.mark.parametrize(
+    ("primeiro_ping", "segundo_ping"),
+    [
+        (object(), EstadoPing.NO_CAMPUS),
+        (EstadoPing.NO_CAMPUS, object()),
+    ],
+)
+def test_classification_rejects_values_outside_the_ping_domain(
+    primeiro_ping: object,
+    segundo_ping: object,
+) -> None:
+    """Raw or malformed evidence cannot silently become an attendance status."""
+
+    sessao = SessaoAula(
+        "aula-01",
+        ConfiguracaoSessao(QuantidadeAulas.DUAS, NumeroChamadas.UMA),
+    )
+
+    with pytest.raises(TypeError, match="EstadoPing"):
+        sessao.classificar(  # type: ignore[arg-type]
+            primeiro_ping,
+            segundo_ping,
+        )
