@@ -29,6 +29,57 @@ service cloud.firestore {
         && !(data.lessonCount == 1 && data.callCount == 2);
     }
 
+    function isNullableString(value, maxLength) {
+      return value == null
+        || (value is string && value.size() <= maxLength);
+    }
+
+    function isValidOperationalLog(data) {
+      let fields = [
+        'schemaVersion',
+        'occurredAt',
+        'expiresAt',
+        'level',
+        'event',
+        'entryPoint',
+        'platform',
+        'correlationId',
+        'operation',
+        'outcome',
+        'durationMs',
+        'errorType',
+        'errorCode',
+        'errorMessage',
+        'errorDetails',
+        'fatal'
+      ];
+      return hasExactFields(data, fields)
+        && data.schemaVersion == 1
+        && data.occurredAt is timestamp
+        && data.occurredAt == request.time
+        && data.expiresAt is timestamp
+        && data.expiresAt > data.occurredAt
+        && data.expiresAt <= data.occurredAt + duration.value(31, 'd')
+        && data.level in ['info', 'error']
+        && data.event is string
+        && data.event.size() >= 1
+        && data.event.size() <= 80
+        && data.entryPoint == 'client'
+        && data.platform in ['web', 'android']
+        && data.correlationId is string
+        && data.correlationId.size() >= 1
+        && data.correlationId.size() <= 128
+        && isNullableString(data.operation, 80)
+        && isNullableString(data.outcome, 24)
+        && (data.durationMs == null
+          || (data.durationMs is int && data.durationMs >= 0))
+        && isNullableString(data.errorType, 120)
+        && isNullableString(data.errorCode, 120)
+        && isNullableString(data.errorMessage, 500)
+        && isNullableString(data.errorDetails, 500)
+        && data.fatal is bool;
+    }
+
     function isValidCourse(data) {
       let fields = [
         'schemaVersion',
@@ -160,6 +211,13 @@ service cloud.firestore {
           && isValidSession(request.resource.data)
           && preservesAuditFields();
       }
+    }
+
+    match /users/{userId}/logs/{logId} {
+      allow read: if owns(userId);
+      allow create: if owns(userId)
+        && isValidOperationalLog(request.resource.data);
+      allow update, delete: if false;
     }
 
     match /{document=**} {

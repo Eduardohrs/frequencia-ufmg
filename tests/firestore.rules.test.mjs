@@ -14,6 +14,7 @@ import {
   getDocs,
   collection,
   setDoc,
+  serverTimestamp,
   updateDoc,
 } from "firebase/firestore";
 
@@ -42,6 +43,8 @@ const meetingPath = (userId, meetingId = "monday-0800") =>
   `${coursePath(userId)}/meetings/${meetingId}`;
 const sessionPath = (userId, sessionId = "2026-08-03") =>
   `${coursePath(userId)}/sessions/${sessionId}`;
+const logPath = (userId, logId = "log-1") =>
+  `users/${userId}/logs/${logId}`;
 
 const createdAt = Timestamp.fromDate(new Date("2026-07-01T12:00:00Z"));
 const updatedAt = Timestamp.fromDate(new Date("2026-07-02T12:00:00Z"));
@@ -81,6 +84,26 @@ const session = (overrides = {}) => ({
   absences: null,
   createdAt,
   updatedAt,
+  ...overrides,
+});
+
+const operationalLog = (overrides = {}) => ({
+  schemaVersion: 1,
+  occurredAt: serverTimestamp(),
+  expiresAt: Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)),
+  level: "error",
+  event: "app_exception",
+  entryPoint: "client",
+  platform: "web",
+  correlationId: "operation-42",
+  operation: "firestore_course_save",
+  outcome: "failed",
+  durationMs: 125,
+  errorType: "FirebaseException",
+  errorCode: "permission-denied",
+  errorMessage: "The caller does not have permission.",
+  errorDetails: null,
+  fatal: false,
   ...overrides,
 });
 
@@ -172,6 +195,48 @@ describe("course documents", () => {
     await assertFails(updateDoc(reference, { createdAt: updatedAt }));
     await assertFails(updateDoc(reference, { updatedAt: createdAt }));
     await assertFails(updateDoc(reference, { ownerId: "alice" }));
+  });
+});
+
+describe("operational logs", () => {
+  test("owner can create and read an immutable structured log", async () => {
+    const path = logPath("alice");
+    const reference = doc(dbFor("alice"), path);
+
+    await assertSucceeds(setDoc(reference, operationalLog()));
+    await assertSucceeds(getDoc(reference));
+    await assertFails(updateDoc(reference, { outcome: "succeeded" }));
+    await assertFails(deleteDoc(reference));
+  });
+
+  test("anonymous and other users cannot access a user's logs", async () => {
+    const path = logPath("alice");
+    await seed(path, operationalLog({ occurredAt: updatedAt }));
+
+    await assertFails(getDoc(doc(anonymousDb(), path)));
+    await assertFails(setDoc(doc(anonymousDb(), path), operationalLog()));
+    await assertFails(getDoc(doc(dbFor("bob"), path)));
+    await assertFails(setDoc(doc(dbFor("bob"), path), operationalLog()));
+  });
+
+  test("rejects malformed, oversized, and over-retained logs", async () => {
+    const db = dbFor("alice");
+    const invalidDocuments = [
+      operationalLog({ schemaVersion: 2 }),
+      operationalLog({ event: "" }),
+      operationalLog({ event: "x".repeat(81) }),
+      operationalLog({ platform: "ios" }),
+      operationalLog({ correlationId: "" }),
+      operationalLog({ durationMs: -1 }),
+      operationalLog({ errorMessage: "x".repeat(501) }),
+      operationalLog({ expiresAt: Timestamp.fromDate(new Date(Date.now() + 32 * 24 * 60 * 60 * 1000)) }),
+      withoutField(operationalLog(), "fatal"),
+      { ...operationalLog(), email: "aluno@ufmg.br" },
+    ];
+
+    for (const [index, data] of invalidDocuments.entries()) {
+      await assertFails(setDoc(doc(db, logPath("alice", `invalid-${index}`)), data));
+    }
   });
 });
 

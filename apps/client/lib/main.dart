@@ -12,7 +12,7 @@ import 'data/firestore_configuration.dart';
 import 'firebase_options.dart';
 import 'observability/app_logger.dart';
 import 'observability/error_reporting.dart';
-import 'observability/firebase_app_logger.dart';
+import 'observability/firebase_logger_composition.dart';
 import 'observability/resilient_app_logger.dart';
 
 typedef AuthGatewayFactory = AuthGateway Function();
@@ -24,7 +24,7 @@ typedef MainCourseRepositoryFactory =
 AuthGatewayFactory authGatewayFactory = FirebaseAuthGateway.new;
 
 @visibleForTesting
-AppLoggerFactory appLoggerFactory = FirebaseAppLogger.new;
+AppLoggerFactory appLoggerFactory = createFirebaseLogger;
 
 @visibleForTesting
 MainCourseRepositoryFactory courseRepositoryFactory =
