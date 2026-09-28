@@ -61,6 +61,23 @@ void main() {
     expect(failure['error_type'], 'TimeoutException');
   });
 
+  test('identifies which transport timed out', () async {
+    final messages = <String>[];
+    final logger = ResilientAppLogger(
+      _ControllableLogger(),
+      transport: 'firebase_analytics',
+      deliveryTimeout: Duration.zero,
+      failureSink: messages.add,
+    );
+
+    await logger.logEvent('app_started');
+    await Future<void>.delayed(Duration.zero);
+
+    final failure = jsonDecode(messages.single) as Map<String, dynamic>;
+    expect(failure['transport'], 'firebase_analytics');
+    expect(failure['target'], 'app_started');
+  });
+
   test('reports a logger that throws before returning a future', () async {
     final messages = <String>[];
     final logger = ResilientAppLogger(
