@@ -777,6 +777,50 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('reports a background calendar synchronization failure', (
+    tester,
+  ) async {
+    final datedCourse = CourseRecord(
+      id: course.id,
+      code: course.code,
+      name: course.name,
+      workload: course.workload,
+      term: course.term,
+      startsOn: DateTime.utc(2026, 8, 3),
+      endsOn: DateTime.utc(2026, 8, 3),
+      createdAt: now,
+      updatedAt: now,
+    );
+    final sessions = _FakeSessionRepository()
+      ..saveError = StateError('offline');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: datedCourse,
+          repository: _FakeMeetingRepository(),
+          sessionRepository: sessions,
+          logger: _RecordingAppLogger(),
+          generator: SessionGenerator(location),
+          now: () => now,
+          idGenerator: () => 'monday-8',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('add-meeting')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('meeting-start')), '08:00');
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Horário salvo, mas não foi possível sincronizar o calendário.',
+      ),
+      findsOneWidget,
+    );
+  });
 }
 
 Future<void> _chooseScheduleAction(WidgetTester tester, String label) async {
@@ -856,6 +900,7 @@ final class _MultiCourseMeetingRepository implements MeetingRepository {
 final class _FakeSessionRepository implements SessionRepository {
   final sessions = <SessionRecord>[];
   Object? listError;
+  Object? saveError;
 
   @override
   Future<void> deleteSession(String courseId, String sessionId) async {
@@ -870,6 +915,7 @@ final class _FakeSessionRepository implements SessionRepository {
 
   @override
   Future<void> saveSession(String courseId, SessionRecord session) async {
+    if (saveError case final error?) throw error;
     sessions.removeWhere((item) => item.id == session.id);
     sessions.add(session);
   }
