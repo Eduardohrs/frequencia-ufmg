@@ -278,6 +278,14 @@ void main() {
 
     tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('nav-absence-dashboard')));
+    await tester.pumpAndSettle();
+    expect(find.text('Faltas restantes'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('nav-general-calendar')));
     await tester.pumpAndSettle();
     expect(find.text('Calendário acadêmico'), findsOneWidget);

@@ -10,6 +10,7 @@ import '../../data/academic_repositories.dart';
 import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
+import '../attendance/absence_dashboard_page.dart';
 import '../schedule/course_schedule_page.dart';
 import '../schedule/general_calendar_page.dart';
 import 'course_editor_dialog.dart';
@@ -115,6 +116,19 @@ class _CoursePageState extends State<CoursePage> {
           repository: widget.sessionRepository,
           location: tz.getLocation('America/Sao_Paulo'),
           now: widget.now,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openAbsenceDashboard() async {
+    Navigator.of(context).pop();
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => AbsenceDashboardPage(
+          courses: _courses,
+          repository: widget.sessionRepository,
+          location: tz.getLocation('America/Sao_Paulo'),
         ),
       ),
     );
@@ -229,6 +243,11 @@ class _CoursePageState extends State<CoursePage> {
                 key: const Key('nav-general-calendar'),
                 title: const Text('Calendário geral'),
                 onTap: _openGeneralCalendar,
+              ),
+              ListTile(
+                key: const Key('nav-absence-dashboard'),
+                title: const Text('Faltas restantes'),
+                onTap: _openAbsenceDashboard,
               ),
             ],
           ),
