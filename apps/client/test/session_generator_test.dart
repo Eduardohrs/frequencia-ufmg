@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
+import 'package:frequencia_ufmg/data/calendar_status.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
 import 'package:frequencia_ufmg/features/schedule/session_generator.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
@@ -103,4 +104,136 @@ void main() {
       throwsArgumentError,
     );
   });
+
+  test('reconciles a moved range without leaving orphan sessions', () {
+    final meeting = _meeting('monday-8');
+    final october = SessionRecord(
+      id: '2026-10-05--monday-8',
+      startsAt: DateTime.utc(2026, 10, 5, 11),
+      endsAt: DateTime.utc(2026, 10, 5, 12, 40),
+      lessonCount: QuantidadeAulas.two,
+      callCount: NumeroChamadas.one,
+      createdAt: createdAt,
+      updatedAt: createdAt,
+    );
+
+    final result = SessionGenerator(location).reconcile(
+      meetings: [meeting],
+      existingSessions: [october],
+      startDate: DateTime(2026, 11, 1),
+      endDate: DateTime(2026, 11, 9),
+      now: createdAt,
+    );
+
+    expect(result.deleteIds, ['2026-10-05--monday-8']);
+    expect(result.upserts.map((item) => item.id), [
+      '2026-11-02--monday-8',
+      '2026-11-09--monday-8',
+    ]);
+    expect(result.destructiveDeleteCount, 0);
+  });
+
+  test('preserves makeups and identifies removed attendance evidence', () {
+    final meeting = _meeting('monday-8');
+    final recorded = SessionRecord(
+      id: '2026-10-05--monday-8',
+      startsAt: DateTime.utc(2026, 10, 5, 11),
+      endsAt: DateTime.utc(2026, 10, 5, 12, 40),
+      lessonCount: QuantidadeAulas.two,
+      callCount: NumeroChamadas.one,
+      attendanceStatus: SituacaoFrequencia.absent,
+      absences: 2,
+      createdAt: createdAt,
+      updatedAt: createdAt,
+    );
+    final makeup = SessionRecord(
+      id: 'makeup-1',
+      startsAt: DateTime.utc(2026, 10, 6, 11),
+      endsAt: DateTime.utc(2026, 10, 6, 12, 40),
+      lessonCount: QuantidadeAulas.two,
+      callCount: NumeroChamadas.one,
+      calendarStatus: SessionCalendarStatus.makeup,
+      createdAt: createdAt,
+      updatedAt: createdAt,
+    );
+
+    final result = SessionGenerator(location).reconcile(
+      meetings: [meeting],
+      existingSessions: [recorded, makeup],
+      startDate: DateTime(2026, 11, 2),
+      endDate: DateTime(2026, 11, 2),
+      now: createdAt,
+    );
+
+    expect(result.deleteIds, ['2026-10-05--monday-8']);
+    expect(result.destructiveDeleteCount, 1);
+    expect(result.deleteIds, isNot(contains('makeup-1')));
+  });
+
+  test('updates unrecorded sessions but preserves evidence and exceptions', () {
+    final changedMeeting = MeetingRecord(
+      id: 'monday-8',
+      weekday: DateTime.monday,
+      startMinutes: 600,
+      endMinutes: 800,
+      lessonCount: QuantidadeAulas.four,
+      callCount: NumeroChamadas.two,
+      createdAt: createdAt,
+      updatedAt: createdAt,
+    );
+    final holiday = SessionRecord(
+      id: '2026-10-05--monday-8',
+      startsAt: DateTime.utc(2026, 10, 5, 11),
+      endsAt: DateTime.utc(2026, 10, 5, 12, 40),
+      lessonCount: QuantidadeAulas.two,
+      callCount: NumeroChamadas.one,
+      calendarStatus: SessionCalendarStatus.holiday,
+      createdAt: createdAt,
+      updatedAt: createdAt,
+    );
+    final recorded = SessionRecord(
+      id: '2026-10-12--monday-8',
+      startsAt: DateTime.utc(2026, 10, 12, 11),
+      endsAt: DateTime.utc(2026, 10, 12, 12, 40),
+      lessonCount: QuantidadeAulas.two,
+      callCount: NumeroChamadas.one,
+      firstPing: EstadoPing.onCampus,
+      attendanceStatus: SituacaoFrequencia.present,
+      absences: 0,
+      createdAt: createdAt,
+      updatedAt: createdAt,
+    );
+
+    final result = SessionGenerator(location).reconcile(
+      meetings: [changedMeeting],
+      existingSessions: [holiday, recorded],
+      startDate: DateTime(2026, 10, 5),
+      endDate: DateTime(2026, 10, 12),
+      now: createdAt.add(const Duration(days: 1)),
+    );
+
+    expect(result.deleteIds, isEmpty);
+    expect(result.upserts, hasLength(1));
+    expect(result.upserts.single.id, holiday.id);
+    expect(result.upserts.single.startsAt, DateTime.utc(2026, 10, 5, 13));
+    expect(result.upserts.single.lessonCount, QuantidadeAulas.four);
+    expect(result.upserts.single.calendarStatus, SessionCalendarStatus.holiday);
+    expect(result.upserts.single.createdAt, createdAt);
+    expect(
+      result.upserts.single.updatedAt,
+      createdAt.add(const Duration(days: 1)),
+    );
+    expect(result.upserts.map((item) => item.id), isNot(contains(recorded.id)));
+  });
 }
+
+MeetingRecord _meeting(String id) => MeetingRecord(
+  id: id,
+  weekday: DateTime.monday,
+  startMinutes: 480,
+  endMinutes: 580,
+  lessonCount: QuantidadeAulas.two,
+  callCount: NumeroChamadas.one,
+  createdAt: DateTime.utc(2026, 8, 1, 12),
+  updatedAt: DateTime.utc(2026, 8, 1, 12),
+);
