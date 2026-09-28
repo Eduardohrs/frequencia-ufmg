@@ -8,6 +8,7 @@ import '../../data/academic_repositories.dart';
 import '../../domain/attendance.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
+import '../attendance/attendance_page.dart';
 import 'calendar_exceptions_page.dart';
 import 'session_generator.dart';
 
@@ -233,11 +234,28 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     ),
   );
 
+  Future<void> _openAttendance() => Navigator.of(context).push<void>(
+    MaterialPageRoute(
+      builder: (_) => AttendancePage(
+        courseId: widget.course.id,
+        repository: widget.sessionRepository,
+        logger: widget.logger,
+        location: _generator.location,
+        now: widget.now,
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: Text('Grade • ${widget.course.code}'),
       actions: [
+        IconButton(
+          tooltip: 'Registrar frequência',
+          onPressed: _openAttendance,
+          icon: const Icon(Icons.check_circle_outline),
+        ),
         IconButton(
           tooltip: 'Exceções de calendário',
           onPressed: _openCalendarExceptions,
