@@ -15,7 +15,8 @@ enum AuditedOperation {
   meetingDelete('firestore_meeting_delete'),
   sessionList('firestore_session_list'),
   sessionSave('firestore_session_save'),
-  sessionDelete('firestore_session_delete');
+  sessionDelete('firestore_session_delete'),
+  sessionGeneration('session_generation');
 
   const AuditedOperation(this.eventPrefix);
 

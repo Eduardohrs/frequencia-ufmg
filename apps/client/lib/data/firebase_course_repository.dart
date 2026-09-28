@@ -30,3 +30,14 @@ MeetingRepository createFirebaseMeetingRepository(
   ),
   logger: logger,
 );
+
+SessionRepository createFirebaseSessionRepository(
+  String userId,
+  AppLogger logger,
+) => FirestoreSessionRepository(
+  userId: userId,
+  store: TimeoutDocumentStore(
+    FirebaseDocumentStore(FirebaseFirestore.instance),
+  ),
+  logger: logger,
+);

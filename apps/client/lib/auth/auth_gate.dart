@@ -13,6 +13,7 @@ class AuthGate extends StatefulWidget {
     required this.logger,
     required this.courseRepositoryFactory,
     required this.meetingRepositoryFactory,
+    required this.sessionRepositoryFactory,
     super.key,
   });
 
@@ -20,6 +21,7 @@ class AuthGate extends StatefulWidget {
   final AppLogger logger;
   final CourseRepository Function(String userId) courseRepositoryFactory;
   final MeetingRepository Function(String userId) meetingRepositoryFactory;
+  final SessionRepository Function(String userId) sessionRepositoryFactory;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -31,12 +33,14 @@ class _AuthGateState extends State<AuthGate> {
   String? _repositoryUserId;
   CourseRepository? _courseRepository;
   MeetingRepository? _meetingRepository;
+  SessionRepository? _sessionRepository;
 
   CourseRepository _repositoryFor(String userId) {
     if (_repositoryUserId != userId) {
       _repositoryUserId = userId;
       _courseRepository = widget.courseRepositoryFactory(userId);
       _meetingRepository = widget.meetingRepositoryFactory(userId);
+      _sessionRepository = widget.sessionRepositoryFactory(userId);
     }
     return _courseRepository!;
   }
@@ -75,6 +79,7 @@ class _AuthGateState extends State<AuthGate> {
           return CoursePage(
             repository: _repositoryFor(user.id),
             meetingRepository: _meetingRepository!,
+            sessionRepository: _sessionRepository!,
             user: user,
             logger: widget.logger,
             onSignOut: () =>
