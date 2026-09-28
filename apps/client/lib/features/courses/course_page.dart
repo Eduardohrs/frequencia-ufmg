@@ -94,18 +94,22 @@ class _CoursePageState extends State<CoursePage> {
     );
   }
 
-  Future<void> _openSchedule(CourseRecord course) => Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (context) => CourseSchedulePage(
-        course: course,
-        repository: widget.meetingRepository,
-        sessionRepository: widget.sessionRepository,
-        logger: widget.logger,
-        allCourses: _courses,
-        allCourseIds: _courses.map((item) => item.id),
+  Future<void> _openSchedule(CourseRecord course) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => CourseSchedulePage(
+          course: course,
+          courseRepository: widget.repository,
+          repository: widget.meetingRepository,
+          sessionRepository: widget.sessionRepository,
+          logger: widget.logger,
+          allCourses: _courses,
+          allCourseIds: _courses.map((item) => item.id),
+        ),
       ),
-    ),
-  );
+    );
+    if (mounted) await _load();
+  }
 
   Future<void> _openGeneralCalendar() async {
     Navigator.of(context).pop();

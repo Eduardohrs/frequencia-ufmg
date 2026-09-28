@@ -63,6 +63,8 @@ void main() {
         'name': FirestoreFieldType.string,
         'workload': FirestoreFieldType.integer,
         'term': FirestoreFieldType.string,
+        'startsOn': FirestoreFieldType.nullableTimestamp,
+        'endsOn': FirestoreFieldType.nullableTimestamp,
         'createdAt': FirestoreFieldType.timestamp,
         'updatedAt': FirestoreFieldType.timestamp,
       });
@@ -102,6 +104,8 @@ void main() {
           'name': 'POO',
           'workload': 60,
           'term': '2026-2',
+          'startsOn': null,
+          'endsOn': null,
           'createdAt': timestamp,
           'updatedAt': timestamp,
         }),
@@ -146,6 +150,8 @@ void main() {
         'name': 'POO',
         'workload': 60,
         'term': '2026-2',
+        'startsOn': null,
+        'endsOn': null,
         'createdAt': Timestamp.now(),
         'updatedAt': Timestamp.now(),
       };
@@ -220,6 +226,16 @@ void main() {
         {..._courseDocument(), 'name': 'x' * 161},
         {..._courseDocument(), 'term': '2026/2'},
         {..._courseDocument(), 'workload': 0},
+        {
+          ..._courseDocument(),
+          'startsOn': Timestamp.fromDate(DateTime.utc(2026, 8, 1)),
+          'endsOn': null,
+        },
+        {
+          ..._courseDocument(),
+          'startsOn': Timestamp.fromDate(DateTime.utc(2026, 9, 1)),
+          'endsOn': Timestamp.fromDate(DateTime.utc(2026, 8, 1)),
+        },
         {
           ..._courseDocument(),
           'updatedAt': Timestamp.fromDate(DateTime.utc(2026, 1, 1)),
@@ -317,6 +333,8 @@ Map<String, Object?> _courseDocument() => {
   'name': 'Programação Orientada a Objetos',
   'workload': 60,
   'term': '2026-2',
+  'startsOn': null,
+  'endsOn': null,
   'createdAt': Timestamp.fromDate(DateTime.utc(2026, 7, 1)),
   'updatedAt': Timestamp.fromDate(DateTime.utc(2026, 7, 2)),
 };

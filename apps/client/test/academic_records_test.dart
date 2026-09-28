@@ -15,6 +15,8 @@ void main() {
       name: 'Programacao Orientada a Objetos',
       workload: 60,
       term: '2026-2',
+      startsOn: DateTime.utc(2026, 8, 3),
+      endsOn: DateTime.utc(2026, 12, 5),
       createdAt: createdAt,
       updatedAt: updatedAt,
     );
@@ -29,8 +31,30 @@ void main() {
     expect(restored.name, 'Programacao Orientada a Objetos');
     expect(restored.workload, 60);
     expect(restored.term, '2026-2');
+    expect(restored.startsOn, DateTime.utc(2026, 8, 3));
+    expect(restored.endsOn, DateTime.utc(2026, 12, 5));
     expect(restored.createdAt, createdAt);
     expect(restored.updatedAt, updatedAt);
+  });
+
+  test('older courses load without an academic date range', () {
+    final data =
+        CourseRecord(
+            id: 'legacy',
+            code: 'DCC203',
+            name: 'POO',
+            workload: 60,
+            term: '2026-2',
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+          ).toFirestore()
+          ..remove('startsOn')
+          ..remove('endsOn');
+
+    final restored = CourseRecord.fromFirestore('legacy', data);
+
+    expect(restored.startsOn, isNull);
+    expect(restored.endsOn, isNull);
   });
 
   test('meeting record round-trips with typed lesson and call counts', () {

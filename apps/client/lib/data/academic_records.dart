@@ -11,20 +11,29 @@ final class CourseRecord {
     required this.name,
     required this.workload,
     required this.term,
+    this.startsOn,
+    this.endsOn,
     required this.createdAt,
     required this.updatedAt,
   });
 
   factory CourseRecord.fromFirestore(String id, Map<String, Object?> data) {
-    FirestoreSchema.validateCourse(data);
+    final normalized = {
+      ...data,
+      'startsOn': data['startsOn'],
+      'endsOn': data['endsOn'],
+    };
+    FirestoreSchema.validateCourse(normalized);
     return CourseRecord(
       id: id,
-      code: data['code']! as String,
-      name: data['name']! as String,
-      workload: data['workload']! as int,
-      term: data['term']! as String,
-      createdAt: _date(data, 'createdAt'),
-      updatedAt: _date(data, 'updatedAt'),
+      code: normalized['code']! as String,
+      name: normalized['name']! as String,
+      workload: normalized['workload']! as int,
+      term: normalized['term']! as String,
+      startsOn: _nullableDate(normalized, 'startsOn'),
+      endsOn: _nullableDate(normalized, 'endsOn'),
+      createdAt: _date(normalized, 'createdAt'),
+      updatedAt: _date(normalized, 'updatedAt'),
     );
   }
 
@@ -33,6 +42,8 @@ final class CourseRecord {
   final String name;
   final int workload;
   final String term;
+  final DateTime? startsOn;
+  final DateTime? endsOn;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -43,6 +54,10 @@ final class CourseRecord {
       'name': name,
       'workload': workload,
       'term': term,
+      'startsOn': startsOn == null
+          ? null
+          : Timestamp.fromDate(startsOn!.toUtc()),
+      'endsOn': endsOn == null ? null : Timestamp.fromDate(endsOn!.toUtc()),
       ..._auditFields(createdAt, updatedAt),
     };
     FirestoreSchema.validateCourse(data);
@@ -179,6 +194,9 @@ final class SessionRecord {
 
 DateTime _date(Map<String, Object?> data, String field) =>
     (data[field]! as Timestamp).toDate().toUtc();
+
+DateTime? _nullableDate(Map<String, Object?> data, String field) =>
+    (data[field] as Timestamp?)?.toDate().toUtc();
 
 Map<String, Object?> _auditFields(DateTime createdAt, DateTime updatedAt) => {
   'createdAt': Timestamp.fromDate(createdAt.toUtc()),

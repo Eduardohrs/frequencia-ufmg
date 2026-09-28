@@ -242,6 +242,9 @@ void main() {
 
     expect(find.text('Grade • DCC203'), findsOneWidget);
     expect(meetingRepository.listedCourseIds, ['course-1']);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('DCC203'), findsOneWidget);
   });
 
   testWidgets('opens and closes the side navigation and general calendar', (

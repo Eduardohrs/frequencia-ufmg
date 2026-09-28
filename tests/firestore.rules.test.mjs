@@ -55,6 +55,8 @@ const course = (overrides = {}) => ({
   name: "Programação Orientada a Objetos",
   workload: 60,
   term: "2026-2",
+  startsOn: null,
+  endsOn: null,
   createdAt,
   updatedAt,
   ...overrides,
@@ -178,6 +180,8 @@ describe("course documents", () => {
       course({ name: "x".repeat(161) }),
       course({ workload: 0 }),
       course({ term: "2026/2" }),
+      course({ startsOn: createdAt, endsOn: null }),
+      course({ startsOn: updatedAt, endsOn: createdAt }),
       course({ createdAt: updatedAt, updatedAt: createdAt }),
       withoutField(course(), "name"),
       { ...course(), ownerId: "alice" },
@@ -187,6 +191,18 @@ describe("course documents", () => {
     for (const [index, data] of invalidDocuments.entries()) {
       await assertFails(setDoc(doc(db, coursePath("alice", `invalid-${index}`)), data));
     }
+  });
+
+  test("accepts a complete date range and the legacy shape", async () => {
+    const db = dbFor("alice");
+    await assertSucceeds(
+      setDoc(
+        doc(db, coursePath("alice", "dated")),
+        course({ startsOn: createdAt, endsOn: updatedAt }),
+      ),
+    );
+    const legacy = withoutField(withoutField(course(), "startsOn"), "endsOn");
+    await assertSucceeds(setDoc(doc(db, coursePath("alice", "legacy")), legacy));
   });
 
   test("preserves creation time and prevents audit time rollback", async () => {
