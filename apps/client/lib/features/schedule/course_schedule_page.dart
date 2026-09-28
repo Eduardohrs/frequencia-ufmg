@@ -8,6 +8,7 @@ import '../../data/academic_repositories.dart';
 import '../../domain/attendance.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
+import 'calendar_exceptions_page.dart';
 import 'session_generator.dart';
 
 typedef MeetingIdGenerator = String Function();
@@ -221,11 +222,27 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _openCalendarExceptions() => Navigator.of(context).push<void>(
+    MaterialPageRoute(
+      builder: (_) => CalendarExceptionsPage(
+        courseId: widget.course.id,
+        repository: widget.sessionRepository,
+        logger: widget.logger,
+        location: _generator.location,
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: Text('Grade • ${widget.course.code}'),
       actions: [
+        IconButton(
+          tooltip: 'Exceções de calendário',
+          onPressed: _openCalendarExceptions,
+          icon: const Icon(Icons.event_busy_outlined),
+        ),
         IconButton(
           tooltip: 'Gerar sessões',
           onPressed: _generating ? null : _generateSessions,
@@ -234,7 +251,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
                   dimension: 20,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.event_repeat_outlined),
+              : const Icon(Icons.add_circle_outline),
         ),
       ],
     ),

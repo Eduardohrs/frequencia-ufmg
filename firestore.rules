@@ -170,6 +170,7 @@ service cloud.firestore {
         'secondPing',
         'attendanceStatus',
         'absences',
+        'calendarStatus',
         'createdAt',
         'updatedAt'
       ];
@@ -179,6 +180,7 @@ service cloud.firestore {
         && data.endsAt is timestamp
         && data.startsAt < data.endsAt
         && hasValidConfiguration(data)
+        && data.calendarStatus in ['scheduled', 'cancelled', 'holiday', 'makeup']
         && isValidPing(data.firstPing)
         && isValidPing(data.secondPing)
         && isValidAttendance(data)

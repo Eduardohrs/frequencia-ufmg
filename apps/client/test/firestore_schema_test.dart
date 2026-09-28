@@ -86,6 +86,7 @@ void main() {
         'secondPing': FirestoreFieldType.nullableString,
         'attendanceStatus': FirestoreFieldType.nullableString,
         'absences': FirestoreFieldType.nullableInteger,
+        'calendarStatus': FirestoreFieldType.string,
         'createdAt': FirestoreFieldType.timestamp,
         'updatedAt': FirestoreFieldType.timestamp,
       });
@@ -130,6 +131,7 @@ void main() {
           'secondPing': 'no_campus',
           'attendanceStatus': null,
           'absences': null,
+          'calendarStatus': 'scheduled',
           'createdAt': timestamp,
           'updatedAt': timestamp,
         }),
@@ -285,6 +287,7 @@ void main() {
         {..._sessionDocument(), 'firstPing': 'campus_a'},
         {..._sessionDocument(), 'secondPing': 'unknown'},
         {..._sessionDocument(), 'attendanceStatus': 'unknown'},
+        {..._sessionDocument(), 'calendarStatus': 'unknown'},
         {..._sessionDocument(), 'absences': 1},
         {..._sessionDocument(), 'attendanceStatus': 'pendente', 'absences': 0},
         {
@@ -338,6 +341,7 @@ Map<String, Object?> _sessionDocument() => {
   'secondPing': null,
   'attendanceStatus': null,
   'absences': null,
+  'calendarStatus': 'scheduled',
   ..._timestamps(),
 };
 

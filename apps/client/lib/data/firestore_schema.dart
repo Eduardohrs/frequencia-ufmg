@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
 
+import 'calendar_status.dart';
+
 enum FirestoreFieldType {
   integer,
   string,
@@ -74,6 +76,7 @@ abstract final class FirestoreSchema {
     'secondPing': FirestoreFieldType.nullableString,
     'attendanceStatus': FirestoreFieldType.nullableString,
     'absences': FirestoreFieldType.nullableInteger,
+    'calendarStatus': FirestoreFieldType.string,
     'createdAt': FirestoreFieldType.timestamp,
     'updatedAt': FirestoreFieldType.timestamp,
   });
@@ -120,6 +123,11 @@ abstract final class FirestoreSchema {
     final statusCode = document['attendanceStatus'] as String?;
     final status = statusCode == null ? null : _attendanceStatus(statusCode);
     final absences = document['absences'] as int?;
+    try {
+      SessionCalendarStatus.fromCode(document['calendarStatus']! as String);
+    } on ArgumentError {
+      throw const FormatException('calendar status is invalid');
+    }
     if (status == null || status == SituacaoFrequencia.pending) {
       if (absences != null) {
         throw const FormatException(
