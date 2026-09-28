@@ -19,6 +19,8 @@ typedef AuthGatewayFactory = AuthGateway Function();
 typedef AppLoggerFactory = AppLogger Function();
 typedef MainCourseRepositoryFactory =
     CourseRepository Function(String userId, AppLogger logger);
+typedef MainMeetingRepositoryFactory =
+    MeetingRepository Function(String userId, AppLogger logger);
 
 @visibleForTesting
 AuthGatewayFactory authGatewayFactory = FirebaseAuthGateway.new;
@@ -29,6 +31,10 @@ AppLoggerFactory appLoggerFactory = createFirebaseLogger;
 @visibleForTesting
 MainCourseRepositoryFactory courseRepositoryFactory =
     createFirebaseCourseRepository;
+
+@visibleForTesting
+MainMeetingRepositoryFactory meetingRepositoryFactory =
+    createFirebaseMeetingRepository;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,6 +52,8 @@ Future<void> main() async {
       logger: logger,
       courseRepositoryFactory: (userId) =>
           courseRepositoryFactory(userId, logger),
+      meetingRepositoryFactory: (userId) =>
+          meetingRepositoryFactory(userId, logger),
     ),
   );
   await logger.logEvent('app_started');
@@ -56,12 +64,14 @@ class FrequenciaUFMGApp extends StatelessWidget {
     required this.authGateway,
     required this.logger,
     required this.courseRepositoryFactory,
+    required this.meetingRepositoryFactory,
     super.key,
   });
 
   final AuthGateway authGateway;
   final AppLogger logger;
   final CourseRepository Function(String userId) courseRepositoryFactory;
+  final MeetingRepository Function(String userId) meetingRepositoryFactory;
 
   @override
   Widget build(BuildContext context) {
@@ -90,6 +100,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
         authGateway: authGateway,
         logger: logger,
         courseRepositoryFactory: courseRepositoryFactory,
+        meetingRepositoryFactory: meetingRepositoryFactory,
       ),
     );
   }
