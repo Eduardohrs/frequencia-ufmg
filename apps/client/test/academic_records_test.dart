@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
+import 'package:frequencia_ufmg/data/calendar_status.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
 
 void main() {
@@ -70,6 +71,7 @@ void main() {
       secondPing: EstadoPing.onCampus,
       attendanceStatus: SituacaoFrequencia.arrivedLate,
       absences: 1,
+      calendarStatus: SessionCalendarStatus.makeup,
       createdAt: createdAt,
       updatedAt: updatedAt,
     );
@@ -88,6 +90,7 @@ void main() {
     expect(restored.secondPing, EstadoPing.onCampus);
     expect(restored.attendanceStatus, SituacaoFrequencia.arrivedLate);
     expect(restored.absences, 1);
+    expect(restored.calendarStatus, SessionCalendarStatus.makeup);
     expect(restored.createdAt, createdAt);
     expect(restored.updatedAt, updatedAt);
   });
@@ -103,6 +106,7 @@ void main() {
       'secondPing': null,
       'attendanceStatus': null,
       'absences': null,
+      'calendarStatus': 'scheduled',
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
     };
@@ -113,6 +117,22 @@ void main() {
     expect(restored.secondPing, isNull);
     expect(restored.attendanceStatus, isNull);
     expect(restored.absences, isNull);
+  });
+
+  test('older sessions default to a scheduled calendar status', () {
+    final data = SessionRecord(
+      id: 'legacy',
+      startsAt: DateTime.utc(2026, 8, 3, 8),
+      endsAt: DateTime.utc(2026, 8, 3, 10),
+      lessonCount: QuantidadeAulas.two,
+      callCount: NumeroChamadas.one,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    ).toFirestore()..remove('calendarStatus');
+
+    final restored = SessionRecord.fromFirestore('legacy', data);
+
+    expect(restored.calendarStatus, SessionCalendarStatus.scheduled);
   });
 
   test('records reject documents outside the declared schema', () {

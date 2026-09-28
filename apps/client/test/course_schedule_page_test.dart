@@ -523,6 +523,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('1 sessão criada.'), findsOneWidget);
   });
+
+  testWidgets('opens the calendar exceptions for the selected course', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          generator: SessionGenerator(location),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Exceções de calendário'));
+    await tester.pumpAndSettle();
+    expect(find.text('Exceções de calendário'), findsOneWidget);
+    expect(find.text('Nenhuma sessão gerada'), findsOneWidget);
+  });
 }
 
 final class _FakeMeetingRepository implements MeetingRepository {

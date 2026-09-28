@@ -16,7 +16,8 @@ enum AuditedOperation {
   sessionList('firestore_session_list'),
   sessionSave('firestore_session_save'),
   sessionDelete('firestore_session_delete'),
-  sessionGeneration('session_generation');
+  sessionGeneration('session_generation'),
+  calendarException('calendar_exception');
 
   const AuditedOperation(this.eventPrefix);
 

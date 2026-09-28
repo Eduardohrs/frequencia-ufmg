@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../domain/attendance.dart';
+import 'calendar_status.dart';
 import 'firestore_schema.dart';
 
 final class CourseRecord {
@@ -110,29 +111,37 @@ final class SessionRecord {
     this.secondPing,
     this.attendanceStatus,
     this.absences,
+    this.calendarStatus = SessionCalendarStatus.scheduled,
     required this.createdAt,
     required this.updatedAt,
   });
 
   factory SessionRecord.fromFirestore(String id, Map<String, Object?> data) {
-    FirestoreSchema.validateSession(data);
-    final firstPing = data['firstPing'] as String?;
-    final secondPing = data['secondPing'] as String?;
-    final attendanceStatus = data['attendanceStatus'] as String?;
+    final normalized = {
+      ...data,
+      'calendarStatus': data['calendarStatus'] ?? 'scheduled',
+    };
+    FirestoreSchema.validateSession(normalized);
+    final firstPing = normalized['firstPing'] as String?;
+    final secondPing = normalized['secondPing'] as String?;
+    final attendanceStatus = normalized['attendanceStatus'] as String?;
     return SessionRecord(
       id: id,
-      startsAt: _date(data, 'startsAt'),
-      endsAt: _date(data, 'endsAt'),
-      lessonCount: QuantidadeAulas.fromValue(data['lessonCount']! as int),
-      callCount: NumeroChamadas.fromValue(data['callCount']! as int),
+      startsAt: _date(normalized, 'startsAt'),
+      endsAt: _date(normalized, 'endsAt'),
+      lessonCount: QuantidadeAulas.fromValue(normalized['lessonCount']! as int),
+      callCount: NumeroChamadas.fromValue(normalized['callCount']! as int),
       firstPing: firstPing == null ? null : EstadoPing.fromCode(firstPing),
       secondPing: secondPing == null ? null : EstadoPing.fromCode(secondPing),
       attendanceStatus: attendanceStatus == null
           ? null
           : SituacaoFrequencia.fromCode(attendanceStatus),
-      absences: data['absences'] as int?,
-      createdAt: _date(data, 'createdAt'),
-      updatedAt: _date(data, 'updatedAt'),
+      absences: normalized['absences'] as int?,
+      calendarStatus: SessionCalendarStatus.fromCode(
+        normalized['calendarStatus']! as String,
+      ),
+      createdAt: _date(normalized, 'createdAt'),
+      updatedAt: _date(normalized, 'updatedAt'),
     );
   }
 
@@ -145,6 +154,7 @@ final class SessionRecord {
   final EstadoPing? secondPing;
   final SituacaoFrequencia? attendanceStatus;
   final int? absences;
+  final SessionCalendarStatus calendarStatus;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -159,6 +169,7 @@ final class SessionRecord {
       'secondPing': secondPing?.code,
       'attendanceStatus': attendanceStatus?.code,
       'absences': absences,
+      'calendarStatus': calendarStatus.code,
       ..._auditFields(createdAt, updatedAt),
     };
     FirestoreSchema.validateSession(data);
