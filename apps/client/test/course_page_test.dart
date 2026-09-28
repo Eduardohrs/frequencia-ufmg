@@ -9,8 +9,10 @@ import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/document_store.dart';
 import 'package:frequencia_ufmg/features/courses/course_page.dart';
 import 'package:frequencia_ufmg/observability/app_logger.dart';
+import 'package:timezone/data/latest.dart' as tz_data;
 
 void main() {
+  tz_data.initializeTimeZones();
   final user = AuthUser(
     id: 'user-1',
     email: 'eduardo@ufmg.br',
@@ -240,6 +242,45 @@ void main() {
 
     expect(find.text('Grade • DCC203'), findsOneWidget);
     expect(meetingRepository.listedCourseIds, ['course-1']);
+  });
+
+  testWidgets('opens and closes the side navigation and general calendar', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(courses: [course]),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('nav-courses')));
+    await tester.pumpAndSettle();
+    expect(find.byType(Drawer), findsNothing);
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('nav-general-calendar')));
+    await tester.pumpAndSettle();
+    expect(find.text('Calendário acadêmico'), findsOneWidget);
   });
 
   testWidgets('rejects changing a course to another existing code', (

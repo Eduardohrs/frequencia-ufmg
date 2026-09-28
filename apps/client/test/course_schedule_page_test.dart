@@ -132,7 +132,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
     await tester.pumpAndSettle();
     expect(
-      find.text('Já existe um horário nessa disciplina nesse dia e hora.'),
+      find.text('Esse horário se sobrepõe a outra aula cadastrada.'),
       findsOneWidget,
     );
     expect(repository.meetings, [existing]);
@@ -322,7 +322,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Gerar sessões'));
+    await _chooseScheduleAction(tester, 'Gerar sessões');
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const Key('generation-start-date')),
@@ -345,7 +345,7 @@ void main() {
       ]),
     );
 
-    await tester.tap(find.byTooltip('Gerar sessões'));
+    await _chooseScheduleAction(tester, 'Gerar sessões');
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const Key('generation-start-date')),
@@ -388,7 +388,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Gerar sessões'));
+    await _chooseScheduleAction(tester, 'Gerar sessões');
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Gerar'));
     await tester.pumpAndSettle();
@@ -435,7 +435,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Gerar sessões'));
+    await _chooseScheduleAction(tester, 'Gerar sessões');
     await tester.pumpAndSettle();
     expect(
       find.text('Cadastre pelo menos um horário antes de gerar sessões.'),
@@ -468,7 +468,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Gerar sessões'));
+    await _chooseScheduleAction(tester, 'Gerar sessões');
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const Key('generation-start-date')),
@@ -509,7 +509,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Gerar sessões'));
+    await _chooseScheduleAction(tester, 'Gerar sessões');
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const Key('generation-start-date')),
@@ -539,7 +539,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Exceções de calendário'));
+    await _chooseScheduleAction(tester, 'Exceções de calendário');
     await tester.pumpAndSettle();
     expect(find.text('Exceções de calendário'), findsOneWidget);
     expect(find.text('Nenhuma sessão gerada'), findsOneWidget);
@@ -560,10 +560,83 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Registrar frequência'));
+    await _chooseScheduleAction(tester, 'Registrar frequência');
     await tester.pumpAndSettle();
     expect(find.text('Frequência por aula'), findsOneWidget);
   });
+
+  testWidgets('opens the general calendar filtered by the selected course', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          generator: SessionGenerator(location),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _chooseScheduleAction(tester, 'Ver calendário');
+    await tester.pumpAndSettle();
+    expect(find.text('Calendário acadêmico'), findsOneWidget);
+    expect(
+      tester
+          .widget<DropdownButtonFormField<String?>>(
+            find.byKey(const Key('calendar-course-filter')),
+          )
+          .initialValue,
+      'poo',
+    );
+  });
+
+  testWidgets('rejects partial overlap with a different course', (
+    tester,
+  ) async {
+    final other = MeetingRecord(
+      id: 'calculus',
+      weekday: DateTime.monday,
+      startMinutes: 450,
+      endMinutes: 510,
+      lessonCount: QuantidadeAulas.one,
+      callCount: NumeroChamadas.one,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final repository = _MultiCourseMeetingRepository({
+      'math': [other],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: repository,
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          allCourseIds: const ['poo', 'math'],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('add-meeting')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('meeting-start')), '08:00');
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Esse horário se sobrepõe a outra aula cadastrada.'),
+      findsOneWidget,
+    );
+  });
+}
+
+Future<void> _chooseScheduleAction(WidgetTester tester, String label) async {
+  await tester.tap(find.byTooltip('Ações da disciplina'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(label).last);
 }
 
 final class _FakeMeetingRepository implements MeetingRepository {
@@ -592,6 +665,24 @@ final class _FakeMeetingRepository implements MeetingRepository {
     if (saveError case final error?) throw error;
     meetings.removeWhere((item) => item.id == meeting.id);
     meetings.add(meeting);
+  }
+}
+
+final class _MultiCourseMeetingRepository implements MeetingRepository {
+  _MultiCourseMeetingRepository(this.byCourse);
+
+  final Map<String, List<MeetingRecord>> byCourse;
+
+  @override
+  Future<void> deleteMeeting(String courseId, String meetingId) async {}
+
+  @override
+  Future<List<MeetingRecord>> listMeetings(String courseId) async =>
+      List.of(byCourse[courseId] ?? const []);
+
+  @override
+  Future<void> saveMeeting(String courseId, MeetingRecord meeting) async {
+    byCourse.putIfAbsent(courseId, () => []).add(meeting);
   }
 }
 
