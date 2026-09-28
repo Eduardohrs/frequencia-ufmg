@@ -13,11 +13,13 @@ final class ResilientAppLogger implements AppLogger {
   ResilientAppLogger(
     this._delegate, {
     Duration deliveryTimeout = const Duration(seconds: 5),
+    this.transport,
     LogFailureSink? failureSink,
   }) : _deliveryTimeout = deliveryTimeout,
        _failureSink = failureSink ?? debugPrint;
 
   final AppLogger _delegate;
+  final String? transport;
   final Duration _deliveryTimeout;
   final LogFailureSink _failureSink;
 
@@ -78,6 +80,7 @@ final class ResilientAppLogger implements AppLogger {
         'event': 'observability_delivery_failed',
         'log_kind': kind,
         'target': target,
+        if (transport != null) 'transport': transport,
         'error_type': details.type,
         if (details.code != null) 'error_code': details.code,
         if (details.message != null) 'error_message': details.message,

@@ -1,6 +1,8 @@
 // coverage:ignore-file
 // Thin production boundary over the Firestore SDK.
 
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'operational_log_store.dart';
@@ -21,12 +23,11 @@ final class FirebaseOperationalLogStore implements OperationalLogStore {
     final logs = _firestore.collection('users').doc(userId).collection('logs');
     await logs.add(firestoreDocument);
     if (!_cleanedUsers.add(userId)) return;
-    try {
-      await _deleteExpired(logs);
-    } catch (_) {
-      _cleanedUsers.remove(userId);
-      rethrow;
-    }
+    unawaited(
+      _deleteExpired(logs).catchError((Object _) {
+        _cleanedUsers.remove(userId);
+      }),
+    );
   }
 
   Future<void> _deleteExpired(

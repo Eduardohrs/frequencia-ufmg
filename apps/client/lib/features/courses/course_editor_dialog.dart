@@ -21,6 +21,7 @@ class CourseEditorDialog extends StatefulWidget {
     required this.onSave,
     required this.onValidationFailed,
     required this.initialTerm,
+    required this.allowedTerms,
     this.course,
     super.key,
   });
@@ -29,6 +30,7 @@ class CourseEditorDialog extends StatefulWidget {
   final Future<String?> Function(CourseInput input) onSave;
   final VoidCallback onValidationFailed;
   final String initialTerm;
+  final List<String> allowedTerms;
 
   @override
   State<CourseEditorDialog> createState() => _CourseEditorDialogState();
@@ -157,9 +159,10 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
                       hintText: '2026-2',
                     ),
                     validator: (value) =>
-                        RegExp(r'^\d{4}-[12]$').hasMatch(value?.trim() ?? '')
+                        widget.allowedTerms.contains(value?.trim())
                         ? null
-                        : 'Use o formato AAAA-S, como 2026-2.',
+                        : 'Escolha o período atual (${widget.allowedTerms.first}) '
+                              'ou o próximo (${widget.allowedTerms.last}).',
                   ),
                 ],
                 if (_error != null) ...[
