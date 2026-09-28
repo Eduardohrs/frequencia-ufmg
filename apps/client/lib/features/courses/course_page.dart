@@ -9,6 +9,7 @@ import '../../data/academic_repositories.dart';
 import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
+import '../schedule/course_schedule_page.dart';
 import 'course_editor_dialog.dart';
 
 typedef CourseIdGenerator = String Function();
@@ -20,6 +21,7 @@ class CoursePage extends StatefulWidget {
   // ignore: prefer_const_constructors_in_immutables
   CoursePage({
     required this.repository,
+    required this.meetingRepository,
     required this.user,
     required this.logger,
     required this.onSignOut,
@@ -30,6 +32,7 @@ class CoursePage extends StatefulWidget {
        now = now ?? DateTime.now;
 
   final CourseRepository repository;
+  final MeetingRepository meetingRepository;
   final AuthUser user;
   final AppLogger logger;
   final Future<void> Function() onSignOut;
@@ -85,6 +88,15 @@ class _CoursePageState extends State<CoursePage> {
       ),
     );
   }
+
+  Future<void> _openSchedule(CourseRecord course) => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (context) => CourseSchedulePage(
+        course: course,
+        repository: widget.meetingRepository,
+      ),
+    ),
+  );
 
   Future<String?> _save(CourseRecord? existing, CourseInput input) async {
     final normalizedCode = input.code.toUpperCase();
@@ -250,6 +262,7 @@ class _CoursePageState extends State<CoursePage> {
         course: _courses[index],
         deleting: _deletingId == _courses[index].id,
         onEdit: () => _openEditor(_courses[index]),
+        onSchedule: () => _openSchedule(_courses[index]),
         onDelete: () => _confirmDelete(_courses[index]),
       ),
     );
@@ -291,12 +304,14 @@ class _CourseTile extends StatelessWidget {
     required this.course,
     required this.deleting,
     required this.onEdit,
+    required this.onSchedule,
     required this.onDelete,
   });
 
   final CourseRecord course;
   final bool deleting;
   final VoidCallback onEdit;
+  final VoidCallback onSchedule;
   final VoidCallback onDelete;
 
   @override
@@ -329,6 +344,11 @@ class _CourseTile extends StatelessWidget {
             : Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  IconButton(
+                    tooltip: 'Horários ${course.code}',
+                    onPressed: onSchedule,
+                    icon: const Icon(Icons.calendar_view_week_outlined),
+                  ),
                   IconButton(
                     tooltip: 'Editar ${course.code}',
                     onPressed: onEdit,

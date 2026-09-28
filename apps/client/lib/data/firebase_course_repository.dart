@@ -19,3 +19,14 @@ CourseRepository createFirebaseCourseRepository(
   ),
   logger: logger,
 );
+
+MeetingRepository createFirebaseMeetingRepository(
+  String userId,
+  AppLogger logger,
+) => FirestoreMeetingRepository(
+  userId: userId,
+  store: TimeoutDocumentStore(
+    FirebaseDocumentStore(FirebaseFirestore.instance),
+  ),
+  logger: logger,
+);

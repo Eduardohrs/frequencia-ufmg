@@ -117,6 +117,7 @@ void main() {
       MaterialApp(
         home: CoursePage(
           repository: repository,
+          meetingRepository: _FakeMeetingRepository(),
           user: user,
           logger: logger,
           onSignOut: () async {},
@@ -204,6 +205,39 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repository.courses.single.term, '2027-1');
+  });
+
+  testWidgets('opens the selected course weekly schedule', (tester) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final repository = _FakeCourseRepository(courses: [course]);
+    final meetingRepository = _FakeMeetingRepository();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: repository,
+          meetingRepository: meetingRepository,
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Horários DCC203'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Grade • DCC203'), findsOneWidget);
+    expect(meetingRepository.listedCourseIds, ['course-1']);
   });
 
   testWidgets('rejects changing a course to another existing code', (
@@ -329,6 +363,7 @@ void main() {
       MaterialApp(
         home: CoursePage(
           repository: repository,
+          meetingRepository: _FakeMeetingRepository(),
           user: user,
           logger: _RecordingAppLogger(),
           onSignOut: () async => logoutCalls++,
@@ -357,6 +392,7 @@ void main() {
       MaterialApp(
         home: CoursePage(
           repository: repository,
+          meetingRepository: _FakeMeetingRepository(),
           user: user,
           logger: _RecordingAppLogger(),
           onSignOut: () async {},
@@ -418,6 +454,7 @@ void main() {
       MaterialApp(
         home: CoursePage(
           repository: repository,
+          meetingRepository: _FakeMeetingRepository(),
           user: user,
           logger: _RecordingAppLogger(),
           onSignOut: () async {},
@@ -474,6 +511,7 @@ Widget _app(
 }) => MaterialApp(
   home: CoursePage(
     repository: repository,
+    meetingRepository: _FakeMeetingRepository(),
     user: user,
     logger: logger ?? _RecordingAppLogger(),
     onSignOut: () async {},
@@ -509,6 +547,22 @@ final class _FakeCourseRepository implements CourseRepository {
     courses.removeWhere((item) => item.id == course.id);
     courses.add(course);
   }
+}
+
+final class _FakeMeetingRepository implements MeetingRepository {
+  final listedCourseIds = <String>[];
+
+  @override
+  Future<void> deleteMeeting(String courseId, String meetingId) async {}
+
+  @override
+  Future<List<MeetingRecord>> listMeetings(String courseId) async {
+    listedCourseIds.add(courseId);
+    return [];
+  }
+
+  @override
+  Future<void> saveMeeting(String courseId, MeetingRecord meeting) async {}
 }
 
 final class _RecordingDocumentStore implements DocumentStore {
