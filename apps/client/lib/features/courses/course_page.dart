@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:timezone/timezone.dart' as tz;
 
 import '../../auth/auth_user.dart';
 import '../../data/academic_records.dart';
@@ -10,6 +11,7 @@ import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import '../schedule/course_schedule_page.dart';
+import '../schedule/general_calendar_page.dart';
 import 'course_editor_dialog.dart';
 
 typedef CourseIdGenerator = String Function();
@@ -98,9 +100,25 @@ class _CoursePageState extends State<CoursePage> {
         repository: widget.meetingRepository,
         sessionRepository: widget.sessionRepository,
         logger: widget.logger,
+        allCourses: _courses,
+        allCourseIds: _courses.map((item) => item.id),
       ),
     ),
   );
+
+  Future<void> _openGeneralCalendar() async {
+    Navigator.of(context).pop();
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => GeneralCalendarPage(
+          courses: _courses,
+          repository: widget.sessionRepository,
+          location: tz.getLocation('America/Sao_Paulo'),
+          now: widget.now,
+        ),
+      ),
+    );
+  }
 
   Future<String?> _save(CourseRecord? existing, CourseInput input) async {
     final normalizedCode = input.code.toUpperCase();
@@ -194,6 +212,28 @@ class _CoursePageState extends State<CoursePage> {
   Widget build(BuildContext context) {
     final firstName = widget.user.displayName?.trim().split(' ').first;
     return Scaffold(
+      drawer: Drawer(
+        child: SafeArea(
+          child: ListView(
+            children: [
+              const ListTile(
+                title: Text('Frequência UFMG'),
+                subtitle: Text('Navegação'),
+              ),
+              ListTile(
+                key: const Key('nav-courses'),
+                title: const Text('Disciplinas'),
+                onTap: () => Navigator.of(context).pop(),
+              ),
+              ListTile(
+                key: const Key('nav-general-calendar'),
+                title: const Text('Calendário geral'),
+                onTap: _openGeneralCalendar,
+              ),
+            ],
+          ),
+        ),
+      ),
       appBar: AppBar(
         title: const Text('Frequência UFMG'),
         actions: [

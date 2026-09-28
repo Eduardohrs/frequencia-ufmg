@@ -42,7 +42,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Chegou atrasado').last);
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('attendance-absences')), findsOneWidget);
+    expect(find.byKey(const Key('attendance-absences')), findsNothing);
+    expect(
+      find.text('As faltas serão calculadas automaticamente.'),
+      findsOneWidget,
+    );
     await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
     await tester.pumpAndSettle();
     expect(
@@ -75,7 +79,14 @@ void main() {
   });
 
   testWidgets('validates absences and reports save failure', (tester) async {
-    final repository = _FakeRepository([_session('regular', now)]);
+    final repository = _FakeRepository([
+      _session(
+        'regular',
+        now,
+        attendanceStatus: SituacaoFrequencia.present,
+        absences: 0,
+      ),
+    ]);
     await tester.pumpWidget(_app(repository, _Logger(), location, now));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
@@ -126,6 +137,8 @@ SessionRecord _session(
   String id,
   DateTime startsAt, {
   SessionCalendarStatus calendar = SessionCalendarStatus.scheduled,
+  SituacaoFrequencia? attendanceStatus,
+  int? absences,
 }) => SessionRecord(
   id: id,
   startsAt: startsAt,
@@ -133,6 +146,8 @@ SessionRecord _session(
   lessonCount: QuantidadeAulas.two,
   callCount: NumeroChamadas.two,
   calendarStatus: calendar,
+  attendanceStatus: attendanceStatus,
+  absences: absences,
   createdAt: startsAt,
   updatedAt: startsAt,
 );

@@ -186,6 +186,8 @@ class _AttendanceDialogState extends State<_AttendanceDialog> {
   bool _saving = false;
   String? _error;
 
+  bool get _editing => widget.session.attendanceStatus != null;
+
   @override
   void initState() {
     super.initState();
@@ -220,7 +222,15 @@ class _AttendanceDialogState extends State<_AttendanceDialog> {
     if (!_formKey.currentState!.validate()) return;
     final value = _status == SituacaoFrequencia.pending
         ? null
-        : int.parse(_absences.text);
+        : _editing
+        ? int.parse(_absences.text)
+        : SessaoAula(
+            widget.session.id,
+            ConfiguracaoSessao(
+              aulas: widget.session.lessonCount,
+              chamadas: widget.session.callCount,
+            ),
+          ).calcularFaltas(_status);
     setState(() {
       _saving = true;
       _error = null;
@@ -266,25 +276,28 @@ class _AttendanceDialogState extends State<_AttendanceDialog> {
                     }),
             ),
             const SizedBox(height: 16),
-            TextFormField(
-              key: const Key('attendance-absences'),
-              controller: _absences,
-              enabled: !_saving && _status != SituacaoFrequencia.pending,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Faltas nesta sessão',
-              ),
-              validator: (value) {
-                if (_status == SituacaoFrequencia.pending) return null;
-                final parsed = int.tryParse(value ?? '');
-                if (parsed == null ||
-                    parsed < 0 ||
-                    parsed > widget.session.lessonCount.value) {
-                  return 'Use um valor entre 0 e ${widget.session.lessonCount.value}.';
-                }
-                return null;
-              },
-            ),
+            if (_editing)
+              TextFormField(
+                key: const Key('attendance-absences'),
+                controller: _absences,
+                enabled: !_saving && _status != SituacaoFrequencia.pending,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Faltas nesta sessão',
+                ),
+                validator: (value) {
+                  if (_status == SituacaoFrequencia.pending) return null;
+                  final parsed = int.tryParse(value ?? '');
+                  if (parsed == null ||
+                      parsed < 0 ||
+                      parsed > widget.session.lessonCount.value) {
+                    return 'Use um valor entre 0 e ${widget.session.lessonCount.value}.';
+                  }
+                  return null;
+                },
+              )
+            else
+              const Text('As faltas serão calculadas automaticamente.'),
             if (_error != null) ...[
               const SizedBox(height: 16),
               Text(

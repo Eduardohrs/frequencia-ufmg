@@ -9,11 +9,14 @@ import '../../domain/attendance.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import '../attendance/attendance_page.dart';
+import 'general_calendar_page.dart';
 import 'calendar_exceptions_page.dart';
 import 'session_generator.dart';
 
 typedef MeetingIdGenerator = String Function();
 typedef CurrentTime = DateTime Function();
+
+enum _ScheduleAction { attendance, calendar, exceptions, generate }
 
 class CourseSchedulePage extends StatefulWidget {
   // Runtime defaults keep production callers free from utility objects.
@@ -23,17 +26,25 @@ class CourseSchedulePage extends StatefulWidget {
     required this.repository,
     required this.sessionRepository,
     required this.logger,
+    Iterable<CourseRecord>? allCourses,
+    Iterable<String>? allCourseIds,
     this.generator,
     MeetingIdGenerator? idGenerator,
     CurrentTime? now,
     super.key,
   }) : idGenerator = idGenerator ?? _newMeetingId,
+       allCourses = List.unmodifiable(allCourses ?? [course]),
+       allCourseIds = List.unmodifiable(
+         allCourseIds ?? (allCourses ?? [course]).map((item) => item.id),
+       ),
        now = now ?? DateTime.now;
 
   final CourseRecord course;
   final MeetingRepository repository;
   final SessionRepository sessionRepository;
   final AppLogger logger;
+  final List<CourseRecord> allCourses;
+  final List<String> allCourseIds;
   final SessionGenerator? generator;
   final MeetingIdGenerator idGenerator;
   final CurrentTime now;
@@ -84,22 +95,29 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
   );
 
   Future<String?> _save(MeetingRecord? existing, _MeetingInput input) async {
-    final duplicate = _meetings.any(
-      (meeting) =>
-          meeting.id != existing?.id &&
-          meeting.weekday == input.weekday &&
-          meeting.startMinutes == input.startMinutes,
-    );
-    if (duplicate) {
-      return 'Já existe um horário nessa disciplina nesse dia e hora.';
-    }
     try {
+      final endMinutes = input.startMinutes + input.lessonCount.value * 50;
+      for (final courseId in widget.allCourseIds) {
+        final meetings = courseId == widget.course.id
+            ? _meetings
+            : await widget.repository.listMeetings(courseId);
+        final overlap = meetings.any(
+          (meeting) =>
+              !(courseId == widget.course.id && meeting.id == existing?.id) &&
+              meeting.weekday == input.weekday &&
+              input.startMinutes < meeting.endMinutes &&
+              meeting.startMinutes < endMinutes,
+        );
+        if (overlap) {
+          return 'Esse horário se sobrepõe a outra aula cadastrada.';
+        }
+      }
       final timestamp = widget.now().toUtc();
       final meeting = MeetingRecord(
         id: existing?.id ?? widget.idGenerator(),
         weekday: input.weekday,
         startMinutes: input.startMinutes,
-        endMinutes: input.startMinutes + input.lessonCount.value * 50,
+        endMinutes: endMinutes,
         lessonCount: input.lessonCount,
         callCount: input.callCount,
         createdAt: existing?.createdAt ?? timestamp,
@@ -246,30 +264,64 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     ),
   );
 
+  void _selectAction(_ScheduleAction action) {
+    switch (action) {
+      case _ScheduleAction.attendance:
+        _openAttendance();
+        return;
+      case _ScheduleAction.calendar:
+        Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => GeneralCalendarPage(
+              courses: widget.allCourses,
+              repository: widget.sessionRepository,
+              location: _generator.location,
+              initialCourseId: widget.course.id,
+              now: widget.now,
+            ),
+          ),
+        );
+        return;
+      case _ScheduleAction.exceptions:
+        _openCalendarExceptions();
+        return;
+      case _ScheduleAction.generate:
+        _generateSessions();
+        return;
+    }
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: Text('Grade • ${widget.course.code}'),
       actions: [
-        IconButton(
-          tooltip: 'Registrar frequência',
-          onPressed: _openAttendance,
-          icon: const Icon(Icons.check_circle_outline),
-        ),
-        IconButton(
-          tooltip: 'Exceções de calendário',
-          onPressed: _openCalendarExceptions,
-          icon: const Icon(Icons.event_busy_outlined),
-        ),
-        IconButton(
-          tooltip: 'Gerar sessões',
-          onPressed: _generating ? null : _generateSessions,
-          icon: _generating
-              ? const SizedBox.square(
-                  dimension: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.add_circle_outline),
+        PopupMenuButton<_ScheduleAction>(
+          tooltip: 'Ações da disciplina',
+          enabled: !_generating,
+          onSelected: _selectAction,
+          itemBuilder: (_) => const [
+            PopupMenuItem(
+              value: _ScheduleAction.attendance,
+              child: Text('Registrar frequência'),
+            ),
+            PopupMenuItem(
+              value: _ScheduleAction.calendar,
+              child: Text('Ver calendário'),
+            ),
+            PopupMenuItem(
+              value: _ScheduleAction.exceptions,
+              child: Text('Exceções de calendário'),
+            ),
+            PopupMenuItem(
+              value: _ScheduleAction.generate,
+              child: Text('Gerar sessões'),
+            ),
+          ],
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Center(child: Text(_generating ? 'Gerando…' : 'Ações')),
+          ),
         ),
       ],
     ),
