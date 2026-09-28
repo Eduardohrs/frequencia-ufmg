@@ -225,6 +225,51 @@ void main() {
     );
     expect(result.upserts.map((item) => item.id), isNot(contains(recorded.id)));
   });
+
+  test('detects every changed generated-session field', () {
+    final generator = SessionGenerator(location);
+    final meeting = _meeting('monday-8');
+    final desired = generator
+        .reconcile(
+          meetings: [meeting],
+          existingSessions: const [],
+          startDate: DateTime(2026, 10, 5),
+          endDate: DateTime(2026, 10, 19),
+          now: createdAt,
+        )
+        .upserts;
+    SessionRecord changed(
+      SessionRecord source, {
+      DateTime? endsAt,
+      QuantidadeAulas? lessonCount,
+      NumeroChamadas? callCount,
+    }) => SessionRecord(
+      id: source.id,
+      startsAt: source.startsAt,
+      endsAt: endsAt ?? source.endsAt,
+      lessonCount: lessonCount ?? source.lessonCount,
+      callCount: callCount ?? source.callCount,
+      createdAt: source.createdAt,
+      updatedAt: source.updatedAt,
+    );
+
+    final result = generator.reconcile(
+      meetings: [meeting],
+      existingSessions: [
+        changed(
+          desired[0],
+          endsAt: desired[0].endsAt.add(const Duration(minutes: 1)),
+        ),
+        changed(desired[1], lessonCount: QuantidadeAulas.four),
+        changed(desired[2], callCount: NumeroChamadas.two),
+      ],
+      startDate: DateTime(2026, 10, 5),
+      endDate: DateTime(2026, 10, 19),
+      now: createdAt,
+    );
+
+    expect(result.upserts, hasLength(3));
+  });
 }
 
 MeetingRecord _meeting(String id) => MeetingRecord(

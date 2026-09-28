@@ -9,6 +9,7 @@ import '../../domain/attendance.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import '../attendance/attendance_page.dart';
+import 'course_date_range_picker.dart';
 import 'general_calendar_page.dart';
 import 'calendar_exceptions_page.dart';
 import 'session_generator.dart';
@@ -16,7 +17,7 @@ import 'session_generator.dart';
 typedef MeetingIdGenerator = String Function();
 typedef CurrentTime = DateTime Function();
 
-enum _ScheduleAction { attendance, calendar, exceptions, generate }
+enum _ScheduleAction { attendance, calendar, exceptions }
 
 class CourseSchedulePage extends StatefulWidget {
   // Runtime defaults keep production callers free from utility objects.
@@ -26,6 +27,7 @@ class CourseSchedulePage extends StatefulWidget {
     required this.repository,
     required this.sessionRepository,
     required this.logger,
+    this.courseRepository,
     Iterable<CourseRecord>? allCourses,
     Iterable<String>? allCourseIds,
     this.generator,
@@ -42,6 +44,7 @@ class CourseSchedulePage extends StatefulWidget {
   final CourseRecord course;
   final MeetingRepository repository;
   final SessionRepository sessionRepository;
+  final CourseRepository? courseRepository;
   final AppLogger logger;
   final List<CourseRecord> allCourses;
   final List<String> allCourseIds;
@@ -54,11 +57,12 @@ class CourseSchedulePage extends StatefulWidget {
 }
 
 class _CourseSchedulePageState extends State<CourseSchedulePage> {
+  late CourseRecord _course;
   List<MeetingRecord> _meetings = const [];
   bool _loading = true;
   bool _loadFailed = false;
   String? _deletingId;
-  bool _generating = false;
+  bool _syncing = false;
 
   SessionGenerator get _generator =>
       widget.generator ?? SessionGenerator(tz.getLocation('America/Sao_Paulo'));
@@ -66,6 +70,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
   @override
   void initState() {
     super.initState();
+    _course = widget.course;
     _load();
   }
 
@@ -123,15 +128,19 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         createdAt: existing?.createdAt ?? timestamp,
         updatedAt: timestamp,
       );
+      final proposedMeetings = _sorted([
+        for (final item in _meetings)
+          if (item.id != meeting.id) item,
+        meeting,
+      ]);
+      final plan = await _planFor(proposedMeetings);
+      if (!await _allowDestructive(plan)) {
+        return 'Alteração cancelada para preservar frequências registradas.';
+      }
       await widget.repository.saveMeeting(widget.course.id, meeting);
+      await _applyPlan(plan);
       if (mounted) {
-        setState(() {
-          _meetings = _sorted([
-            for (final item in _meetings)
-              if (item.id != meeting.id) item,
-            meeting,
-          ]);
-        });
+        setState(() => _meetings = proposedMeetings);
       }
       return null;
     } catch (_) {
@@ -163,13 +172,15 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     if (confirmed != true || !mounted) return;
     setState(() => _deletingId = meeting.id);
     try {
+      final proposedMeetings = _meetings
+          .where((item) => item.id != meeting.id)
+          .toList(growable: false);
+      final plan = await _planFor(proposedMeetings);
+      if (!await _allowDestructive(plan)) return;
       await widget.repository.deleteMeeting(widget.course.id, meeting.id);
+      await _applyPlan(plan);
       if (mounted) {
-        setState(
-          () => _meetings = _meetings
-              .where((item) => item.id != meeting.id)
-              .toList(growable: false),
-        );
+        setState(() => _meetings = proposedMeetings);
       }
     } catch (_) {
       if (mounted) {
@@ -182,56 +193,109 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     }
   }
 
-  Future<void> _generateSessions() async {
-    if (_meetings.isEmpty) {
-      _message('Cadastre pelo menos um horário antes de gerar sessões.');
-      return;
-    }
-    final range = await showDialog<_GenerationRange>(
+  Future<void> _choosePeriod() async {
+    final now = widget.now();
+    final currentRange = _course.startsOn == null
+        ? null
+        : DateTimeRange(start: _course.startsOn!, end: _course.endsOn!);
+    final range = await showDialog<DateTimeRange>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const _GenerationRangeDialog(),
+      builder: (_) => CourseDateRangePickerDialog(
+        initialMonth: currentRange?.start ?? now,
+        firstDate: DateTime(now.year - 5),
+        lastDate: DateTime(now.year + 5, 12, 31),
+        highlightedWeekdays: _meetings.map((item) => item.weekday).toSet(),
+        initialRange: currentRange,
+      ),
     );
     if (range == null || !mounted) return;
-
-    setState(() => _generating = true);
-    try {
-      final count = await runAuditedOperation<int>(
-        logger: widget.logger,
-        operation: AuditedOperation.sessionGeneration,
-        action: () async {
-          final existing = await widget.sessionRepository.listSessions(
-            widget.course.id,
-          );
-          final currentTime = widget.now();
-          final generated = _generator.generateMissing(
-            meetings: _meetings,
-            existingSessions: existing,
-            startDate: range.start,
-            endDate: range.end,
-            notBefore: tz.TZDateTime.from(currentTime, _generator.location),
-            now: currentTime,
-          );
-          for (final session in generated) {
-            await widget.sessionRepository.saveSession(
-              widget.course.id,
-              session,
-            );
-          }
-          return generated.length;
-        },
-      );
-      if (!mounted) return;
-      _message(switch (count) {
-        0 => 'Nenhuma sessão nova para criar.',
-        1 => '1 sessão criada.',
-        _ => '$count sessões criadas.',
-      });
-    } catch (_) {
-      if (mounted) _message('Não foi possível gerar as sessões.');
-    } finally {
-      if (mounted) setState(() => _generating = false);
+    if (widget.courseRepository == null) {
+      _message('Não foi possível salvar o período.');
+      return;
     }
+    setState(() => _syncing = true);
+    try {
+      final plan = await _planFor(
+        _meetings,
+        startDate: range.start,
+        endDate: range.end,
+      );
+      if (!await _allowDestructive(plan)) return;
+      final updated = _copyCourseWithRange(_course, range, widget.now());
+      await widget.courseRepository!.saveCourse(updated);
+      await _applyPlan(plan);
+      if (mounted) setState(() => _course = updated);
+      _message('Período salvo e calendário atualizado.');
+    } catch (_) {
+      if (mounted) {
+        _message('Não foi possível salvar o período e atualizar o calendário.');
+      }
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  Future<SessionReconciliation?> _planFor(
+    List<MeetingRecord> meetings, {
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    final start = startDate ?? _course.startsOn;
+    final end = endDate ?? _course.endsOn;
+    if (start == null || end == null) return null;
+    final existing = await widget.sessionRepository.listSessions(
+      widget.course.id,
+    );
+    return _generator.reconcile(
+      meetings: meetings,
+      existingSessions: existing,
+      startDate: start,
+      endDate: end,
+      now: widget.now(),
+    );
+  }
+
+  Future<bool> _allowDestructive(SessionReconciliation? plan) async {
+    final count = plan?.destructiveDeleteCount ?? 0;
+    if (count == 0 || !mounted) return true;
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: const Text('Há frequências registradas'),
+            content: Text(
+              '$count ${count == 1 ? 'aula registrada será removida' : 'aulas registradas serão removidas'} com esta alteração.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Manter como está'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Alterar mesmo assim'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _applyPlan(SessionReconciliation? plan) async {
+    if (plan == null) return;
+    await runAuditedOperation<void>(
+      logger: widget.logger,
+      operation: AuditedOperation.sessionGeneration,
+      action: () async {
+        for (final session in plan.upserts) {
+          await widget.sessionRepository.saveSession(widget.course.id, session);
+        }
+        for (final id in plan.deleteIds) {
+          await widget.sessionRepository.deleteSession(widget.course.id, id);
+        }
+      },
+    );
   }
 
   void _message(String message) {
@@ -285,20 +349,17 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       case _ScheduleAction.exceptions:
         _openCalendarExceptions();
         return;
-      case _ScheduleAction.generate:
-        _generateSessions();
-        return;
     }
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: Text('Grade • ${widget.course.code}'),
+      title: Text('Grade • ${_course.code}'),
       actions: [
         PopupMenuButton<_ScheduleAction>(
           tooltip: 'Ações da disciplina',
-          enabled: !_generating,
+          enabled: !_syncing,
           onSelected: _selectAction,
           itemBuilder: (_) => const [
             PopupMenuItem(
@@ -313,21 +374,17 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
               value: _ScheduleAction.exceptions,
               child: Text('Exceções de calendário'),
             ),
-            PopupMenuItem(
-              value: _ScheduleAction.generate,
-              child: Text('Gerar sessões'),
-            ),
           ],
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Center(child: Text(_generating ? 'Gerando…' : 'Ações')),
+            child: Center(child: Text(_syncing ? 'Sincronizando…' : 'Ações')),
           ),
         ),
       ],
     ),
     floatingActionButton: FloatingActionButton.extended(
       key: const Key('add-meeting'),
-      onPressed: _openEditor,
+      onPressed: _syncing ? null : _openEditor,
       icon: const Icon(Icons.add),
       label: const Text('Adicionar horário'),
     ),
@@ -361,156 +418,118 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         ),
       );
     }
-    if (_meetings.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.calendar_view_week_outlined, size: 48),
-            SizedBox(height: 16),
-            Text('Nenhum horário cadastrado'),
-            SizedBox(height: 6),
-            Text('Adicione os encontros semanais desta disciplina.'),
-          ],
+    return ListView(
+      children: [
+        _PeriodCard(
+          course: _course,
+          syncing: _syncing,
+          onPressed: _choosePeriod,
         ),
-      );
-    }
-    return ListView.separated(
-      itemCount: _meetings.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final meeting = _meetings[index];
-        final weekday = _weekdayLabel(meeting.weekday);
-        return Card(
-          elevation: 0,
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 20,
-              vertical: 8,
+        const SizedBox(height: 16),
+        if (_meetings.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 48),
+            child: Column(
+              children: [
+                Icon(Icons.calendar_view_week_outlined, size: 48),
+                SizedBox(height: 16),
+                Text('Nenhum horário cadastrado'),
+                SizedBox(height: 6),
+                Text('Adicione os encontros semanais desta disciplina.'),
+              ],
             ),
-            title: Text(
-              '$weekday • ${_time(meeting.startMinutes)}–'
-              '${_time(meeting.endMinutes)}',
-            ),
-            subtitle: Text(
-              '${meeting.lessonCount.value} '
-              '${meeting.lessonCount.value == 1 ? 'aula' : 'aulas'} • '
-              '${meeting.callCount.value} '
-              '${meeting.callCount.value == 1 ? 'chamada' : 'chamadas'}',
-            ),
-            trailing: _deletingId == meeting.id
-                ? const SizedBox.square(
-                    dimension: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: 'Editar horário de ${weekday.toLowerCase()}',
-                        onPressed: () => _openEditor(meeting),
-                        icon: const Icon(Icons.edit_outlined),
-                      ),
-                      IconButton(
-                        tooltip: 'Excluir horário de ${weekday.toLowerCase()}',
-                        onPressed: () => _confirmDelete(meeting),
-                        icon: const Icon(Icons.delete_outline),
-                      ),
-                    ],
+          )
+        else
+          for (final meeting in _meetings) ...[
+            Builder(
+              builder: (context) {
+                final weekday = _weekdayLabel(meeting.weekday);
+                return Card(
+                  elevation: 0,
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 8,
+                    ),
+                    title: Text(
+                      '$weekday • ${_time(meeting.startMinutes)}–'
+                      '${_time(meeting.endMinutes)}',
+                    ),
+                    subtitle: Text(
+                      '${meeting.lessonCount.value} '
+                      '${meeting.lessonCount.value == 1 ? 'aula' : 'aulas'} • '
+                      '${meeting.callCount.value} '
+                      '${meeting.callCount.value == 1 ? 'chamada' : 'chamadas'}',
+                    ),
+                    trailing: _deletingId == meeting.id
+                        ? const SizedBox.square(
+                            dimension: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                tooltip:
+                                    'Editar horário de ${weekday.toLowerCase()}',
+                                onPressed: _syncing
+                                    ? null
+                                    : () => _openEditor(meeting),
+                                icon: const Icon(Icons.edit_outlined),
+                              ),
+                              IconButton(
+                                tooltip:
+                                    'Excluir horário de ${weekday.toLowerCase()}',
+                                onPressed: _syncing
+                                    ? null
+                                    : () => _confirmDelete(meeting),
+                                icon: const Icon(Icons.delete_outline),
+                              ),
+                            ],
+                          ),
                   ),
-          ),
-        );
-      },
+                );
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+      ],
     );
   }
 }
 
-final class _GenerationRange {
-  const _GenerationRange(this.start, this.end);
+class _PeriodCard extends StatelessWidget {
+  const _PeriodCard({
+    required this.course,
+    required this.syncing,
+    required this.onPressed,
+  });
 
-  final DateTime start;
-  final DateTime end;
-}
-
-class _GenerationRangeDialog extends StatefulWidget {
-  const _GenerationRangeDialog();
-
-  @override
-  State<_GenerationRangeDialog> createState() => _GenerationRangeDialogState();
-}
-
-class _GenerationRangeDialogState extends State<_GenerationRangeDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _start = TextEditingController();
-  final _end = TextEditingController();
-  String? _rangeError;
+  final CourseRecord course;
+  final bool syncing;
+  final VoidCallback onPressed;
 
   @override
-  void dispose() {
-    _start.dispose();
-    _end.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    if (!_formKey.currentState!.validate()) return;
-    final start = _parseDate(_start.text)!;
-    final end = _parseDate(_end.text)!;
-    if (end.isBefore(start)) {
-      setState(() => _rangeError = 'A data final deve ser igual ou posterior.');
-      return;
-    }
-    Navigator.of(context).pop(_GenerationRange(start, end));
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Gerar sessões'),
-    content: SizedBox(
-      width: 420,
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextFormField(
-              key: const Key('generation-start-date'),
-              controller: _start,
-              decoration: const InputDecoration(
-                labelText: 'Data inicial',
-                hintText: 'AAAA-MM-DD',
-              ),
-              validator: _dateValidator,
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              key: const Key('generation-end-date'),
-              controller: _end,
-              decoration: const InputDecoration(
-                labelText: 'Data final',
-                hintText: 'AAAA-MM-DD',
-              ),
-              validator: _dateValidator,
-            ),
-            if (_rangeError != null) ...[
-              const SizedBox(height: 16),
-              Text(
-                _rangeError!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ],
-          ],
+  Widget build(BuildContext context) {
+    final hasRange = course.startsOn != null;
+    return Card(
+      elevation: 0,
+      child: ListTile(
+        leading: const Icon(Icons.date_range_outlined),
+        title: const Text('Período das aulas'),
+        subtitle: Text(
+          hasRange
+              ? '${_shortDate(course.startsOn!)} – ${_shortDate(course.endsOn!)}'
+              : 'Defina o início e o fim para montar o calendário.',
+        ),
+        trailing: TextButton(
+          key: const Key('edit-course-period'),
+          onPressed: syncing ? null : onPressed,
+          child: Text(hasRange ? 'Alterar' : 'Definir'),
         ),
       ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.of(context).pop(),
-        child: const Text('Cancelar'),
-      ),
-      FilledButton(onPressed: _submit, child: const Text('Gerar')),
-    ],
-  );
+    );
+  }
 }
 
 final class _MeetingInput {
@@ -728,22 +747,6 @@ int? _parseTime(String value) {
   return hour * 60 + minute;
 }
 
-String? _dateValidator(String? value) => _parseDate(value ?? '') == null
-    ? 'Use uma data válida no formato AAAA-MM-DD.'
-    : null;
-
-DateTime? _parseDate(String value) {
-  final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(value.trim());
-  if (match == null) return null;
-  final year = int.parse(match.group(1)!);
-  final month = int.parse(match.group(2)!);
-  final day = int.parse(match.group(3)!);
-  final parsed = DateTime(year, month, day);
-  return parsed.year == year && parsed.month == month && parsed.day == day
-      ? parsed
-      : null;
-}
-
 String _time(int minutes) =>
     '${(minutes ~/ 60).toString().padLeft(2, '0')}:'
     '${(minutes % 60).toString().padLeft(2, '0')}';
@@ -757,6 +760,26 @@ String _weekdayLabel(int weekday) => const {
   DateTime.saturday: 'Sábado',
   DateTime.sunday: 'Domingo',
 }[weekday]!;
+
+String _shortDate(DateTime date) =>
+    '${date.day.toString().padLeft(2, '0')}/'
+    '${date.month.toString().padLeft(2, '0')}/${date.year}';
+
+CourseRecord _copyCourseWithRange(
+  CourseRecord course,
+  DateTimeRange range,
+  DateTime now,
+) => CourseRecord(
+  id: course.id,
+  code: course.code,
+  name: course.name,
+  workload: course.workload,
+  term: course.term,
+  startsOn: DateTime.utc(range.start.year, range.start.month, range.start.day),
+  endsOn: DateTime.utc(range.end.year, range.end.month, range.end.day),
+  createdAt: course.createdAt,
+  updatedAt: now.toUtc(),
+);
 
 String _newMeetingId() {
   final random = Random.secure();

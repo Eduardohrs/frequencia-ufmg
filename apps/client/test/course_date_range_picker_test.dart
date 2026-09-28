@@ -82,6 +82,9 @@ void main() {
     await tester.tap(find.byKey(const Key('date-2026-10-20')));
     await tester.pumpAndSettle();
     expect(find.text('Escolha o último dia'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('date-2026-10-10')));
+    await tester.pumpAndSettle();
+    expect(find.text('Escolha o último dia'), findsOneWidget);
     await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();
   });
@@ -97,7 +100,7 @@ void main() {
       MaterialApp(
         home: CourseDateRangePickerDialog(
           initialMonth: DateTime(2026, 10),
-          firstDate: DateTime(2026, 10, 1),
+          firstDate: DateTime(2026, 10, 10),
           lastDate: DateTime(2026, 12, 31),
           highlightedWeekdays: const {},
         ),
