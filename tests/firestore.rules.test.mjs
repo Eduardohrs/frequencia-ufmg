@@ -314,6 +314,12 @@ describe("session documents", () => {
     await assertSucceeds(setDoc(doc(db, sessionPath("alice", "unresolved")), session()));
     await assertSucceeds(
       setDoc(
+        doc(db, sessionPath("alice", "no-call")),
+        session({ calendarStatus: "no_call" }),
+      ),
+    );
+    await assertSucceeds(
+      setDoc(
         doc(db, sessionPath("alice", "pending")),
         session({
           firstPing: "indisponivel",

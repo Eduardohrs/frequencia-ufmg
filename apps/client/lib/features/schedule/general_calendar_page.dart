@@ -293,8 +293,9 @@ String _time(DateTime value) =>
     '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
 String _status(SessionCalendarStatus status) => switch (status) {
   SessionCalendarStatus.scheduled => 'Programada',
-  SessionCalendarStatus.cancelled => 'Cancelada',
-  SessionCalendarStatus.holiday => 'Feriado',
+  SessionCalendarStatus.cancelled ||
+  SessionCalendarStatus.holiday => 'Cancelada/feriado',
+  SessionCalendarStatus.noCall => 'Aula sem chamada',
   SessionCalendarStatus.makeup => 'Reposição',
 };
 String _monthName(int month) => const [

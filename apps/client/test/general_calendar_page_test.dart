@@ -63,7 +63,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('DCC203 • 16/09/2026'), findsNWidgets(3));
     expect(find.text('MAT001 • 17/09/2026'), findsOneWidget);
-    expect(find.text('10:00 • Feriado'), findsOneWidget);
+    expect(find.text('10:00 • Cancelada/feriado'), findsOneWidget);
     expect(find.text('12:00 • Reposição'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('calendar-course-filter')));

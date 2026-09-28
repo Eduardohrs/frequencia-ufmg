@@ -145,7 +145,8 @@ class _AttendancePageState extends State<AttendancePage> {
         final local = tz.TZDateTime.from(session.startsAt, widget.location);
         final inactive =
             session.calendarStatus == SessionCalendarStatus.cancelled ||
-            session.calendarStatus == SessionCalendarStatus.holiday;
+            session.calendarStatus == SessionCalendarStatus.holiday ||
+            session.calendarStatus == SessionCalendarStatus.noCall;
         return Card(
           elevation: 0,
           child: ListTile(
@@ -337,10 +338,12 @@ String _statusName(SituacaoFrequencia status) => switch (status) {
   SituacaoFrequencia.pending => 'Pendente',
 };
 
-String _calendarLabel(SessionCalendarStatus status) =>
-    status == SessionCalendarStatus.holiday
-    ? 'Feriado • sem frequência'
-    : 'Cancelada • sem frequência';
+String _calendarLabel(SessionCalendarStatus status) => switch (status) {
+  SessionCalendarStatus.noCall => 'Aula sem chamada • sem frequência',
+  SessionCalendarStatus.cancelled ||
+  SessionCalendarStatus.holiday => 'Cancelada/feriado • sem frequência',
+  _ => '',
+};
 
 String _date(DateTime value) =>
     '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';

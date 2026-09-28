@@ -15,7 +15,7 @@ void main() {
   final now = DateTime.utc(2026, 8, 1, 12);
   const courseId = 'poo';
 
-  testWidgets('marks only the selected session as cancelled or holiday', (
+  testWidgets('marks a session as cancelled or without roll call', (
     tester,
   ) async {
     final first = _session('first', DateTime.utc(2026, 8, 3, 11), now);
@@ -38,7 +38,7 @@ void main() {
 
     await tester.tap(find.byTooltip('Alterar sessão de 03/08/2026'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Cancelar aula'));
+    await tester.tap(find.text('Cancelada/feriado'));
     await tester.pumpAndSettle();
 
     expect(
@@ -49,7 +49,7 @@ void main() {
       repository.byId('second').calendarStatus,
       SessionCalendarStatus.scheduled,
     );
-    expect(find.text('Cancelada'), findsOneWidget);
+    expect(find.text('Cancelada/feriado'), findsOneWidget);
     expect(
       logger.events,
       containsAllInOrder([
@@ -60,13 +60,21 @@ void main() {
 
     await tester.tap(find.byTooltip('Alterar sessão de 05/08/2026'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Marcar feriado'));
+    await tester.tap(find.text('Aula sem chamada'));
     await tester.pumpAndSettle();
     expect(
       repository.byId('second').calendarStatus,
-      SessionCalendarStatus.holiday,
+      SessionCalendarStatus.noCall,
     );
-    expect(find.text('Feriado'), findsOneWidget);
+    expect(find.text('Aula sem chamada'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Entenda os tipos de aula'));
+    await tester.pumpAndSettle();
+    expect(find.text('Como as aulas entram no cálculo'), findsOneWidget);
+    expect(find.textContaining('exercício ou opcional'), findsOneWidget);
+    await tester.tap(find.text('Entendi'));
+    await tester.pumpAndSettle();
+    expect(find.text('Como as aulas entram no cálculo'), findsNothing);
   });
 
   testWidgets('restores a calendar exception without losing attendance data', (
@@ -149,7 +157,7 @@ void main() {
 
     await tester.tap(find.byTooltip('Alterar sessão de 04/08/2026'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Cancelar aula'));
+    await tester.tap(find.text('Cancelada/feriado'));
     await tester.pumpAndSettle();
     expect(
       repository.byId('makeup-1').calendarStatus,
@@ -181,7 +189,7 @@ void main() {
     repository.saveError = StateError('offline');
     await tester.tap(find.byTooltip('Alterar sessão de 03/08/2026'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Cancelar aula'));
+    await tester.tap(find.text('Cancelada/feriado'));
     await tester.pumpAndSettle();
     expect(find.text('Não foi possível alterar a sessão.'), findsOneWidget);
     expect(

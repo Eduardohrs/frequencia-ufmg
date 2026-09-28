@@ -27,6 +27,7 @@ void main() {
         calendarStatus: SessionCalendarStatus.cancelled,
       ),
       _session('holiday', now, calendarStatus: SessionCalendarStatus.holiday),
+      _session('no-call', now, calendarStatus: SessionCalendarStatus.noCall),
     ]);
 
     expect(summary.sessions.map((item) => item.id), [
@@ -35,8 +36,9 @@ void main() {
       'pending',
     ]);
     expect(summary.consumedAbsences, 2);
-    expect(summary.absenceLimit, 15);
-    expect(summary.remainingAbsences, 13);
+    expect(summary.eligibleLessons, 6);
+    expect(summary.absenceLimit, 1);
+    expect(summary.remainingAbsences, 0);
     expect(summary.pendingSessions, 1);
   });
 
@@ -44,7 +46,7 @@ void main() {
     final summary = CourseAbsenceSummary.from(calculus, [
       _session('over-limit', now, absences: 2),
     ]);
-    expect(summary.absenceLimit, 1);
+    expect(summary.absenceLimit, 0);
     expect(summary.remainingAbsences, 0);
   });
 
@@ -85,9 +87,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Faltas restantes'), findsOneWidget);
-    expect(find.text('12 faltas restantes'), findsOneWidget);
+    expect(find.text('0 faltas restantes'), findsOneWidget);
     expect(
-      find.text('3 de 15 faltas usadas • 1 sessão pendente'),
+      find.text('3 de 2 faltas usadas • 1 sessão pendente'),
       findsOneWidget,
     );
     expect(find.text('1 falta restante'), findsOneWidget);
@@ -132,7 +134,7 @@ void main() {
     repository.error = null;
     await tester.tap(find.text('Tentar novamente'));
     await tester.pumpAndSettle();
-    expect(find.text('15 faltas restantes'), findsOneWidget);
+    expect(find.text('0 faltas restantes'), findsOneWidget);
   });
 
   testWidgets('shows the empty state without courses', (tester) async {
