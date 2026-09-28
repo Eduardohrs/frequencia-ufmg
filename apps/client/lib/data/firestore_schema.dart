@@ -7,6 +7,7 @@ enum FirestoreFieldType {
   integer,
   string,
   timestamp,
+  nullableTimestamp,
   nullableInteger,
   nullableString;
 
@@ -14,6 +15,7 @@ enum FirestoreFieldType {
     FirestoreFieldType.integer => value is int,
     FirestoreFieldType.string => value is String,
     FirestoreFieldType.timestamp => value is Timestamp,
+    FirestoreFieldType.nullableTimestamp => value == null || value is Timestamp,
     FirestoreFieldType.nullableInteger => value == null || value is int,
     FirestoreFieldType.nullableString => value == null || value is String,
   };
@@ -51,6 +53,8 @@ abstract final class FirestoreSchema {
     'name': FirestoreFieldType.string,
     'workload': FirestoreFieldType.integer,
     'term': FirestoreFieldType.string,
+    'startsOn': FirestoreFieldType.nullableTimestamp,
+    'endsOn': FirestoreFieldType.nullableTimestamp,
     'createdAt': FirestoreFieldType.timestamp,
     'updatedAt': FirestoreFieldType.timestamp,
   });
@@ -90,6 +94,14 @@ abstract final class FirestoreSchema {
     }
     if ((document['workload']! as int) <= 0) {
       throw const FormatException('workload must be positive');
+    }
+    final startsOn = document['startsOn'] as Timestamp?;
+    final endsOn = document['endsOn'] as Timestamp?;
+    if ((startsOn == null) != (endsOn == null)) {
+      throw const FormatException('course date range must be complete');
+    }
+    if (startsOn != null && endsOn!.toDate().isBefore(startsOn.toDate())) {
+      throw const FormatException('course end date cannot precede start date');
     }
     _validateAuditTimestamps(document);
   }

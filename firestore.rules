@@ -81,7 +81,7 @@ service cloud.firestore {
     }
 
     function isValidCourse(data) {
-      let fields = [
+      let legacyFields = [
         'schemaVersion',
         'code',
         'name',
@@ -90,7 +90,10 @@ service cloud.firestore {
         'createdAt',
         'updatedAt'
       ];
-      return hasExactFields(data, fields)
+      let datedFields = legacyFields.concat(['startsOn', 'endsOn']);
+      let startsOn = data.get('startsOn', null);
+      let endsOn = data.get('endsOn', null);
+      return (hasExactFields(data, legacyFields) || hasExactFields(data, datedFields))
         && data.schemaVersion == 1
         && data.code is string
         && data.code.size() >= 1
@@ -104,6 +107,8 @@ service cloud.firestore {
         && data.workload > 0
         && data.term is string
         && data.term.matches('^[0-9]{4}-[12]$')
+        && ((startsOn == null && endsOn == null)
+          || (startsOn is timestamp && endsOn is timestamp && startsOn <= endsOn))
         && hasValidAuditFields(data);
     }
 
