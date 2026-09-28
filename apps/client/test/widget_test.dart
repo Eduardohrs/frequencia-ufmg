@@ -25,6 +25,7 @@ void main() {
     app.appLoggerFactory = () => logger;
     app.courseRepositoryFactory = (_, _) => _FakeCourseRepository();
     app.meetingRepositoryFactory = (_, _) => _FakeMeetingRepository();
+    app.sessionRepositoryFactory = (_, _) => _FakeSessionRepository();
     final previousFlutterHandler = FlutterError.onError;
     final previousPlatformHandler = PlatformDispatcher.instance.onError;
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -53,6 +54,7 @@ void main() {
     app.appLoggerFactory = () => logger;
     app.courseRepositoryFactory = (_, _) => _FakeCourseRepository();
     app.meetingRepositoryFactory = (_, _) => _FakeMeetingRepository();
+    app.sessionRepositoryFactory = (_, _) => _FakeSessionRepository();
     final previousFlutterHandler = FlutterError.onError;
     final previousPlatformHandler = PlatformDispatcher.instance.onError;
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -90,6 +92,7 @@ void main() {
       return _FakeCourseRepository();
     };
     app.meetingRepositoryFactory = (_, _) => _FakeMeetingRepository();
+    app.sessionRepositoryFactory = (_, _) => _FakeSessionRepository();
     final previousFlutterHandler = FlutterError.onError;
     final previousPlatformHandler = PlatformDispatcher.instance.onError;
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -117,6 +120,7 @@ void main() {
         logger: logger,
         courseRepositoryFactory: (_) => _FakeCourseRepository(),
         meetingRepositoryFactory: (_) => _FakeMeetingRepository(),
+        sessionRepositoryFactory: (_) => _FakeSessionRepository(),
       ),
     );
 
@@ -146,6 +150,7 @@ void main() {
         logger: logger,
         courseRepositoryFactory: (_) => _FakeCourseRepository(),
         meetingRepositoryFactory: (_) => _FakeMeetingRepository(),
+        sessionRepositoryFactory: (_) => _FakeSessionRepository(),
       ),
     );
 
@@ -176,6 +181,7 @@ void main() {
         logger: logger,
         courseRepositoryFactory: (_) => _FakeCourseRepository(),
         meetingRepositoryFactory: (_) => _FakeMeetingRepository(),
+        sessionRepositoryFactory: (_) => _FakeSessionRepository(),
       ),
     );
 
@@ -234,6 +240,17 @@ final class _FakeMeetingRepository implements MeetingRepository {
 
   @override
   Future<void> saveMeeting(String courseId, MeetingRecord meeting) async {}
+}
+
+final class _FakeSessionRepository implements SessionRepository {
+  @override
+  Future<void> deleteSession(String courseId, String sessionId) async {}
+
+  @override
+  Future<List<SessionRecord>> listSessions(String courseId) async => [];
+
+  @override
+  Future<void> saveSession(String courseId, SessionRecord session) async {}
 }
 
 class _FakeAuthGateway implements AuthGateway {

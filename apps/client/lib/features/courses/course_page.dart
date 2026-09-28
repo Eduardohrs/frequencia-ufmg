@@ -22,6 +22,7 @@ class CoursePage extends StatefulWidget {
   CoursePage({
     required this.repository,
     required this.meetingRepository,
+    required this.sessionRepository,
     required this.user,
     required this.logger,
     required this.onSignOut,
@@ -33,6 +34,7 @@ class CoursePage extends StatefulWidget {
 
   final CourseRepository repository;
   final MeetingRepository meetingRepository;
+  final SessionRepository sessionRepository;
   final AuthUser user;
   final AppLogger logger;
   final Future<void> Function() onSignOut;
@@ -94,6 +96,8 @@ class _CoursePageState extends State<CoursePage> {
       builder: (context) => CourseSchedulePage(
         course: course,
         repository: widget.meetingRepository,
+        sessionRepository: widget.sessionRepository,
+        logger: widget.logger,
       ),
     ),
   );

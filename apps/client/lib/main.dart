@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:timezone/data/latest.dart' as tz_data;
 
 import 'auth/auth_gate.dart';
 import 'auth/auth_gateway.dart';
@@ -21,6 +22,8 @@ typedef MainCourseRepositoryFactory =
     CourseRepository Function(String userId, AppLogger logger);
 typedef MainMeetingRepositoryFactory =
     MeetingRepository Function(String userId, AppLogger logger);
+typedef MainSessionRepositoryFactory =
+    SessionRepository Function(String userId, AppLogger logger);
 
 @visibleForTesting
 AuthGatewayFactory authGatewayFactory = FirebaseAuthGateway.new;
@@ -36,8 +39,13 @@ MainCourseRepositoryFactory courseRepositoryFactory =
 MainMeetingRepositoryFactory meetingRepositoryFactory =
     createFirebaseMeetingRepository;
 
+@visibleForTesting
+MainSessionRepositoryFactory sessionRepositoryFactory =
+    createFirebaseSessionRepository;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  tz_data.initializeTimeZones();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   if (kIsWeb) {
     // coverage:ignore-start
@@ -54,6 +62,8 @@ Future<void> main() async {
           courseRepositoryFactory(userId, logger),
       meetingRepositoryFactory: (userId) =>
           meetingRepositoryFactory(userId, logger),
+      sessionRepositoryFactory: (userId) =>
+          sessionRepositoryFactory(userId, logger),
     ),
   );
   await logger.logEvent('app_started');
@@ -65,6 +75,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
     required this.logger,
     required this.courseRepositoryFactory,
     required this.meetingRepositoryFactory,
+    required this.sessionRepositoryFactory,
     super.key,
   });
 
@@ -72,6 +83,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
   final AppLogger logger;
   final CourseRepository Function(String userId) courseRepositoryFactory;
   final MeetingRepository Function(String userId) meetingRepositoryFactory;
+  final SessionRepository Function(String userId) sessionRepositoryFactory;
 
   @override
   Widget build(BuildContext context) {
@@ -101,6 +113,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
         logger: logger,
         courseRepositoryFactory: courseRepositoryFactory,
         meetingRepositoryFactory: meetingRepositoryFactory,
+        sessionRepositoryFactory: sessionRepositoryFactory,
       ),
     );
   }

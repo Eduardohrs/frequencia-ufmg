@@ -118,6 +118,7 @@ void main() {
         home: CoursePage(
           repository: repository,
           meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
           user: user,
           logger: logger,
           onSignOut: () async {},
@@ -225,6 +226,7 @@ void main() {
         home: CoursePage(
           repository: repository,
           meetingRepository: meetingRepository,
+          sessionRepository: _FakeSessionRepository(),
           user: user,
           logger: _RecordingAppLogger(),
           onSignOut: () async {},
@@ -364,6 +366,7 @@ void main() {
         home: CoursePage(
           repository: repository,
           meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
           user: user,
           logger: _RecordingAppLogger(),
           onSignOut: () async => logoutCalls++,
@@ -393,6 +396,7 @@ void main() {
         home: CoursePage(
           repository: repository,
           meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
           user: user,
           logger: _RecordingAppLogger(),
           onSignOut: () async {},
@@ -455,6 +459,7 @@ void main() {
         home: CoursePage(
           repository: repository,
           meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
           user: user,
           logger: _RecordingAppLogger(),
           onSignOut: () async {},
@@ -512,6 +517,7 @@ Widget _app(
   home: CoursePage(
     repository: repository,
     meetingRepository: _FakeMeetingRepository(),
+    sessionRepository: _FakeSessionRepository(),
     user: user,
     logger: logger ?? _RecordingAppLogger(),
     onSignOut: () async {},
@@ -563,6 +569,17 @@ final class _FakeMeetingRepository implements MeetingRepository {
 
   @override
   Future<void> saveMeeting(String courseId, MeetingRecord meeting) async {}
+}
+
+final class _FakeSessionRepository implements SessionRepository {
+  @override
+  Future<void> deleteSession(String courseId, String sessionId) async {}
+
+  @override
+  Future<List<SessionRecord>> listSessions(String courseId) async => [];
+
+  @override
+  Future<void> saveSession(String courseId, SessionRecord session) async {}
 }
 
 final class _RecordingDocumentStore implements DocumentStore {

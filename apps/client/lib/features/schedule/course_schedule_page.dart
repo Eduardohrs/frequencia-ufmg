@@ -1,10 +1,14 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:timezone/timezone.dart' as tz;
 
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../domain/attendance.dart';
+import '../../observability/app_logger.dart';
+import '../../observability/audited_operation.dart';
+import 'session_generator.dart';
 
 typedef MeetingIdGenerator = String Function();
 typedef CurrentTime = DateTime Function();
@@ -15,6 +19,9 @@ class CourseSchedulePage extends StatefulWidget {
   CourseSchedulePage({
     required this.course,
     required this.repository,
+    required this.sessionRepository,
+    required this.logger,
+    this.generator,
     MeetingIdGenerator? idGenerator,
     CurrentTime? now,
     super.key,
@@ -23,6 +30,9 @@ class CourseSchedulePage extends StatefulWidget {
 
   final CourseRecord course;
   final MeetingRepository repository;
+  final SessionRepository sessionRepository;
+  final AppLogger logger;
+  final SessionGenerator? generator;
   final MeetingIdGenerator idGenerator;
   final CurrentTime now;
 
@@ -35,6 +45,10 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
   bool _loading = true;
   bool _loadFailed = false;
   String? _deletingId;
+  bool _generating = false;
+
+  SessionGenerator get _generator =>
+      widget.generator ?? SessionGenerator(tz.getLocation('America/Sao_Paulo'));
 
   @override
   void initState() {
@@ -148,9 +162,82 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     }
   }
 
+  Future<void> _generateSessions() async {
+    if (_meetings.isEmpty) {
+      _message('Cadastre pelo menos um horário antes de gerar sessões.');
+      return;
+    }
+    final range = await showDialog<_GenerationRange>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _GenerationRangeDialog(),
+    );
+    if (range == null || !mounted) return;
+
+    setState(() => _generating = true);
+    try {
+      final count = await runAuditedOperation<int>(
+        logger: widget.logger,
+        operation: AuditedOperation.sessionGeneration,
+        action: () async {
+          final existing = await widget.sessionRepository.listSessions(
+            widget.course.id,
+          );
+          final currentTime = widget.now();
+          final generated = _generator.generateMissing(
+            meetings: _meetings,
+            existingSessions: existing,
+            startDate: range.start,
+            endDate: range.end,
+            notBefore: tz.TZDateTime.from(currentTime, _generator.location),
+            now: currentTime,
+          );
+          for (final session in generated) {
+            await widget.sessionRepository.saveSession(
+              widget.course.id,
+              session,
+            );
+          }
+          return generated.length;
+        },
+      );
+      if (!mounted) return;
+      _message(switch (count) {
+        0 => 'Nenhuma sessão nova para criar.',
+        1 => '1 sessão criada.',
+        _ => '$count sessões criadas.',
+      });
+    } catch (_) {
+      if (mounted) _message('Não foi possível gerar as sessões.');
+    } finally {
+      if (mounted) setState(() => _generating = false);
+    }
+  }
+
+  void _message(String message) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text('Grade • ${widget.course.code}')),
+    appBar: AppBar(
+      title: Text('Grade • ${widget.course.code}'),
+      actions: [
+        IconButton(
+          tooltip: 'Gerar sessões',
+          onPressed: _generating ? null : _generateSessions,
+          icon: _generating
+              ? const SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.event_repeat_outlined),
+        ),
+      ],
+    ),
     floatingActionButton: FloatingActionButton.extended(
       key: const Key('add-meeting'),
       onPressed: _openEditor,
@@ -249,6 +336,94 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       },
     );
   }
+}
+
+final class _GenerationRange {
+  const _GenerationRange(this.start, this.end);
+
+  final DateTime start;
+  final DateTime end;
+}
+
+class _GenerationRangeDialog extends StatefulWidget {
+  const _GenerationRangeDialog();
+
+  @override
+  State<_GenerationRangeDialog> createState() => _GenerationRangeDialogState();
+}
+
+class _GenerationRangeDialogState extends State<_GenerationRangeDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _start = TextEditingController();
+  final _end = TextEditingController();
+  String? _rangeError;
+
+  @override
+  void dispose() {
+    _start.dispose();
+    _end.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    final start = _parseDate(_start.text)!;
+    final end = _parseDate(_end.text)!;
+    if (end.isBefore(start)) {
+      setState(() => _rangeError = 'A data final deve ser igual ou posterior.');
+      return;
+    }
+    Navigator.of(context).pop(_GenerationRange(start, end));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Gerar sessões'),
+    content: SizedBox(
+      width: 420,
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextFormField(
+              key: const Key('generation-start-date'),
+              controller: _start,
+              decoration: const InputDecoration(
+                labelText: 'Data inicial',
+                hintText: 'AAAA-MM-DD',
+              ),
+              validator: _dateValidator,
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              key: const Key('generation-end-date'),
+              controller: _end,
+              decoration: const InputDecoration(
+                labelText: 'Data final',
+                hintText: 'AAAA-MM-DD',
+              ),
+              validator: _dateValidator,
+            ),
+            if (_rangeError != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                _rangeError!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancelar'),
+      ),
+      FilledButton(onPressed: _submit, child: const Text('Gerar')),
+    ],
+  );
 }
 
 final class _MeetingInput {
@@ -464,6 +639,22 @@ int? _parseTime(String value) {
   final minute = int.parse(match.group(2)!);
   if (hour > 23 || minute > 59) return null;
   return hour * 60 + minute;
+}
+
+String? _dateValidator(String? value) => _parseDate(value ?? '') == null
+    ? 'Use uma data válida no formato AAAA-MM-DD.'
+    : null;
+
+DateTime? _parseDate(String value) {
+  final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(value.trim());
+  if (match == null) return null;
+  final year = int.parse(match.group(1)!);
+  final month = int.parse(match.group(2)!);
+  final day = int.parse(match.group(3)!);
+  final parsed = DateTime(year, month, day);
+  return parsed.year == year && parsed.month == month && parsed.day == day
+      ? parsed
+      : null;
 }
 
 String _time(int minutes) =>

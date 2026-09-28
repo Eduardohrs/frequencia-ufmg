@@ -4,8 +4,14 @@ import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
 import 'package:frequencia_ufmg/features/schedule/course_schedule_page.dart';
+import 'package:frequencia_ufmg/features/schedule/session_generator.dart';
+import 'package:frequencia_ufmg/observability/app_logger.dart';
+import 'package:timezone/data/latest.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
 
 void main() {
+  tz_data.initializeTimeZones();
+  final location = tz.getLocation('America/Sao_Paulo');
   final now = DateTime.utc(2026, 9, 27, 12);
   final course = CourseRecord(
     id: 'poo',
@@ -26,6 +32,8 @@ void main() {
         home: CourseSchedulePage(
           course: course,
           repository: repository,
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
           now: () => now,
           idGenerator: () => 'meeting-1',
         ),
@@ -101,6 +109,8 @@ void main() {
         home: CourseSchedulePage(
           course: course,
           repository: repository,
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
           now: () => now,
           idGenerator: () => 'new-meeting',
         ),
@@ -143,7 +153,12 @@ void main() {
       ..listError = StateError('offline');
     await tester.pumpWidget(
       MaterialApp(
-        home: CourseSchedulePage(course: course, repository: repository),
+        home: CourseSchedulePage(
+          course: course,
+          repository: repository,
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -216,7 +231,12 @@ void main() {
     );
     await tester.pumpWidget(
       MaterialApp(
-        home: CourseSchedulePage(course: course, repository: repository),
+        home: CourseSchedulePage(
+          course: course,
+          repository: repository,
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -271,6 +291,238 @@ void main() {
     expect(created.callCount, NumeroChamadas.one);
     expect(created.endMinutes, 890);
   });
+
+  testWidgets('generates only missing future sessions for a date range', (
+    tester,
+  ) async {
+    final meeting = MeetingRecord(
+      id: 'monday-8',
+      weekday: DateTime.monday,
+      startMinutes: 480,
+      endMinutes: 580,
+      lessonCount: QuantidadeAulas.two,
+      callCount: NumeroChamadas.one,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final meetingRepository = _FakeMeetingRepository(meetings: [meeting]);
+    final sessionRepository = _FakeSessionRepository();
+    final logger = _RecordingAppLogger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: meetingRepository,
+          sessionRepository: sessionRepository,
+          logger: logger,
+          generator: SessionGenerator(location),
+          now: () => DateTime.utc(2026, 8, 1, 12),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Gerar sessões'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('generation-start-date')),
+      '2026-08-03',
+    );
+    await tester.enterText(
+      find.byKey(const Key('generation-end-date')),
+      '2026-08-10',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Gerar'));
+    await tester.pumpAndSettle();
+
+    expect(sessionRepository.sessions, hasLength(2));
+    expect(find.text('2 sessões criadas.'), findsOneWidget);
+    expect(
+      logger.events,
+      containsAllInOrder([
+        'session_generation_started',
+        'session_generation_succeeded',
+      ]),
+    );
+
+    await tester.tap(find.byTooltip('Gerar sessões'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('generation-start-date')),
+      '2026-08-03',
+    );
+    await tester.enterText(
+      find.byKey(const Key('generation-end-date')),
+      '2026-08-10',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Gerar'));
+    await tester.pumpAndSettle();
+    expect(sessionRepository.sessions, hasLength(2));
+    expect(find.text('Nenhuma sessão nova para criar.'), findsOneWidget);
+  });
+
+  testWidgets('validates and cancels the generation date range', (
+    tester,
+  ) async {
+    final meeting = MeetingRecord(
+      id: 'monday-8',
+      weekday: DateTime.monday,
+      startMinutes: 480,
+      endMinutes: 580,
+      lessonCount: QuantidadeAulas.two,
+      callCount: NumeroChamadas.one,
+      createdAt: now,
+      updatedAt: now,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: _FakeMeetingRepository(meetings: [meeting]),
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          generator: SessionGenerator(location),
+          now: () => DateTime.utc(2026, 8, 1, 12),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Gerar sessões'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Gerar'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Use uma data válida no formato AAAA-MM-DD.'),
+      findsNWidgets(2),
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('generation-start-date')),
+      '2026-08-10',
+    );
+    await tester.enterText(
+      find.byKey(const Key('generation-end-date')),
+      '2026-08-03',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Gerar'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('A data final deve ser igual ou posterior.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Cancelar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Gerar sessões'), findsNothing);
+  });
+
+  testWidgets('reports empty schedules and generation failures', (
+    tester,
+  ) async {
+    final meetingRepository = _FakeMeetingRepository();
+    final sessionRepository = _FakeSessionRepository();
+    final logger = _RecordingAppLogger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: meetingRepository,
+          sessionRepository: sessionRepository,
+          logger: logger,
+          generator: SessionGenerator(location),
+          now: () => DateTime.utc(2026, 8, 1, 12),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Gerar sessões'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Cadastre pelo menos um horário antes de gerar sessões.'),
+      findsOneWidget,
+    );
+
+    meetingRepository.meetings.add(
+      MeetingRecord(
+        id: 'monday-8',
+        weekday: DateTime.monday,
+        startMinutes: 480,
+        endMinutes: 580,
+        lessonCount: QuantidadeAulas.two,
+        callCount: NumeroChamadas.one,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: meetingRepository,
+          sessionRepository: sessionRepository,
+          logger: logger,
+          generator: SessionGenerator(location),
+          now: () => DateTime.utc(2026, 8, 1, 12),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Gerar sessões'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('generation-start-date')),
+      '2026-08-03',
+    );
+    await tester.enterText(
+      find.byKey(const Key('generation-end-date')),
+      '2026-08-03',
+    );
+    sessionRepository.listError = StateError('offline');
+    await tester.tap(find.widgetWithText(FilledButton, 'Gerar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Não foi possível gerar as sessões.'), findsOneWidget);
+    expect(logger.events, contains('session_generation_failed'));
+  });
+
+  testWidgets('reports a single generated session', (tester) async {
+    final meeting = MeetingRecord(
+      id: 'monday-8',
+      weekday: DateTime.monday,
+      startMinutes: 480,
+      endMinutes: 580,
+      lessonCount: QuantidadeAulas.two,
+      callCount: NumeroChamadas.one,
+      createdAt: now,
+      updatedAt: now,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: _FakeMeetingRepository(meetings: [meeting]),
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          generator: SessionGenerator(location),
+          now: () => DateTime.utc(2026, 8, 1, 12),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Gerar sessões'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('generation-start-date')),
+      '2026-08-03',
+    );
+    await tester.enterText(
+      find.byKey(const Key('generation-end-date')),
+      '2026-08-03',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Gerar'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 sessão criada.'), findsOneWidget);
+  });
 }
 
 final class _FakeMeetingRepository implements MeetingRepository {
@@ -300,4 +552,44 @@ final class _FakeMeetingRepository implements MeetingRepository {
     meetings.removeWhere((item) => item.id == meeting.id);
     meetings.add(meeting);
   }
+}
+
+final class _FakeSessionRepository implements SessionRepository {
+  final sessions = <SessionRecord>[];
+  Object? listError;
+
+  @override
+  Future<void> deleteSession(String courseId, String sessionId) async {
+    sessions.removeWhere((session) => session.id == sessionId);
+  }
+
+  @override
+  Future<List<SessionRecord>> listSessions(String courseId) async {
+    if (listError case final error?) throw error;
+    return List.of(sessions);
+  }
+
+  @override
+  Future<void> saveSession(String courseId, SessionRecord session) async {
+    sessions.removeWhere((item) => item.id == session.id);
+    sessions.add(session);
+  }
+}
+
+final class _RecordingAppLogger implements AppLogger {
+  final events = <String>[];
+
+  @override
+  Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
+    events.add(name);
+  }
+
+  @override
+  Future<void> recordError(
+    Object error,
+    StackTrace stackTrace, {
+    required String context,
+    bool fatal = false,
+    Map<String, Object>? parameters,
+  }) async {}
 }
