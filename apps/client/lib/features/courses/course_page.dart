@@ -54,6 +54,7 @@ class _CoursePageState extends State<CoursePage> {
   bool _loading = true;
   bool _loadFailed = false;
   String? _deletingId;
+  final _savingIds = <String>{};
 
   @override
   void initState() {
@@ -187,45 +188,50 @@ class _CoursePageState extends State<CoursePage> {
       return 'Já existe uma disciplina com o código $normalizedCode.';
     }
     try {
-      await runAuditedOperation(
-        logger: widget.logger,
-        operation: existing == null
-            ? AuditedOperation.courseCreate
-            : AuditedOperation.courseUpdate,
-        action: () async {
-          final timestamp = widget.now().toUtc();
-          final defaultPeriod = AcademicPeriod.forTerm(input.term);
-          final movesDefaultPeriod =
-              existing != null &&
-              existing.term != input.term &&
-              _usesDefaultPeriod(existing);
-          final course = CourseRecord(
-            id: existing?.id ?? widget.idGenerator(),
-            code: normalizedCode,
-            name: input.name,
-            workload: input.workload,
-            term: input.term,
-            startsOn: existing == null || movesDefaultPeriod
-                ? defaultPeriod.startsOn
-                : existing.startsOn ?? defaultPeriod.startsOn,
-            endsOn: existing == null || movesDefaultPeriod
-                ? defaultPeriod.endsOn
-                : existing.endsOn ?? defaultPeriod.endsOn,
-            createdAt: existing?.createdAt ?? timestamp,
-            updatedAt: timestamp,
-          );
-          await widget.repository.saveCourse(course);
-          if (mounted) {
-            setState(() {
-              _courses = [
-                for (final item in _courses)
-                  if (item.id != course.id) item,
-                course,
-              ]..sort((left, right) => left.code.compareTo(right.code));
-            });
-          }
-        },
+      final timestamp = widget.now().toUtc();
+      final defaultPeriod = AcademicPeriod.forTerm(input.term);
+      final movesDefaultPeriod =
+          existing != null &&
+          existing.term != input.term &&
+          _usesDefaultPeriod(existing);
+      final course = CourseRecord(
+        id: existing?.id ?? widget.idGenerator(),
+        code: normalizedCode,
+        name: input.name,
+        workload: existing?.workload ?? 1,
+        term: input.term,
+        startsOn: existing == null || movesDefaultPeriod
+            ? defaultPeriod.startsOn
+            : existing.startsOn ?? defaultPeriod.startsOn,
+        endsOn: existing == null || movesDefaultPeriod
+            ? defaultPeriod.endsOn
+            : existing.endsOn ?? defaultPeriod.endsOn,
+        createdAt: existing?.createdAt ?? timestamp,
+        updatedAt: timestamp,
       );
+      if (existing == null) {
+        setState(() {
+          _courses = [..._courses, course]
+            ..sort((left, right) => left.code.compareTo(right.code));
+          _savingIds.add(course.id);
+        });
+        unawaited(_persistCreatedCourse(course));
+        return null;
+      }
+      await runAuditedOperation<void>(
+        logger: widget.logger,
+        operation: AuditedOperation.courseUpdate,
+        action: () => widget.repository.saveCourse(course),
+      );
+      if (mounted) {
+        setState(() {
+          _courses = [
+            for (final item in _courses)
+              if (item.id != course.id) item,
+            course,
+          ]..sort((left, right) => left.code.compareTo(right.code));
+        });
+      }
       return null;
     } catch (error) {
       final code = ErrorLogDetails.from(error).code;
@@ -233,6 +239,34 @@ class _CoursePageState extends State<CoursePage> {
           ? 'Não foi possível salvar a disciplina.'
           : 'Não foi possível salvar a disciplina. Código: $code.';
     }
+  }
+
+  Future<void> _persistCreatedCourse(CourseRecord course) async {
+    try {
+      await runAuditedOperation<void>(
+        logger: widget.logger,
+        operation: AuditedOperation.courseCreate,
+        action: () => widget.repository.saveCourse(course),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _courses.removeWhere((item) => item.id == course.id));
+      final code = ErrorLogDetails.from(error).code;
+      final diagnostic = code == null ? '' : ' Código: $code.';
+      _message(
+        'Não foi possível salvar ${course.code}. A disciplina foi removida.'
+        '$diagnostic',
+      );
+    } finally {
+      if (mounted) setState(() => _savingIds.remove(course.id));
+    }
+  }
+
+  void _message(String message) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _confirmDelete(CourseRecord course) async {
@@ -375,6 +409,7 @@ class _CoursePageState extends State<CoursePage> {
       itemBuilder: (context, index) => _CourseTile(
         course: _courses[index],
         deleting: _deletingId == _courses[index].id,
+        saving: _savingIds.contains(_courses[index].id),
         onEdit: () => _openEditor(_courses[index]),
         onSchedule: () => _openSchedule(_courses[index]),
         onDelete: () => _confirmDelete(_courses[index]),
@@ -417,6 +452,7 @@ class _CourseTile extends StatelessWidget {
   const _CourseTile({
     required this.course,
     required this.deleting,
+    required this.saving,
     required this.onEdit,
     required this.onSchedule,
     required this.onDelete,
@@ -424,6 +460,7 @@ class _CourseTile extends StatelessWidget {
 
   final CourseRecord course;
   final bool deleting;
+  final bool saving;
   final VoidCallback onEdit;
   final VoidCallback onSchedule;
   final VoidCallback onDelete;
@@ -446,11 +483,11 @@ class _CourseTile extends StatelessWidget {
             children: [
               Text(course.name),
               const SizedBox(height: 2),
-              Text('${course.workload} horas-aula • ${course.term}'),
+              Text(course.term),
             ],
           ),
         ),
-        trailing: deleting
+        trailing: deleting || saving
             ? const SizedBox.square(
                 dimension: 24,
                 child: CircularProgressIndicator(strokeWidth: 2),

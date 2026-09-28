@@ -152,7 +152,16 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Exceções de calendário')),
+    appBar: AppBar(
+      title: const Text('Exceções de calendário'),
+      actions: [
+        IconButton(
+          tooltip: 'Entenda os tipos de aula',
+          onPressed: _showHelp,
+          icon: const Icon(Icons.help_outline),
+        ),
+      ],
+    ),
     floatingActionButton: FloatingActionButton.extended(
       key: const Key('add-makeup-session'),
       onPressed: _openMakeupEditor,
@@ -216,17 +225,21 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
                       SessionCalendarStatus.scheduled => const [
                         PopupMenuItem(
                           value: SessionCalendarStatus.cancelled,
-                          child: Text('Cancelar aula'),
+                          child: Text('Cancelada/feriado'),
                         ),
                         PopupMenuItem(
-                          value: SessionCalendarStatus.holiday,
-                          child: Text('Marcar feriado'),
+                          value: SessionCalendarStatus.noCall,
+                          child: Text('Aula sem chamada'),
                         ),
                       ],
                       SessionCalendarStatus.makeup => const [
                         PopupMenuItem(
                           value: SessionCalendarStatus.cancelled,
-                          child: Text('Cancelar aula'),
+                          child: Text('Cancelada/feriado'),
+                        ),
+                        PopupMenuItem(
+                          value: SessionCalendarStatus.noCall,
+                          child: Text('Aula sem chamada'),
                         ),
                       ],
                       _ => const [
@@ -242,6 +255,26 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
       },
     );
   }
+
+  Future<void> _showHelp() => showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Como as aulas entram no cálculo'),
+      content: const Text(
+        'Aulas programadas e reposições entram no total de aulas e no cálculo '
+        'de faltas.\n\nCancelada/feriado indica que a aula não aconteceu. '
+        'Aula sem chamada indica que houve atividade, mas a frequência não foi '
+        'cobrada — por exemplo, uma aula de exercício ou opcional. Nos dois '
+        'casos, a sessão fica fora do cálculo de frequência.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Entendi'),
+        ),
+      ],
+    ),
+  );
 }
 
 final class _MakeupInput {
@@ -434,8 +467,9 @@ List<SessionRecord> _sorted(Iterable<SessionRecord> sessions) =>
 
 String _statusLabel(SessionCalendarStatus status) => switch (status) {
   SessionCalendarStatus.scheduled => 'Programada',
-  SessionCalendarStatus.cancelled => 'Cancelada',
-  SessionCalendarStatus.holiday => 'Feriado',
+  SessionCalendarStatus.cancelled ||
+  SessionCalendarStatus.holiday => 'Cancelada/feriado',
+  SessionCalendarStatus.noCall => 'Aula sem chamada',
   SessionCalendarStatus.makeup => 'Reposição',
 };
 

@@ -33,8 +33,7 @@ void main() {
     final logger = _Logger();
     await tester.pumpWidget(_app(repository, logger, location, now));
     await tester.pumpAndSettle();
-    expect(find.text('Cancelada • sem frequência'), findsOneWidget);
-    expect(find.text('Feriado • sem frequência'), findsOneWidget);
+    expect(find.text('Cancelada/feriado • sem frequência'), findsNWidgets(2));
 
     await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
     await tester.pumpAndSettle();
@@ -76,6 +75,27 @@ void main() {
     );
     expect(repository.byId('regular').absences, isNull);
     expect(find.text('Pendente • faltas pendentes'), findsOneWidget);
+  });
+
+  testWidgets('registers attendance for a session from a previous month', (
+    tester,
+  ) async {
+    final repository = _FakeRepository([
+      _session('august', DateTime.utc(2026, 8, 3, 11)),
+    ]);
+    final september = DateTime.utc(2026, 9, 28, 12);
+
+    await tester.pumpWidget(_app(repository, _Logger(), location, september));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Registrar frequência de 03/08/2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(
+      repository.byId('august').attendanceStatus,
+      SituacaoFrequencia.present,
+    );
   });
 
   testWidgets('validates absences and reports save failure', (tester) async {

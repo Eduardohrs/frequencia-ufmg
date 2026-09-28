@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -138,10 +139,13 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         return 'Alteração cancelada para preservar frequências registradas.';
       }
       await widget.repository.saveMeeting(widget.course.id, meeting);
-      await _applyPlan(plan);
       if (mounted) {
-        setState(() => _meetings = proposedMeetings);
+        setState(() {
+          _meetings = proposedMeetings;
+          _syncing = plan != null;
+        });
       }
+      if (plan != null) unawaited(_applyPlanInBackground(plan));
       return null;
     } catch (_) {
       return 'Não foi possível salvar o horário.';
@@ -296,6 +300,20 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         }
       },
     );
+  }
+
+  Future<void> _applyPlanInBackground(SessionReconciliation plan) async {
+    try {
+      await _applyPlan(plan);
+    } catch (_) {
+      if (mounted) {
+        _message(
+          'Horário salvo, mas não foi possível sincronizar o calendário.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
   }
 
   void _message(String message) {

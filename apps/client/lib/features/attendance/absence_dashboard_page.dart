@@ -26,7 +26,10 @@ final class CourseAbsenceSummary {
   int get consumedAbsences =>
       sessions.fold(0, (total, session) => total + (session.absences ?? 0));
 
-  int get absenceLimit => course.workload ~/ 4;
+  int get eligibleLessons =>
+      sessions.fold(0, (total, session) => total + session.lessonCount.value);
+
+  int get absenceLimit => eligibleLessons ~/ 4;
 
   int get remainingAbsences => max(0, absenceLimit - consumedAbsences);
 
@@ -113,7 +116,7 @@ class _AbsenceDashboardPageState extends State<AbsenceDashboardPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'O limite corresponde a 25% da carga horária de cada disciplina.',
+          'O limite corresponde a 25% das aulas sujeitas a chamada.',
           style: Theme.of(context).textTheme.bodyMedium,
         ),
         const SizedBox(height: 16),

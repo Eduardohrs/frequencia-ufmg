@@ -133,6 +133,22 @@ void main() {
     expect(result.destructiveDeleteCount, 0);
   });
 
+  test('reconciles sessions retroactively from the beginning of the term', () {
+    final result = SessionGenerator(location).reconcile(
+      meetings: [_meeting('monday-8')],
+      existingSessions: const [],
+      startDate: DateTime(2026, 8, 3),
+      endDate: DateTime(2026, 8, 17),
+      now: DateTime.utc(2026, 9, 28, 12),
+    );
+
+    expect(result.upserts.map((session) => session.id), [
+      '2026-08-03--monday-8',
+      '2026-08-10--monday-8',
+      '2026-08-17--monday-8',
+    ]);
+  });
+
   test('preserves makeups and identifies removed attendance evidence', () {
     final meeting = _meeting('monday-8');
     final recorded = SessionRecord(

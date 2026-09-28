@@ -2,6 +2,7 @@ enum SessionCalendarStatus {
   scheduled('scheduled'),
   cancelled('cancelled'),
   holiday('holiday'),
+  noCall('no_call'),
   makeup('makeup');
 
   const SessionCalendarStatus(this.code);

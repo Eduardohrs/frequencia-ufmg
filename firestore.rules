@@ -185,7 +185,7 @@ service cloud.firestore {
         && data.endsAt is timestamp
         && data.startsAt < data.endsAt
         && hasValidConfiguration(data)
-        && data.calendarStatus in ['scheduled', 'cancelled', 'holiday', 'makeup']
+        && data.calendarStatus in ['scheduled', 'cancelled', 'holiday', 'no_call', 'makeup']
         && isValidPing(data.firstPing)
         && isValidPing(data.secondPing)
         && isValidAttendance(data)

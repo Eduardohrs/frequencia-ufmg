@@ -62,7 +62,7 @@ void main() {
       find.byKey(const Key('course-name')),
       'Programação Orientada a Objetos',
     );
-    await tester.enterText(find.byKey(const Key('course-workload')), '60');
+    expect(find.byKey(const Key('course-workload')), findsNothing);
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
 
@@ -73,7 +73,7 @@ void main() {
     expect(repository.courses.single.createdAt, now);
     expect(find.text('DCC203'), findsOneWidget);
     expect(find.text('Programação Orientada a Objetos'), findsOneWidget);
-    expect(find.text('60 horas-aula • 2026-2'), findsOneWidget);
+    expect(find.text('2026-2'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Editar DCC203'));
     await tester.pumpAndSettle();
@@ -491,7 +491,6 @@ void main() {
 
     expect(find.text('Informe o código.'), findsOneWidget);
     expect(find.text('Informe o nome.'), findsOneWidget);
-    expect(find.text('Use um número maior que zero.'), findsOneWidget);
     expect(repository.courses, isEmpty);
     expect(logger.events, contains('course_create_validation_failed'));
 
@@ -607,7 +606,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('course-code')), 'DCC204');
     await tester.enterText(find.byKey(const Key('course-name')), 'Algoritmos');
-    await tester.enterText(find.byKey(const Key('course-workload')), '60');
+    expect(find.byKey(const Key('course-workload')), findsNothing);
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
 
@@ -633,10 +632,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('course-code')), 'DCC203');
     await tester.enterText(find.byKey(const Key('course-name')), 'POO');
-    await tester.enterText(find.byKey(const Key('course-workload')), '60');
+    expect(find.byKey(const Key('course-workload')), findsNothing);
     await tester.tap(find.text('Salvar'));
     await tester.pump();
-
     final reachedFirestoreBeforeAnalytics = store.savedPaths.isNotEmpty;
     logger.release();
     await tester.pumpAndSettle();
@@ -690,6 +688,46 @@ void main() {
     expect(find.byKey(const Key('course-code')), findsNothing);
     expect(find.text('DCC203'), findsOneWidget);
   });
+
+  testWidgets('shows a new course while its remote save is still pending', (
+    tester,
+  ) async {
+    final repository = _BlockingSaveCourseRepository();
+
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+    await _fillNewCourse(tester);
+    await tester.tap(find.text('Salvar'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.byKey(const Key('course-code')), findsNothing);
+    expect(find.text('DCC203'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    repository.complete();
+    await tester.pumpAndSettle();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('removes an optimistic course when its remote save fails', (
+    tester,
+  ) async {
+    final repository = _FakeCourseRepository()
+      ..saveError = FirebaseException(
+        plugin: 'cloud_firestore',
+        code: 'permission-denied',
+      );
+
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+    await _fillNewCourse(tester);
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('DCC203'), findsNothing);
+    expect(find.textContaining('Código: permission-denied'), findsOneWidget);
+  });
 }
 
 Future<void> _fillNewCourse(
@@ -701,7 +739,7 @@ Future<void> _fillNewCourse(
   await tester.pumpAndSettle();
   await tester.enterText(find.byKey(const Key('course-code')), code);
   await tester.enterText(find.byKey(const Key('course-name')), name);
-  await tester.enterText(find.byKey(const Key('course-workload')), '60');
+  expect(find.byKey(const Key('course-workload')), findsNothing);
 }
 
 Widget _app(
@@ -818,6 +856,21 @@ final class _ReloadBlockingCourseRepository implements CourseRepository {
   Future<void> saveCourse(CourseRecord course) async {
     savedCourse = course;
   }
+}
+
+final class _BlockingSaveCourseRepository implements CourseRepository {
+  final _save = Completer<void>();
+
+  void complete() => _save.complete();
+
+  @override
+  Future<void> deleteCourse(String courseId) async {}
+
+  @override
+  Future<List<CourseRecord>> listCourses() async => [];
+
+  @override
+  Future<void> saveCourse(CourseRecord course) => _save.future;
 }
 
 final class _SelectivelyBlockingLogger implements AppLogger {

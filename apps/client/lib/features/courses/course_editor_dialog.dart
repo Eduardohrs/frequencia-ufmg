@@ -6,13 +6,11 @@ final class CourseInput {
   const CourseInput({
     required this.code,
     required this.name,
-    required this.workload,
     required this.term,
   });
 
   final String code;
   final String name;
-  final int workload;
   final String term;
 }
 
@@ -40,7 +38,6 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _code;
   late final TextEditingController _name;
-  late final TextEditingController _workload;
   late final TextEditingController _term;
   bool _saving = false;
   String? _error;
@@ -51,7 +48,6 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
     final course = widget.course;
     _code = TextEditingController(text: course?.code);
     _name = TextEditingController(text: course?.name);
-    _workload = TextEditingController(text: course?.workload.toString());
     _term = TextEditingController(text: widget.initialTerm);
   }
 
@@ -59,7 +55,6 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
   void dispose() {
     _code.dispose();
     _name.dispose();
-    _workload.dispose();
     _term.dispose();
     super.dispose();
   }
@@ -77,7 +72,6 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
       CourseInput(
         code: _code.text.trim(),
         name: _name.text.trim(),
-        workload: int.parse(_workload.text),
         term: _term.text.trim(),
       ),
     );
@@ -130,23 +124,6 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
                   ),
                   validator: (value) =>
                       _required(value, 'Informe o nome.', 160),
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  key: const Key('course-workload'),
-                  controller: _workload,
-                  enabled: !_saving,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Carga horária',
-                    suffixText: 'horas-aula',
-                  ),
-                  validator: (value) {
-                    final parsed = int.tryParse(value?.trim() ?? '');
-                    return parsed == null || parsed <= 0
-                        ? 'Use um número maior que zero.'
-                        : null;
-                  },
                 ),
                 if (widget.course != null) ...[
                   const SizedBox(height: 16),
