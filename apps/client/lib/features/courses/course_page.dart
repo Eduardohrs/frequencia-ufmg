@@ -7,6 +7,7 @@ import 'package:timezone/timezone.dart' as tz;
 import '../../auth/auth_user.dart';
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
+import '../../data/academic_period.dart';
 import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
@@ -67,6 +68,7 @@ class _CoursePageState extends State<CoursePage> {
     });
     try {
       final courses = await widget.repository.listCourses();
+      await _removeExpiredCourses(courses);
       if (!mounted) return;
       courses.sort((left, right) => left.code.compareTo(right.code));
       setState(() => _courses = courses);
@@ -77,15 +79,49 @@ class _CoursePageState extends State<CoursePage> {
     }
   }
 
+  Future<void> _removeExpiredCourses(List<CourseRecord> courses) async {
+    final policy = AcademicPeriodPolicy(widget.now());
+    final expired = courses.where(policy.isExpired).toList(growable: false);
+    for (final course in expired) {
+      unawaited(
+        widget.logger.logEvent(
+          'course_expiration_delete_started',
+          parameters: {'term': course.term},
+        ),
+      );
+      try {
+        await widget.repository.deleteCourse(course.id);
+        courses.remove(course);
+        unawaited(
+          widget.logger.logEvent(
+            'course_expiration_delete_succeeded',
+            parameters: {'term': course.term},
+          ),
+        );
+      } catch (error, stackTrace) {
+        unawaited(
+          widget.logger.recordError(
+            error,
+            stackTrace,
+            context: 'course_expiration_delete',
+            parameters: {'term': course.term},
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _openEditor([CourseRecord? course]) async {
     final mode = course == null ? 'create' : 'update';
+    final policy = AcademicPeriodPolicy(widget.now());
     unawaited(widget.logger.logEvent('course_${mode}_editor_opened'));
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (context) => CourseEditorDialog(
         course: course,
-        initialTerm: course?.term ?? academicTermFor(widget.now()),
+        initialTerm: course?.term ?? policy.current.term,
+        allowedTerms: policy.allowedTerms,
         onSave: (input) => _save(course, input),
         onValidationFailed: () => unawaited(
           widget.logger.logEvent('course_${mode}_validation_failed'),
@@ -158,12 +194,23 @@ class _CoursePageState extends State<CoursePage> {
             : AuditedOperation.courseUpdate,
         action: () async {
           final timestamp = widget.now().toUtc();
+          final defaultPeriod = AcademicPeriod.forTerm(input.term);
+          final movesDefaultPeriod =
+              existing != null &&
+              existing.term != input.term &&
+              _usesDefaultPeriod(existing);
           final course = CourseRecord(
             id: existing?.id ?? widget.idGenerator(),
             code: normalizedCode,
             name: input.name,
             workload: input.workload,
             term: input.term,
+            startsOn: existing == null || movesDefaultPeriod
+                ? defaultPeriod.startsOn
+                : existing.startsOn ?? defaultPeriod.startsOn,
+            endsOn: existing == null || movesDefaultPeriod
+                ? defaultPeriod.endsOn
+                : existing.endsOn ?? defaultPeriod.endsOn,
             createdAt: existing?.createdAt ?? timestamp,
             updatedAt: timestamp,
           );
@@ -475,5 +522,12 @@ String _newCourseId() {
       '${random.nextInt(1 << 30).toRadixString(36)}';
 }
 
-String academicTermFor(DateTime date) =>
-    '${date.year}-${date.month <= DateTime.june ? 1 : 2}';
+String academicTermFor(DateTime date) => AcademicPeriod.current(date).term;
+
+bool _usesDefaultPeriod(CourseRecord course) {
+  final defaultPeriod = AcademicPeriod.forTerm(course.term);
+  return course.startsOn == null ||
+      course.endsOn == null ||
+      (course.startsOn == defaultPeriod.startsOn &&
+          course.endsOn == defaultPeriod.endsOn);
+}

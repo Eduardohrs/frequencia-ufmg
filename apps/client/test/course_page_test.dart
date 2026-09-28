@@ -68,6 +68,8 @@ void main() {
 
     expect(repository.courses.single.id, 'course-1');
     expect(repository.courses.single.term, '2026-2');
+    expect(repository.courses.single.startsOn, DateTime.utc(2026, 7));
+    expect(repository.courses.single.endsOn, DateTime.utc(2026, 12, 31));
     expect(repository.courses.single.createdAt, now);
     expect(find.text('DCC203'), findsOneWidget);
     expect(find.text('Programação Orientada a Objetos'), findsOneWidget);
@@ -208,6 +210,148 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repository.courses.single.term, '2027-1');
+  });
+
+  testWidgets('rejects editing a course outside current or next term', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final repository = _FakeCourseRepository(courses: [course]);
+
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Editar DCC203'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('course-term')), '2026-1');
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Escolha o período atual (2026-2) ou o próximo (2027-1).'),
+      findsOneWidget,
+    );
+    expect(repository.courses.single.term, '2026-2');
+  });
+
+  testWidgets('preserves a custom date range while editing metadata', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      startsOn: DateTime.utc(2026, 8, 3),
+      endsOn: DateTime.utc(2026, 11, 30),
+      createdAt: now,
+      updatedAt: now,
+    );
+    final repository = _FakeCourseRepository(courses: [course]);
+
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Editar DCC203'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('course-name')), 'POO editada');
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(repository.courses.single.startsOn, DateTime.utc(2026, 8, 3));
+    expect(repository.courses.single.endsOn, DateTime.utc(2026, 11, 30));
+  });
+
+  testWidgets('moves untouched default dates when the term changes', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      startsOn: DateTime.utc(2026, 7),
+      endsOn: DateTime.utc(2026, 12, 31),
+      createdAt: now,
+      updatedAt: now,
+    );
+    final repository = _FakeCourseRepository(courses: [course]);
+
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Editar DCC203'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('course-term')), '2027-1');
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(repository.courses.single.startsOn, DateTime.utc(2027));
+    expect(repository.courses.single.endsOn, DateTime.utc(2027, 6, 30));
+  });
+
+  testWidgets('deletes expired previous courses on the first load', (
+    tester,
+  ) async {
+    final expired = CourseRecord(
+      id: 'old-course',
+      code: 'DCC100',
+      name: 'Antiga',
+      workload: 60,
+      term: '2026-1',
+      startsOn: DateTime.utc(2026),
+      endsOn: DateTime.utc(2026, 6, 30),
+      createdAt: DateTime.utc(2026),
+      updatedAt: DateTime.utc(2026),
+    );
+    final current = CourseRecord(
+      id: 'current-course',
+      code: 'DCC203',
+      name: 'Atual',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final repository = _FakeCourseRepository(courses: [expired, current]);
+
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+
+    expect(repository.deletedIds, ['old-course']);
+    expect(find.text('DCC100'), findsNothing);
+    expect(find.text('DCC203'), findsOneWidget);
+  });
+
+  testWidgets('keeps an expired course visible when automatic cleanup fails', (
+    tester,
+  ) async {
+    final expired = CourseRecord(
+      id: 'old-course',
+      code: 'DCC100',
+      name: 'Antiga',
+      workload: 60,
+      term: '2026-1',
+      startsOn: DateTime.utc(2026),
+      endsOn: DateTime.utc(2026, 6, 30),
+      createdAt: DateTime.utc(2026),
+      updatedAt: DateTime.utc(2026),
+    );
+    final repository = _FakeCourseRepository(courses: [expired])
+      ..deleteError = StateError('offline');
+
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+
+    expect(find.text('DCC100'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('opens the selected course weekly schedule', (tester) async {
@@ -583,6 +727,7 @@ final class _FakeCourseRepository implements CourseRepository {
     : courses = courses ?? [];
 
   final List<CourseRecord> courses;
+  final deletedIds = <String>[];
   Object? listError;
   Object? saveError;
   Object? deleteError;
@@ -590,6 +735,7 @@ final class _FakeCourseRepository implements CourseRepository {
   @override
   Future<void> deleteCourse(String courseId) async {
     if (deleteError case final error?) throw error;
+    deletedIds.add(courseId);
     courses.removeWhere((course) => course.id == courseId);
   }
 
