@@ -13,6 +13,9 @@ htmlcov/
 
 # Node.js / Firebase emulator tests
 node_modules/
+dist/
+.wrangler/
+.dev.vars
 firestore-debug.log
 
 # Flutter / Dart

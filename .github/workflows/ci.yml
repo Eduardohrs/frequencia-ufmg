@@ -52,6 +52,36 @@ jobs:
       - run: npm audit --audit-level=high
       - run: npm run test:firestore
 
+  broker:
+    name: UFMG broker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: broker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: broker/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=high
+      - run: npm run check
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
+        with:
+          files: broker/coverage/lcov.info
+          flags: broker
+          use_oidc: true
+          fail_ci_if_error: true
+
   backend:
     name: Backend
     runs-on: ubuntu-latest
@@ -147,7 +177,7 @@ jobs:
   quality-gate:
     name: Quality Gate
     if: always()
-    needs: [secret-scan, firestore, backend, client]
+    needs: [secret-scan, firestore, broker, backend, client]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -155,5 +185,6 @@ jobs:
         run: |
           test "${{ needs.secret-scan.result }}" = "success"
           test "${{ needs.firestore.result }}" = "success"
+          test "${{ needs.broker.result }}" = "success"
           test "${{ needs.backend.result }}" = "success"
           test "${{ needs.client.result }}" = "success"
