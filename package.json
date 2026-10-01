@@ -13,5 +13,10 @@
     "firebase": "12.19.0",
     "firebase-tools": "15.31.0",
     "picomatch": "4.0.7"
+  },
+  "overrides": {
+    "@firebase/firestore": {
+      "@grpc/grpc-js": "1.13.6"
+    }
   }
 }

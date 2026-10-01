@@ -97,14 +97,17 @@ async function withTimeout<T>(
   promise: Promise<T>,
   milliseconds: number,
 ): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let rejectTimeout!: (reason: HttpError) => void;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(
-      () =>
-        reject(new HttpError(503, "UPSTREAM_TIMEOUT", "Serviço indisponível.")),
-      milliseconds,
-    );
+    rejectTimeout = reject;
   });
+  const timer = setTimeout(
+    () =>
+      rejectTimeout(
+        new HttpError(503, "UPSTREAM_TIMEOUT", "Serviço indisponível."),
+      ),
+    milliseconds,
+  );
   try {
     return await Promise.race([promise, timeout]);
   } finally {
