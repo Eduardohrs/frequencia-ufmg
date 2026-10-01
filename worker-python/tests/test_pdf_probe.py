@@ -3,7 +3,7 @@ from io import BytesIO
 import pytest
 from pypdf import PdfWriter
 
-from src.pdf_probe import MAX_PDF_BYTES, extract_dates, extract_pdf_summary
+from pdf_probe import MAX_PDF_BYTES, extract_dates, extract_pdf_summary
 
 
 def test_extract_dates_normalizes_and_deduplicates_supported_dates() -> None:

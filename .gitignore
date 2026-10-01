@@ -16,6 +16,8 @@ node_modules/
 dist/
 .wrangler/
 .dev.vars
+worker-python/.venv-workers/
+worker-python/python_modules/
 firestore-debug.log
 
 # Flutter / Dart

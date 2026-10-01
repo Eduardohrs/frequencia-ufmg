@@ -1,2 +1,0 @@
-"""Cloudflare Python Worker spike."""
-

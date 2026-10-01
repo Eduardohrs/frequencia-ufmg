@@ -21,6 +21,7 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --cov=src --cov-branch --cov-report=term-missing --cov-report=xml --cov-fail-under=100"
+pythonpath = ["src"]
 testpaths = ["tests"]
 
 [tool.coverage.run]
@@ -42,5 +43,5 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
-files = ["src", "tests"]
-
+mypy_path = "src"
+files = ["src"]

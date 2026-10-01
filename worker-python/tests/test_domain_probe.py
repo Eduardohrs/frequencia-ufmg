@@ -1,6 +1,6 @@
 import pytest
 
-from src.domain_probe import AttendanceStatus, calculate_absences
+from domain_probe import AttendanceStatus, calculate_absences
 
 
 @pytest.mark.parametrize(
@@ -32,4 +32,3 @@ def test_calculate_absences_rejects_invalid_session_configuration(
 ) -> None:
     with pytest.raises(ValueError):
         calculate_absences(AttendanceStatus.PRESENT, lessons, calls)
-

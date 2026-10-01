@@ -1,0 +1,21 @@
+{
+  "$schema": "../broker/node_modules/wrangler/config-schema.json",
+  "name": "frequencia-ufmg-python-spike",
+  "account_id": "bf485b2692be39be94a55161e86a3db2",
+  "main": "src/entry.py",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["python_workers"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "frequencia-ufmg-dev",
+      "database_id": "0289a8b3-acc2-4dc5-ba28-81a7bc9b4259"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
