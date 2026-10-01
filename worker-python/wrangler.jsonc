@@ -1,5 +1,5 @@
 {
-  "$schema": "../broker/node_modules/wrangler/config-schema.json",
+  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "frequencia-ufmg-python-spike",
   "account_id": "bf485b2692be39be94a55161e86a3db2",
   "main": "src/entry.py",
