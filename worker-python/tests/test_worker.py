@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
+from pdf_probe import MAX_PDF_BYTES
 from worker import app
 
 
@@ -112,3 +113,29 @@ def test_pdf_endpoint_returns_a_safe_error_for_invalid_pdf_bytes() -> None:
 
     assert response.status_code == 400
     assert response.json() == {"detail": "invalid PDF signature"}
+
+
+def test_pdf_endpoint_rejects_oversized_content_before_parsing() -> None:
+    client, _ = client_with_database()
+
+    response = client.post(
+        "/v1/spike/pdf",
+        content=b"%PDF" + b"0" * MAX_PDF_BYTES,
+        headers={"content-type": "application/pdf"},
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "PDF exceeds the spike limit"}
+
+
+def test_pdf_endpoint_sanitizes_pdf_parser_errors() -> None:
+    client, _ = client_with_database()
+
+    response = client.post(
+        "/v1/spike/pdf",
+        content=b"%PDF malformed",
+        headers={"content-type": "application/pdf"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "invalid PDF"}
