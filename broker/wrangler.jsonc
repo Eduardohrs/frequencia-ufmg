@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "frequencia-ufmg-broker",
+  "account_id": "bf485b2692be39be94a55161e86a3db2",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "workers_dev": true,

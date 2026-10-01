@@ -15,6 +15,7 @@
     "picomatch": "4.0.7"
   },
   "overrides": {
+    "basic-ftp": "6.2.1",
     "@firebase/firestore": {
       "@grpc/grpc-js": "1.13.6"
     }
