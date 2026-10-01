@@ -1,0 +1,7 @@
+{
+  "name": "frequencia-ufmg-python-worker",
+  "private": true,
+  "devDependencies": {
+    "wrangler": "4.146.0"
+  }
+}
