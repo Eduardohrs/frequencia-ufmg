@@ -13,6 +13,7 @@ from appwrite.services.tables_db import TablesDB
 module_search_path.insert(0, str(Path(__file__).resolve().parent))
 
 from domain_probe import AttendanceStatus, calculate_absences  # noqa: E402
+from firebase_identity import InvalidIdentity, verify_firebase_identity  # noqa: E402
 from pdf_probe import extract_pdf_summary  # noqa: E402
 
 
@@ -29,7 +30,25 @@ def main(context: Any) -> Any:
         return _domain(context, started)
     if method == "POST" and path == "/pdf":
         return _pdf(context, started)
+    if method == "GET" and path == "/v1/identity":
+        return _identity(context)
     return context.res.json({"error": "not_found"}, 404)
+
+
+def _identity(context: Any) -> Any:
+    try:
+        _firebase_identity(context.req.headers)
+    except InvalidIdentity:
+        _error(context, "firebase_identity_rejected")
+        return context.res.json({"error": "unauthorized"}, 401)
+
+    _log(context, "firebase_identity_verified")
+    return context.res.json({"authenticated": True})
+
+
+def _firebase_identity(headers: dict[str, str]) -> str:
+    identity = verify_firebase_identity(headers, environ.get("FIREBASE_PROJECT_ID", ""))
+    return identity.uid
 
 
 def _health(context: Any, started: float) -> Any:

@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 import main as function
+from firebase_identity import InvalidIdentity
 
 
 @dataclass
@@ -121,6 +122,64 @@ def test_unknown_route_returns_not_found() -> None:
     context = FakeContext(FakeRequest("GET", "/unknown"))
 
     assert function.main(context) == {"body": {"error": "not_found"}, "status": 404}
+
+
+def test_identity_route_accepts_verified_firebase_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_firebase_identity", lambda _headers: "firebase-user")
+    context = FakeContext(
+        FakeRequest("GET", "/v1/identity", headers={"authorization": "Bearer private"})
+    )
+
+    result = function.main(context)
+
+    assert result == {"body": {"authenticated": True}, "status": 200}
+    assert json.loads(context.logs[0]) == {"event": "firebase_identity_verified"}
+    assert "firebase-user" not in "".join(context.logs)
+    assert "private" not in "".join(context.logs)
+
+
+def test_identity_route_rejects_invalid_firebase_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(_headers: dict[str, str]) -> str:
+        raise InvalidIdentity("private-token")
+
+    monkeypatch.setattr(function, "_firebase_identity", fail)
+    context = FakeContext(
+        FakeRequest("GET", "/v1/identity", headers={"authorization": "Bearer private-token"})
+    )
+
+    result = function.main(context)
+
+    assert result == {"body": {"error": "unauthorized"}, "status": 401}
+    assert context.errors == ['{"event":"firebase_identity_rejected"}']
+    assert "private-token" not in "".join(context.errors)
+
+
+def test_firebase_identity_uses_configured_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, Any] = {}
+
+    class Identity:
+        uid = "firebase-user"
+
+    def verify(headers: dict[str, str], project_id: str) -> Identity:
+        calls.update(headers=headers, project_id=project_id)
+        return Identity()
+
+    monkeypatch.setattr(function, "verify_firebase_identity", verify)
+    monkeypatch.setattr(function, "environ", {"FIREBASE_PROJECT_ID": "firebase-project"})
+
+    uid = function._firebase_identity({"authorization": "Bearer private"})
+
+    assert uid == "firebase-user"
+    assert calls == {
+        "headers": {"authorization": "Bearer private"},
+        "project_id": "firebase-project",
+    }
 
 
 def test_read_probe_value_uses_injected_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
