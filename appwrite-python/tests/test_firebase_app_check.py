@@ -184,3 +184,13 @@ def test_google_verifier_uses_app_check_jwks_and_bounded_timeout(
         "sub": "registered"
     }
     assert calls["timeout"] == 5
+
+
+def test_google_verifier_rejects_non_mapping_claims(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_check_module, "Request", lambda: object())
+    monkeypatch.setattr(app_check_module, "verify_token", lambda *_args, **_kwargs: [])
+
+    with pytest.raises(ValueError, match="invalid App Check claims"):
+        app_check_module._verify_google_token("signed", "projects/123")
