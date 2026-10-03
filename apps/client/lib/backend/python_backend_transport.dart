@@ -63,11 +63,11 @@ final class PythonBackendTransport implements BackendIdentityVerifier {
   PythonBackendTransport({
     required Uri endpoint,
     required PythonBackendTokens tokens,
-    http.Client? client,
+    required http.Client client,
     this.timeout = const Duration(seconds: 10),
   }) : _endpoint = endpoint,
        _tokens = tokens,
-       _client = client ?? http.Client();
+       _client = client;
 
   final Uri _endpoint;
   final PythonBackendTokens _tokens;

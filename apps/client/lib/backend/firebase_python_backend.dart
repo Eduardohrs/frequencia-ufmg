@@ -5,6 +5,7 @@
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import 'python_backend_transport.dart';
 
@@ -25,6 +26,7 @@ final class _FirebasePythonBackendVerifier implements BackendIdentityVerifier {
     : _transport = PythonBackendTransport(
         endpoint: endpoint,
         tokens: _FirebasePythonBackendTokens(),
+        client: http.Client(),
       );
 
   final PythonBackendTransport _transport;
