@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'auth_gateway.dart';
 import 'auth_user.dart';
+import '../backend/python_backend_transport.dart';
 import '../data/academic_repositories.dart';
 import '../features/courses/course_page.dart';
 import '../observability/app_logger.dart';
@@ -14,6 +17,7 @@ class AuthGate extends StatefulWidget {
     required this.courseRepositoryFactory,
     required this.meetingRepositoryFactory,
     required this.sessionRepositoryFactory,
+    this.backendIdentityVerifier,
     super.key,
   });
 
@@ -22,6 +26,7 @@ class AuthGate extends StatefulWidget {
   final CourseRepository Function(String userId) courseRepositoryFactory;
   final MeetingRepository Function(String userId) meetingRepositoryFactory;
   final SessionRepository Function(String userId) sessionRepositoryFactory;
+  final BackendIdentityVerifier? backendIdentityVerifier;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -34,6 +39,27 @@ class _AuthGateState extends State<AuthGate> {
   CourseRepository? _courseRepository;
   MeetingRepository? _meetingRepository;
   SessionRepository? _sessionRepository;
+  String? _verifiedBackendUserId;
+
+  void _verifyBackendFor(String userId) {
+    final verifier = widget.backendIdentityVerifier;
+    if (verifier == null || _verifiedBackendUserId == userId) return;
+    _verifiedBackendUserId = userId;
+    unawaited(_verifyBackend(verifier));
+  }
+
+  Future<void> _verifyBackend(BackendIdentityVerifier verifier) async {
+    try {
+      await verifier.verifyIdentity();
+      await widget.logger.logEvent('python_backend_identity_succeeded');
+    } catch (error, stackTrace) {
+      await widget.logger.recordError(
+        error,
+        stackTrace,
+        context: 'python_backend_identity',
+      );
+    }
+  }
 
   CourseRepository _repositoryFor(String userId) {
     if (_repositoryUserId != userId) {
@@ -76,6 +102,7 @@ class _AuthGateState extends State<AuthGate> {
       builder: (context, snapshot) {
         final user = snapshot.data;
         if (user != null) {
+          _verifyBackendFor(user.id);
           return CoursePage(
             repository: _repositoryFor(user.id),
             meetingRepository: _meetingRepository!,
@@ -86,6 +113,7 @@ class _AuthGateState extends State<AuthGate> {
                 _run(AuditedOperation.logout, widget.authGateway.signOut),
           );
         }
+        _verifiedBackendUserId = null;
         return Scaffold(
           appBar: AppBar(title: const Text('Frequência UFMG')),
           body: Center(

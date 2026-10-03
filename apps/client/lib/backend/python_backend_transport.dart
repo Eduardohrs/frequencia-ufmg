@@ -30,6 +30,10 @@ abstract interface class PythonBackendTokens {
   Future<String> limitedUseAppCheckToken();
 }
 
+abstract interface class BackendIdentityVerifier {
+  Future<void> verifyIdentity();
+}
+
 final class PythonBackendSettings {
   const PythonBackendSettings({required this.enabled, required this.endpoint});
 
@@ -55,7 +59,7 @@ final class PythonBackendSettings {
   }
 }
 
-final class PythonBackendTransport {
+final class PythonBackendTransport implements BackendIdentityVerifier {
   PythonBackendTransport({
     required Uri endpoint,
     required PythonBackendTokens tokens,
@@ -70,6 +74,7 @@ final class PythonBackendTransport {
   final http.Client _client;
   final Duration timeout;
 
+  @override
   Future<void> verifyIdentity() async {
     var forceIdentityRefresh = false;
     for (var attempt = 0; attempt < 2; attempt += 1) {

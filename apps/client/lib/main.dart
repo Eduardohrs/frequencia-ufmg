@@ -7,6 +7,8 @@ import 'package:timezone/data/latest.dart' as tz_data;
 import 'auth/auth_gate.dart';
 import 'auth/auth_gateway.dart';
 import 'auth/firebase_auth_gateway.dart';
+import 'backend/firebase_python_backend.dart';
+import 'backend/python_backend_transport.dart';
 import 'data/academic_repositories.dart';
 import 'data/firebase_course_repository.dart';
 import 'data/firestore_configuration.dart';
@@ -24,6 +26,7 @@ typedef MainMeetingRepositoryFactory =
     MeetingRepository Function(String userId, AppLogger logger);
 typedef MainSessionRepositoryFactory =
     SessionRepository Function(String userId, AppLogger logger);
+typedef BackendIdentityVerifierFactory = BackendIdentityVerifier? Function();
 
 @visibleForTesting
 AuthGatewayFactory authGatewayFactory = FirebaseAuthGateway.new;
@@ -42,6 +45,10 @@ MainMeetingRepositoryFactory meetingRepositoryFactory =
 @visibleForTesting
 MainSessionRepositoryFactory sessionRepositoryFactory =
     createFirebaseSessionRepository;
+
+@visibleForTesting
+BackendIdentityVerifierFactory backendIdentityVerifierFactory =
+    createFirebasePythonBackendVerifier;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -64,6 +71,7 @@ Future<void> main() async {
           meetingRepositoryFactory(userId, logger),
       sessionRepositoryFactory: (userId) =>
           sessionRepositoryFactory(userId, logger),
+      backendIdentityVerifier: backendIdentityVerifierFactory(),
     ),
   );
   await logger.logEvent('app_started');
@@ -76,6 +84,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
     required this.courseRepositoryFactory,
     required this.meetingRepositoryFactory,
     required this.sessionRepositoryFactory,
+    this.backendIdentityVerifier,
     super.key,
   });
 
@@ -84,6 +93,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
   final CourseRepository Function(String userId) courseRepositoryFactory;
   final MeetingRepository Function(String userId) meetingRepositoryFactory;
   final SessionRepository Function(String userId) sessionRepositoryFactory;
+  final BackendIdentityVerifier? backendIdentityVerifier;
 
   @override
   Widget build(BuildContext context) {
@@ -114,6 +124,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
         courseRepositoryFactory: courseRepositoryFactory,
         meetingRepositoryFactory: meetingRepositoryFactory,
         sessionRepositoryFactory: sessionRepositoryFactory,
+        backendIdentityVerifier: backendIdentityVerifier,
       ),
     );
   }
