@@ -43,7 +43,7 @@ final class _FirebasePythonBackendVerifier implements BackendIdentityVerifier {
       throw StateError('Firebase App Check web site key is not configured.');
     }
     await FirebaseAppCheck.instance.activate(
-      providerWeb: ReCaptchaV3Provider(_webSiteKey),
+      providerWeb: ReCaptchaEnterpriseProvider(_webSiteKey),
       providerAndroid: kDebugMode
           ? const AndroidDebugProvider()
           : const AndroidPlayIntegrityProvider(),
