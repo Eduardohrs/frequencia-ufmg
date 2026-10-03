@@ -16,6 +16,7 @@
   },
   "overrides": {
     "basic-ftp": "6.2.1",
+    "chokidar": "4.0.3",
     "@firebase/firestore": {
       "@grpc/grpc-js": "1.13.6"
     }
