@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/auth/auth_gateway.dart';
 import 'package:frequencia_ufmg/auth/auth_user.dart';
+import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/main.dart' as app;
@@ -107,6 +108,63 @@ void main() {
       FlutterError.onError = previousFlutterHandler;
       PlatformDispatcher.instance.onError = previousPlatformHandler;
     }
+  });
+
+  testWidgets(
+    'verifies the optional Python backend once per authenticated user',
+    (tester) async {
+      final gateway = _FakeAuthGateway(
+        initialUser: AuthUser(id: 'user-42', email: 'aluno@ufmg.br'),
+      );
+      final logger = _FakeAppLogger();
+      final verifier = _FakeBackendVerifier();
+      addTearDown(gateway.close);
+
+      await tester.pumpWidget(
+        app.FrequenciaUFMGApp(
+          authGateway: gateway,
+          logger: logger,
+          backendIdentityVerifier: verifier,
+          courseRepositoryFactory: (_) => _FakeCourseRepository(),
+          meetingRepositoryFactory: (_) => _FakeMeetingRepository(),
+          sessionRepositoryFactory: (_) => _FakeSessionRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.pump();
+
+      expect(verifier.calls, 1);
+      expect(logger.events, ['python_backend_identity_succeeded']);
+
+      await tester.pump();
+      expect(verifier.calls, 1);
+    },
+  );
+
+  testWidgets('backend verification failure never blocks the Firebase UI', (
+    tester,
+  ) async {
+    final gateway = _FakeAuthGateway(
+      initialUser: AuthUser(id: 'user-42', email: 'aluno@ufmg.br'),
+    );
+    final logger = _FakeAppLogger();
+    final verifier = _FakeBackendVerifier(fails: true);
+    addTearDown(gateway.close);
+
+    await tester.pumpWidget(
+      app.FrequenciaUFMGApp(
+        authGateway: gateway,
+        logger: logger,
+        backendIdentityVerifier: verifier,
+        courseRepositoryFactory: (_) => _FakeCourseRepository(),
+        meetingRepositoryFactory: (_) => _FakeMeetingRepository(),
+        sessionRepositoryFactory: (_) => _FakeSessionRepository(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Suas disciplinas'), findsOneWidget);
+    expect(logger.errorContexts, ['python_backend_identity']);
   });
 
   testWidgets('signs in and presents the authenticated user', (tester) async {
@@ -217,6 +275,19 @@ class _FakeAppLogger implements AppLogger {
     Map<String, Object>? parameters,
   }) async {
     errorContexts.add(context);
+  }
+}
+
+final class _FakeBackendVerifier implements BackendIdentityVerifier {
+  _FakeBackendVerifier({this.fails = false});
+
+  final bool fails;
+  int calls = 0;
+
+  @override
+  Future<void> verifyIdentity() async {
+    calls += 1;
+    if (fails) throw StateError('private backend failure');
   }
 }
 

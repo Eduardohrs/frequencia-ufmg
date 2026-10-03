@@ -20,6 +20,9 @@ jobs:
       ANDROID_DEBUG_KEY_ALIAS: ${{ secrets.ANDROID_DEBUG_KEY_ALIAS }}
       ANDROID_DEBUG_KEY_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEY_PASSWORD }}
       ANDROID_DEBUG_CERT_SHA256: ${{ secrets.ANDROID_DEBUG_CERT_SHA256 }}
+      ENABLE_PYTHON_BACKEND: ${{ vars.ENABLE_PYTHON_BACKEND || 'false' }}
+      PYTHON_BACKEND_ORIGIN: ${{ vars.PYTHON_BACKEND_ORIGIN }}
+      FIREBASE_APP_CHECK_WEB_SITE_KEY: ${{ vars.FIREBASE_APP_CHECK_WEB_SITE_KEY }}
     defaults:
       run:
         working-directory: apps/client
@@ -32,7 +35,19 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get --enforce-lockfile
-      - run: flutter build web
+      - name: Validate Python backend build configuration
+        run: |
+          [[ "$ENABLE_PYTHON_BACKEND" == "true" || "$ENABLE_PYTHON_BACKEND" == "false" ]]
+          if [[ "$ENABLE_PYTHON_BACKEND" == "true" ]]; then
+            [[ "$PYTHON_BACKEND_ORIGIN" == https://* ]]
+            test -n "$FIREBASE_APP_CHECK_WEB_SITE_KEY"
+          fi
+      - name: Build web
+        run: |
+          flutter build web \
+            --dart-define="ENABLE_PYTHON_BACKEND=$ENABLE_PYTHON_BACKEND" \
+            --dart-define="PYTHON_BACKEND_ORIGIN=$PYTHON_BACKEND_ORIGIN" \
+            --dart-define="FIREBASE_APP_CHECK_WEB_SITE_KEY=$FIREBASE_APP_CHECK_WEB_SITE_KEY"
       - name: Restore stable Android test signing key
         env:
           ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
@@ -45,7 +60,11 @@ jobs:
           printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
           chmod 600 "$keystore_path"
           echo "ANDROID_DEBUG_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
-      - run: flutter build apk --debug
+      - name: Build Android debug APK
+        run: |
+          flutter build apk --debug \
+            --dart-define="ENABLE_PYTHON_BACKEND=$ENABLE_PYTHON_BACKEND" \
+            --dart-define="PYTHON_BACKEND_ORIGIN=$PYTHON_BACKEND_ORIGIN"
       - name: Verify APK signing certificate
         run: |
           apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
