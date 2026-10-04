@@ -188,7 +188,12 @@ jobs:
       - run: uv run pytest
       - name: Verify deployment archive
         run: |
-          tar -czf appwrite-python.tar.gz --exclude='__pycache__' --exclude='*.pyc' requirements.txt src
+          mkdir -p .bundle/src/frequencia_ufmg
+          cp requirements.txt .bundle/
+          cp -r src/*.py .bundle/src/
+          cp ../backend/src/frequencia_ufmg/__init__.py .bundle/src/frequencia_ufmg/
+          cp ../backend/src/frequencia_ufmg/models.py .bundle/src/frequencia_ufmg/
+          tar -C .bundle -czf appwrite-python.tar.gz requirements.txt src
           tar -tzf appwrite-python.tar.gz
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:

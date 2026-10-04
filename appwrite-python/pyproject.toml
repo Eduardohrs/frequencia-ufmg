@@ -21,7 +21,7 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --cov=src --cov-branch --cov-report=term-missing --cov-report=xml --cov-fail-under=100"
-pythonpath = [".", "src"]
+pythonpath = [".", "src", "../backend/src"]
 testpaths = ["tests"]
 
 [tool.coverage.run]
@@ -44,7 +44,7 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 python_version = "3.12"
 strict = true
 files = ["src"]
-mypy_path = "src"
+mypy_path = ["src", "../backend/src"]
 
 [[tool.mypy.overrides]]
 module = ["appwrite.*"]

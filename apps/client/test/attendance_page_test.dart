@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/calendar_status.dart';
@@ -98,6 +99,62 @@ void main() {
     );
   });
 
+  testWidgets('uses Python as authority for a new attendance record', (
+    tester,
+  ) async {
+    final repository = _FakeRepository([_session('python', now)]);
+    final evaluator = _Evaluator(absences: 1);
+    await tester.pumpWidget(
+      _app(
+        repository,
+        _Logger(),
+        location,
+        now,
+        attendanceEvaluator: evaluator,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('attendance-status')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Chegou atrasado').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(evaluator.calls, [
+      (lessons: 2, calls: 2, status: 'chegou_atrasado'),
+    ]);
+    expect(repository.byId('python').absences, 1);
+  });
+
+  testWidgets('does not save when the Python authority is unavailable', (
+    tester,
+  ) async {
+    final repository = _FakeRepository([_session('python', now)]);
+    await tester.pumpWidget(
+      _app(
+        repository,
+        _Logger(),
+        location,
+        now,
+        attendanceEvaluator: _Evaluator(absences: 2, status: 'ausente'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Não foi possível calcular as faltas. Tente novamente.'),
+      findsOneWidget,
+    );
+    expect(repository.byId('python').attendanceStatus, isNull);
+  });
+
   testWidgets('validates absences and reports save failure', (tester) async {
     final repository = _FakeRepository([
       _session(
@@ -142,14 +199,16 @@ Widget _app(
   _FakeRepository repository,
   AppLogger logger,
   tz.Location location,
-  DateTime now,
-) => MaterialApp(
+  DateTime now, {
+  BackendAttendanceEvaluator? attendanceEvaluator,
+}) => MaterialApp(
   home: AttendancePage(
     courseId: 'poo',
     repository: repository,
     logger: logger,
     location: location,
     now: () => now,
+    attendanceEvaluator: attendanceEvaluator,
   ),
 );
 
@@ -208,4 +267,25 @@ final class _Logger implements AppLogger {
     bool fatal = false,
     Map<String, Object>? parameters,
   }) async {}
+}
+
+final class _Evaluator implements BackendAttendanceEvaluator {
+  _Evaluator({this.absences, this.status});
+
+  final int? absences;
+  final String? status;
+  final calls = <({int lessons, int calls, String status})>[];
+
+  @override
+  Future<PythonAttendanceDecision> evaluateAttendanceStatus({
+    required int lessons,
+    required int calls,
+    required String status,
+  }) async {
+    this.calls.add((lessons: lessons, calls: calls, status: status));
+    return PythonAttendanceDecision(
+      status: this.status ?? status,
+      absences: absences,
+    );
+  }
 }

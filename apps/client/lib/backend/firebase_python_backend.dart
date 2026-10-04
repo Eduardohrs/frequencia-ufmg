@@ -21,7 +21,8 @@ BackendIdentityVerifier? createFirebasePythonBackendVerifier() {
   return _FirebasePythonBackendVerifier(endpoint);
 }
 
-final class _FirebasePythonBackendVerifier implements BackendIdentityVerifier {
+final class _FirebasePythonBackendVerifier
+    implements BackendIdentityVerifier, BackendAttendanceEvaluator {
   _FirebasePythonBackendVerifier(Uri endpoint)
     : _transport = PythonBackendTransport(
         endpoint: endpoint,
@@ -36,6 +37,20 @@ final class _FirebasePythonBackendVerifier implements BackendIdentityVerifier {
   Future<void> verifyIdentity() async {
     await (_activation ??= _activateAppCheck());
     await _transport.verifyIdentity();
+  }
+
+  @override
+  Future<PythonAttendanceDecision> evaluateAttendanceStatus({
+    required int lessons,
+    required int calls,
+    required String status,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.evaluateAttendanceStatus(
+      lessons: lessons,
+      calls: calls,
+      status: status,
+    );
   }
 
   static Future<void> _activateAppCheck() async {

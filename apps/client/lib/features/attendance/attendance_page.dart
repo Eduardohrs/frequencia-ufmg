@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../data/academic_records.dart';
+import '../../backend/python_backend_transport.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/calendar_status.dart';
 import '../../domain/attendance.dart';
@@ -15,6 +16,7 @@ class AttendancePage extends StatefulWidget {
     required this.logger,
     required this.location,
     required this.now,
+    this.attendanceEvaluator,
     super.key,
   });
 
@@ -23,6 +25,7 @@ class AttendancePage extends StatefulWidget {
   final AppLogger logger;
   final tz.Location location;
   final DateTime Function() now;
+  final BackendAttendanceEvaluator? attendanceEvaluator;
 
   @override
   State<AttendancePage> createState() => _AttendancePageState();
@@ -60,6 +63,7 @@ class _AttendancePageState extends State<AttendancePage> {
     barrierDismissible: false,
     builder: (_) => _AttendanceDialog(
       session: session,
+      attendanceEvaluator: widget.attendanceEvaluator,
       onSave: (status, absences) => _save(session, status, absences),
     ),
   );
@@ -171,10 +175,15 @@ class _AttendancePageState extends State<AttendancePage> {
 }
 
 class _AttendanceDialog extends StatefulWidget {
-  const _AttendanceDialog({required this.session, required this.onSave});
+  const _AttendanceDialog({
+    required this.session,
+    required this.onSave,
+    this.attendanceEvaluator,
+  });
 
   final SessionRecord session;
   final Future<String?> Function(SituacaoFrequencia, int?) onSave;
+  final BackendAttendanceEvaluator? attendanceEvaluator;
 
   @override
   State<_AttendanceDialog> createState() => _AttendanceDialogState();
@@ -203,6 +212,7 @@ class _AttendanceDialogState extends State<_AttendanceDialog> {
   }
 
   void _setSuggestedAbsences() {
+    if (!_editing) return;
     final session = SessaoAula(
       widget.session.id,
       ConfiguracaoSessao(
@@ -221,22 +231,21 @@ class _AttendanceDialogState extends State<_AttendanceDialog> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    final value = _status == SituacaoFrequencia.pending
-        ? null
-        : _editing
-        ? int.parse(_absences.text)
-        : SessaoAula(
-            widget.session.id,
-            ConfiguracaoSessao(
-              aulas: widget.session.lessonCount,
-              chamadas: widget.session.callCount,
-            ),
-          ).calcularFaltas(_status);
     setState(() {
       _saving = true;
       _error = null;
     });
-    final error = await widget.onSave(_status, value);
+    String? error;
+    try {
+      final value = _editing
+          ? _status == SituacaoFrequencia.pending
+                ? null
+                : int.parse(_absences.text)
+          : await _defaultAbsences();
+      error = await widget.onSave(_status, value);
+    } catch (_) {
+      error = 'Não foi possível calcular as faltas. Tente novamente.';
+    }
     if (!mounted) return;
     if (error == null) {
       Navigator.of(context).pop();
@@ -246,6 +255,28 @@ class _AttendanceDialogState extends State<_AttendanceDialog> {
         _error = error;
       });
     }
+  }
+
+  Future<int?> _defaultAbsences() async {
+    final evaluator = widget.attendanceEvaluator;
+    if (evaluator == null) {
+      return SessaoAula(
+        widget.session.id,
+        ConfiguracaoSessao(
+          aulas: widget.session.lessonCount,
+          chamadas: widget.session.callCount,
+        ),
+      ).calcularFaltas(_status);
+    }
+    final decision = await evaluator.evaluateAttendanceStatus(
+      lessons: widget.session.lessonCount.value,
+      calls: widget.session.callCount.value,
+      status: _status.code,
+    );
+    if (decision.status != _status.code) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+    return decision.absences;
   }
 
   @override
