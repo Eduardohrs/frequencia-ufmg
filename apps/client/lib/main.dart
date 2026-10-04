@@ -60,6 +60,7 @@ Future<void> main() async {
     // coverage:ignore-end
   }
   final logger = ResilientAppLogger(appLoggerFactory());
+  final backend = backendIdentityVerifierFactory();
   configureErrorReporting(logger);
   runApp(
     FrequenciaUFMGApp(
@@ -71,7 +72,10 @@ Future<void> main() async {
           meetingRepositoryFactory(userId, logger),
       sessionRepositoryFactory: (userId) =>
           sessionRepositoryFactory(userId, logger),
-      backendIdentityVerifier: backendIdentityVerifierFactory(),
+      backendIdentityVerifier: backend,
+      attendanceEvaluator: backend is BackendAttendanceEvaluator
+          ? backend as BackendAttendanceEvaluator
+          : null,
     ),
   );
   await logger.logEvent('app_started');
@@ -85,6 +89,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
     required this.meetingRepositoryFactory,
     required this.sessionRepositoryFactory,
     this.backendIdentityVerifier,
+    this.attendanceEvaluator,
     super.key,
   });
 
@@ -94,6 +99,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
   final MeetingRepository Function(String userId) meetingRepositoryFactory;
   final SessionRepository Function(String userId) sessionRepositoryFactory;
   final BackendIdentityVerifier? backendIdentityVerifier;
+  final BackendAttendanceEvaluator? attendanceEvaluator;
 
   @override
   Widget build(BuildContext context) {
@@ -125,6 +131,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
         meetingRepositoryFactory: meetingRepositoryFactory,
         sessionRepositoryFactory: sessionRepositoryFactory,
         backendIdentityVerifier: backendIdentityVerifier,
+        attendanceEvaluator: attendanceEvaluator,
       ),
     );
   }

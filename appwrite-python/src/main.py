@@ -11,7 +11,10 @@ from appwrite.client import Client
 from appwrite.services.tables_db import TablesDB
 
 module_search_path.insert(0, str(Path(__file__).resolve().parent))
+development_domain = Path(__file__).resolve().parents[2] / "backend" / "src"
+module_search_path.insert(0, str(development_domain))
 
+from attendance_service import InvalidAttendanceRequest, evaluate_attendance  # noqa: E402
 from domain_probe import AttendanceStatus, calculate_absences  # noqa: E402
 from firebase_app_check import (  # noqa: E402
     FirebaseAppIdentity,
@@ -43,7 +46,10 @@ def main(context: Any) -> Any:
     if origin and allowed_origin is None:
         _error(context, "origin_rejected")
         return _respond(context, {"error": "origin_forbidden"}, 403)
-    if method == "OPTIONS" and path == "/v1/identity":
+    if method == "OPTIONS" and path in {
+        "/v1/attendance/evaluate",
+        "/v1/identity",
+    }:
         return _respond(
             context,
             {},
@@ -53,7 +59,7 @@ def main(context: Any) -> Any:
                 "Access-Control-Allow-Headers": (
                     "Authorization,Content-Type,X-Firebase-AppCheck"
                 ),
-                "Access-Control-Allow-Methods": "GET,OPTIONS",
+                "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
                 "Access-Control-Max-Age": "600",
             },
         )
@@ -73,10 +79,37 @@ def main(context: Any) -> Any:
         return _pdf(context, started)
     if method == "GET" and path == "/v1/identity":
         return _identity(context, allowed_origin)
+    if method == "POST" and path == "/v1/attendance/evaluate":
+        return _attendance(context, allowed_origin)
     return _respond(context, {"error": "not_found"}, 404, allowed_origin)
 
 
 def _identity(context: Any, origin: str | None) -> Any:
+    rejected = _authentication_rejection(context, origin, "/v1/identity")
+    if rejected is not None:
+        return rejected
+    _log(context, "request_authenticated")
+    return _respond(context, {"authenticated": True}, origin=origin)
+
+
+def _attendance(context: Any, origin: str | None) -> Any:
+    rejected = _authentication_rejection(context, origin, "/v1/attendance/evaluate")
+    if rejected is not None:
+        return rejected
+    try:
+        result = evaluate_attendance(context.req.body_json)
+    except (InvalidAttendanceRequest, TypeError, ValueError):
+        _error(context, "attendance_rejected")
+        return _respond(context, {"error": "invalid_request"}, 400, origin)
+    _log(context, "attendance_evaluated")
+    return _respond(context, result, origin=origin)
+
+
+def _authentication_rejection(
+    context: Any,
+    origin: str | None,
+    route: str,
+) -> Any | None:
     now = int(time())
     try:
         user_id = _firebase_identity(context.req.headers)
@@ -94,7 +127,7 @@ def _identity(context: Any, origin: str | None) -> Any:
         _security_store(context.req.headers).consume(
             token_digest=app.token_digest,
             user_id=user_id,
-            route="/v1/identity",
+            route=route,
             expires_at=app.expires_at,
             now=now,
         )
@@ -119,8 +152,7 @@ def _identity(context: Any, origin: str | None) -> Any:
             origin,
         )
 
-    _log(context, "request_authenticated")
-    return _respond(context, {"authenticated": True}, origin=origin)
+    return None
 
 
 def _firebase_identity(headers: dict[str, str]) -> str:

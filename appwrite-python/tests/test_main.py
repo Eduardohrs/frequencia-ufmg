@@ -228,7 +228,7 @@ def test_preflight_allows_only_configured_exact_origin(
     assert result["headers"]["Access-Control-Allow-Origin"] == (
         "https://frequencia-ufmg-eduardo.web.app"
     )
-    assert result["headers"]["Access-Control-Allow-Methods"] == "GET,OPTIONS"
+    assert result["headers"]["Access-Control-Allow-Methods"] == "GET,POST,OPTIONS"
     assert "X-Firebase-AppCheck" in result["headers"]["Access-Control-Allow-Headers"]
     assert result["headers"]["Vary"] == "Origin"
 

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../auth/auth_user.dart';
+import '../../backend/python_backend_transport.dart';
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/academic_period.dart';
@@ -30,6 +31,7 @@ class CoursePage extends StatefulWidget {
     required this.user,
     required this.logger,
     required this.onSignOut,
+    this.attendanceEvaluator,
     CourseIdGenerator? idGenerator,
     CurrentTime? now,
     super.key,
@@ -42,6 +44,7 @@ class CoursePage extends StatefulWidget {
   final AuthUser user;
   final AppLogger logger;
   final Future<void> Function() onSignOut;
+  final BackendAttendanceEvaluator? attendanceEvaluator;
   final CourseIdGenerator idGenerator;
   final CurrentTime now;
 
@@ -140,6 +143,7 @@ class _CoursePageState extends State<CoursePage> {
           repository: widget.meetingRepository,
           sessionRepository: widget.sessionRepository,
           logger: widget.logger,
+          attendanceEvaluator: widget.attendanceEvaluator,
           allCourses: _courses,
           allCourseIds: _courses.map((item) => item.id),
         ),

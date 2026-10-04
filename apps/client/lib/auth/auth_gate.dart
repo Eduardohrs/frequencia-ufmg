@@ -18,6 +18,7 @@ class AuthGate extends StatefulWidget {
     required this.meetingRepositoryFactory,
     required this.sessionRepositoryFactory,
     this.backendIdentityVerifier,
+    this.attendanceEvaluator,
     super.key,
   });
 
@@ -27,6 +28,7 @@ class AuthGate extends StatefulWidget {
   final MeetingRepository Function(String userId) meetingRepositoryFactory;
   final SessionRepository Function(String userId) sessionRepositoryFactory;
   final BackendIdentityVerifier? backendIdentityVerifier;
+  final BackendAttendanceEvaluator? attendanceEvaluator;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -109,6 +111,7 @@ class _AuthGateState extends State<AuthGate> {
             sessionRepository: _sessionRepository!,
             user: user,
             logger: widget.logger,
+            attendanceEvaluator: widget.attendanceEvaluator,
             onSignOut: () =>
                 _run(AuditedOperation.logout, widget.authGateway.signOut),
           );

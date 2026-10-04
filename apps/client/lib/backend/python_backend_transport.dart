@@ -34,6 +34,24 @@ abstract interface class BackendIdentityVerifier {
   Future<void> verifyIdentity();
 }
 
+abstract interface class BackendAttendanceEvaluator {
+  Future<PythonAttendanceDecision> evaluateAttendanceStatus({
+    required int lessons,
+    required int calls,
+    required String status,
+  });
+}
+
+final class PythonAttendanceDecision {
+  const PythonAttendanceDecision({
+    required this.status,
+    required this.absences,
+  });
+
+  final String status;
+  final int? absences;
+}
+
 final class PythonBackendSettings {
   const PythonBackendSettings({required this.enabled, required this.endpoint});
 
@@ -59,7 +77,8 @@ final class PythonBackendSettings {
   }
 }
 
-final class PythonBackendTransport implements BackendIdentityVerifier {
+final class PythonBackendTransport
+    implements BackendIdentityVerifier, BackendAttendanceEvaluator {
   PythonBackendTransport({
     required Uri endpoint,
     required PythonBackendTokens tokens,
@@ -76,16 +95,37 @@ final class PythonBackendTransport implements BackendIdentityVerifier {
 
   @override
   Future<void> verifyIdentity() async {
+    final response = await _authenticatedRequest(path: '/v1/identity');
+    if (_isAuthenticated(response.body)) return;
+    throw const PythonBackendException(PythonBackendError.invalidResponse);
+  }
+
+  @override
+  Future<PythonAttendanceDecision> evaluateAttendanceStatus({
+    required int lessons,
+    required int calls,
+    required String status,
+  }) async {
+    final response = await _authenticatedRequest(
+      path: '/v1/attendance/evaluate',
+      body: {'lessons': lessons, 'calls': calls, 'status': status},
+    );
+    return _attendanceDecision(response.body, maximumAbsences: lessons);
+  }
+
+  Future<http.Response> _authenticatedRequest({
+    required String path,
+    Map<String, Object>? body,
+  }) async {
     var forceIdentityRefresh = false;
     for (var attempt = 0; attempt < 2; attempt += 1) {
       final response = await _request(
         forceIdentityRefresh: forceIdentityRefresh,
+        path: path,
+        body: body,
       );
       final error = _errorCode(response);
-      if (response.statusCode == 200) {
-        if (_isAuthenticated(response.body)) return;
-        throw const PythonBackendException(PythonBackendError.invalidResponse);
-      }
+      if (response.statusCode == 200) return response;
       if (attempt == 0 && error == 'unauthorized') {
         forceIdentityRefresh = true;
         continue;
@@ -96,7 +136,11 @@ final class PythonBackendTransport implements BackendIdentityVerifier {
     throw const PythonBackendException(PythonBackendError.invalidResponse);
   }
 
-  Future<http.Response> _request({required bool forceIdentityRefresh}) async {
+  Future<http.Response> _request({
+    required bool forceIdentityRefresh,
+    required String path,
+    required Map<String, Object>? body,
+  }) async {
     try {
       final idToken = await _tokens.firebaseIdToken(
         forceRefresh: forceIdentityRefresh,
@@ -107,15 +151,19 @@ final class PythonBackendTransport implements BackendIdentityVerifier {
           PythonBackendError.credentialsUnavailable,
         );
       }
-      return await _client
-          .get(
-            _endpoint.resolve('/v1/identity'),
-            headers: {
-              'Authorization': 'Bearer $idToken',
-              'X-Firebase-AppCheck': appCheckToken,
-            },
-          )
-          .timeout(timeout);
+      final headers = {
+        'Authorization': 'Bearer $idToken',
+        'X-Firebase-AppCheck': appCheckToken,
+      };
+      final uri = _endpoint.resolve(path);
+      final request = body == null
+          ? _client.get(uri, headers: headers)
+          : _client.post(
+              uri,
+              headers: {...headers, 'Content-Type': 'application/json'},
+              body: jsonEncode(body),
+            );
+      return await request.timeout(timeout);
     } on PythonBackendException {
       rethrow;
     } on TimeoutException {
@@ -131,6 +179,43 @@ final class PythonBackendTransport implements BackendIdentityVerifier {
       return value is Map<String, dynamic> && value['authenticated'] == true;
     } catch (_) {
       return false;
+    }
+  }
+
+  static PythonAttendanceDecision _attendanceDecision(
+    String body, {
+    required int maximumAbsences,
+  }) {
+    try {
+      final value = jsonDecode(body);
+      if (value is! Map<String, dynamic> ||
+          value.keys.toSet().difference({'status', 'absences'}).isNotEmpty) {
+        throw const FormatException();
+      }
+      final status = value['status'];
+      final absences = value['absences'];
+      const allowedStatuses = {
+        'presente',
+        'chegou_atrasado',
+        'saiu_mais_cedo',
+        'ausente',
+        'pendente',
+      };
+      final validAbsences =
+          absences == null ||
+          absences is int && absences >= 0 && absences <= maximumAbsences;
+      if (status is! String ||
+          !allowedStatuses.contains(status) ||
+          !validAbsences ||
+          (status == 'pendente') != (absences == null)) {
+        throw const FormatException();
+      }
+      return PythonAttendanceDecision(
+        status: status,
+        absences: absences as int?,
+      );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
     }
   }
 

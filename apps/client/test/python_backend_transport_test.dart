@@ -84,6 +84,73 @@ void main() {
     expect(transport.timeout, const Duration(seconds: 30));
   });
 
+  test(
+    'posts attendance input and accepts the authoritative decision',
+    () async {
+      final tokens = _Tokens();
+      late http.Request captured;
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: tokens,
+        client: MockClient((request) async {
+          captured = request;
+          return http.Response(
+            jsonEncode({'status': 'chegou_atrasado', 'absences': 1}),
+            200,
+          );
+        }),
+      );
+
+      final decision = await transport.evaluateAttendanceStatus(
+        lessons: 2,
+        calls: 2,
+        status: 'chegou_atrasado',
+      );
+
+      expect(captured.method, 'POST');
+      expect(
+        captured.url,
+        Uri.parse('https://backend.example/v1/attendance/evaluate'),
+      );
+      expect(captured.headers['content-type'], 'application/json');
+      expect(jsonDecode(captured.body), {
+        'lessons': 2,
+        'calls': 2,
+        'status': 'chegou_atrasado',
+      });
+      expect(decision.status, 'chegou_atrasado');
+      expect(decision.absences, 1);
+    },
+  );
+
+  test('rejects a malformed authoritative attendance decision', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({'status': 'chegou_atrasado', 'absences': 3}),
+          200,
+        ),
+      ),
+    );
+
+    await expectLater(
+      transport.evaluateAttendanceStatus(
+        lessons: 2,
+        calls: 2,
+        status: 'chegou_atrasado',
+      ),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'code',
+          PythonBackendError.invalidResponse,
+        ),
+      ),
+    );
+  });
+
   test('refreshes both credentials once after unauthorized response', () async {
     final tokens = _Tokens();
     final requests = <http.Request>[];

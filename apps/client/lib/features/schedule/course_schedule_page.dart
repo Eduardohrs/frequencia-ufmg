@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../data/academic_records.dart';
+import '../../backend/python_backend_transport.dart';
 import '../../data/academic_repositories.dart';
 import '../../domain/attendance.dart';
 import '../../observability/app_logger.dart';
@@ -28,6 +29,7 @@ class CourseSchedulePage extends StatefulWidget {
     required this.repository,
     required this.sessionRepository,
     required this.logger,
+    this.attendanceEvaluator,
     this.courseRepository,
     Iterable<CourseRecord>? allCourses,
     Iterable<String>? allCourseIds,
@@ -47,6 +49,7 @@ class CourseSchedulePage extends StatefulWidget {
   final SessionRepository sessionRepository;
   final CourseRepository? courseRepository;
   final AppLogger logger;
+  final BackendAttendanceEvaluator? attendanceEvaluator;
   final List<CourseRecord> allCourses;
   final List<String> allCourseIds;
   final SessionGenerator? generator;
@@ -340,6 +343,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         courseId: widget.course.id,
         repository: widget.sessionRepository,
         logger: widget.logger,
+        attendanceEvaluator: widget.attendanceEvaluator,
         location: _generator.location,
         now: widget.now,
       ),
