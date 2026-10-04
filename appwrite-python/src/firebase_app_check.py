@@ -18,6 +18,12 @@ TokenVerifier = Callable[[str, str], Mapping[str, Any]]
 class InvalidAppCheck(Exception):
     """A request did not contain a valid token from an allowlisted app."""
 
+    _safe_reasons = frozenset({"claims", "configuration", "header", "token", "verification"})
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason if reason in self._safe_reasons else "verification"
+        super().__init__("invalid App Check")
+
 
 @dataclass(frozen=True, slots=True)
 class FirebaseAppIdentity:
@@ -40,15 +46,18 @@ def verify_firebase_app_check(
 
     token = _app_check_token(headers)
     if not project_number.isdigit() or not allowed_app_ids:
-        raise InvalidAppCheck("invalid App Check")
+        raise InvalidAppCheck("configuration")
 
     audience = f"projects/{project_number}"
     try:
         decode_header = cast(Any, jwt.decode_header)
         header = decode_header(token)
+    except Exception:
+        raise InvalidAppCheck("header") from None
+    try:
         claims = (verify_token or _verify_google_token)(token, audience)
     except Exception:
-        raise InvalidAppCheck("invalid App Check") from None
+        raise InvalidAppCheck("verification") from None
 
     claim_audience = claims.get("aud")
     audiences = {claim_audience} if isinstance(claim_audience, str) else set(claim_audience or [])
@@ -68,7 +77,7 @@ def verify_firebase_app_check(
         or not isinstance(issued_at, int)
         or issued_at > now
     ):
-        raise InvalidAppCheck("invalid App Check")
+        raise InvalidAppCheck("claims")
 
     return FirebaseAppIdentity(
         app_id=app_id,
@@ -88,16 +97,16 @@ def _app_check_token(headers: Mapping[str, str]) -> str:
         or token.count(".") != 2
         or any(character.isspace() for character in token)
     ):
-        raise InvalidAppCheck("invalid App Check")
+        raise InvalidAppCheck("token")
     return token
 
 
 def _verify_google_token(token: str, audience: str) -> Mapping[str, Any]:
     request = Request()
 
-    def bounded_request(**kwargs: Any) -> Any:
+    def bounded_request(*args: Any, **kwargs: Any) -> Any:
         kwargs.setdefault("timeout", VERIFICATION_TIMEOUT_SECONDS)
-        return request(**kwargs)
+        return request(*args, **kwargs)
 
     untyped_verify = cast(Any, verify_token)
     claims = untyped_verify(
