@@ -74,6 +74,16 @@ void main() {
     },
   );
 
+  test('default timeout tolerates an Appwrite cold start', () {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((_) async => http.Response('{}', 200)),
+    );
+
+    expect(transport.timeout, const Duration(seconds: 30));
+  });
+
   test('refreshes both credentials once after unauthorized response', () async {
     final tokens = _Tokens();
     final requests = <http.Request>[];
