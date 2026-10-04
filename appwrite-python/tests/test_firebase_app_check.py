@@ -1,5 +1,6 @@
 import base64
 import json
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -154,6 +155,11 @@ def test_verify_app_check_sanitizes_verifier_and_header_failures() -> None:
         assert caught.value.__cause__ is None
 
 
+def test_invalid_app_check_exposes_only_allowlisted_failure_reasons() -> None:
+    assert InvalidAppCheck("verification").reason == "verification"
+    assert InvalidAppCheck("private-token").reason == "verification"
+
+
 def test_google_verifier_uses_app_check_jwks_and_bounded_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -184,6 +190,44 @@ def test_google_verifier_uses_app_check_jwks_and_bounded_timeout(
         "sub": "registered"
     }
     assert calls["timeout"] == 5
+
+
+def test_google_verifier_accepts_a_real_signed_jwks_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private_key = rsa.generate_private_key(public_exponent=65_537, key_size=2_048)
+    jwk = json.loads(pyjwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk.update({"alg": "RS256", "kid": "test-key", "use": "sig"})
+    now = int(time.time())
+    token = pyjwt.encode(
+        {
+            "aud": ["projects/123"],
+            "exp": now + 300,
+            "iat": now,
+            "iss": "https://firebaseappcheck.googleapis.com/123",
+            "sub": "1:123:web:registered",
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "test-key", "typ": "JWT"},
+    )
+
+    class Response:
+        status = 200
+        data = json.dumps({"keys": [jwk]}).encode()
+
+    class Request:
+        def __call__(self, *_args: Any, **_kwargs: Any) -> Response:
+            return Response()
+
+    monkeypatch.setattr(app_check_module, "Request", lambda: Request())
+
+    claims = app_check_module._verify_google_token(token, "projects/123")
+
+    assert claims["sub"] == "1:123:web:registered"
 
 
 def test_google_verifier_rejects_non_mapping_claims(

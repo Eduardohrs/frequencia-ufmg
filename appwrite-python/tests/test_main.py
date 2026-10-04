@@ -309,7 +309,9 @@ def test_identity_route_rejects_invalid_app_check(
 
     assert result["status"] == 401
     assert result["body"] == {"error": "app_check_invalid"}
-    assert context.errors == ['{"event":"app_check_rejected"}']
+    assert context.errors == [
+        '{"event":"app_check_rejected","reason":"verification"}'
+    ]
     assert "private-token" not in "".join(context.errors)
 
 

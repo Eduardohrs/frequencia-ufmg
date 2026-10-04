@@ -86,8 +86,8 @@ def _identity(context: Any, origin: str | None) -> Any:
 
     try:
         app = _firebase_app(context.req.headers, now)
-    except InvalidAppCheck:
-        _error(context, "app_check_rejected")
+    except InvalidAppCheck as error:
+        _error(context, "app_check_rejected", reason=error.reason)
         return _respond(context, {"error": "app_check_invalid"}, 401, origin)
 
     try:
@@ -320,5 +320,7 @@ def _log(context: Any, event: str, **fields: Any) -> None:
     context.log(json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True))
 
 
-def _error(context: Any, event: str) -> None:
-    context.error(json.dumps({"event": event}, separators=(",", ":")))
+def _error(context: Any, event: str, **fields: Any) -> None:
+    context.error(
+        json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True)
+    )
