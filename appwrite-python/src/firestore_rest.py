@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from os import environ
 from typing import Any
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 MAX_PAYLOAD_BYTES = 1_048_576
@@ -86,13 +86,66 @@ class FirestoreRestClient:
             raise ValueError("Firestore payload is too large")
         return self._request("PATCH", segments, body)
 
+    def list_user_documents(self, *segments: str) -> list[dict[str, Any]]:
+        """List at most 500 documents below a user-owned collection."""
+
+        documents: list[dict[str, Any]] = []
+        page_token: str | None = None
+        while True:
+            query = {"pageSize": "100"}
+            if page_token is not None:
+                query["pageToken"] = page_token
+            page = self._request("GET", segments, query=query, collection=True)
+            values = page.get("documents", [])
+            if not isinstance(values, list) or any(not isinstance(value, dict) for value in values):
+                raise FirestoreUnavailable("Firestore is unavailable")
+            documents.extend(values)
+            next_token = page.get("nextPageToken")
+            if next_token is None:
+                return documents
+            if not isinstance(next_token, str) or not next_token or len(documents) >= 500:
+                raise FirestoreUnavailable("Firestore is unavailable")
+            page_token = next_token
+
+    def delete_user_document(self, *segments: str) -> None:
+        """Delete a document owned by the verified user."""
+
+        self._request("DELETE", segments, allow_empty=True)
+
+    def delete_user_documents(self, paths: list[tuple[str, ...]]) -> None:
+        """Delete a bounded set of user documents in one atomic commit."""
+
+        if not paths or len(paths) > 500:
+            raise ValueError("Firestore delete batch is invalid")
+        writes = [{"delete": self._document_name(path)} for path in paths]
+        body = json.dumps({"writes": writes}, separators=(",", ":")).encode()
+        project = quote(self._project_id, safe="")
+        url = f"{self.base_url}/projects/{project}/databases/(default)/documents:commit"
+        self._send("POST", url, body)
+
     def _request(
         self,
         method: str,
         segments: tuple[str, ...],
         body: bytes | None = None,
+        *,
+        query: Mapping[str, str] | None = None,
+        collection: bool = False,
+        allow_empty: bool = False,
     ) -> dict[str, Any]:
-        url = self._document_url(segments)
+        url = self._resource_url(segments, collection=collection)
+        if query:
+            url = f"{url}?{urlencode(query)}"
+        return self._send(method, url, body, allow_empty=allow_empty)
+
+    def _send(
+        self,
+        method: str,
+        url: str,
+        body: bytes | None = None,
+        *,
+        allow_empty: bool = False,
+    ) -> dict[str, Any]:
         headers = {"Authorization": f"Bearer {self._id_token}"}
         if body is not None:
             headers["Content-Type"] = "application/json"
@@ -111,6 +164,8 @@ class FirestoreRestClient:
             raise FirestoreRequestRejected("Firestore rejected the request")
         if not 200 <= status < 300 or len(response_body) > MAX_PAYLOAD_BYTES:
             raise FirestoreUnavailable("Firestore is unavailable")
+        if not response_body and allow_empty:
+            return {}
         try:
             decoded = json.loads(response_body)
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -119,25 +174,29 @@ class FirestoreRestClient:
             raise FirestoreUnavailable("Firestore is unavailable")
         return decoded
 
-    def _document_url(self, segments: tuple[str, ...]) -> str:
+    def _resource_url(self, segments: tuple[str, ...], *, collection: bool) -> str:
+        expected_remainder = 1 if collection else 0
+        if not segments or len(segments) % 2 != expected_remainder:
+            kind = "collection" if collection else "document"
+            raise ValueError(f"Firestore {kind} path is invalid")
+        return f"{self.base_url}/{self._resource_name(segments)}"
+
+    def _document_name(self, segments: tuple[str, ...]) -> str:
         if not segments or len(segments) % 2 != 0:
-            raise ValueError("Firestore document paths require collection/document pairs")
+            raise ValueError("Firestore document path is invalid")
+        return self._resource_name(segments)
+
+    def _resource_name(self, segments: tuple[str, ...]) -> str:
         safe_segments = [
             quote(_segment(segment, "document path segment"), safe="") for segment in segments
         ]
         path = "/".join(("users", quote(self._user_id, safe=""), *safe_segments))
         project = quote(self._project_id, safe="")
-        return f"{self.base_url}/projects/{project}/databases/(default)/documents/{path}"
+        return f"projects/{project}/databases/(default)/documents/{path}"
 
 
 def _segment(value: str, field: str) -> str:
-    if (
-        not value
-        or len(value) > 128
-        or value.strip() != value
-        or "/" in value
-        or "\\" in value
-    ):
+    if not value or len(value) > 128 or value.strip() != value or "/" in value or "\\" in value:
         raise ValueError(f"invalid {field}")
     return value
 

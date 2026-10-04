@@ -15,9 +15,11 @@ from firebase_app_check import (
 
 
 def _token(header: Mapping[str, Any] | None = None) -> str:
-    encoded = base64.urlsafe_b64encode(
-        json.dumps(header or {"alg": "RS256", "typ": "JWT"}).encode()
-    ).decode().rstrip("=")
+    encoded = (
+        base64.urlsafe_b64encode(json.dumps(header or {"alg": "RS256", "typ": "JWT"}).encode())
+        .decode()
+        .rstrip("=")
+    )
     payload = base64.urlsafe_b64encode(b"{}").decode().rstrip("=")
     signature = base64.urlsafe_b64encode(b"signature").decode().rstrip("=")
     return f"{encoded}.{payload}.{signature}"
@@ -186,9 +188,7 @@ def test_google_verifier_uses_app_check_jwks_and_bounded_timeout(
     monkeypatch.setattr(app_check_module, "Request", lambda: Request())
     monkeypatch.setattr(app_check_module, "verify_token", verify_token)
 
-    assert app_check_module._verify_google_token("signed", "projects/123") == {
-        "sub": "registered"
-    }
+    assert app_check_module._verify_google_token("signed", "projects/123") == {"sub": "registered"}
     assert calls["timeout"] == 5
 
 

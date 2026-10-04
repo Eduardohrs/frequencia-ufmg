@@ -5,8 +5,16 @@ from typing import Any
 import pytest
 
 import main as function
+from course_repository import DuplicateCourseCode
+from course_service import InvalidCourse
 from firebase_app_check import FirebaseAppIdentity, InvalidAppCheck
 from firebase_identity import InvalidIdentity
+from firestore_rest import (
+    FirestoreAccessDenied,
+    FirestoreNotFound,
+    FirestoreRequestRejected,
+    FirestoreUnavailable,
+)
 from quota_guard import RateLimitExceeded, ReplayDetected, SecurityStoreUnavailable
 
 
@@ -60,6 +68,7 @@ def test_health_reads_tablesdb_and_reports_runtime(monkeypatch: pytest.MonkeyPat
 
 def test_health_sanitizes_database_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENABLE_SPIKE_ROUTES", "true")
+
     def fail(_headers: dict[str, str]) -> str:
         raise RuntimeError("secret-token")
 
@@ -125,6 +134,7 @@ def test_pdf_route_returns_summary(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_pdf_route_sanitizes_invalid_file(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENABLE_SPIKE_ROUTES", "true")
+
     def fail(_payload: bytes) -> dict[str, int]:
         raise ValueError("contains private academic content")
 
@@ -144,6 +154,132 @@ def test_unknown_route_returns_not_found() -> None:
     result = function.main(context)
     assert result["body"] == {"error": "not_found"}
     assert result["status"] == 404
+
+
+def test_course_routes_list_save_and_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+
+    class Repository:
+        def list_courses(self) -> list[dict[str, str]]:
+            return [{"id": "course-1"}]
+
+        def save_course(self, payload: dict[str, Any]) -> dict[str, Any]:
+            assert payload["id"] == "course-1"
+            return payload
+
+        def delete_course(self, course_id: str) -> None:
+            assert course_id == "course-1"
+
+    monkeypatch.setattr(function, "_course_repository", lambda *_args: Repository())
+
+    listed = FakeContext(FakeRequest("GET", "/v1/courses"))
+    saved = FakeContext(FakeRequest("PUT", "/v1/courses/course-1", body_json={"code": "DCC203"}))
+    deleted = FakeContext(FakeRequest("DELETE", "/v1/courses/course-1"))
+
+    assert function.main(listed)["body"] == {"courses": [{"id": "course-1"}]}
+    assert function.main(saved)["body"]["course"]["id"] == "course-1"
+    assert function.main(deleted)["body"] == {"deleted": True}
+    assert json.loads(listed.logs[0]) == {"count": 1, "event": "course_list_succeeded"}
+    assert json.loads(saved.logs[0]) == {"event": "course_save_succeeded"}
+    assert json.loads(deleted.logs[0]) == {"event": "course_delete_succeeded"}
+
+
+def test_course_routes_return_authentication_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_args: (None, rejection))
+
+    assert function.main(FakeContext(FakeRequest("GET", "/v1/courses"))) is rejection
+    assert function.main(FakeContext(FakeRequest("DELETE", "/v1/courses/course-1"))) is rejection
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "error"),
+    [
+        (InvalidCourse(), 500, "course_data_invalid"),
+        (FirestoreRequestRejected(), 500, "course_data_invalid"),
+        (FirestoreAccessDenied(), 403, "course_access_denied"),
+        (FirestoreUnavailable(), 503, "course_store_unavailable"),
+    ],
+)
+def test_course_list_sanitizes_store_failures(
+    failure: Exception,
+    status: int,
+    error: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+
+    class Repository:
+        def list_courses(self) -> list[dict[str, Any]]:
+            raise failure
+
+    monkeypatch.setattr(function, "_course_repository", lambda *_args: Repository())
+    context = FakeContext(FakeRequest("GET", "/v1/courses"))
+
+    result = function.main(context)
+
+    assert result["status"] == status
+    assert result["body"] == {"error": error}
+    assert json.loads(context.errors[0]) == {"event": error}
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "error"),
+    [
+        (DuplicateCourseCode(), 409, "course_code_conflict"),
+        (InvalidCourse(), 400, "course_rejected"),
+        (FirestoreRequestRejected(), 400, "course_rejected"),
+        (TypeError(), 400, "course_rejected"),
+        (ValueError(), 400, "course_rejected"),
+        (FirestoreNotFound(), 404, "course_not_found"),
+        (FirestoreAccessDenied(), 403, "course_access_denied"),
+        (FirestoreUnavailable(), 503, "course_store_unavailable"),
+    ],
+)
+def test_course_mutation_sanitizes_failures(
+    failure: Exception,
+    status: int,
+    error: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+
+    class Repository:
+        def save_course(self, _payload: dict[str, Any]) -> dict[str, Any]:
+            raise failure
+
+    monkeypatch.setattr(function, "_course_repository", lambda *_args: Repository())
+    context = FakeContext(FakeRequest("PUT", "/v1/courses/course-1"))
+
+    result = function.main(context)
+
+    assert result["status"] == status
+    assert result["body"] == {"error": error}
+    assert json.loads(context.errors[0]) == {"event": error}
+
+
+def test_course_repository_uses_verified_uid_and_bearer_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class Client:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(function, "FirestoreRestClient", Client)
+    monkeypatch.setattr(function, "CourseRepository", lambda client: client)
+    monkeypatch.setattr(function, "firebase_bearer_token", lambda _headers: "token")
+    monkeypatch.setattr(function, "environ", {"FIREBASE_PROJECT_ID": "project"})
+
+    repository = function._course_repository({"authorization": "private"}, "verified-user")
+
+    assert repository is not None
+    assert captured == {
+        "id_token": "token",
+        "project_id": "project",
+        "user_id": "verified-user",
+    }
 
 
 def test_identity_route_accepts_verified_firebase_user(
@@ -228,7 +364,7 @@ def test_preflight_allows_only_configured_exact_origin(
     assert result["headers"]["Access-Control-Allow-Origin"] == (
         "https://frequencia-ufmg-eduardo.web.app"
     )
-    assert result["headers"]["Access-Control-Allow-Methods"] == "GET,POST,OPTIONS"
+    assert result["headers"]["Access-Control-Allow-Methods"] == ("GET,POST,PUT,DELETE,OPTIONS")
     assert "X-Firebase-AppCheck" in result["headers"]["Access-Control-Allow-Headers"]
     assert result["headers"]["Vary"] == "Origin"
 
@@ -275,21 +411,15 @@ def test_native_request_without_origin_is_allowed(
 
 
 def test_request_rejects_oversized_or_false_content_length() -> None:
-    oversized = FakeContext(
-        FakeRequest("GET", "/v1/identity", body_binary=b"x" * 16_385)
-    )
-    invalid = FakeContext(
-        FakeRequest("GET", "/v1/identity", headers={"content-length": "invalid"})
-    )
+    oversized = FakeContext(FakeRequest("GET", "/v1/identity", body_binary=b"x" * 16_385))
+    invalid = FakeContext(FakeRequest("GET", "/v1/identity", headers={"content-length": "invalid"}))
 
     assert function.main(oversized)["status"] == 413
     assert function.main(invalid)["status"] == 400
 
 
 def test_request_rejects_declared_oversized_payload() -> None:
-    context = FakeContext(
-        FakeRequest("GET", "/v1/identity", headers={"content-length": "16385"})
-    )
+    context = FakeContext(FakeRequest("GET", "/v1/identity", headers={"content-length": "16385"}))
 
     assert function.main(context)["status"] == 413
 
@@ -309,9 +439,7 @@ def test_identity_route_rejects_invalid_app_check(
 
     assert result["status"] == 401
     assert result["body"] == {"error": "app_check_invalid"}
-    assert context.errors == [
-        '{"event":"app_check_rejected","reason":"verification"}'
-    ]
+    assert context.errors == ['{"event":"app_check_rejected","reason":"verification"}']
     assert "private-token" not in "".join(context.errors)
 
 
@@ -510,9 +638,7 @@ def test_allowed_origin_supports_https_and_local_development(
         ({"content-length": "1"}, b"", None),
     ],
 )
-def test_payload_length_boundary(
-    headers: dict[str, str], body: bytes, error: str | None
-) -> None:
+def test_payload_length_boundary(headers: dict[str, str], body: bytes, error: str | None) -> None:
     assert function._payload_error(headers, body) == error
 
 

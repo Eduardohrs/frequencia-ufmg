@@ -76,9 +76,7 @@ class AppwriteSecurityStore:
 
         window_start = now - now % self._window_seconds
         retry_after = self._window_seconds - (now - window_start)
-        rate_key = sha256(
-            f"{user_id}\0{route}\0{window_start}".encode()
-        ).hexdigest()[:32]
+        rate_key = sha256(f"{user_id}\0{route}\0{window_start}".encode()).hexdigest()[:32]
         row_id = f"r_{rate_key}"
         try:
             row = self._tables.create_row(

@@ -9,6 +9,7 @@ import pytest
 
 from firestore_rest import (
     FirestoreAccessDenied,
+    FirestoreNotFound,
     FirestoreRequestRejected,
     FirestoreRestClient,
 )
@@ -16,8 +17,7 @@ from firestore_rest import (
 PROJECT_ID = "demo-frequencia-ufmg"
 
 pytestmark = pytest.mark.skipif(
-    not environ.get("FIRESTORE_EMULATOR_HOST")
-    or not environ.get("FIREBASE_AUTH_EMULATOR_HOST"),
+    not environ.get("FIRESTORE_EMULATOR_HOST") or not environ.get("FIREBASE_AUTH_EMULATOR_HOST"),
     reason="Firebase Auth and Firestore emulators are required",
 )
 
@@ -65,9 +65,7 @@ def test_firestore_rest_enforces_owner_other_user_and_anonymous_rules() -> None:
     loaded = owner.get_user_document("courses", "dcc203")
 
     assert created["fields"]["code"] == {"stringValue": "DCC203"}
-    assert loaded["fields"]["name"] == {
-        "stringValue": "Programação Orientada a Objetos"
-    }
+    assert loaded["fields"]["name"] == {"stringValue": "Programação Orientada a Objetos"}
 
     other_targeting_owner = FirestoreRestClient(PROJECT_ID, owner_id, other_token)
     with pytest.raises(FirestoreAccessDenied):
@@ -81,6 +79,16 @@ def test_firestore_rest_enforces_owner_other_user_and_anonymous_rules() -> None:
     with pytest.raises(HTTPError) as anonymous_error:
         urlopen(anonymous_url, timeout=10)
     assert anonymous_error.value.code == 403
+
+    updated_fields = {**_course_fields(), "name": {"stringValue": "POO atualizada"}}
+    updated = owner.patch_user_document("courses", "dcc203", fields=updated_fields)
+    listed = owner.list_user_documents("courses")
+    owner.delete_user_documents([("courses", "dcc203")])
+
+    assert updated["fields"]["name"] == {"stringValue": "POO atualizada"}
+    assert [document["fields"]["code"] for document in listed] == [{"stringValue": "DCC203"}]
+    with pytest.raises(FirestoreNotFound):
+        owner.get_user_document("courses", "dcc203")
 
 
 def test_firestore_rest_rejects_an_invalid_user_token() -> None:

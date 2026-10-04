@@ -9,12 +9,25 @@ import 'package:frequencia_ufmg/auth/auth_user.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
+import 'package:frequencia_ufmg/data/python_course_repository.dart';
 import 'package:frequencia_ufmg/main.dart' as app;
 import 'package:frequencia_ufmg/observability/app_logger.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   TestFirebaseCoreHostApi.setUp(_FirebaseCoreHostApi());
+
+  test('selects Python course persistence only for a course gateway', () {
+    final logger = _FakeAppLogger();
+    final gateway = _FakeCourseBackend();
+
+    final repository = app.resolveCourseRepositoryFactory(gateway)(
+      'user',
+      logger,
+    );
+
+    expect(repository, isA<PythonCourseRepository>());
+  });
 
   testWidgets('bootstraps Firebase and shows the signed-out experience', (
     tester,
@@ -289,6 +302,21 @@ final class _FakeBackendVerifier implements BackendIdentityVerifier {
     calls += 1;
     if (fails) throw StateError('private backend failure');
   }
+}
+
+final class _FakeCourseBackend
+    implements BackendIdentityVerifier, BackendCourseGateway {
+  @override
+  Future<void> verifyIdentity() async {}
+
+  @override
+  Future<List<PythonCourse>> listCourses() async => [];
+
+  @override
+  Future<PythonCourse> saveCourse(PythonCourse course) async => course;
+
+  @override
+  Future<void> deleteCourse(String courseId) async {}
 }
 
 final class _FakeCourseRepository implements CourseRepository {

@@ -196,9 +196,7 @@ def test_attendance_api_calculates_default_absences_from_manual_status(
     monkeypatch.setattr(function, "time", lambda: 1_500)
 
     result = function.main(
-        function_test_context(
-            {"lessons": 4, "calls": 2, "status": "saiu_mais_cedo"}
-        )
+        function_test_context({"lessons": 4, "calls": 2, "status": "saiu_mais_cedo"})
     )
 
     assert result["status"] == 200

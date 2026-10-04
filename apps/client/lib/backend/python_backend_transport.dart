@@ -14,6 +14,8 @@ enum PythonBackendError {
   unavailable,
 }
 
+enum _BackendMethod { get, post, put, delete }
+
 final class PythonBackendException implements Exception {
   const PythonBackendException(this.code, {this.retryAfter});
 
@@ -40,6 +42,118 @@ abstract interface class BackendAttendanceEvaluator {
     required int calls,
     required String status,
   });
+}
+
+abstract interface class BackendCourseGateway {
+  Future<List<PythonCourse>> listCourses();
+
+  Future<PythonCourse> saveCourse(PythonCourse course);
+
+  Future<void> deleteCourse(String courseId);
+}
+
+final class PythonCourse {
+  const PythonCourse({
+    required this.id,
+    required this.code,
+    required this.name,
+    required this.workload,
+    required this.term,
+    required this.startsOn,
+    required this.endsOn,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory PythonCourse.fromJson(Map<String, Object?> json) {
+    const keys = {
+      'id',
+      'code',
+      'name',
+      'workload',
+      'term',
+      'starts_on',
+      'ends_on',
+      'created_at',
+      'updated_at',
+    };
+    if (json.keys.toSet().difference(keys).isNotEmpty ||
+        keys.difference(json.keys.toSet()).isNotEmpty) {
+      throw const FormatException();
+    }
+    final startsOn = _nullableDate(json['starts_on']);
+    final endsOn = _nullableDate(json['ends_on']);
+    final createdAt = _requiredDate(json['created_at']);
+    final updatedAt = _requiredDate(json['updated_at']);
+    final id = json['id'];
+    final code = json['code'];
+    final name = json['name'];
+    final workload = json['workload'];
+    final term = json['term'];
+    if (id is! String ||
+        id.isEmpty ||
+        id.length > 128 ||
+        id.contains('/') ||
+        id.contains(r'\') ||
+        code is! String ||
+        code.isEmpty ||
+        code != code.toUpperCase() ||
+        name is! String ||
+        name.trim() != name ||
+        name.isEmpty ||
+        workload is! int ||
+        workload <= 0 ||
+        term is! String ||
+        !RegExp(r'^\d{4}-[12]$').hasMatch(term) ||
+        (startsOn == null) != (endsOn == null) ||
+        startsOn != null && endsOn != null && startsOn.isAfter(endsOn) ||
+        updatedAt.isBefore(createdAt)) {
+      throw const FormatException();
+    }
+    return PythonCourse(
+      id: id,
+      code: code,
+      name: name,
+      workload: workload,
+      term: term,
+      startsOn: startsOn,
+      endsOn: endsOn,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
+  }
+
+  final String id;
+  final String code;
+  final String name;
+  final int workload;
+  final String term;
+  final DateTime? startsOn;
+  final DateTime? endsOn;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  Map<String, Object?> toJson({bool includeId = true}) => {
+    if (includeId) 'id': id,
+    'code': code,
+    'name': name,
+    'workload': workload,
+    'term': term,
+    'starts_on': startsOn?.toUtc().toIso8601String(),
+    'ends_on': endsOn?.toUtc().toIso8601String(),
+    'created_at': createdAt.toUtc().toIso8601String(),
+    'updated_at': updatedAt.toUtc().toIso8601String(),
+  };
+
+  static DateTime? _nullableDate(Object? value) =>
+      value == null ? null : _requiredDate(value);
+
+  static DateTime _requiredDate(Object? value) {
+    if (value is! String) throw const FormatException();
+    final parsed = DateTime.tryParse(value);
+    if (parsed == null || !value.endsWith('Z')) throw const FormatException();
+    return parsed.toUtc();
+  }
 }
 
 final class PythonAttendanceDecision {
@@ -78,7 +192,10 @@ final class PythonBackendSettings {
 }
 
 final class PythonBackendTransport
-    implements BackendIdentityVerifier, BackendAttendanceEvaluator {
+    implements
+        BackendIdentityVerifier,
+        BackendAttendanceEvaluator,
+        BackendCourseGateway {
   PythonBackendTransport({
     required Uri endpoint,
     required PythonBackendTokens tokens,
@@ -108,20 +225,72 @@ final class PythonBackendTransport
   }) async {
     final response = await _authenticatedRequest(
       path: '/v1/attendance/evaluate',
+      method: _BackendMethod.post,
       body: {'lessons': lessons, 'calls': calls, 'status': status},
     );
     return _attendanceDecision(response.body, maximumAbsences: lessons);
   }
 
+  @override
+  Future<List<PythonCourse>> listCourses() async {
+    final response = await _authenticatedRequest(path: '/v1/courses');
+    try {
+      final value = jsonDecode(response.body);
+      final courses = value is Map<String, dynamic> ? value['courses'] : null;
+      if (courses is! List) throw const FormatException();
+      return courses
+          .map(
+            (item) =>
+                PythonCourse.fromJson(Map<String, Object?>.from(item as Map)),
+          )
+          .toList(growable: false);
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<PythonCourse> saveCourse(PythonCourse course) async {
+    _validateCourseId(course.id);
+    final response = await _authenticatedRequest(
+      path: '/v1/courses/${Uri.encodeComponent(course.id)}',
+      method: _BackendMethod.put,
+      body: course.toJson(includeId: false),
+    );
+    try {
+      final value = jsonDecode(response.body);
+      final saved = value is Map<String, dynamic> ? value['course'] : null;
+      return PythonCourse.fromJson(Map<String, Object?>.from(saved as Map));
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<void> deleteCourse(String courseId) async {
+    _validateCourseId(courseId);
+    final response = await _authenticatedRequest(
+      path: '/v1/courses/${Uri.encodeComponent(courseId)}',
+      method: _BackendMethod.delete,
+    );
+    try {
+      final value = jsonDecode(response.body);
+      if (value is Map<String, dynamic> && value['deleted'] == true) return;
+    } catch (_) {}
+    throw const PythonBackendException(PythonBackendError.invalidResponse);
+  }
+
   Future<http.Response> _authenticatedRequest({
     required String path,
-    Map<String, Object>? body,
+    _BackendMethod method = _BackendMethod.get,
+    Map<String, Object?>? body,
   }) async {
     var forceIdentityRefresh = false;
     for (var attempt = 0; attempt < 2; attempt += 1) {
       final response = await _request(
         forceIdentityRefresh: forceIdentityRefresh,
         path: path,
+        method: method,
         body: body,
       );
       final error = _errorCode(response);
@@ -139,7 +308,8 @@ final class PythonBackendTransport
   Future<http.Response> _request({
     required bool forceIdentityRefresh,
     required String path,
-    required Map<String, Object>? body,
+    required _BackendMethod method,
+    required Map<String, Object?>? body,
   }) async {
     try {
       final idToken = await _tokens.firebaseIdToken(
@@ -156,13 +326,20 @@ final class PythonBackendTransport
         'X-Firebase-AppCheck': appCheckToken,
       };
       final uri = _endpoint.resolve(path);
-      final request = body == null
-          ? _client.get(uri, headers: headers)
-          : _client.post(
-              uri,
-              headers: {...headers, 'Content-Type': 'application/json'},
-              body: jsonEncode(body),
-            );
+      final request = switch (method) {
+        _BackendMethod.get => _client.get(uri, headers: headers),
+        _BackendMethod.delete => _client.delete(uri, headers: headers),
+        _BackendMethod.post => _client.post(
+          uri,
+          headers: {...headers, 'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        ),
+        _BackendMethod.put => _client.put(
+          uri,
+          headers: {...headers, 'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        ),
+      };
       return await request.timeout(timeout);
     } on PythonBackendException {
       rethrow;
@@ -257,5 +434,15 @@ final class PythonBackendTransport
       return const PythonBackendException(PythonBackendError.unavailable);
     }
     return const PythonBackendException(PythonBackendError.invalidResponse);
+  }
+
+  static void _validateCourseId(String value) {
+    if (value.isEmpty ||
+        value.length > 128 ||
+        value.trim() != value ||
+        value.contains('/') ||
+        value.contains(r'\')) {
+      throw ArgumentError.value(value, 'courseId', 'unsafe course id');
+    }
   }
 }
