@@ -12,6 +12,7 @@ import 'backend/python_backend_transport.dart';
 import 'data/academic_repositories.dart';
 import 'data/firebase_course_repository.dart';
 import 'data/firestore_configuration.dart';
+import 'data/python_course_repository.dart';
 import 'firebase_options.dart';
 import 'observability/app_logger.dart';
 import 'observability/error_reporting.dart';
@@ -50,6 +51,16 @@ MainSessionRepositoryFactory sessionRepositoryFactory =
 BackendIdentityVerifierFactory backendIdentityVerifierFactory =
     createFirebasePythonBackendVerifier;
 
+@visibleForTesting
+MainCourseRepositoryFactory resolveCourseRepositoryFactory(
+  BackendIdentityVerifier? backend,
+) => backend is BackendCourseGateway
+    ? (String _, AppLogger logger) => PythonCourseRepository(
+        gateway: backend as BackendCourseGateway,
+        logger: logger,
+      )
+    : courseRepositoryFactory;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   tz_data.initializeTimeZones();
@@ -61,13 +72,16 @@ Future<void> main() async {
   }
   final logger = ResilientAppLogger(appLoggerFactory());
   final backend = backendIdentityVerifierFactory();
+  final effectiveCourseRepositoryFactory = resolveCourseRepositoryFactory(
+    backend,
+  );
   configureErrorReporting(logger);
   runApp(
     FrequenciaUFMGApp(
       authGateway: authGatewayFactory(),
       logger: logger,
       courseRepositoryFactory: (userId) =>
-          courseRepositoryFactory(userId, logger),
+          effectiveCourseRepositoryFactory(userId, logger),
       meetingRepositoryFactory: (userId) =>
           meetingRepositoryFactory(userId, logger),
       sessionRepositoryFactory: (userId) =>

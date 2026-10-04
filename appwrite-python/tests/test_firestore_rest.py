@@ -62,6 +62,93 @@ def test_patch_user_document_sends_only_firestore_fields() -> None:
     assert document == {"fields": fields}
 
 
+def test_list_user_documents_follows_bounded_pagination() -> None:
+    calls: list[Any] = []
+
+    def transport(request: Any, _timeout: float) -> tuple[int, bytes]:
+        calls.append(request)
+        if len(calls) == 1:
+            return 200, b'{"documents":[{"name":"one"}],"nextPageToken":"next"}'
+        return 200, b'{"documents":[{"name":"two"}]}'
+
+    client = FirestoreRestClient("project", "user", "token", transport=transport)
+
+    documents = client.list_user_documents("courses")
+
+    assert documents == [{"name": "one"}, {"name": "two"}]
+    assert calls[0].full_url.endswith("/users/user/courses?pageSize=100")
+    assert calls[1].full_url.endswith("/users/user/courses?pageSize=100&pageToken=next")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [b'{"documents":"bad"}', b'{"documents":["bad"]}', b'{"nextPageToken":""}'],
+)
+def test_list_user_documents_rejects_malformed_pages(payload: bytes) -> None:
+    client = FirestoreRestClient(
+        "project", "user", "token", transport=lambda _request, _timeout: (200, payload)
+    )
+
+    with pytest.raises(FirestoreUnavailable):
+        client.list_user_documents("courses")
+
+
+def test_delete_user_document_accepts_empty_success() -> None:
+    calls: list[Any] = []
+
+    def transport(request: Any, _timeout: float) -> tuple[int, bytes]:
+        calls.append(request)
+        return 204, b""
+
+    client = FirestoreRestClient("project", "user", "token", transport=transport)
+
+    client.delete_user_document("courses", "course-1")
+
+    assert calls[0].method == "DELETE"
+
+
+def test_delete_user_documents_commits_one_bounded_batch() -> None:
+    calls: list[Any] = []
+
+    def transport(request: Any, _timeout: float) -> tuple[int, bytes]:
+        calls.append(request)
+        return 200, b'{"writeResults":[]}'
+
+    client = FirestoreRestClient("project", "user", "token", transport=transport)
+
+    client.delete_user_documents(
+        [("courses", "course-1", "sessions", "session-1"), ("courses", "course-1")]
+    )
+
+    assert calls[0].method == "POST"
+    assert calls[0].full_url.endswith("/databases/(default)/documents:commit")
+    assert json.loads(calls[0].data) == {
+        "writes": [
+            {
+                "delete": (
+                    "projects/project/databases/(default)/documents/"
+                    "users/user/courses/course-1/sessions/session-1"
+                )
+            },
+            {
+                "delete": (
+                    "projects/project/databases/(default)/documents/users/user/courses/course-1"
+                )
+            },
+        ]
+    }
+
+
+@pytest.mark.parametrize("paths", [[], [("courses", "id")] * 501, [("courses",)]])
+def test_delete_user_documents_rejects_unsafe_batches(
+    paths: list[tuple[str, ...]],
+) -> None:
+    client = FirestoreRestClient("project", "user", "token")
+
+    with pytest.raises(ValueError):
+        client.delete_user_documents(paths)
+
+
 @pytest.mark.parametrize("status", [401, 403])
 def test_request_maps_auth_failures_without_exposing_response(status: int) -> None:
     client = FirestoreRestClient(

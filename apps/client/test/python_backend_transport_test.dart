@@ -151,6 +151,104 @@ void main() {
     );
   });
 
+  test(
+    'lists, saves, and deletes courses through authenticated REST',
+    () async {
+      final requests = <http.Request>[];
+      final courseJson = {
+        'id': 'course-1',
+        'code': 'DCC203',
+        'name': 'POO',
+        'workload': 1,
+        'term': '2026-2',
+        'starts_on': null,
+        'ends_on': null,
+        'created_at': '2026-10-04T12:00:00Z',
+        'updated_at': '2026-10-04T12:00:00Z',
+      };
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((request) async {
+          requests.add(request);
+          return switch (request.method) {
+            'GET' => http.Response(
+              jsonEncode({
+                'courses': [courseJson],
+              }),
+              200,
+            ),
+            'PUT' => http.Response(jsonEncode({'course': courseJson}), 200),
+            'DELETE' => http.Response(jsonEncode({'deleted': true}), 200),
+            _ => http.Response('{}', 500),
+          };
+        }),
+      );
+      final course = PythonCourse.fromJson(courseJson);
+
+      expect(course.toJson()['id'], 'course-1');
+      expect(
+        PythonCourse.fromJson({
+          ...courseJson,
+          'starts_on': '2026-08-01T00:00:00Z',
+          'ends_on': '2026-12-01T00:00:00Z',
+        }).startsOn,
+        DateTime.utc(2026, 8),
+      );
+
+      final listed = await transport.listCourses();
+      final saved = await transport.saveCourse(course);
+      await transport.deleteCourse('course-1');
+
+      expect(listed.single.code, 'DCC203');
+      expect(saved.id, 'course-1');
+      expect(requests.map((request) => request.method), [
+        'GET',
+        'PUT',
+        'DELETE',
+      ]);
+      expect(requests[1].url.path, '/v1/courses/course-1');
+      expect(jsonDecode(requests[1].body), isNot(contains('id')));
+      expect(requests[2].url.path, '/v1/courses/course-1');
+    },
+  );
+
+  test('rejects malformed course responses and unsafe ids', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'courses': [{}],
+          }),
+          200,
+        ),
+      ),
+    );
+
+    await expectLater(
+      transport.listCourses(),
+      throwsA(isA<PythonBackendException>()),
+    );
+    await expectLater(
+      transport.deleteCourse('bad/id'),
+      throwsA(isA<ArgumentError>()),
+    );
+    final invalidRange = {
+      'id': 'course-1',
+      'code': 'DCC203',
+      'name': 'POO',
+      'workload': 1,
+      'term': '2026-2',
+      'starts_on': '2026-12-01T00:00:00Z',
+      'ends_on': '2026-08-01T00:00:00Z',
+      'created_at': '2026-10-04T12:00:00Z',
+      'updated_at': '2026-10-04T12:00:00Z',
+    };
+    expect(() => PythonCourse.fromJson(invalidRange), throwsFormatException);
+  });
+
   test('refreshes both credentials once after unauthorized response', () async {
     final tokens = _Tokens();
     final requests = <http.Request>[];

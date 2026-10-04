@@ -29,7 +29,7 @@ def verify_firebase_identity(
 ) -> FirebaseIdentity:
     """Validate a bearer token and return only its stable Firebase user ID."""
 
-    token = _bearer_token(headers)
+    token = firebase_bearer_token(headers)
     if not project_id:
         raise InvalidIdentity("invalid Firebase identity")
 
@@ -51,7 +51,8 @@ def verify_firebase_identity(
     return FirebaseIdentity(uid=uid)
 
 
-def _bearer_token(headers: Mapping[str, str]) -> str:
+def firebase_bearer_token(headers: Mapping[str, str]) -> str:
+    """Return a strictly validated bearer token without logging or persisting it."""
     authorization = next(
         (value for key, value in headers.items() if key.lower() == "authorization"),
         "",

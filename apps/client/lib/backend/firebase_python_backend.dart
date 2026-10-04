@@ -22,7 +22,10 @@ BackendIdentityVerifier? createFirebasePythonBackendVerifier() {
 }
 
 final class _FirebasePythonBackendVerifier
-    implements BackendIdentityVerifier, BackendAttendanceEvaluator {
+    implements
+        BackendIdentityVerifier,
+        BackendAttendanceEvaluator,
+        BackendCourseGateway {
   _FirebasePythonBackendVerifier(Uri endpoint)
     : _transport = PythonBackendTransport(
         endpoint: endpoint,
@@ -51,6 +54,24 @@ final class _FirebasePythonBackendVerifier
       calls: calls,
       status: status,
     );
+  }
+
+  @override
+  Future<List<PythonCourse>> listCourses() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.listCourses();
+  }
+
+  @override
+  Future<PythonCourse> saveCourse(PythonCourse course) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.saveCourse(course);
+  }
+
+  @override
+  Future<void> deleteCourse(String courseId) async {
+    await (_activation ??= _activateAppCheck());
+    await _transport.deleteCourse(courseId);
   }
 
   static Future<void> _activateAppCheck() async {

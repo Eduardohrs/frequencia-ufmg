@@ -68,8 +68,7 @@ def verify_firebase_app_check(
         header.get("alg") != "RS256"
         or header.get("typ") != "JWT"
         or audience not in audiences
-        or claims.get("iss")
-        != f"https://firebaseappcheck.googleapis.com/{project_number}"
+        or claims.get("iss") != f"https://firebaseappcheck.googleapis.com/{project_number}"
         or not isinstance(app_id, str)
         or app_id not in allowed_app_ids
         or not isinstance(expires_at, int)
