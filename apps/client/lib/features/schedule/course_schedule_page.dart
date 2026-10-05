@@ -30,6 +30,8 @@ class CourseSchedulePage extends StatefulWidget {
     required this.sessionRepository,
     required this.logger,
     this.attendanceEvaluator,
+    this.scheduleGateway,
+    this.scheduleWritesEnabled = false,
     this.courseRepository,
     Iterable<CourseRecord>? allCourses,
     Iterable<String>? allCourseIds,
@@ -50,6 +52,8 @@ class CourseSchedulePage extends StatefulWidget {
   final CourseRepository? courseRepository;
   final AppLogger logger;
   final BackendAttendanceEvaluator? attendanceEvaluator;
+  final BackendScheduleGateway? scheduleGateway;
+  final bool scheduleWritesEnabled;
   final List<CourseRecord> allCourses;
   final List<String> allCourseIds;
   final SessionGenerator? generator;
@@ -84,9 +88,25 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       _loadFailed = false;
     });
     try {
-      final meetings = await widget.repository.listMeetings(widget.course.id);
+      final schedule = await widget.scheduleGateway?.getSchedule(
+        widget.course.id,
+      );
+      final meetings = schedule == null
+          ? await widget.repository.listMeetings(widget.course.id)
+          : schedule.meetings.map(_meetingFromPython).toList(growable: false);
       if (!mounted) return;
-      setState(() => _meetings = _sorted(meetings));
+      setState(() {
+        if (schedule != null) _course = _courseFromPython(schedule.course);
+        _meetings = _sorted(meetings);
+      });
+      if (schedule != null) {
+        unawaited(
+          widget.logger.logEvent(
+            'schedule_preview_succeeded',
+            parameters: _changeParameters(schedule.changes),
+          ),
+        );
+      }
     } catch (_) {
       if (mounted) setState(() => _loadFailed = true);
     } finally {
@@ -106,7 +126,10 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
   Future<String?> _save(MeetingRecord? existing, _MeetingInput input) async {
     try {
       final endMinutes = input.startMinutes + input.lessonCount.value * 50;
-      for (final courseId in widget.allCourseIds) {
+      for (final courseId
+          in widget.scheduleGateway == null
+              ? widget.allCourseIds
+              : const <String>[]) {
         final meetings = courseId == widget.course.id
             ? _meetings
             : await widget.repository.listMeetings(courseId);
@@ -137,6 +160,14 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
           if (item.id != meeting.id) item,
         meeting,
       ]);
+      if (widget.scheduleGateway != null) {
+        final schedule = await _saveAuthoritative(proposedMeetings);
+        if (schedule == null) {
+          return 'Alteração cancelada para preservar frequências registradas.';
+        }
+        _adopt(schedule);
+        return null;
+      }
       final plan = await _planFor(proposedMeetings);
       if (!await _allowDestructive(plan)) {
         return 'Alteração cancelada para preservar frequências registradas.';
@@ -182,6 +213,11 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       final proposedMeetings = _meetings
           .where((item) => item.id != meeting.id)
           .toList(growable: false);
+      if (widget.scheduleGateway != null) {
+        final schedule = await _saveAuthoritative(proposedMeetings);
+        if (schedule != null) _adopt(schedule);
+        return;
+      }
       final plan = await _planFor(proposedMeetings);
       if (!await _allowDestructive(plan)) return;
       await widget.repository.deleteMeeting(widget.course.id, meeting.id);
@@ -223,6 +259,18 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     }
     setState(() => _syncing = true);
     try {
+      if (widget.scheduleGateway != null) {
+        final schedule = await _saveAuthoritative(
+          _meetings,
+          startDate: range.start,
+          endDate: range.end,
+        );
+        if (schedule != null) {
+          _adopt(schedule);
+          _message('Período salvo e calendário atualizado.');
+        }
+        return;
+      }
       final plan = await _planFor(
         _meetings,
         startDate: range.start,
@@ -265,6 +313,10 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
 
   Future<bool> _allowDestructive(SessionReconciliation? plan) async {
     final count = plan?.destructiveDeleteCount ?? 0;
+    return _allowDestructiveCount(count);
+  }
+
+  Future<bool> _allowDestructiveCount(int count) async {
     if (count == 0 || !mounted) return true;
     return await showDialog<bool>(
           context: context,
@@ -287,6 +339,53 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
           ),
         ) ??
         false;
+  }
+
+  Future<PythonSchedule?> _saveAuthoritative(
+    List<MeetingRecord> meetings, {
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    final gateway = widget.scheduleGateway;
+    if (gateway == null || !widget.scheduleWritesEnabled) {
+      throw const PythonBackendException(PythonBackendError.unavailable);
+    }
+    Future<PythonSchedule> save(bool confirm) => gateway.saveSchedule(
+      courseId: _course.id,
+      startsOn: (startDate ?? _course.startsOn)?.toUtc(),
+      endsOn: (endDate ?? _course.endsOn)?.toUtc(),
+      meetings: meetings.map(_meetingToPython).toList(growable: false),
+      confirmDestructive: confirm,
+    );
+
+    try {
+      return await save(false);
+    } on PythonBackendException catch (error) {
+      if (error.code != PythonBackendError.destructiveConflict ||
+          error.destructiveSessions == null) {
+        rethrow;
+      }
+      if (!await _allowDestructiveCount(error.destructiveSessions!)) {
+        return null;
+      }
+      return save(true);
+    }
+  }
+
+  void _adopt(PythonSchedule schedule) {
+    if (!mounted) return;
+    setState(() {
+      _course = _courseFromPython(schedule.course);
+      _meetings = _sorted(
+        schedule.meetings.map(_meetingFromPython).toList(growable: false),
+      );
+    });
+    unawaited(
+      widget.logger.logEvent(
+        'schedule_save_succeeded',
+        parameters: _changeParameters(schedule.changes),
+      ),
+    );
   }
 
   Future<void> _applyPlan(SessionReconciliation? plan) async {
@@ -406,7 +505,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     ),
     floatingActionButton: FloatingActionButton.extended(
       key: const Key('add-meeting'),
-      onPressed: _syncing ? null : _openEditor,
+      onPressed: _syncing || !_writesAvailable ? null : _openEditor,
       icon: const Icon(Icons.add),
       label: const Text('Adicionar horário'),
     ),
@@ -445,8 +544,15 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         _PeriodCard(
           course: _course,
           syncing: _syncing,
-          onPressed: _choosePeriod,
+          onPressed: _writesAvailable ? _choosePeriod : null,
         ),
+        if (!_writesAvailable) ...[
+          const SizedBox(height: 12),
+          const Text(
+            'A grade está em validação segura. A edição será liberada após a conferência dos dados.',
+            textAlign: TextAlign.center,
+          ),
+        ],
         const SizedBox(height: 16),
         if (_meetings.isEmpty)
           const Padding(
@@ -494,7 +600,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
                               IconButton(
                                 tooltip:
                                     'Editar horário de ${weekday.toLowerCase()}',
-                                onPressed: _syncing
+                                onPressed: _syncing || !_writesAvailable
                                     ? null
                                     : () => _openEditor(meeting),
                                 icon: const Icon(Icons.edit_outlined),
@@ -502,7 +608,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
                               IconButton(
                                 tooltip:
                                     'Excluir horário de ${weekday.toLowerCase()}',
-                                onPressed: _syncing
+                                onPressed: _syncing || !_writesAvailable
                                     ? null
                                     : () => _confirmDelete(meeting),
                                 icon: const Icon(Icons.delete_outline),
@@ -518,7 +624,52 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       ],
     );
   }
+
+  bool get _writesAvailable =>
+      widget.scheduleGateway == null || widget.scheduleWritesEnabled;
 }
+
+CourseRecord _courseFromPython(PythonCourse course) => CourseRecord(
+  id: course.id,
+  code: course.code,
+  name: course.name,
+  workload: course.workload,
+  term: course.term,
+  startsOn: course.startsOn,
+  endsOn: course.endsOn,
+  createdAt: course.createdAt,
+  updatedAt: course.updatedAt,
+);
+
+MeetingRecord _meetingFromPython(PythonMeeting meeting) => MeetingRecord(
+  id: meeting.id,
+  weekday: meeting.weekday,
+  startMinutes: meeting.startMinutes,
+  endMinutes: meeting.endMinutes,
+  lessonCount: QuantidadeAulas.fromValue(meeting.lessonCount),
+  callCount: NumeroChamadas.fromValue(meeting.callCount),
+  createdAt: meeting.createdAt,
+  updatedAt: meeting.updatedAt,
+);
+
+PythonMeeting _meetingToPython(MeetingRecord meeting) => PythonMeeting(
+  id: meeting.id,
+  weekday: meeting.weekday,
+  startMinutes: meeting.startMinutes,
+  endMinutes: meeting.endMinutes,
+  lessonCount: meeting.lessonCount.value,
+  callCount: meeting.callCount.value,
+  createdAt: meeting.createdAt,
+  updatedAt: meeting.updatedAt,
+);
+
+Map<String, Object> _changeParameters(PythonScheduleChanges changes) => {
+  'meeting_upserts': changes.meetingUpserts,
+  'meeting_deletes': changes.meetingDeletes,
+  'session_upserts': changes.sessionUpserts,
+  'session_deletes': changes.sessionDeletes,
+  'destructive_deletes': changes.destructiveDeletes,
+};
 
 class _PeriodCard extends StatelessWidget {
   const _PeriodCard({
@@ -529,7 +680,7 @@ class _PeriodCard extends StatelessWidget {
 
   final CourseRecord course;
   final bool syncing;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {

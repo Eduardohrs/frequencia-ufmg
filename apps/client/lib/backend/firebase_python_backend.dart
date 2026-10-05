@@ -14,6 +14,9 @@ const _settings = PythonBackendSettings(
   endpoint: String.fromEnvironment('PYTHON_BACKEND_ORIGIN'),
 );
 const _webSiteKey = String.fromEnvironment('FIREBASE_APP_CHECK_WEB_SITE_KEY');
+const pythonScheduleWritesEnabled = bool.fromEnvironment(
+  'ENABLE_PYTHON_SCHEDULE_WRITES',
+);
 
 BackendIdentityVerifier? createFirebasePythonBackendVerifier() {
   final endpoint = _settings.endpointUri;
@@ -25,7 +28,8 @@ final class _FirebasePythonBackendVerifier
     implements
         BackendIdentityVerifier,
         BackendAttendanceEvaluator,
-        BackendCourseGateway {
+        BackendCourseGateway,
+        BackendScheduleGateway {
   _FirebasePythonBackendVerifier(Uri endpoint)
     : _transport = PythonBackendTransport(
         endpoint: endpoint,
@@ -72,6 +76,30 @@ final class _FirebasePythonBackendVerifier
   Future<void> deleteCourse(String courseId) async {
     await (_activation ??= _activateAppCheck());
     await _transport.deleteCourse(courseId);
+  }
+
+  @override
+  Future<PythonSchedule> getSchedule(String courseId) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.getSchedule(courseId);
+  }
+
+  @override
+  Future<PythonSchedule> saveSchedule({
+    required String courseId,
+    required DateTime? startsOn,
+    required DateTime? endsOn,
+    required List<PythonMeeting> meetings,
+    required bool confirmDestructive,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.saveSchedule(
+      courseId: courseId,
+      startsOn: startsOn,
+      endsOn: endsOn,
+      meetings: meetings,
+      confirmDestructive: confirmDestructive,
+    );
   }
 
   static Future<void> _activateAppCheck() async {

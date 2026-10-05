@@ -33,6 +33,8 @@ class CoursePage extends StatefulWidget {
     required this.logger,
     required this.onSignOut,
     this.attendanceEvaluator,
+    this.scheduleGateway,
+    this.scheduleWritesEnabled = false,
     CourseIdGenerator? idGenerator,
     CurrentTime? now,
     super.key,
@@ -46,6 +48,8 @@ class CoursePage extends StatefulWidget {
   final AppLogger logger;
   final Future<void> Function() onSignOut;
   final BackendAttendanceEvaluator? attendanceEvaluator;
+  final BackendScheduleGateway? scheduleGateway;
+  final bool scheduleWritesEnabled;
   final CourseIdGenerator idGenerator;
   final CurrentTime now;
 
@@ -182,6 +186,8 @@ class _CoursePageState extends State<CoursePage> {
           sessionRepository: widget.sessionRepository,
           logger: widget.logger,
           attendanceEvaluator: widget.attendanceEvaluator,
+          scheduleGateway: widget.scheduleGateway,
+          scheduleWritesEnabled: widget.scheduleWritesEnabled,
           allCourses: _courses,
           allCourseIds: _courses.map((item) => item.id),
         ),
