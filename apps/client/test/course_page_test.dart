@@ -7,6 +7,8 @@ import 'package:frequencia_ufmg/auth/auth_user.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/document_store.dart';
+import 'package:frequencia_ufmg/data/calendar_status.dart';
+import 'package:frequencia_ufmg/domain/attendance.dart';
 import 'package:frequencia_ufmg/features/courses/course_page.dart';
 import 'package:frequencia_ufmg/observability/app_logger.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
@@ -435,7 +437,119 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('nav-general-calendar')));
     await tester.pumpAndSettle();
-    expect(find.text('Calendário acadêmico'), findsOneWidget);
+    expect(find.text('Calendário operacional'), findsOneWidget);
+  });
+
+  testWidgets('alerts about unresolved attendance from an earlier day', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final sessions = _FakeSessionRepository({
+      'course-1': [
+        _session('past', DateTime.utc(2026, 9, 26, 12)),
+        _session('today', now),
+        _session(
+          'no-call',
+          DateTime.utc(2026, 9, 26, 14),
+          status: SessionCalendarStatus.noCall,
+        ),
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(courses: [course]),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: sessions,
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('past-attendance-pending-alert')),
+      findsOneWidget,
+    );
+    expect(find.text('1 aula anterior está sem frequência'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('past-attendance-pending-alert')));
+    await tester.pumpAndSettle();
+    expect(find.text('Faltas restantes'), findsOneWidget);
+    sessions.sessions['course-1'] = const [];
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('past-attendance-pending-alert')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('shows plural pending alert and tolerates pending-load failure', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final sessions = _FakeSessionRepository({
+      'course-1': [
+        _session('past-1', DateTime.utc(2026, 9, 25, 12)),
+        _session('past-2', DateTime.utc(2026, 9, 26, 12)),
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(courses: [course]),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: sessions,
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('2 aulas anteriores estão sem frequência'),
+      findsOneWidget,
+    );
+
+    final logger = _RecordingAppLogger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(courses: [course]),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository()
+            ..listError = StateError('offline'),
+          key: UniqueKey(),
+          user: user,
+          logger: logger,
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(logger.errorContexts, ['past_attendance_pending_load']);
   });
 
   testWidgets('rejects changing a course to another existing code', (
@@ -808,15 +922,38 @@ final class _FakeMeetingRepository implements MeetingRepository {
 }
 
 final class _FakeSessionRepository implements SessionRepository {
+  _FakeSessionRepository([this.sessions = const {}]);
+
+  final Map<String, List<SessionRecord>> sessions;
+  Object? listError;
+
   @override
   Future<void> deleteSession(String courseId, String sessionId) async {}
 
   @override
-  Future<List<SessionRecord>> listSessions(String courseId) async => [];
+  Future<List<SessionRecord>> listSessions(String courseId) async {
+    if (listError case final error?) throw error;
+    return List.of(sessions[courseId] ?? const []);
+  }
 
   @override
   Future<void> saveSession(String courseId, SessionRecord session) async {}
 }
+
+SessionRecord _session(
+  String id,
+  DateTime startsAt, {
+  SessionCalendarStatus status = SessionCalendarStatus.scheduled,
+}) => SessionRecord(
+  id: id,
+  startsAt: startsAt,
+  endsAt: startsAt.add(const Duration(minutes: 100)),
+  lessonCount: QuantidadeAulas.two,
+  callCount: NumeroChamadas.one,
+  calendarStatus: status,
+  createdAt: startsAt,
+  updatedAt: startsAt,
+);
 
 final class _RecordingDocumentStore implements DocumentStore {
   final savedPaths = <String>[];
@@ -898,6 +1035,7 @@ final class _SelectivelyBlockingLogger implements AppLogger {
 
 final class _RecordingAppLogger implements AppLogger {
   final events = <String>[];
+  final errorContexts = <String>[];
 
   @override
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
@@ -911,5 +1049,7 @@ final class _RecordingAppLogger implements AppLogger {
     required String context,
     bool fatal = false,
     Map<String, Object>? parameters,
-  }) async {}
+  }) async {
+    errorContexts.add(context);
+  }
 }

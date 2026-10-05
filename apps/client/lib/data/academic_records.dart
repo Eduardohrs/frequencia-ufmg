@@ -127,6 +127,7 @@ final class SessionRecord {
     this.attendanceStatus,
     this.absences,
     this.calendarStatus = SessionCalendarStatus.scheduled,
+    this.assessmentTitle,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -135,6 +136,7 @@ final class SessionRecord {
     final normalized = {
       ...data,
       'calendarStatus': data['calendarStatus'] ?? 'scheduled',
+      'assessmentTitle': data['assessmentTitle'],
     };
     FirestoreSchema.validateSession(normalized);
     final firstPing = normalized['firstPing'] as String?;
@@ -155,6 +157,7 @@ final class SessionRecord {
       calendarStatus: SessionCalendarStatus.fromCode(
         normalized['calendarStatus']! as String,
       ),
+      assessmentTitle: normalized['assessmentTitle'] as String?,
       createdAt: _date(normalized, 'createdAt'),
       updatedAt: _date(normalized, 'updatedAt'),
     );
@@ -170,6 +173,7 @@ final class SessionRecord {
   final SituacaoFrequencia? attendanceStatus;
   final int? absences;
   final SessionCalendarStatus calendarStatus;
+  final String? assessmentTitle;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -185,6 +189,7 @@ final class SessionRecord {
       'attendanceStatus': attendanceStatus?.code,
       'absences': absences,
       'calendarStatus': calendarStatus.code,
+      'assessmentTitle': assessmentTitle,
       ..._auditFields(createdAt, updatedAt),
     };
     FirestoreSchema.validateSession(data);

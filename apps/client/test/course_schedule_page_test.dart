@@ -728,7 +728,7 @@ void main() {
     await tester.pumpAndSettle();
     await _chooseScheduleAction(tester, 'Ver calendário');
     await tester.pumpAndSettle();
-    expect(find.text('Calendário acadêmico'), findsOneWidget);
+    expect(find.text('Calendário operacional'), findsOneWidget);
     expect(
       tester
           .widget<DropdownButtonFormField<String?>>(

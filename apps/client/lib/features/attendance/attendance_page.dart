@@ -84,6 +84,7 @@ class _AttendancePageState extends State<AttendancePage> {
       attendanceStatus: status,
       absences: absences,
       calendarStatus: source.calendarStatus,
+      assessmentTitle: source.assessmentTitle,
       createdAt: source.createdAt,
       updatedAt: widget.now().toUtc(),
     );
@@ -162,7 +163,9 @@ class _AttendancePageState extends State<AttendancePage> {
             ),
             trailing: IconButton(
               tooltip: inactive
-                  ? 'Sessão sem frequência'
+                  ? session.calendarStatus == SessionCalendarStatus.noCall
+                        ? 'Presença garantida'
+                        : 'Sessão sem frequência'
                   : 'Registrar frequência de ${_date(local)}',
               onPressed: inactive ? null : () => _edit(session),
               icon: const Icon(Icons.edit_outlined),
@@ -370,7 +373,7 @@ String _statusName(SituacaoFrequencia status) => switch (status) {
 };
 
 String _calendarLabel(SessionCalendarStatus status) => switch (status) {
-  SessionCalendarStatus.noCall => 'Aula sem chamada • sem frequência',
+  SessionCalendarStatus.noCall => 'Aula sem chamada • presença garantida',
   SessionCalendarStatus.cancelled ||
   SessionCalendarStatus.holiday => 'Cancelada/feriado • sem frequência',
   _ => '',

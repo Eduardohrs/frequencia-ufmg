@@ -22,12 +22,21 @@ void main() {
   ) async {
     final repository = _Repository({
       'poo': [
-        _session('poo-1', DateTime.utc(2026, 9, 16, 11)),
+        _session(
+          'poo-1',
+          DateTime.utc(2026, 9, 16, 11),
+          assessmentTitle: 'Prova 1',
+        ),
         _session('poo-2', DateTime.utc(2026, 9, 16, 13)),
         _session(
           'poo-3',
           DateTime.utc(2026, 9, 16, 15),
           status: SessionCalendarStatus.makeup,
+        ),
+        _session(
+          'poo-no-call',
+          DateTime.utc(2026, 9, 18, 11),
+          status: SessionCalendarStatus.noCall,
         ),
       ],
       'calc': [
@@ -51,8 +60,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('month-calendar-grid')), findsOneWidget);
     expect(find.text('DCC203'), findsNWidgets(2));
-    expect(find.text('MAT001'), findsOneWidget);
+    expect(find.text('MAT001'), findsNothing);
     expect(find.text('+1'), findsOneWidget);
+    expect(find.byIcon(Icons.assignment_outlined), findsOneWidget);
     await tester.tap(find.text('Próximo'));
     await tester.pumpAndSettle();
     expect(find.text('Outubro 2026'), findsOneWidget);
@@ -62,8 +72,8 @@ void main() {
     await tester.tap(find.text('Lista'));
     await tester.pumpAndSettle();
     expect(find.text('DCC203 • 16/09/2026'), findsNWidgets(3));
-    expect(find.text('MAT001 • 17/09/2026'), findsOneWidget);
-    expect(find.text('10:00 • Cancelada/feriado'), findsOneWidget);
+    expect(find.text('MAT001 • 17/09/2026'), findsNothing);
+    expect(find.text('DCC203 • 18/09/2026'), findsNothing);
     expect(find.text('12:00 • Reposição'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('calendar-course-filter')));
@@ -115,6 +125,7 @@ SessionRecord _session(
   String id,
   DateTime startsAt, {
   SessionCalendarStatus status = SessionCalendarStatus.scheduled,
+  String? assessmentTitle,
 }) => SessionRecord(
   id: id,
   startsAt: startsAt,
@@ -122,6 +133,7 @@ SessionRecord _session(
   lessonCount: QuantidadeAulas.two,
   callCount: NumeroChamadas.one,
   calendarStatus: status,
+  assessmentTitle: assessmentTitle,
   createdAt: startsAt,
   updatedAt: startsAt,
 );

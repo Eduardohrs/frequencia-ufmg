@@ -86,12 +86,16 @@ class _CourseDateRangePickerDialogState
     final teachingDays = _start == null || previewEnd == null
         ? 0
         : _countTeachingDays(_start!, previewEnd, widget.highlightedWeekdays);
+    final calendarHeight = twoMonths ? 340.0 : 320.0;
     return AlertDialog(
       insetPadding: const EdgeInsets.all(16),
       title: const Text('Período das aulas'),
       content: SizedBox(
         width: dialogWidth,
-        height: 390,
+        height: min(
+          calendarHeight + 96,
+          MediaQuery.sizeOf(context).height - 180,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -131,20 +135,23 @@ class _CourseDateRangePickerDialogState
                 ),
               ],
             ),
-            Expanded(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: _monthView(_month)),
-                  if (twoMonths) ...[
-                    const SizedBox(width: 20),
-                    Expanded(
-                      child: _monthView(
-                        DateTime(_month.year, _month.month + 1),
+            Flexible(
+              child: SizedBox(
+                height: calendarHeight,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: _monthView(_month)),
+                    if (twoMonths) ...[
+                      const SizedBox(width: 20),
+                      Expanded(
+                        child: _monthView(
+                          DateTime(_month.year, _month.month + 1),
+                        ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ],

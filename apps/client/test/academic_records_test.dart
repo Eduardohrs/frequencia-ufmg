@@ -96,6 +96,7 @@ void main() {
       attendanceStatus: SituacaoFrequencia.arrivedLate,
       absences: 1,
       calendarStatus: SessionCalendarStatus.makeup,
+      assessmentTitle: 'Prova 1',
       createdAt: createdAt,
       updatedAt: updatedAt,
     );
@@ -115,6 +116,7 @@ void main() {
     expect(restored.attendanceStatus, SituacaoFrequencia.arrivedLate);
     expect(restored.absences, 1);
     expect(restored.calendarStatus, SessionCalendarStatus.makeup);
+    expect(restored.assessmentTitle, 'Prova 1');
     expect(restored.createdAt, createdAt);
     expect(restored.updatedAt, updatedAt);
   });
@@ -144,19 +146,23 @@ void main() {
   });
 
   test('older sessions default to a scheduled calendar status', () {
-    final data = SessionRecord(
-      id: 'legacy',
-      startsAt: DateTime.utc(2026, 8, 3, 8),
-      endsAt: DateTime.utc(2026, 8, 3, 10),
-      lessonCount: QuantidadeAulas.two,
-      callCount: NumeroChamadas.one,
-      createdAt: createdAt,
-      updatedAt: updatedAt,
-    ).toFirestore()..remove('calendarStatus');
+    final data =
+        SessionRecord(
+            id: 'legacy',
+            startsAt: DateTime.utc(2026, 8, 3, 8),
+            endsAt: DateTime.utc(2026, 8, 3, 10),
+            lessonCount: QuantidadeAulas.two,
+            callCount: NumeroChamadas.one,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+          ).toFirestore()
+          ..remove('calendarStatus')
+          ..remove('assessmentTitle');
 
     final restored = SessionRecord.fromFirestore('legacy', data);
 
     expect(restored.calendarStatus, SessionCalendarStatus.scheduled);
+    expect(restored.assessmentTitle, isNull);
   });
 
   test('records reject documents outside the declared schema', () {

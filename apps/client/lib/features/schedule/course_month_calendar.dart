@@ -27,7 +27,9 @@ class CourseMonthCalendar extends StatelessWidget {
     final first = DateTime(month.year, month.month);
     final offset = first.weekday - 1;
     final days = DateTime(month.year, month.month + 1, 0).day;
+    final rowCount = ((offset + days) / 7).ceil();
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           '${_months[month.month - 1]} ${month.year}',
@@ -41,14 +43,15 @@ class CourseMonthCalendar extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 4),
-        Expanded(
+        SizedBox(
+          height: rowCount * 38,
           child: GridView.builder(
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              childAspectRatio: 1,
+              mainAxisExtent: 38,
             ),
-            itemCount: 42,
+            itemCount: rowCount * 7,
             itemBuilder: (context, index) {
               final day = index - offset + 1;
               if (day < 1 || day > days) return const SizedBox.shrink();

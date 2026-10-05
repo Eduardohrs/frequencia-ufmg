@@ -71,16 +71,19 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     }
   }
 
-  List<_CalendarEntry> get _filtered => _courseId == null
-      ? _entries
-      : _entries.where((entry) => entry.course.id == _courseId).toList();
+  List<_CalendarEntry> get _filtered => _entries.where((entry) {
+    final operational =
+        entry.session.calendarStatus == SessionCalendarStatus.scheduled ||
+        entry.session.calendarStatus == SessionCalendarStatus.makeup;
+    return operational && (_courseId == null || entry.course.id == _courseId);
+  }).toList();
 
   void _moveMonth(int delta) =>
       setState(() => _month = DateTime(_month.year, _month.month + delta));
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Calendário acadêmico')),
+    appBar: AppBar(title: const Text('Calendário operacional')),
     body: SafeArea(
       child: Center(
         child: ConstrainedBox(
@@ -251,10 +254,21 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                       ),
                     ),
                     for (final entry in entries.take(2))
-                      Text(
-                        entry.course.code,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelSmall,
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              entry.course.code,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelSmall,
+                            ),
+                          ),
+                          if (entry.session.assessmentTitle != null)
+                            const Padding(
+                              padding: EdgeInsets.only(left: 2),
+                              child: Icon(Icons.assignment_outlined, size: 12),
+                            ),
+                        ],
                       ),
                     if (entries.length > 2) Text('+${entries.length - 2}'),
                   ],
@@ -274,8 +288,15 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
       child: ListTile(
         title: Text('${entry.course.code} • ${_date(local)}'),
         subtitle: Text(
-          '${_time(local)} • ${_status(entry.session.calendarStatus)}',
+          [
+            '${_time(local)} • ${_status(entry.session.calendarStatus)}',
+            if (entry.session.assessmentTitle case final title?)
+              'Avaliação: $title',
+          ].join('\n'),
         ),
+        trailing: entry.session.assessmentTitle == null
+            ? null
+            : const Icon(Icons.assignment_outlined),
       ),
     );
   }
