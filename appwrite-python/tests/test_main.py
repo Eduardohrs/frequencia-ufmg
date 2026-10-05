@@ -16,6 +16,8 @@ from firestore_rest import (
     FirestoreUnavailable,
 )
 from quota_guard import RateLimitExceeded, ReplayDetected, SecurityStoreUnavailable
+from schedule_repository import DestructiveScheduleChange
+from schedule_service import InvalidSchedule, ScheduleOverlap
 
 
 @dataclass
@@ -184,6 +186,125 @@ def test_course_routes_list_save_and_delete(monkeypatch: pytest.MonkeyPatch) -> 
     assert json.loads(deleted.logs[0]) == {"event": "course_delete_succeeded"}
 
 
+def test_schedule_routes_preview_and_save_with_bounded_logs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+    monkeypatch.setenv("ENABLE_SCHEDULE_WRITES", "true")
+    result = {
+        "course": {"id": "private-course"},
+        "meetings": [],
+        "changes": {
+            "meeting_upserts": 1,
+            "meeting_deletes": 0,
+            "session_upserts": 3,
+            "session_deletes": 0,
+            "destructive_deletes": 0,
+        },
+    }
+
+    class Repository:
+        def get_schedule(self, course_id: str) -> dict[str, Any]:
+            assert course_id == "course-1"
+            return result
+
+        def save_schedule(self, course_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+            assert course_id == "course-1"
+            assert payload == {"private": "payload"}
+            return result
+
+    monkeypatch.setattr(function, "_schedule_repository", lambda *_args: Repository())
+    preview = FakeContext(FakeRequest("GET", "/v1/courses/course-1/schedule"))
+    saved = FakeContext(
+        FakeRequest("PUT", "/v1/courses/course-1/schedule", body_json={"private": "payload"})
+    )
+
+    assert function.main(preview)["body"] == result
+    assert function.main(saved)["body"] == result
+    assert json.loads(preview.logs[0]) == {
+        "event": "schedule_preview_succeeded",
+        **result["changes"],
+    }
+    assert json.loads(saved.logs[0]) == {"event": "schedule_save_succeeded", **result["changes"]}
+    assert "private-course" not in "".join(preview.logs + saved.logs)
+
+
+def test_schedule_write_switch_fails_closed_after_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    routes: list[str] = []
+
+    def authenticate(_context: Any, _origin: Any, route: str) -> tuple[str, None]:
+        routes.append(route)
+        return "user", None
+
+    monkeypatch.setattr(function, "_authentication", authenticate)
+    monkeypatch.delenv("ENABLE_SCHEDULE_WRITES", raising=False)
+    context = FakeContext(FakeRequest("PUT", "/v1/courses/course-1/schedule"))
+
+    result = function.main(context)
+
+    assert result["status"] == 503
+    assert result["body"] == {"error": "schedule_writes_disabled"}
+    assert routes == ["/v1/courses/schedule/put"]
+    assert json.loads(context.errors[0]) == {"event": "schedule_writes_disabled"}
+
+
+def test_schedule_route_returns_authentication_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_args: (None, rejection))
+
+    assert function.main(FakeContext(FakeRequest("GET", "/v1/courses/x/schedule"))) is rejection
+
+
+@pytest.mark.parametrize(
+    ("failure", "method", "status", "error", "extra"),
+    [
+        (ScheduleOverlap(), "PUT", 409, "schedule_overlap", {}),
+        (InvalidSchedule(), "PUT", 400, "schedule_rejected", {}),
+        (
+            DestructiveScheduleChange(2),
+            "PUT",
+            409,
+            "schedule_destructive_conflict",
+            {"destructive_sessions": 2},
+        ),
+        (FirestoreNotFound(), "GET", 404, "course_not_found", {}),
+        (FirestoreAccessDenied(), "GET", 403, "course_access_denied", {}),
+        (FirestoreUnavailable(), "GET", 503, "course_store_unavailable", {}),
+        (FirestoreRequestRejected(), "GET", 500, "schedule_data_invalid", {}),
+    ],
+)
+def test_schedule_routes_sanitize_failures(
+    failure: Exception,
+    method: str,
+    status: int,
+    error: str,
+    extra: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+    monkeypatch.setenv("ENABLE_SCHEDULE_WRITES", "true")
+
+    class Repository:
+        def get_schedule(self, _course_id: str) -> dict[str, Any]:
+            raise failure
+
+        def save_schedule(self, _course_id: str, _payload: dict[str, Any]) -> dict[str, Any]:
+            raise failure
+
+    monkeypatch.setattr(function, "_schedule_repository", lambda *_args: Repository())
+    context = FakeContext(FakeRequest(method, "/v1/courses/course-1/schedule"))
+
+    result = function.main(context)
+
+    assert result["status"] == status
+    assert result["body"] == {"error": error, **extra}
+    logged = json.loads(context.errors[0])
+    assert logged["event"] == error
+    assert "private" not in "".join(context.errors)
+
+
 def test_course_routes_return_authentication_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
     rejection = {"status": 401}
     monkeypatch.setattr(function, "_authentication", lambda *_args: (None, rejection))
@@ -280,6 +401,16 @@ def test_course_repository_uses_verified_uid_and_bearer_token(
         "project_id": "project",
         "user_id": "verified-user",
     }
+
+
+def test_schedule_repository_uses_the_shared_firestore_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = object()
+    monkeypatch.setattr(function, "_firestore", lambda *_args: client)
+    monkeypatch.setattr(function, "ScheduleRepository", lambda value: ("schedule", value))
+
+    assert function._schedule_repository({}, "user") == ("schedule", client)
 
 
 def test_identity_route_accepts_verified_firebase_user(

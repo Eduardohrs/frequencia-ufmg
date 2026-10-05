@@ -2,10 +2,14 @@ from datetime import UTC, datetime
 
 import pytest
 
+import schedule_service as module
 from schedule_service import (
     InvalidSchedule,
     ScheduleOverlap,
+    SchedulePlan,
     build_schedule_plan,
+    validate_saved_meeting,
+    validate_saved_session,
 )
 
 NOW = datetime(2026, 10, 5, 12, tzinfo=UTC)
@@ -106,7 +110,7 @@ def _plan(
     other_schedules: list[tuple[dict[str, object], list[dict[str, object]]]] | None = None,
     starts_on: object = "2026-08-04T00:00:00Z",
     ends_on: object = "2026-12-03T00:00:00Z",
-):
+) -> SchedulePlan:
     return build_schedule_plan(
         course=course or _course(),
         requested_starts_on=starts_on,
@@ -259,3 +263,150 @@ def test_schedule_rejects_disallowed_or_contradictory_periods(
 def test_schedule_rejects_invalid_meetings(meeting: dict[str, object]) -> None:
     with pytest.raises(InvalidSchedule):
         _plan(requested_meetings=[meeting])
+
+
+def test_schedule_updates_changed_unevidenced_session_and_preserves_metadata() -> None:
+    saved = _session(
+        "2026-08-04--tuesday-19",
+        starts_at="2026-08-04T21:00:00Z",
+        ends_at="2026-08-04T22:40:00Z",
+        calendar_status="holiday",
+        assessment_title="Prova",
+    )
+
+    plan = _plan(
+        starts_on="2026-08-04T00:00:00Z",
+        ends_on="2026-08-04T00:00:00Z",
+        existing_sessions=[saved],
+    )
+
+    assert plan.session_upserts[0]["starts_at"] == "2026-08-04T22:00:00Z"
+    assert plan.session_upserts[0]["calendar_status"] == "holiday"
+    assert plan.session_upserts[0]["assessment_title"] == "Prova"
+
+
+def test_schedule_checks_active_other_course_without_explicit_period() -> None:
+    other = _course("other", starts_on=None, ends_on=None)
+    plan = _plan(
+        requested_meetings=[_meeting_input(start_minutes=8 * 60)],
+        other_schedules=[(other, [_meeting("other", start_minutes=10 * 60)])],
+    )
+
+    assert len(plan.meetings) == 1
+
+
+def test_schedule_rejects_invalid_course_duplicate_saved_ids_and_invalid_other_course() -> None:
+    invalid_course = {**_course(), "code": "lower"}
+    with pytest.raises(InvalidSchedule):
+        _plan(course=invalid_course)
+    with pytest.raises(InvalidSchedule):
+        _plan(existing_meetings=[_meeting(), _meeting()])
+    with pytest.raises(InvalidSchedule):
+        _plan(other_schedules=[(invalid_course, [])])
+
+
+def test_schedule_rejects_duplicate_requested_ids_and_unbounded_inputs() -> None:
+    with pytest.raises(InvalidSchedule):
+        _plan(requested_meetings="not-a-list")
+    with pytest.raises(InvalidSchedule):
+        _plan(requested_meetings=[_meeting_input()] * 33)
+    with pytest.raises(InvalidSchedule):
+        _plan(requested_meetings=[_meeting_input(), _meeting_input()])
+
+
+def test_schedule_rejects_non_midnight_period_and_naive_clock() -> None:
+    with pytest.raises(InvalidSchedule):
+        _plan(starts_on="2026-08-04T00:01:00Z")
+    with pytest.raises(InvalidSchedule):
+        build_schedule_plan(
+            course=_course(),
+            requested_starts_on=None,
+            requested_ends_on=None,
+            requested_meetings=[],
+            existing_meetings=[],
+            existing_sessions=[],
+            other_schedules=[],
+            now=datetime(2026, 10, 5, 12),
+        )
+
+
+def test_schedule_caps_generated_sessions() -> None:
+    meetings = [
+        _meeting_input(
+            f"meeting-{weekday}-{slot}",
+            weekday=weekday,
+            start_minutes=slot * 100,
+            lesson_count=2,
+        )
+        for weekday in range(1, 8)
+        for slot in range(4)
+    ]
+
+    with pytest.raises(InvalidSchedule):
+        _plan(
+            requested_meetings=meetings,
+            starts_on="2026-07-01T00:00:00Z",
+            ends_on="2026-12-31T00:00:00Z",
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: value.pop("weekday"),
+        lambda value: value.update(end_minutes=1),
+        lambda value: value.update(updated_at="2026-07-01T00:00:00Z"),
+    ],
+)
+def test_saved_meeting_validation_rejects_bad_schema(mutation: object) -> None:
+    value = _meeting()
+    mutation(value)  # type: ignore[operator]
+    with pytest.raises(InvalidSchedule):
+        validate_saved_meeting(value)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: value.pop("first_ping"),
+        lambda value: value.update(ends_at=value["starts_at"]),
+        lambda value: value.update(absences=1),
+        lambda value: value.update(attendance_status="presente", absences=3),
+        lambda value: value.update(calendar_status="invalid"),
+        lambda value: value.update(assessment_title=""),
+        lambda value: value.update(updated_at="2026-07-01T00:00:00Z"),
+    ],
+)
+def test_saved_session_validation_rejects_bad_schema(mutation: object) -> None:
+    value = _session(
+        "session",
+        starts_at="2026-08-04T22:00:00Z",
+        ends_at="2026-08-04T23:40:00Z",
+    )
+    mutation(value)  # type: ignore[operator]
+    with pytest.raises(InvalidSchedule):
+        validate_saved_session(value)
+
+
+@pytest.mark.parametrize("term", ["bad", "2026-3"])
+def test_term_date_parser_rejects_invalid_terms(term: str) -> None:
+    with pytest.raises(InvalidSchedule):
+        module._term_dates(term)
+
+
+def test_first_semester_term_dates_are_supported() -> None:
+    assert module._term_dates("2026-1") == (
+        datetime(2026, 1, 1).date(),
+        datetime(2026, 6, 30).date(),
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [3, "x" * 41, "not-a-date", "2026-08-01T00:00:00"],
+)
+def test_saved_timestamp_validation_rejects_invalid_instants(value: object) -> None:
+    meeting = _meeting()
+    meeting["created_at"] = value
+    with pytest.raises(InvalidSchedule):
+        validate_saved_meeting(meeting)

@@ -552,4 +552,4 @@ def _format_optional(value: datetime | None) -> str | None:
 
 
 def _format_instant(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")

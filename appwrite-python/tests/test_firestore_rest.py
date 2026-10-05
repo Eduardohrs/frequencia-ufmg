@@ -1,4 +1,5 @@
 import json
+from collections.abc import Mapping
 from io import BytesIO
 from typing import Any
 from urllib.error import HTTPError
@@ -178,6 +179,22 @@ def test_commit_user_documents_updates_and_deletes_atomically() -> None:
             },
         ]
     }
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        [(("courses", "one"), {"bad": object()})],
+        [(("courses", "one"), {"large": {"stringValue": "x" * 1_048_576}})],
+    ],
+)
+def test_commit_user_documents_rejects_invalid_update_payloads(
+    updates: list[tuple[tuple[str, ...], Mapping[str, Any]]],
+) -> None:
+    client = FirestoreRestClient("project", "user", "token")
+
+    with pytest.raises(ValueError):
+        client.commit_user_documents(updates=updates, deletes=[])
 
 
 @pytest.mark.parametrize("paths", [[], [("courses", "id")] * 501, [("courses",)]])

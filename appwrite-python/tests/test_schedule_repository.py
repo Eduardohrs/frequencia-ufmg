@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 
+import schedule_repository as module
 from course_service import course_to_firestore
 from schedule_repository import DestructiveScheduleChange, ScheduleRepository
 from schedule_service import InvalidSchedule, ScheduleOverlap
@@ -149,6 +150,28 @@ def test_get_schedule_is_a_read_only_noop_preview() -> None:
     assert store.commits == []
 
 
+def test_save_noop_does_not_issue_an_empty_commit() -> None:
+    store = FakeFirestore()
+    payload = {
+        "starts_on": "2026-08-04T00:00:00Z",
+        "ends_on": "2026-08-18T00:00:00Z",
+        "meetings": [
+            {
+                "id": "tuesday-19",
+                "weekday": 2,
+                "start_minutes": 1140,
+                "lesson_count": 2,
+                "call_count": 1,
+            }
+        ],
+        "confirm_destructive": False,
+    }
+
+    _repository(store).save_schedule("poo", payload)
+
+    assert store.commits == []
+
+
 def test_save_schedule_commits_period_meetings_and_sessions_atomically() -> None:
     store = FakeFirestore()
     payload = {
@@ -182,7 +205,7 @@ def test_save_schedule_commits_period_meetings_and_sessions_atomically() -> None
 
 def test_save_requires_confirmation_before_deleting_evidence() -> None:
     store = FakeFirestore(protected=True)
-    payload = {
+    payload: dict[str, Any] = {
         "starts_on": None,
         "ends_on": None,
         "meetings": [],
@@ -232,3 +255,53 @@ def test_save_rejects_overlap_with_another_active_course() -> None:
 def test_save_rejects_malformed_mutations(payload: dict[str, object]) -> None:
     with pytest.raises(InvalidSchedule):
         _repository(FakeFirestore()).save_schedule("poo", payload)
+
+
+def test_decoders_accept_legacy_optional_session_fields() -> None:
+    value = _session(4)
+    fields = _session_fields(value)
+    del fields["calendarStatus"]
+    del fields["assessmentTitle"]
+
+    decoded = module._decode_session(_document(str(value["id"]), fields))
+
+    assert decoded["calendar_status"] == "scheduled"
+    assert decoded["assessment_title"] is None
+
+
+@pytest.mark.parametrize(
+    ("decoder", "document"),
+    [
+        (
+            module._decode_meeting,
+            _document(
+                "meeting",
+                {**_meeting_fields(_meeting()), "schemaVersion": {"integerValue": "2"}},
+            ),
+        ),
+        (module._decode_session, _document("session", {"schemaVersion": {"integerValue": "2"}})),
+        (module._decode_meeting, {"name": 3, "fields": {}}),
+        (module._decode_session, {"name": "root/id", "fields": []}),
+        (
+            module._decode_meeting,
+            _document(
+                "meeting", {**_meeting_fields(_meeting()), "createdAt": {"timestampValue": 3}}
+            ),
+        ),
+        (
+            module._decode_session,
+            _document("session", {**_session_fields(_session(4)), "firstPing": {"stringValue": 3}}),
+        ),
+        (
+            module._decode_session,
+            _document(
+                "session", {**_session_fields(_session(4)), "calendarStatus": {"stringValue": 3}}
+            ),
+        ),
+    ],
+)
+def test_decoders_reject_malformed_firestore_documents(
+    decoder: Any, document: dict[str, Any]
+) -> None:
+    with pytest.raises(InvalidSchedule):
+        decoder(document)

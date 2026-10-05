@@ -46,6 +46,11 @@ from quota_guard import (  # noqa: E402
     ReplayDetected,
     SecurityStoreUnavailable,
 )
+from schedule_repository import (  # noqa: E402
+    DestructiveScheduleChange,
+    ScheduleRepository,
+)
+from schedule_service import InvalidSchedule, ScheduleOverlap  # noqa: E402
 
 MAX_REQUEST_BYTES = 16_384
 
@@ -95,9 +100,61 @@ def main(context: Any) -> Any:
         return _attendance(context, allowed_origin)
     if method == "GET" and path == "/v1/courses":
         return _courses_list(context, allowed_origin)
+    if (
+        path.startswith("/v1/courses/")
+        and path.endswith("/schedule")
+        and method
+        in {
+            "GET",
+            "PUT",
+        }
+    ):
+        course_id = path.removeprefix("/v1/courses/").removesuffix("/schedule")
+        return _schedule(context, allowed_origin, method, course_id)
     if path.startswith("/v1/courses/") and method in {"PUT", "DELETE"}:
         return _course_mutation(context, allowed_origin, method, path.removeprefix("/v1/courses/"))
     return _respond(context, {"error": "not_found"}, 404, allowed_origin)
+
+
+def _schedule(context: Any, origin: str | None, method: str, course_id: str) -> Any:
+    user_id, rejected = _authentication(context, origin, f"/v1/courses/schedule/{method.lower()}")
+    if rejected is not None:
+        return rejected
+    if method == "PUT" and environ.get("ENABLE_SCHEDULE_WRITES", "").lower() != "true":
+        return _schedule_error(context, origin, "schedule_writes_disabled", 503)
+    try:
+        valid_id = validate_course_id(course_id)
+        repository = _schedule_repository(context.req.headers, cast(str, user_id))
+        result = (
+            repository.get_schedule(valid_id)
+            if method == "GET"
+            else repository.save_schedule(valid_id, context.req.body_json)
+        )
+    except ScheduleOverlap:
+        return _schedule_error(context, origin, "schedule_overlap", 409)
+    except DestructiveScheduleChange as error:
+        return _schedule_error(
+            context,
+            origin,
+            "schedule_destructive_conflict",
+            409,
+            destructive_sessions=error.count,
+        )
+    except (InvalidSchedule, InvalidCourse, TypeError, ValueError):
+        error_code = "schedule_data_invalid" if method == "GET" else "schedule_rejected"
+        return _schedule_error(context, origin, error_code, 500 if method == "GET" else 400)
+    except FirestoreRequestRejected:
+        error_code = "schedule_data_invalid" if method == "GET" else "schedule_rejected"
+        return _schedule_error(context, origin, error_code, 500 if method == "GET" else 400)
+    except FirestoreNotFound:
+        return _schedule_error(context, origin, "course_not_found", 404)
+    except FirestoreAccessDenied:
+        return _schedule_error(context, origin, "course_access_denied", 403)
+    except FirestoreUnavailable:
+        return _schedule_error(context, origin, "course_store_unavailable", 503)
+    event = "schedule_preview_succeeded" if method == "GET" else "schedule_save_succeeded"
+    _log(context, event, **result["changes"])
+    return _respond(context, result, origin=origin)
 
 
 def _identity(context: Any, origin: str | None) -> Any:
@@ -215,18 +272,35 @@ def _course_mutation(context: Any, origin: str | None, method: str, course_id: s
 
 
 def _course_repository(headers: dict[str, str], user_id: str) -> CourseRepository:
-    return CourseRepository(
-        FirestoreRestClient(
-            project_id=environ.get("FIREBASE_PROJECT_ID", ""),
-            user_id=user_id,
-            id_token=firebase_bearer_token(headers),
-        )
+    return CourseRepository(_firestore(headers, user_id))
+
+
+def _schedule_repository(headers: dict[str, str], user_id: str) -> ScheduleRepository:
+    return ScheduleRepository(_firestore(headers, user_id))
+
+
+def _firestore(headers: dict[str, str], user_id: str) -> FirestoreRestClient:
+    return FirestoreRestClient(
+        project_id=environ.get("FIREBASE_PROJECT_ID", ""),
+        user_id=user_id,
+        id_token=firebase_bearer_token(headers),
     )
 
 
 def _course_error(context: Any, origin: str | None, error: str, status: int) -> Any:
     _error(context, error)
     return _respond(context, {"error": error}, status, origin)
+
+
+def _schedule_error(
+    context: Any,
+    origin: str | None,
+    error: str,
+    status: int,
+    **fields: Any,
+) -> Any:
+    _error(context, error, **fields)
+    return _respond(context, {"error": error, **fields}, status, origin)
 
 
 def _is_public_api_path(path: str) -> bool:
