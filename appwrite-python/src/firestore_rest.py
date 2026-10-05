@@ -115,10 +115,35 @@ class FirestoreRestClient:
     def delete_user_documents(self, paths: list[tuple[str, ...]]) -> None:
         """Delete a bounded set of user documents in one atomic commit."""
 
-        if not paths or len(paths) > 500:
-            raise ValueError("Firestore delete batch is invalid")
-        writes = [{"delete": self._document_name(path)} for path in paths]
-        body = json.dumps({"writes": writes}, separators=(",", ":")).encode()
+        self.commit_user_documents(updates=[], deletes=paths)
+
+    def commit_user_documents(
+        self,
+        *,
+        updates: list[tuple[tuple[str, ...], Mapping[str, Any]]],
+        deletes: list[tuple[str, ...]],
+    ) -> None:
+        """Atomically replace typed fields and delete user-owned documents."""
+
+        if not updates and not deletes or len(updates) + len(deletes) > 500:
+            raise ValueError("Firestore commit batch is invalid")
+        writes: list[dict[str, Any]] = []
+        for path, fields in updates:
+            writes.append(
+                {
+                    "update": {
+                        "name": self._document_name(path),
+                        "fields": fields,
+                    }
+                }
+            )
+        writes.extend({"delete": self._document_name(path)} for path in deletes)
+        try:
+            body = json.dumps({"writes": writes}, separators=(",", ":")).encode()
+        except (TypeError, ValueError):
+            raise ValueError("Firestore fields must be JSON serializable") from None
+        if len(body) > MAX_PAYLOAD_BYTES:
+            raise ValueError("Firestore payload is too large")
         project = quote(self._project_id, safe="")
         url = f"{self.base_url}/projects/{project}/databases/(default)/documents:commit"
         self._send("POST", url, body)
