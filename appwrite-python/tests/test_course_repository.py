@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -65,6 +66,24 @@ def test_repository_rejects_duplicate_code_for_a_different_course() -> None:
 
     with pytest.raises(DuplicateCourseCode):
         repository.save_course(_course("course-2"))
+
+
+def test_repository_allows_only_current_or_next_term_for_new_courses() -> None:
+    repository = CourseRepository(FakeFirestore(), now=lambda: datetime(2026, 10, 5, tzinfo=UTC))  # type: ignore[arg-type]
+
+    with pytest.raises(InvalidCourse):
+        repository.save_course({**_course(), "term": "2026-1"})
+
+    assert repository.save_course({**_course(), "term": "2027-1"})["term"] == "2027-1"
+
+
+def test_repository_keeps_old_existing_courses_editable() -> None:
+    old = {**_course(), "term": "2026-1"}
+    repository = CourseRepository(
+        FakeFirestore([_document(old)]), now=lambda: datetime(2026, 10, 5, tzinfo=UTC)
+    )  # type: ignore[arg-type]
+
+    assert repository.save_course(old)["term"] == "2026-1"
 
 
 def test_repository_cascades_children_before_course_delete() -> None:

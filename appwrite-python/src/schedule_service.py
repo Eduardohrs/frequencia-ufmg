@@ -88,7 +88,7 @@ def build_schedule_plan(
         current_course = validate_course(course)
     except InvalidCourse:
         raise InvalidSchedule("invalid schedule") from None
-    _require_mutable_term(str(current_course["term"]), timestamp.date())
+    require_mutable_term(str(current_course["term"]), timestamp.date())
     starts_on, ends_on = _period(
         str(current_course["term"]), requested_starts_on, requested_ends_on
     )
@@ -446,7 +446,9 @@ def _term_dates(term: str) -> tuple[date, date]:
     raise InvalidSchedule("invalid schedule")
 
 
-def _require_mutable_term(term: str, today: date) -> None:
+def require_mutable_term(term: str, today: date) -> None:
+    """Reject terms other than the current or immediately following semester."""
+
     current = f"{today.year}-{1 if today.month <= 6 else 2}"
     current_year, current_semester = (int(part) for part in current.split("-"))
     following = f"{current_year}-2" if current_semester == 1 else f"{current_year + 1}-1"
