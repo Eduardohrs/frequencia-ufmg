@@ -175,11 +175,8 @@ void main() {
       find.text('0 de 0 faltas usadas • nenhuma pendência anterior'),
       findsOneWidget,
     );
-    expect(find.byKey(const Key('attendance-semicircle-poo')), findsOneWidget);
-    expect(
-      find.byKey(const Key('minimum-attendance-marker-poo')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('attendance-bar-poo')), findsOneWidget);
+    expect(find.byKey(const Key('attendance-semicircle-poo')), findsNothing);
     expect(find.text('Frequência mínima garantida'), findsOneWidget);
 
     await tester.tap(find.text('DCC203'));
@@ -199,6 +196,52 @@ void main() {
     expect(find.text('01/10/2026'), findsNothing);
     expect(find.text('26/09/2026 • Presença garantida'), findsOneWidget);
     expect(find.text('Aula realizada sem chamada • 0 faltas'), findsOneWidget);
+  });
+
+  testWidgets('fits a segmented attendance bar on a 320px phone', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = _Repository({
+      'poo': [
+        _session('present', DateTime.utc(2026, 9, 24, 11), absences: 0),
+        _session('pending', DateTime.utc(2026, 9, 29, 11)),
+        _session('absent', DateTime.utc(2026, 9, 25, 11), absences: 2),
+      ],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AbsenceDashboardPage(
+          courses: [poo],
+          repository: repository,
+          location: location,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('attendance-bar-poo')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.getSize(find.byKey(const Key('attendance-bar-poo'))).width,
+      lessThanOrEqualTo(232),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AbsenceDashboardPage(
+          courses: [poo],
+          repository: repository,
+          location: location,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('shows empty state and recovers from a loading failure', (

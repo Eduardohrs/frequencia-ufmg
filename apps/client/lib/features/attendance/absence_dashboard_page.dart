@@ -237,11 +237,12 @@ class _SummaryCard extends StatelessWidget {
               '${summary.consumedAbsences} de ${summary.absenceLimit} faltas usadas'
               ' • ${_pendingLabel(summary.pendingSessions)}',
             ),
+            const SizedBox(height: 10),
+            _RemainingBadge(label: summary.remainingMeetingsLabel),
             const SizedBox(height: 12),
-            _AttendanceSemicircle(summary: summary),
+            _AttendanceBar(summary: summary),
           ],
         ),
-        leading: _RemainingBadge(label: summary.remainingMeetingsLabel),
         children: [
           if (summary.sessions.isEmpty)
             const Padding(
@@ -266,70 +267,52 @@ class _RemainingBadge extends StatelessWidget {
   final String label;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: 88,
-    child: Text(
-      label,
-      textAlign: TextAlign.center,
-      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-        color: Theme.of(context).colorScheme.primary,
-        fontWeight: FontWeight.w700,
-      ),
+  Widget build(BuildContext context) => Text(
+    label,
+    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+      color: Theme.of(context).colorScheme.primary,
+      fontWeight: FontWeight.w700,
     ),
   );
 }
 
-class _AttendanceSemicircle extends StatelessWidget {
-  const _AttendanceSemicircle({required this.summary});
+class _AttendanceBar extends StatelessWidget {
+  const _AttendanceBar({required this.summary});
 
   final CourseAbsenceSummary summary;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final states = <Color>[
-      ...List.filled(summary.presentLessons, Colors.green),
-      ...List.filled(summary.consumedAbsences, colors.error),
-      ...List.filled(summary.unresolvedLessons, colors.outlineVariant),
-    ];
-    final thresholdIndex = max(0, (states.length * .75).ceil() - 1);
     return Semantics(
       label:
           '${summary.presentLessons} presenças, '
           '${summary.consumedAbsences} faltas e '
-          '${summary.unresolvedLessons} aulas ainda não definidas',
+          '${summary.unresolvedLessons} aulas ainda não definidas; '
+          'marco de frequência mínima em 75%',
       child: Column(
-        key: ValueKey('attendance-semicircle-${summary.course.id}'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 230,
-            height: 112,
-            child: Stack(
-              children: [
-                for (final entry in states.asMap().entries)
-                  Positioned(
-                    left: _semicircleDotOffset(entry.key, states.length).dx,
-                    top: _semicircleDotOffset(entry.key, states.length).dy,
-                    child: Container(
-                      key: entry.key == thresholdIndex
-                          ? ValueKey(
-                              'minimum-attendance-marker-${summary.course.id}',
-                            )
-                          : null,
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: entry.value,
-                        shape: BoxShape.circle,
-                        border: entry.key == thresholdIndex
-                            ? Border.all(color: colors.onSurface, width: 2)
-                            : null,
-                      ),
-                    ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final width = min(232.0, constraints.maxWidth);
+              return SizedBox(
+                key: ValueKey('attendance-bar-${summary.course.id}'),
+                width: width,
+                height: width / 2 + 8,
+                child: CustomPaint(
+                  painter: _AttendanceBarPainter(
+                    present: summary.presentLessons,
+                    unresolved: summary.unresolvedLessons,
+                    absent: summary.consumedAbsences,
+                    presentColor: Colors.green.shade600,
+                    unresolvedColor: colors.outlineVariant,
+                    absentColor: colors.error,
+                    markerColor: colors.onSurface,
                   ),
-              ],
-            ),
+                ),
+              );
+            },
           ),
           const SizedBox(height: 4),
           Text(
@@ -344,14 +327,91 @@ class _AttendanceSemicircle extends StatelessWidget {
   }
 }
 
-Offset _semicircleDotOffset(int index, int count) {
-  final ringCount = max(1, min(3, (count / 18).ceil()));
-  final slotCount = max(1, (count / ringCount).ceil());
-  final angle = slotCount == 1
-      ? pi / 2
-      : pi - pi * (index ~/ ringCount) / (slotCount - 1);
-  final radius = 58 + (index % ringCount) * 18;
-  return Offset(115 + radius * cos(angle) - 5, 104 - radius * sin(angle) - 5);
+class _AttendanceBarPainter extends CustomPainter {
+  const _AttendanceBarPainter({
+    required this.present,
+    required this.unresolved,
+    required this.absent,
+    required this.presentColor,
+    required this.unresolvedColor,
+    required this.absentColor,
+    required this.markerColor,
+  });
+
+  final int present;
+  final int unresolved;
+  final int absent;
+  final Color presentColor;
+  final Color unresolvedColor;
+  final Color absentColor;
+  final Color markerColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final total = present + unresolved + absent;
+    if (total == 0 || size.isEmpty) return;
+    const strokeWidth = 18.0;
+    final center = Offset(size.width / 2, size.height - strokeWidth / 2);
+    final radius = min(
+      (size.width - strokeWidth) / 2,
+      center.dy - strokeWidth / 2,
+    );
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    var start = pi;
+    final segments = [
+      (value: present, color: presentColor),
+      (value: unresolved, color: unresolvedColor),
+      (value: absent, color: absentColor),
+    ];
+    for (final segment in segments) {
+      if (segment.value == 0) continue;
+      final sweep = pi * segment.value / total;
+      canvas.drawArc(
+        rect,
+        start,
+        sweep,
+        false,
+        Paint()
+          ..color = segment.color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = strokeWidth
+          ..strokeCap = StrokeCap.butt,
+      );
+      start += sweep;
+    }
+    final nonEmpty = segments.where((segment) => segment.value > 0).toList();
+    canvas
+      ..drawCircle(
+        Offset(center.dx - radius, center.dy),
+        strokeWidth / 2,
+        Paint()..color = nonEmpty.first.color,
+      )
+      ..drawCircle(
+        Offset(center.dx + radius, center.dy),
+        strokeWidth / 2,
+        Paint()..color = nonEmpty.last.color,
+      );
+
+    final markerAngle = pi * 1.75;
+    final direction = Offset(cos(markerAngle), sin(markerAngle));
+    canvas.drawLine(
+      center + direction * (radius - strokeWidth / 2 - 4),
+      center + direction * (radius + strokeWidth / 2 + 4),
+      Paint()
+        ..color = markerColor
+        ..strokeWidth = 2,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_AttendanceBarPainter oldDelegate) =>
+      present != oldDelegate.present ||
+      unresolved != oldDelegate.unresolved ||
+      absent != oldDelegate.absent ||
+      presentColor != oldDelegate.presentColor ||
+      unresolvedColor != oldDelegate.unresolvedColor ||
+      absentColor != oldDelegate.absentColor ||
+      markerColor != oldDelegate.markerColor;
 }
 
 class _SessionImpactTile extends StatelessWidget {
