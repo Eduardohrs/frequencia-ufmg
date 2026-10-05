@@ -8,6 +8,7 @@ dependencies = [
   "google-auth==2.59.1",
   "PyJWT[crypto]>=2.10,<3",
   "pypdf==6.19.0",
+  "tzdata>=2025.2,<2027",
 ]
 
 [dependency-groups]
