@@ -51,6 +51,7 @@ final class SessionGenerator {
             lessonCount: generated.lessonCount,
             callCount: generated.callCount,
             calendarStatus: existing.calendarStatus,
+            assessmentTitle: existing.assessmentTitle,
             createdAt: existing.createdAt,
             updatedAt: now.toUtc(),
           ),

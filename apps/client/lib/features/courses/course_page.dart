@@ -9,6 +9,7 @@ import '../../backend/python_backend_transport.dart';
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/academic_period.dart';
+import '../../data/calendar_status.dart';
 import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
@@ -58,6 +59,7 @@ class _CoursePageState extends State<CoursePage> {
   bool _loadFailed = false;
   String? _deletingId;
   final _savingIds = <String>{};
+  int _pastPendingCount = 0;
 
   @override
   void initState() {
@@ -76,10 +78,46 @@ class _CoursePageState extends State<CoursePage> {
       if (!mounted) return;
       courses.sort((left, right) => left.code.compareTo(right.code));
       setState(() => _courses = courses);
+      unawaited(_loadPastPendingCount(courses));
     } catch (_) {
       if (mounted) setState(() => _loadFailed = true);
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadPastPendingCount(List<CourseRecord> courses) async {
+    try {
+      final location = tz.getLocation('America/Sao_Paulo');
+      final localNow = tz.TZDateTime.from(widget.now(), location);
+      final today = DateTime(localNow.year, localNow.month, localNow.day);
+      final loaded = await Future.wait([
+        for (final course in courses)
+          widget.sessionRepository.listSessions(course.id),
+      ]);
+      final count = loaded.expand((sessions) => sessions).where((session) {
+        final requiresAttendance =
+            session.calendarStatus == SessionCalendarStatus.scheduled ||
+            session.calendarStatus == SessionCalendarStatus.makeup;
+        final localSession = tz.TZDateTime.from(session.startsAt, location);
+        final day = DateTime(
+          localSession.year,
+          localSession.month,
+          localSession.day,
+        );
+        return requiresAttendance &&
+            session.absences == null &&
+            day.isBefore(today);
+      }).length;
+      if (mounted) setState(() => _pastPendingCount = count);
+    } catch (error, stackTrace) {
+      unawaited(
+        widget.logger.recordError(
+          error,
+          stackTrace,
+          context: 'past_attendance_pending_load',
+        ),
+      );
     }
   }
 
@@ -166,17 +204,19 @@ class _CoursePageState extends State<CoursePage> {
     );
   }
 
-  Future<void> _openAbsenceDashboard() async {
-    Navigator.of(context).pop();
+  Future<void> _openAbsenceDashboard({bool closeDrawer = true}) async {
+    if (closeDrawer) Navigator.of(context).pop();
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => AbsenceDashboardPage(
           courses: _courses,
           repository: widget.sessionRepository,
           location: tz.getLocation('America/Sao_Paulo'),
+          now: widget.now,
         ),
       ),
     );
+    if (mounted) await _loadPastPendingCount(_courses);
   }
 
   Future<String?> _save(CourseRecord? existing, CourseInput input) async {
@@ -336,7 +376,7 @@ class _CoursePageState extends State<CoursePage> {
               ListTile(
                 key: const Key('nav-absence-dashboard'),
                 title: const Text('Faltas restantes'),
-                onTap: _openAbsenceDashboard,
+                onTap: () => _openAbsenceDashboard(),
               ),
             ],
           ),
@@ -376,6 +416,26 @@ class _CoursePageState extends State<CoursePage> {
                     ),
                   ),
                   const SizedBox(height: 28),
+                  if (_pastPendingCount > 0) ...[
+                    Card(
+                      color: Theme.of(context).colorScheme.errorContainer,
+                      child: ListTile(
+                        key: const Key('past-attendance-pending-alert'),
+                        leading: const Icon(Icons.warning_amber_rounded),
+                        title: Text(
+                          _pastPendingCount == 1
+                              ? '1 aula anterior está sem frequência'
+                              : '$_pastPendingCount aulas anteriores estão sem frequência',
+                        ),
+                        subtitle: const Text(
+                          'Revise agora para não perder o controle das faltas.',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _openAbsenceDashboard(closeDrawer: false),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   _SectionHeader(onAdd: () => _openEditor()),
                   const SizedBox(height: 16),
                   Expanded(child: _content()),

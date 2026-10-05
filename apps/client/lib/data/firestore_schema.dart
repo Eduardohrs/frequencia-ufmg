@@ -81,6 +81,7 @@ abstract final class FirestoreSchema {
     'attendanceStatus': FirestoreFieldType.nullableString,
     'absences': FirestoreFieldType.nullableInteger,
     'calendarStatus': FirestoreFieldType.string,
+    'assessmentTitle': FirestoreFieldType.nullableString,
     'createdAt': FirestoreFieldType.timestamp,
     'updatedAt': FirestoreFieldType.timestamp,
   });
@@ -139,6 +140,10 @@ abstract final class FirestoreSchema {
       SessionCalendarStatus.fromCode(document['calendarStatus']! as String);
     } on ArgumentError {
       throw const FormatException('calendar status is invalid');
+    }
+    final assessmentTitle = document['assessmentTitle'] as String?;
+    if (assessmentTitle != null) {
+      _validateText(assessmentTitle, 'assessmentTitle', 120);
     }
     if (status == null || status == SituacaoFrequencia.pending) {
       if (absences != null) {

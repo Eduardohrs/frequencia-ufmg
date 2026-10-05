@@ -74,6 +74,7 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
       final updated = _copySession(
         session,
         calendarStatus: status,
+        assessmentTitle: session.assessmentTitle,
         updatedAt: widget.now().toUtc(),
       );
       await runAuditedOperation<void>(
@@ -102,6 +103,41 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
     barrierDismissible: false,
     builder: (_) => _MakeupSessionDialog(onSave: _addMakeup),
   );
+
+  Future<void> _editAssessment(SessionRecord session) async {
+    final title = await showDialog<String?>(
+      context: context,
+      builder: (_) => _AssessmentDialog(initialTitle: session.assessmentTitle),
+    );
+    if (title == null || !mounted) return;
+    setState(() => _savingId = session.id);
+    try {
+      final updated = _copySession(
+        session,
+        calendarStatus: session.calendarStatus,
+        assessmentTitle: title.isEmpty ? null : title,
+        updatedAt: widget.now().toUtc(),
+      );
+      await runAuditedOperation<void>(
+        logger: widget.logger,
+        operation: AuditedOperation.assessmentUpdate,
+        action: () => widget.repository.saveSession(widget.courseId, updated),
+      );
+      if (mounted) {
+        setState(() {
+          _sessions = _sorted([
+            for (final item in _sessions)
+              if (item.id != updated.id) item,
+            updated,
+          ]);
+        });
+      }
+    } catch (_) {
+      if (mounted) _message('Não foi possível salvar a avaliação.');
+    } finally {
+      if (mounted) setState(() => _savingId = null);
+    }
+  }
 
   Future<String?> _addMakeup(_MakeupInput input) async {
     final timestamp = widget.now().toUtc();
@@ -212,43 +248,62 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
           elevation: 0,
           child: ListTile(
             title: Text('$date • ${_time(local)}'),
-            subtitle: Text(_statusLabel(session.calendarStatus)),
+            subtitle: Text(
+              session.assessmentTitle == null
+                  ? _statusLabel(session.calendarStatus)
+                  : '${_statusLabel(session.calendarStatus)} • '
+                        'Avaliação: ${session.assessmentTitle}',
+            ),
             trailing: _savingId == session.id
                 ? const SizedBox.square(
                     dimension: 24,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : PopupMenuButton<SessionCalendarStatus>(
-                    tooltip: 'Alterar sessão de $date',
-                    onSelected: (status) => _changeStatus(session, status),
-                    itemBuilder: (_) => switch (session.calendarStatus) {
-                      SessionCalendarStatus.scheduled => const [
-                        PopupMenuItem(
-                          value: SessionCalendarStatus.cancelled,
-                          child: Text('Cancelada/feriado'),
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Editar avaliação de $date',
+                        onPressed: () => _editAssessment(session),
+                        icon: Icon(
+                          session.assessmentTitle == null
+                              ? Icons.assignment_outlined
+                              : Icons.assignment,
                         ),
-                        PopupMenuItem(
-                          value: SessionCalendarStatus.noCall,
-                          child: Text('Aula sem chamada'),
-                        ),
-                      ],
-                      SessionCalendarStatus.makeup => const [
-                        PopupMenuItem(
-                          value: SessionCalendarStatus.cancelled,
-                          child: Text('Cancelada/feriado'),
-                        ),
-                        PopupMenuItem(
-                          value: SessionCalendarStatus.noCall,
-                          child: Text('Aula sem chamada'),
-                        ),
-                      ],
-                      _ => const [
-                        PopupMenuItem(
-                          value: SessionCalendarStatus.scheduled,
-                          child: Text('Restaurar aula'),
-                        ),
-                      ],
-                    },
+                      ),
+                      PopupMenuButton<SessionCalendarStatus>(
+                        tooltip: 'Alterar sessão de $date',
+                        onSelected: (status) => _changeStatus(session, status),
+                        itemBuilder: (_) => switch (session.calendarStatus) {
+                          SessionCalendarStatus.scheduled => const [
+                            PopupMenuItem(
+                              value: SessionCalendarStatus.cancelled,
+                              child: Text('Cancelada/feriado'),
+                            ),
+                            PopupMenuItem(
+                              value: SessionCalendarStatus.noCall,
+                              child: Text('Aula sem chamada'),
+                            ),
+                          ],
+                          SessionCalendarStatus.makeup => const [
+                            PopupMenuItem(
+                              value: SessionCalendarStatus.cancelled,
+                              child: Text('Cancelada/feriado'),
+                            ),
+                            PopupMenuItem(
+                              value: SessionCalendarStatus.noCall,
+                              child: Text('Aula sem chamada'),
+                            ),
+                          ],
+                          _ => const [
+                            PopupMenuItem(
+                              value: SessionCalendarStatus.scheduled,
+                              child: Text('Restaurar aula'),
+                            ),
+                          ],
+                        },
+                      ),
+                    ],
                   ),
           ),
         );
@@ -263,9 +318,9 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
       content: const Text(
         'Aulas programadas e reposições entram no total de aulas e no cálculo '
         'de faltas.\n\nCancelada/feriado indica que a aula não aconteceu. '
-        'Aula sem chamada indica que houve atividade, mas a frequência não foi '
-        'cobrada — por exemplo, uma aula de exercício ou opcional. Nos dois '
-        'casos, a sessão fica fora do cálculo de frequência.',
+        'Aula sem chamada indica que a aula aconteceu e vale como presença '
+        'garantida. Ela entra no total acadêmico, mas não aparece na agenda '
+        'operacional. Cancelada/feriado não entra no cálculo.',
       ),
       actions: [
         TextButton(
@@ -274,6 +329,57 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
         ),
       ],
     ),
+  );
+}
+
+class _AssessmentDialog extends StatefulWidget {
+  const _AssessmentDialog({this.initialTitle});
+
+  final String? initialTitle;
+
+  @override
+  State<_AssessmentDialog> createState() => _AssessmentDialogState();
+}
+
+class _AssessmentDialogState extends State<_AssessmentDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialTitle);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Atividade avaliativa'),
+    content: TextField(
+      key: const Key('assessment-title'),
+      controller: _controller,
+      autofocus: true,
+      maxLength: 120,
+      decoration: const InputDecoration(
+        labelText: 'Título',
+        hintText: 'Ex.: Prova 1, seminário ou entrega',
+        helperText: 'Deixe vazio para remover a avaliação.',
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancelar'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+        child: const Text('Salvar'),
+      ),
+    ],
   );
 }
 
@@ -445,6 +551,7 @@ class _MakeupSessionDialogState extends State<_MakeupSessionDialog> {
 SessionRecord _copySession(
   SessionRecord source, {
   required SessionCalendarStatus calendarStatus,
+  required String? assessmentTitle,
   required DateTime updatedAt,
 }) => SessionRecord(
   id: source.id,
@@ -457,6 +564,7 @@ SessionRecord _copySession(
   attendanceStatus: source.attendanceStatus,
   absences: source.absences,
   calendarStatus: calendarStatus,
+  assessmentTitle: assessmentTitle,
   createdAt: source.createdAt,
   updatedAt: updatedAt,
 );

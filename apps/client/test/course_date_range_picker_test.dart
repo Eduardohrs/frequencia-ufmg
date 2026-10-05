@@ -116,4 +116,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Outubro 2026'), findsOneWidget);
   });
+
+  testWidgets('shows every day in a six-row month without clipping', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseDateRangePickerDialog(
+          initialMonth: DateTime(2026, 8),
+          firstDate: DateTime(2026, 1, 1),
+          lastDate: DateTime(2027, 12, 31),
+          highlightedWeekdays: const {DateTime.monday},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('date-2026-08-31')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

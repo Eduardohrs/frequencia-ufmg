@@ -85,6 +85,7 @@ const session = (overrides = {}) => ({
   attendanceStatus: null,
   absences: null,
   calendarStatus: "scheduled",
+  assessmentTitle: null,
   createdAt,
   updatedAt,
   ...overrides,
@@ -312,6 +313,10 @@ describe("session documents", () => {
     const db = dbFor("alice");
 
     await assertSucceeds(setDoc(doc(db, sessionPath("alice", "unresolved")), session()));
+    const { assessmentTitle: _, ...legacySession } = session();
+    await assertSucceeds(
+      setDoc(doc(db, sessionPath("alice", "legacy")), legacySession),
+    );
     await assertSucceeds(
       setDoc(
         doc(db, sessionPath("alice", "no-call")),
@@ -358,6 +363,9 @@ describe("session documents", () => {
       session({ secondPing: "unknown" }),
       session({ attendanceStatus: "unknown" }),
       session({ calendarStatus: "unknown" }),
+      session({ assessmentTitle: "" }),
+      session({ assessmentTitle: " Prova" }),
+      session({ assessmentTitle: "x".repeat(121) }),
       session({ absences: 1 }),
       session({ attendanceStatus: "pendente", absences: 0 }),
       session({ attendanceStatus: "presente", absences: null }),

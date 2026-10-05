@@ -165,7 +165,7 @@ service cloud.firestore {
     }
 
     function isValidSession(data) {
-      let fields = [
+      let requiredFields = [
         'schemaVersion',
         'startsAt',
         'endsAt',
@@ -179,13 +179,21 @@ service cloud.firestore {
         'createdAt',
         'updatedAt'
       ];
-      return hasExactFields(data, fields)
+      let allowedFields = requiredFields.concat(['assessmentTitle']);
+      return data.keys().hasAll(requiredFields)
+        && data.keys().hasOnly(allowedFields)
         && data.schemaVersion == 1
         && data.startsAt is timestamp
         && data.endsAt is timestamp
         && data.startsAt < data.endsAt
         && hasValidConfiguration(data)
         && data.calendarStatus in ['scheduled', 'cancelled', 'holiday', 'no_call', 'makeup']
+        && (!data.keys().hasAny(['assessmentTitle'])
+          || data.assessmentTitle == null
+          || (data.assessmentTitle is string
+            && data.assessmentTitle.size() > 0
+            && data.assessmentTitle.size() <= 120
+            && data.assessmentTitle.matches('^\\S(.*\\S)?$')))
         && isValidPing(data.firstPing)
         && isValidPing(data.secondPing)
         && isValidAttendance(data)
