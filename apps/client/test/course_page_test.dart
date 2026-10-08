@@ -483,9 +483,12 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('1 aula anterior está sem frequência'), findsOneWidget);
+    expect(find.text('Mais recente: DCC203 • 26/09/2026'), findsOneWidget);
     await tester.tap(find.byKey(const Key('past-attendance-pending-alert')));
     await tester.pumpAndSettle();
-    expect(find.text('Faltas restantes'), findsOneWidget);
+    expect(find.text('Frequência • DCC203'), findsOneWidget);
+    expect(find.text('Pendências anteriores'), findsOneWidget);
+    expect(find.text('Selecionada pelo alerta'), findsOneWidget);
     sessions.sessions['course-1'] = const [];
     await tester.pageBack();
     await tester.pumpAndSettle();

@@ -14,6 +14,7 @@ import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import '../attendance/absence_dashboard_page.dart';
+import '../attendance/attendance_page.dart';
 import '../schedule/course_schedule_page.dart';
 import '../schedule/general_calendar_page.dart';
 import 'course_editor_dialog.dart';
@@ -64,6 +65,7 @@ class _CoursePageState extends State<CoursePage> {
   String? _deletingId;
   final _savingIds = <String>{};
   int _pastPendingCount = 0;
+  _PendingAttendance? _nextPastPending;
 
   @override
   void initState() {
@@ -99,21 +101,35 @@ class _CoursePageState extends State<CoursePage> {
         for (final course in courses)
           widget.sessionRepository.listSessions(course.id),
       ]);
-      final count = loaded.expand((sessions) => sessions).where((session) {
-        final requiresAttendance =
-            session.calendarStatus == SessionCalendarStatus.scheduled ||
-            session.calendarStatus == SessionCalendarStatus.makeup;
-        final localSession = tz.TZDateTime.from(session.startsAt, location);
-        final day = DateTime(
-          localSession.year,
-          localSession.month,
-          localSession.day,
-        );
-        return requiresAttendance &&
-            session.absences == null &&
-            day.isBefore(today);
-      }).length;
-      if (mounted) setState(() => _pastPendingCount = count);
+      final pending = <_PendingAttendance>[];
+      for (var index = 0; index < courses.length; index++) {
+        for (final session in loaded[index]) {
+          final requiresAttendance =
+              session.calendarStatus == SessionCalendarStatus.scheduled ||
+              session.calendarStatus == SessionCalendarStatus.makeup;
+          final localSession = tz.TZDateTime.from(session.startsAt, location);
+          final day = DateTime(
+            localSession.year,
+            localSession.month,
+            localSession.day,
+          );
+          if (requiresAttendance &&
+              session.absences == null &&
+              day.isBefore(today)) {
+            pending.add(_PendingAttendance(courses[index], session));
+          }
+        }
+      }
+      pending.sort(
+        (left, right) =>
+            right.session.startsAt.compareTo(left.session.startsAt),
+      );
+      if (mounted) {
+        setState(() {
+          _pastPendingCount = pending.length;
+          _nextPastPending = pending.isEmpty ? null : pending.first;
+        });
+      }
     } catch (error, stackTrace) {
       unawaited(
         widget.logger.recordError(
@@ -217,6 +233,26 @@ class _CoursePageState extends State<CoursePage> {
         builder: (_) => AbsenceDashboardPage(
           courses: _courses,
           repository: widget.sessionRepository,
+          location: tz.getLocation('America/Sao_Paulo'),
+          now: widget.now,
+        ),
+      ),
+    );
+    if (mounted) await _loadPastPendingCount(_courses);
+  }
+
+  Future<void> _openPendingAttendance() async {
+    final pending = _nextPastPending;
+    if (pending == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => AttendancePage(
+          courseId: pending.course.id,
+          courseCode: pending.course.code,
+          initialSessionId: pending.session.id,
+          repository: widget.sessionRepository,
+          logger: widget.logger,
+          attendanceEvaluator: widget.attendanceEvaluator,
           location: tz.getLocation('America/Sao_Paulo'),
           now: widget.now,
         ),
@@ -433,11 +469,12 @@ class _CoursePageState extends State<CoursePage> {
                               ? '1 aula anterior está sem frequência'
                               : '$_pastPendingCount aulas anteriores estão sem frequência',
                         ),
-                        subtitle: const Text(
-                          'Revise agora para não perder o controle das faltas.',
+                        subtitle: Text(
+                          'Mais recente: ${_nextPastPending!.course.code} • '
+                          '${_date(_nextPastPending!.session.startsAt, tz.getLocation('America/Sao_Paulo'))}',
                         ),
                         trailing: const Icon(Icons.chevron_right),
-                        onTap: () => _openAbsenceDashboard(closeDrawer: false),
+                        onTap: _openPendingAttendance,
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -637,4 +674,17 @@ bool _usesDefaultPeriod(CourseRecord course) {
       course.endsOn == null ||
       (course.startsOn == defaultPeriod.startsOn &&
           course.endsOn == defaultPeriod.endsOn);
+}
+
+final class _PendingAttendance {
+  const _PendingAttendance(this.course, this.session);
+
+  final CourseRecord course;
+  final SessionRecord session;
+}
+
+String _date(DateTime value, tz.Location location) {
+  final local = tz.TZDateTime.from(value, location);
+  return '${local.day.toString().padLeft(2, '0')}/'
+      '${local.month.toString().padLeft(2, '0')}/${local.year}';
 }

@@ -99,6 +99,85 @@ void main() {
     );
   });
 
+  testWidgets('groups sessions by urgency and highlights an alert target', (
+    tester,
+  ) async {
+    final repository = _FakeRepository([
+      _session(
+        'history',
+        DateTime.utc(2026, 7, 29, 12),
+        attendanceStatus: SituacaoFrequencia.present,
+        absences: 0,
+      ),
+      _session('pending-old', DateTime.utc(2026, 7, 30, 12)),
+      _session('pending-recent', DateTime.utc(2026, 7, 31, 12)),
+      _session('today', now),
+      _session('future', DateTime.utc(2026, 8, 2, 12)),
+    ]);
+
+    await tester.pumpWidget(
+      _app(
+        repository,
+        _Logger(),
+        location,
+        now,
+        courseCode: 'DCC203',
+        initialSessionId: 'pending-recent',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Frequência • DCC203'), findsOneWidget);
+    expect(find.text('Pendências anteriores'), findsOneWidget);
+    expect(find.text('Hoje'), findsOneWidget);
+    expect(find.text('Próximas aulas'), findsOneWidget);
+    expect(find.text('Histórico'), findsOneWidget);
+    expect(find.text('Selecionada pelo alerta'), findsOneWidget);
+    expect(find.text('Pendente de registro'), findsNWidgets(2));
+    expect(
+      tester
+          .getTopLeft(
+            find.byKey(const Key('attendance-session-pending-recent')),
+          )
+          .dy,
+      lessThan(
+        tester
+            .getTopLeft(find.byKey(const Key('attendance-session-pending-old')))
+            .dy,
+      ),
+    );
+    expect(
+      tester.getTopLeft(find.text('Pendências anteriores')).dy,
+      lessThan(tester.getTopLeft(find.text('Hoje')).dy),
+    );
+  });
+
+  testWidgets('keeps the highlighted pending session readable on a phone', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = _FakeRepository([
+      _session('pending', DateTime.utc(2026, 7, 31, 12)),
+    ]);
+
+    await tester.pumpWidget(
+      _app(
+        repository,
+        _Logger(),
+        location,
+        now,
+        courseCode: 'DCC203',
+        initialSessionId: 'pending',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Selecionada pelo alerta'), findsOneWidget);
+    expect(find.text('Pendente de registro'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('uses Python as authority for a new attendance record', (
     tester,
   ) async {
@@ -201,9 +280,13 @@ Widget _app(
   tz.Location location,
   DateTime now, {
   BackendAttendanceEvaluator? attendanceEvaluator,
+  String? courseCode,
+  String? initialSessionId,
 }) => MaterialApp(
   home: AttendancePage(
     courseId: 'poo',
+    courseCode: courseCode,
+    initialSessionId: initialSessionId,
     repository: repository,
     logger: logger,
     location: location,
