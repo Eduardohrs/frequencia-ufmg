@@ -1,6 +1,7 @@
 """Authenticated course operations over the user's existing Firestore tree."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from typing import Any
 
 from course_service import (
@@ -10,6 +11,7 @@ from course_service import (
     validate_course,
 )
 from firestore_rest import FirestoreRestClient
+from schedule_service import InvalidSchedule, require_mutable_term
 
 
 class DuplicateCourseCode(Exception):
@@ -17,8 +19,14 @@ class DuplicateCourseCode(Exception):
 
 
 class CourseRepository:
-    def __init__(self, firestore: FirestoreRestClient) -> None:
+    def __init__(
+        self,
+        firestore: FirestoreRestClient,
+        *,
+        now: Callable[[], datetime] | None = None,
+    ) -> None:
         self._firestore = firestore
+        self._now = now or (lambda: datetime.now(UTC))
 
     def list_courses(self) -> list[dict[str, Any]]:
         courses = [
@@ -28,11 +36,17 @@ class CourseRepository:
 
     def save_course(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         course = validate_course(payload)
+        existing_courses = self.list_courses()
         if any(
             existing["id"] != course["id"] and existing["code"] == course["code"]
-            for existing in self.list_courses()
+            for existing in existing_courses
         ):
             raise DuplicateCourseCode("duplicate course code")
+        if not any(existing["id"] == course["id"] for existing in existing_courses):
+            try:
+                require_mutable_term(str(course["term"]), self._now().date())
+            except InvalidSchedule:
+                raise InvalidCourse("invalid course") from None
         document = self._firestore.patch_user_document(
             "courses", str(course["id"]), fields=course_to_firestore(course)
         )

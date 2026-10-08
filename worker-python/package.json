@@ -2,6 +2,9 @@
   "name": "frequencia-ufmg-python-worker",
   "private": true,
   "devDependencies": {
-    "wrangler": "4.146.0"
+    "wrangler": "4.148.0"
+  },
+  "overrides": {
+    "sharp": "0.35.5"
   }
 }

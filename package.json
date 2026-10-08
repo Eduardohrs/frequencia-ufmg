@@ -11,7 +11,7 @@
   "devDependencies": {
     "@firebase/rules-unit-testing": "5.0.2",
     "firebase": "12.19.0",
-    "firebase-tools": "15.31.0",
+    "firebase-tools": "15.33.0",
     "picomatch": "4.0.7"
   },
   "overrides": {

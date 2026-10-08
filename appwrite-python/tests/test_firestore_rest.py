@@ -1,4 +1,5 @@
 import json
+from collections.abc import Mapping
 from io import BytesIO
 from typing import Any
 from urllib.error import HTTPError
@@ -137,6 +138,63 @@ def test_delete_user_documents_commits_one_bounded_batch() -> None:
             },
         ]
     }
+
+
+def test_commit_user_documents_updates_and_deletes_atomically() -> None:
+    calls: list[Any] = []
+
+    def transport(request: Any, _timeout: float) -> tuple[int, bytes]:
+        calls.append(request)
+        return 200, b'{"writeResults":[]}'
+
+    client = FirestoreRestClient("project", "user", "token", transport=transport)
+    client.commit_user_documents(
+        updates=[
+            (
+                ("courses", "course-1", "meetings", "meeting-1"),
+                {"schemaVersion": {"integerValue": "1"}},
+            )
+        ],
+        deletes=[("courses", "course-1", "sessions", "obsolete")],
+    )
+
+    assert calls[0].method == "POST"
+    assert calls[0].full_url.endswith("/databases/(default)/documents:commit")
+    assert json.loads(calls[0].data) == {
+        "writes": [
+            {
+                "update": {
+                    "name": (
+                        "projects/project/databases/(default)/documents/users/user/"
+                        "courses/course-1/meetings/meeting-1"
+                    ),
+                    "fields": {"schemaVersion": {"integerValue": "1"}},
+                }
+            },
+            {
+                "delete": (
+                    "projects/project/databases/(default)/documents/users/user/"
+                    "courses/course-1/sessions/obsolete"
+                )
+            },
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        [(("courses", "one"), {"bad": object()})],
+        [(("courses", "one"), {"large": {"stringValue": "x" * 1_048_576}})],
+    ],
+)
+def test_commit_user_documents_rejects_invalid_update_payloads(
+    updates: list[tuple[tuple[str, ...], Mapping[str, Any]]],
+) -> None:
+    client = FirestoreRestClient("project", "user", "token")
+
+    with pytest.raises(ValueError):
+        client.commit_user_documents(updates=updates, deletes=[])
 
 
 @pytest.mark.parametrize("paths", [[], [("courses", "id")] * 501, [("courses",)]])

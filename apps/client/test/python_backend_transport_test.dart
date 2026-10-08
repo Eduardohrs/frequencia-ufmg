@@ -213,6 +213,112 @@ void main() {
     },
   );
 
+  test('previews and atomically saves a complete schedule', () async {
+    final requests = <http.Request>[];
+    final response = {
+      'course': _courseJson,
+      'meetings': [_meetingJson],
+      'changes': {
+        'meeting_upserts': 1,
+        'meeting_deletes': 0,
+        'session_upserts': 3,
+        'session_deletes': 0,
+        'destructive_deletes': 0,
+      },
+    };
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        requests.add(request);
+        return http.Response(jsonEncode(response), 200);
+      }),
+    );
+
+    final preview = await transport.getSchedule('course-1');
+    final saved = await transport.saveSchedule(
+      courseId: 'course-1',
+      startsOn: DateTime.utc(2026, 8, 4),
+      endsOn: DateTime.utc(2026, 12, 1),
+      meetings: preview.meetings,
+      confirmDestructive: false,
+    );
+
+    expect(preview.course.id, 'course-1');
+    expect(preview.meetings.single.startMinutes, 1140);
+    expect(saved.changes.sessionUpserts, 3);
+    expect(requests.map((request) => request.method), ['GET', 'PUT']);
+    expect(requests.first.url.path, '/v1/courses/course-1/schedule');
+    expect(jsonDecode(requests.last.body), {
+      'starts_on': '2026-08-04T00:00:00.000Z',
+      'ends_on': '2026-12-01T00:00:00.000Z',
+      'meetings': [
+        {
+          'id': 'tuesday-19',
+          'weekday': 2,
+          'start_minutes': 1140,
+          'lesson_count': 2,
+          'call_count': 1,
+        },
+      ],
+      'confirm_destructive': false,
+    });
+  });
+
+  test('preserves the bounded destructive-conflict count', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'error': 'schedule_destructive_conflict',
+            'destructive_sessions': 2,
+          }),
+          409,
+        ),
+      ),
+    );
+
+    await expectLater(
+      transport.saveSchedule(
+        courseId: 'course-1',
+        startsOn: null,
+        endsOn: null,
+        meetings: const [],
+        confirmDestructive: false,
+      ),
+      throwsA(
+        isA<PythonBackendException>()
+            .having(
+              (error) => error.code,
+              'code',
+              PythonBackendError.destructiveConflict,
+            )
+            .having((error) => error.destructiveSessions, 'count', 2),
+      ),
+    );
+  });
+
+  test('rejects malformed schedule responses', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((_) async => http.Response(jsonEncode({}), 200)),
+    );
+
+    await expectLater(
+      transport.getSchedule('course-1'),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'code',
+          PythonBackendError.invalidResponse,
+        ),
+      ),
+    );
+  });
+
   test('rejects malformed course responses and unsafe ids', () async {
     final transport = PythonBackendTransport(
       endpoint: Uri.parse('https://backend.example'),
@@ -417,6 +523,29 @@ void main() {
     );
   });
 }
+
+const _courseJson = <String, Object?>{
+  'id': 'course-1',
+  'code': 'DCC203',
+  'name': 'POO',
+  'workload': 1,
+  'term': '2026-2',
+  'starts_on': '2026-08-04T00:00:00Z',
+  'ends_on': '2026-12-01T00:00:00Z',
+  'created_at': '2026-08-01T12:00:00Z',
+  'updated_at': '2026-08-01T12:00:00Z',
+};
+
+const _meetingJson = <String, Object?>{
+  'id': 'tuesday-19',
+  'weekday': 2,
+  'start_minutes': 1140,
+  'end_minutes': 1240,
+  'lesson_count': 2,
+  'call_count': 1,
+  'created_at': '2026-08-01T12:00:00Z',
+  'updated_at': '2026-08-01T12:00:00Z',
+};
 
 final class _Tokens implements PythonBackendTokens {
   _Tokens({this.idToken = 'id', this.appCheckToken = 'app'});

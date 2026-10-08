@@ -90,6 +90,10 @@ Future<void> main() async {
       attendanceEvaluator: backend is BackendAttendanceEvaluator
           ? backend as BackendAttendanceEvaluator
           : null,
+      scheduleGateway: backend is BackendScheduleGateway
+          ? backend as BackendScheduleGateway
+          : null,
+      scheduleWritesEnabled: pythonScheduleWritesEnabled,
     ),
   );
   await logger.logEvent('app_started');
@@ -104,6 +108,8 @@ class FrequenciaUFMGApp extends StatelessWidget {
     required this.sessionRepositoryFactory,
     this.backendIdentityVerifier,
     this.attendanceEvaluator,
+    this.scheduleGateway,
+    this.scheduleWritesEnabled = false,
     super.key,
   });
 
@@ -114,6 +120,8 @@ class FrequenciaUFMGApp extends StatelessWidget {
   final SessionRepository Function(String userId) sessionRepositoryFactory;
   final BackendIdentityVerifier? backendIdentityVerifier;
   final BackendAttendanceEvaluator? attendanceEvaluator;
+  final BackendScheduleGateway? scheduleGateway;
+  final bool scheduleWritesEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -146,6 +154,8 @@ class FrequenciaUFMGApp extends StatelessWidget {
         sessionRepositoryFactory: sessionRepositoryFactory,
         backendIdentityVerifier: backendIdentityVerifier,
         attendanceEvaluator: attendanceEvaluator,
+        scheduleGateway: scheduleGateway,
+        scheduleWritesEnabled: scheduleWritesEnabled,
       ),
     );
   }

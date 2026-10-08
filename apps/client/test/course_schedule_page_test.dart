@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
@@ -22,6 +23,268 @@ void main() {
     createdAt: now,
     updatedAt: now,
   );
+
+  testWidgets('loads the authoritative preview and keeps writes disabled', (
+    tester,
+  ) async {
+    final direct = _FakeMeetingRepository()
+      ..listError = StateError('must not read');
+    final gateway = _FakeScheduleGateway(
+      course: course,
+      meetings: [
+        MeetingRecord(
+          id: 'authoritative',
+          weekday: DateTime.tuesday,
+          startMinutes: 1140,
+          endMinutes: 1240,
+          lessonCount: QuantidadeAulas.two,
+          callCount: NumeroChamadas.one,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: direct,
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          scheduleGateway: gateway,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Terça-feira • 19:00–20:40'), findsOneWidget);
+    expect(
+      find.textContaining('A grade está em validação segura'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<FloatingActionButton>(find.byKey(const Key('add-meeting')))
+          .onPressed,
+      isNull,
+    );
+    expect(gateway.getCount, 1);
+    expect(gateway.saveCount, 0);
+  });
+
+  testWidgets(
+    'saves a complete schedule only through the authoritative gateway',
+    (tester) async {
+      final dated = CourseRecord(
+        id: course.id,
+        code: course.code,
+        name: course.name,
+        workload: course.workload,
+        term: course.term,
+        startsOn: DateTime.utc(2026, 8, 3),
+        endsOn: DateTime.utc(2026, 12, 1),
+        createdAt: now,
+        updatedAt: now,
+      );
+      final direct = _FakeMeetingRepository();
+      final gateway = _FakeScheduleGateway(course: dated);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CourseSchedulePage(
+            course: dated,
+            repository: direct,
+            sessionRepository: _FakeSessionRepository(),
+            logger: _RecordingAppLogger(),
+            scheduleGateway: gateway,
+            scheduleWritesEnabled: true,
+            idGenerator: () => 'monday-8',
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('add-meeting')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('meeting-start')), '08:00');
+      await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.saveCount, 1);
+      expect(gateway.meetings.single.id, 'monday-8');
+      expect(direct.meetings, isEmpty);
+      expect(find.text('Segunda-feira • 08:00–09:40'), findsOneWidget);
+    },
+  );
+
+  testWidgets('shows an authoritative overlap as a validation error', (
+    tester,
+  ) async {
+    final dated = CourseRecord(
+      id: course.id,
+      code: course.code,
+      name: course.name,
+      workload: course.workload,
+      term: course.term,
+      startsOn: DateTime.utc(2026, 8, 3),
+      endsOn: DateTime.utc(2026, 12, 1),
+      createdAt: now,
+      updatedAt: now,
+    );
+    final gateway = _FakeScheduleGateway(course: dated)
+      ..saveError = const PythonBackendException(
+        PythonBackendError.scheduleConflict,
+      );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: dated,
+          repository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          scheduleGateway: gateway,
+          scheduleWritesEnabled: true,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('add-meeting')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('meeting-start')), '08:00');
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Esse horário se sobrepõe a outra aula cadastrada.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('deletes a meeting through the authoritative gateway', (
+    tester,
+  ) async {
+    final meeting = MeetingRecord(
+      id: 'monday-8',
+      weekday: DateTime.monday,
+      startMinutes: 480,
+      endMinutes: 580,
+      lessonCount: QuantidadeAulas.two,
+      callCount: NumeroChamadas.one,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final gateway = _FakeScheduleGateway(course: course, meetings: [meeting]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          scheduleGateway: gateway,
+          scheduleWritesEnabled: true,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Excluir horário de segunda-feira'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Excluir'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.meetings, isEmpty);
+    expect(find.text('Nenhum horário cadastrado'), findsOneWidget);
+  });
+
+  testWidgets('saves a visual period through the authoritative gateway', (
+    tester,
+  ) async {
+    final gateway = _FakeScheduleGateway(course: course);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          scheduleGateway: gateway,
+          scheduleWritesEnabled: true,
+          now: () => DateTime.utc(2026, 8, 1, 12),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('edit-course-period')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('date-2026-08-03')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('date-2026-08-10')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar período'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.startsOn, DateTime.utc(2026, 8, 3));
+    expect(gateway.endsOn, DateTime.utc(2026, 8, 10));
+    expect(find.text('Período salvo e calendário atualizado.'), findsOneWidget);
+  });
+
+  testWidgets('asks before an authoritative destructive replacement', (
+    tester,
+  ) async {
+    final dated = CourseRecord(
+      id: course.id,
+      code: course.code,
+      name: course.name,
+      workload: course.workload,
+      term: course.term,
+      startsOn: DateTime.utc(2026, 8, 3),
+      endsOn: DateTime.utc(2026, 12, 1),
+      createdAt: now,
+      updatedAt: now,
+    );
+    final gateway = _FakeScheduleGateway(course: dated)..destructiveCount = 1;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: dated,
+          repository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          scheduleGateway: gateway,
+          scheduleWritesEnabled: true,
+          idGenerator: () => 'monday-8',
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Future<void> submit() async {
+      await tester.tap(find.byKey(const Key('add-meeting')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('meeting-start')), '08:00');
+      await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    await submit();
+    await tester.tap(find.widgetWithText(TextButton, 'Manter como está'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Cancelar'));
+    await tester.pumpAndSettle();
+    expect(gateway.confirmations, [false]);
+
+    await submit();
+    await tester.tap(find.widgetWithText(FilledButton, 'Alterar mesmo assim'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.confirmations, [false, false, true]);
+    expect(find.text('Segunda-feira • 08:00–09:40'), findsOneWidget);
+  });
 
   testWidgets('creates, edits, lists, and deletes a weekly meeting', (
     tester,
@@ -937,4 +1200,107 @@ final class _RecordingAppLogger implements AppLogger {
     bool fatal = false,
     Map<String, Object>? parameters,
   }) async {}
+}
+
+final class _FakeScheduleGateway implements BackendScheduleGateway {
+  _FakeScheduleGateway({required this.course, List<MeetingRecord>? meetings})
+    : meetings = meetings ?? [];
+
+  CourseRecord course;
+  List<MeetingRecord> meetings;
+  int getCount = 0;
+  int saveCount = 0;
+  int? destructiveCount;
+  Object? saveError;
+  DateTime? startsOn;
+  DateTime? endsOn;
+  final confirmations = <bool>[];
+
+  @override
+  Future<PythonSchedule> getSchedule(String courseId) async {
+    getCount++;
+    return _schedule();
+  }
+
+  @override
+  Future<PythonSchedule> saveSchedule({
+    required String courseId,
+    required DateTime? startsOn,
+    required DateTime? endsOn,
+    required List<PythonMeeting> meetings,
+    required bool confirmDestructive,
+  }) async {
+    saveCount++;
+    if (saveError case final error?) throw error;
+    confirmations.add(confirmDestructive);
+    if (!confirmDestructive && destructiveCount != null) {
+      throw PythonBackendException(
+        PythonBackendError.destructiveConflict,
+        destructiveSessions: destructiveCount,
+      );
+    }
+    this.startsOn = startsOn;
+    this.endsOn = endsOn;
+    course = CourseRecord(
+      id: course.id,
+      code: course.code,
+      name: course.name,
+      workload: course.workload,
+      term: course.term,
+      startsOn: startsOn,
+      endsOn: endsOn,
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+    );
+    this.meetings = meetings
+        .map(
+          (item) => MeetingRecord(
+            id: item.id,
+            weekday: item.weekday,
+            startMinutes: item.startMinutes,
+            endMinutes: item.endMinutes,
+            lessonCount: QuantidadeAulas.fromValue(item.lessonCount),
+            callCount: NumeroChamadas.fromValue(item.callCount),
+            createdAt: item.createdAt,
+            updatedAt: item.updatedAt,
+          ),
+        )
+        .toList(growable: false);
+    return _schedule();
+  }
+
+  PythonSchedule _schedule() => PythonSchedule(
+    course: PythonCourse(
+      id: course.id,
+      code: course.code,
+      name: course.name,
+      workload: course.workload,
+      term: course.term,
+      startsOn: course.startsOn,
+      endsOn: course.endsOn,
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+    ),
+    meetings: meetings
+        .map(
+          (item) => PythonMeeting(
+            id: item.id,
+            weekday: item.weekday,
+            startMinutes: item.startMinutes,
+            endMinutes: item.endMinutes,
+            lessonCount: item.lessonCount.value,
+            callCount: item.callCount.value,
+            createdAt: item.createdAt,
+            updatedAt: item.updatedAt,
+          ),
+        )
+        .toList(growable: false),
+    changes: const PythonScheduleChanges(
+      meetingUpserts: 0,
+      meetingDeletes: 0,
+      sessionUpserts: 0,
+      sessionDeletes: 0,
+      destructiveDeletes: 0,
+    ),
+  );
 }

@@ -6,9 +6,11 @@ import 'package:http/http.dart' as http;
 enum PythonBackendError {
   appCheckInvalid,
   credentialsUnavailable,
+  destructiveConflict,
   invalidResponse,
   rateLimited,
   replayed,
+  scheduleConflict,
   timeout,
   unauthorized,
   unavailable,
@@ -17,10 +19,15 @@ enum PythonBackendError {
 enum _BackendMethod { get, post, put, delete }
 
 final class PythonBackendException implements Exception {
-  const PythonBackendException(this.code, {this.retryAfter});
+  const PythonBackendException(
+    this.code, {
+    this.retryAfter,
+    this.destructiveSessions,
+  });
 
   final PythonBackendError code;
   final Duration? retryAfter;
+  final int? destructiveSessions;
 
   @override
   String toString() => 'PythonBackendException(${code.name})';
@@ -50,6 +57,18 @@ abstract interface class BackendCourseGateway {
   Future<PythonCourse> saveCourse(PythonCourse course);
 
   Future<void> deleteCourse(String courseId);
+}
+
+abstract interface class BackendScheduleGateway {
+  Future<PythonSchedule> getSchedule(String courseId);
+
+  Future<PythonSchedule> saveSchedule({
+    required String courseId,
+    required DateTime? startsOn,
+    required DateTime? endsOn,
+    required List<PythonMeeting> meetings,
+    required bool confirmDestructive,
+  });
 }
 
 final class PythonCourse {
@@ -156,6 +175,166 @@ final class PythonCourse {
   }
 }
 
+final class PythonMeeting {
+  const PythonMeeting({
+    required this.id,
+    required this.weekday,
+    required this.startMinutes,
+    required this.endMinutes,
+    required this.lessonCount,
+    required this.callCount,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory PythonMeeting.fromJson(Map<String, Object?> json) {
+    const keys = {
+      'id',
+      'weekday',
+      'start_minutes',
+      'end_minutes',
+      'lesson_count',
+      'call_count',
+      'created_at',
+      'updated_at',
+    };
+    if (!_hasExactKeys(json, keys)) throw const FormatException();
+    final id = json['id'];
+    final weekday = json['weekday'];
+    final start = json['start_minutes'];
+    final end = json['end_minutes'];
+    final lessons = json['lesson_count'];
+    final calls = json['call_count'];
+    final createdAt = PythonCourse._requiredDate(json['created_at']);
+    final updatedAt = PythonCourse._requiredDate(json['updated_at']);
+    if (id is! String ||
+        id.isEmpty ||
+        id.length > 128 ||
+        id.trim() != id ||
+        id.contains('/') ||
+        id.contains(r'\') ||
+        weekday is! int ||
+        weekday < 1 ||
+        weekday > 7 ||
+        start is! int ||
+        start < 0 ||
+        start > 1439 ||
+        end is! int ||
+        lessons is! int ||
+        !{1, 2, 4}.contains(lessons) ||
+        end != start + lessons * 50 ||
+        end > 1440 ||
+        calls is! int ||
+        !{1, 2}.contains(calls) ||
+        lessons == 1 && calls == 2 ||
+        updatedAt.isBefore(createdAt)) {
+      throw const FormatException();
+    }
+    return PythonMeeting(
+      id: id,
+      weekday: weekday,
+      startMinutes: start,
+      endMinutes: end,
+      lessonCount: lessons,
+      callCount: calls,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
+  }
+
+  final String id;
+  final int weekday;
+  final int startMinutes;
+  final int endMinutes;
+  final int lessonCount;
+  final int callCount;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  Map<String, Object?> toMutationJson() => {
+    'id': id,
+    'weekday': weekday,
+    'start_minutes': startMinutes,
+    'lesson_count': lessonCount,
+    'call_count': callCount,
+  };
+}
+
+final class PythonScheduleChanges {
+  const PythonScheduleChanges({
+    required this.meetingUpserts,
+    required this.meetingDeletes,
+    required this.sessionUpserts,
+    required this.sessionDeletes,
+    required this.destructiveDeletes,
+  });
+
+  factory PythonScheduleChanges.fromJson(Map<String, Object?> json) {
+    const keys = {
+      'meeting_upserts',
+      'meeting_deletes',
+      'session_upserts',
+      'session_deletes',
+      'destructive_deletes',
+    };
+    if (!_hasExactKeys(json, keys) ||
+        json.values.any((value) => value is! int || value < 0)) {
+      throw const FormatException();
+    }
+    return PythonScheduleChanges(
+      meetingUpserts: json['meeting_upserts']! as int,
+      meetingDeletes: json['meeting_deletes']! as int,
+      sessionUpserts: json['session_upserts']! as int,
+      sessionDeletes: json['session_deletes']! as int,
+      destructiveDeletes: json['destructive_deletes']! as int,
+    );
+  }
+
+  final int meetingUpserts;
+  final int meetingDeletes;
+  final int sessionUpserts;
+  final int sessionDeletes;
+  final int destructiveDeletes;
+}
+
+final class PythonSchedule {
+  const PythonSchedule({
+    required this.course,
+    required this.meetings,
+    required this.changes,
+  });
+
+  factory PythonSchedule.fromJson(Map<String, Object?> json) {
+    if (!_hasExactKeys(json, {'course', 'meetings', 'changes'})) {
+      throw const FormatException();
+    }
+    final meetings = json['meetings'];
+    if (meetings is! List) throw const FormatException();
+    return PythonSchedule(
+      course: PythonCourse.fromJson(
+        Map<String, Object?>.from(json['course']! as Map),
+      ),
+      meetings: meetings
+          .map(
+            (item) =>
+                PythonMeeting.fromJson(Map<String, Object?>.from(item as Map)),
+          )
+          .toList(growable: false),
+      changes: PythonScheduleChanges.fromJson(
+        Map<String, Object?>.from(json['changes']! as Map),
+      ),
+    );
+  }
+
+  final PythonCourse course;
+  final List<PythonMeeting> meetings;
+  final PythonScheduleChanges changes;
+}
+
+bool _hasExactKeys(Map<String, Object?> json, Set<String> keys) =>
+    json.keys.toSet().difference(keys).isEmpty &&
+    keys.difference(json.keys.toSet()).isEmpty;
+
 final class PythonAttendanceDecision {
   const PythonAttendanceDecision({
     required this.status,
@@ -195,7 +374,8 @@ final class PythonBackendTransport
     implements
         BackendIdentityVerifier,
         BackendAttendanceEvaluator,
-        BackendCourseGateway {
+        BackendCourseGateway,
+        BackendScheduleGateway {
   PythonBackendTransport({
     required Uri endpoint,
     required PythonBackendTokens tokens,
@@ -280,6 +460,39 @@ final class PythonBackendTransport
     throw const PythonBackendException(PythonBackendError.invalidResponse);
   }
 
+  @override
+  Future<PythonSchedule> getSchedule(String courseId) async {
+    _validateCourseId(courseId);
+    final response = await _authenticatedRequest(
+      path: '/v1/courses/${Uri.encodeComponent(courseId)}/schedule',
+    );
+    return _schedule(response.body);
+  }
+
+  @override
+  Future<PythonSchedule> saveSchedule({
+    required String courseId,
+    required DateTime? startsOn,
+    required DateTime? endsOn,
+    required List<PythonMeeting> meetings,
+    required bool confirmDestructive,
+  }) async {
+    _validateCourseId(courseId);
+    final response = await _authenticatedRequest(
+      path: '/v1/courses/${Uri.encodeComponent(courseId)}/schedule',
+      method: _BackendMethod.put,
+      body: {
+        'starts_on': startsOn?.toUtc().toIso8601String(),
+        'ends_on': endsOn?.toUtc().toIso8601String(),
+        'meetings': meetings
+            .map((item) => item.toMutationJson())
+            .toList(growable: false),
+        'confirm_destructive': confirmDestructive,
+      },
+    );
+    return _schedule(response.body);
+  }
+
   Future<http.Response> _authenticatedRequest({
     required String path,
     _BackendMethod method = _BackendMethod.get,
@@ -300,7 +513,12 @@ final class PythonBackendTransport
         continue;
       }
       if (attempt == 0 && error == 'app_check_replayed') continue;
-      throw _exceptionFor(response.statusCode, error, response.headers);
+      throw _exceptionFor(
+        response.statusCode,
+        error,
+        response.headers,
+        destructiveSessions: _destructiveSessions(response),
+      );
     }
     throw const PythonBackendException(PythonBackendError.invalidResponse);
   }
@@ -396,6 +614,15 @@ final class PythonBackendTransport
     }
   }
 
+  static PythonSchedule _schedule(String body) {
+    try {
+      final value = jsonDecode(body);
+      return PythonSchedule.fromJson(Map<String, Object?>.from(value as Map));
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
   static String? _errorCode(http.Response response) {
     try {
       final value = jsonDecode(response.body);
@@ -407,11 +634,24 @@ final class PythonBackendTransport
     }
   }
 
+  static int? _destructiveSessions(http.Response response) {
+    try {
+      final value = jsonDecode(response.body);
+      final count = value is Map<String, dynamic>
+          ? value['destructive_sessions']
+          : null;
+      return count is int && count > 0 && count <= 450 ? count : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static PythonBackendException _exceptionFor(
     int status,
     String? error,
-    Map<String, String> headers,
-  ) {
+    Map<String, String> headers, {
+    int? destructiveSessions,
+  }) {
     if (status == 401 && error == 'app_check_invalid') {
       return const PythonBackendException(PythonBackendError.appCheckInvalid);
     }
@@ -420,6 +660,17 @@ final class PythonBackendTransport
     }
     if (status == 409 && error == 'app_check_replayed') {
       return const PythonBackendException(PythonBackendError.replayed);
+    }
+    if (status == 409 &&
+        error == 'schedule_destructive_conflict' &&
+        destructiveSessions != null) {
+      return PythonBackendException(
+        PythonBackendError.destructiveConflict,
+        destructiveSessions: destructiveSessions,
+      );
+    }
+    if (status == 409 && error == 'schedule_overlap') {
+      return const PythonBackendException(PythonBackendError.scheduleConflict);
     }
     if (status == 429) {
       final seconds = int.tryParse(headers['retry-after'] ?? '');

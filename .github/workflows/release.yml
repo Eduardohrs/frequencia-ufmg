@@ -22,6 +22,7 @@ jobs:
       ANDROID_DEBUG_KEY_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEY_PASSWORD }}
       ANDROID_DEBUG_CERT_SHA256: ${{ secrets.ANDROID_DEBUG_CERT_SHA256 }}
       ENABLE_PYTHON_BACKEND: ${{ vars.ENABLE_PYTHON_BACKEND || 'false' }}
+      ENABLE_PYTHON_SCHEDULE_WRITES: ${{ vars.ENABLE_PYTHON_SCHEDULE_WRITES || 'false' }}
       PYTHON_BACKEND_ORIGIN: ${{ vars.PYTHON_BACKEND_ORIGIN }}
       FIREBASE_APP_CHECK_WEB_SITE_KEY: ${{ vars.FIREBASE_APP_CHECK_WEB_SITE_KEY }}
     defaults:
@@ -59,6 +60,10 @@ jobs:
       - name: Build web and signed Android release
         run: |
           [[ "$ENABLE_PYTHON_BACKEND" == "true" || "$ENABLE_PYTHON_BACKEND" == "false" ]]
+          [[ "$ENABLE_PYTHON_SCHEDULE_WRITES" == "true" || "$ENABLE_PYTHON_SCHEDULE_WRITES" == "false" ]]
+          if [[ "$ENABLE_PYTHON_SCHEDULE_WRITES" == "true" ]]; then
+            [[ "$ENABLE_PYTHON_BACKEND" == "true" ]]
+          fi
           if [[ "$ENABLE_PYTHON_BACKEND" == "true" ]]; then
             [[ "$PYTHON_BACKEND_ORIGIN" == https://* ]]
             test -n "$FIREBASE_APP_CHECK_WEB_SITE_KEY"
@@ -67,12 +72,14 @@ jobs:
             --build-name "$APP_VERSION" \
             --build-number "$GITHUB_RUN_NUMBER" \
             --dart-define="ENABLE_PYTHON_BACKEND=$ENABLE_PYTHON_BACKEND" \
+            --dart-define="ENABLE_PYTHON_SCHEDULE_WRITES=$ENABLE_PYTHON_SCHEDULE_WRITES" \
             --dart-define="PYTHON_BACKEND_ORIGIN=$PYTHON_BACKEND_ORIGIN" \
             --dart-define="FIREBASE_APP_CHECK_WEB_SITE_KEY=$FIREBASE_APP_CHECK_WEB_SITE_KEY"
           flutter build apk --release \
             --build-name "$APP_VERSION" \
             --build-number "$GITHUB_RUN_NUMBER" \
             --dart-define="ENABLE_PYTHON_BACKEND=$ENABLE_PYTHON_BACKEND" \
+            --dart-define="ENABLE_PYTHON_SCHEDULE_WRITES=$ENABLE_PYTHON_SCHEDULE_WRITES" \
             --dart-define="PYTHON_BACKEND_ORIGIN=$PYTHON_BACKEND_ORIGIN"
       - name: Verify APK signing certificate
         run: |

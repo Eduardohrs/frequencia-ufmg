@@ -2,3 +2,4 @@ appwrite==24.0.0
 google-auth==2.59.1
 PyJWT[crypto]==2.15.1
 pypdf==6.19.0
+tzdata==2026.5
