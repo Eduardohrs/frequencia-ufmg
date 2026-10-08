@@ -110,6 +110,7 @@ def _plan(
     other_schedules: list[tuple[dict[str, object], list[dict[str, object]]]] | None = None,
     starts_on: object = "2026-08-04T00:00:00Z",
     ends_on: object = "2026-12-03T00:00:00Z",
+    now: datetime = NOW,
 ) -> SchedulePlan:
     return build_schedule_plan(
         course=course or _course(),
@@ -119,7 +120,7 @@ def _plan(
         existing_meetings=existing_meetings or [],
         existing_sessions=existing_sessions or [],
         other_schedules=other_schedules or [],
-        now=NOW,
+        now=now,
     )
 
 
@@ -246,6 +247,17 @@ def test_schedule_rejects_disallowed_or_contradictory_periods(
             ends_on=ends_on,
             requested_meetings=requested_meetings,
         )
+
+
+def test_schedule_remains_available_during_thirty_day_retention() -> None:
+    course = _course(ends_on="2026-12-03T00:00:00Z")
+
+    plan = _plan(course=course, now=datetime(2027, 1, 1, 12, tzinfo=UTC))
+
+    assert plan.course["term"] == "2026-2"
+
+    with pytest.raises(InvalidSchedule):
+        _plan(course=course, now=datetime(2027, 1, 2, 12, tzinfo=UTC))
 
 
 @pytest.mark.parametrize(

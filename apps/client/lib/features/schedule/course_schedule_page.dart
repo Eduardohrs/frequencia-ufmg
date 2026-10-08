@@ -181,6 +181,11 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       }
       if (plan != null) unawaited(_applyPlanInBackground(plan));
       return null;
+    } on PythonBackendException catch (error) {
+      if (error.code == PythonBackendError.scheduleConflict) {
+        return 'Esse horário se sobrepõe a outra aula cadastrada.';
+      }
+      return 'Não foi possível salvar o horário.';
     } catch (_) {
       return 'Não foi possível salvar o horário.';
     }
@@ -253,7 +258,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       ),
     );
     if (range == null || !mounted) return;
-    if (widget.courseRepository == null) {
+    if (widget.scheduleGateway == null && widget.courseRepository == null) {
       _message('Não foi possível salvar o período.');
       return;
     }
@@ -352,8 +357,12 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     }
     Future<PythonSchedule> save(bool confirm) => gateway.saveSchedule(
       courseId: _course.id,
-      startsOn: (startDate ?? _course.startsOn)?.toUtc(),
-      endsOn: (endDate ?? _course.endsOn)?.toUtc(),
+      startsOn: startDate == null
+          ? _course.startsOn?.toUtc()
+          : _utcCivilDate(startDate),
+      endsOn: endDate == null
+          ? _course.endsOn?.toUtc()
+          : _utcCivilDate(endDate),
       meetings: meetings.map(_meetingToPython).toList(growable: false),
       confirmDestructive: confirm,
     );
@@ -937,6 +946,9 @@ String _weekdayLabel(int weekday) => const {
 String _shortDate(DateTime date) =>
     '${date.day.toString().padLeft(2, '0')}/'
     '${date.month.toString().padLeft(2, '0')}/${date.year}';
+
+DateTime _utcCivilDate(DateTime date) =>
+    DateTime.utc(date.year, date.month, date.day);
 
 CourseRecord _copyCourseWithRange(
   CourseRecord course,

@@ -88,7 +88,7 @@ def build_schedule_plan(
         current_course = validate_course(course)
     except InvalidCourse:
         raise InvalidSchedule("invalid schedule") from None
-    require_mutable_term(str(current_course["term"]), timestamp.date())
+    _require_retained_course(current_course, timestamp.date())
     starts_on, ends_on = _period(
         str(current_course["term"]), requested_starts_on, requested_ends_on
     )
@@ -454,6 +454,25 @@ def require_mutable_term(term: str, today: date) -> None:
     following = f"{current_year}-2" if current_semester == 1 else f"{current_year + 1}-1"
     if term not in {current, following}:
         raise InvalidSchedule("invalid schedule")
+
+
+def _require_retained_course(course: Mapping[str, Any], today: date) -> None:
+    """Allow current/next schedules and the previous term during its grace period."""
+
+    term = str(course["term"])
+    current = f"{today.year}-{1 if today.month <= 6 else 2}"
+    current_year, current_semester = (int(part) for part in current.split("-"))
+    following = f"{current_year}-2" if current_semester == 1 else f"{current_year + 1}-1"
+    previous = f"{current_year - 1}-2" if current_semester == 1 else f"{current_year}-1"
+    if term in {current, following}:
+        return
+    if term == previous:
+        _, effective_end = _effective_course_period(course)
+        _, term_end = _term_dates(term)
+        effective_end = min(effective_end, term_end)
+        if today < effective_end + timedelta(days=30):
+            return
+    raise InvalidSchedule("invalid schedule")
 
 
 def _meetings_overlap(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:

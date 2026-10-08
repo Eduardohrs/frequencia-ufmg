@@ -118,6 +118,51 @@ void main() {
     },
   );
 
+  testWidgets('shows an authoritative overlap as a validation error', (
+    tester,
+  ) async {
+    final dated = CourseRecord(
+      id: course.id,
+      code: course.code,
+      name: course.name,
+      workload: course.workload,
+      term: course.term,
+      startsOn: DateTime.utc(2026, 8, 3),
+      endsOn: DateTime.utc(2026, 12, 1),
+      createdAt: now,
+      updatedAt: now,
+    );
+    final gateway = _FakeScheduleGateway(course: dated)
+      ..saveError = const PythonBackendException(
+        PythonBackendError.scheduleConflict,
+      );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: dated,
+          repository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          scheduleGateway: gateway,
+          scheduleWritesEnabled: true,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('add-meeting')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('meeting-start')), '08:00');
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Esse horário se sobrepõe a outra aula cadastrada.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('deletes a meeting through the authoritative gateway', (
     tester,
   ) async {
@@ -163,7 +208,6 @@ void main() {
       MaterialApp(
         home: CourseSchedulePage(
           course: course,
-          courseRepository: _FakeCourseRepository(course),
           repository: _FakeMeetingRepository(),
           sessionRepository: _FakeSessionRepository(),
           logger: _RecordingAppLogger(),
@@ -183,8 +227,8 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Salvar período'));
     await tester.pumpAndSettle();
 
-    expect(gateway.startsOn, DateTime.utc(2026, 8, 3, 3));
-    expect(gateway.endsOn, DateTime.utc(2026, 8, 10, 3));
+    expect(gateway.startsOn, DateTime.utc(2026, 8, 3));
+    expect(gateway.endsOn, DateTime.utc(2026, 8, 10));
     expect(find.text('Período salvo e calendário atualizado.'), findsOneWidget);
   });
 
@@ -1167,6 +1211,7 @@ final class _FakeScheduleGateway implements BackendScheduleGateway {
   int getCount = 0;
   int saveCount = 0;
   int? destructiveCount;
+  Object? saveError;
   DateTime? startsOn;
   DateTime? endsOn;
   final confirmations = <bool>[];
@@ -1186,6 +1231,7 @@ final class _FakeScheduleGateway implements BackendScheduleGateway {
     required bool confirmDestructive,
   }) async {
     saveCount++;
+    if (saveError case final error?) throw error;
     confirmations.add(confirmDestructive);
     if (!confirmDestructive && destructiveCount != null) {
       throw PythonBackendException(

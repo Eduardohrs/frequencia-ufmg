@@ -172,6 +172,36 @@ def test_save_noop_does_not_issue_an_empty_commit() -> None:
     assert store.commits == []
 
 
+def test_save_rejects_a_plan_larger_than_one_atomic_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeFirestore()
+    monkeypatch.setattr(
+        module,
+        "_writes",
+        lambda *_: ([(('courses', 'poo'), {})] * 501, []),
+    )
+    payload = {
+        "starts_on": "2026-08-04T00:00:00Z",
+        "ends_on": "2026-08-18T00:00:00Z",
+        "meetings": [
+            {
+                "id": "tuesday-19",
+                "weekday": 2,
+                "start_minutes": 1140,
+                "lesson_count": 2,
+                "call_count": 1,
+            }
+        ],
+        "confirm_destructive": False,
+    }
+
+    with pytest.raises(InvalidSchedule):
+        _repository(store).save_schedule("poo", payload)
+
+    assert store.commits == []
+
+
 def test_save_schedule_commits_period_meetings_and_sessions_atomically() -> None:
     store = FakeFirestore()
     payload = {

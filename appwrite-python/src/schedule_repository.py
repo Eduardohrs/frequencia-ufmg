@@ -15,6 +15,8 @@ from schedule_service import (
     validate_saved_session,
 )
 
+MAX_ATOMIC_WRITES = 500
+
 
 class DestructiveScheduleChange(Exception):
     """A schedule replacement would delete evidence-bearing sessions."""
@@ -76,6 +78,8 @@ class ScheduleRepository:
         if plan.destructive_delete_count and not confirm:
             raise DestructiveScheduleChange(plan.destructive_delete_count)
         updates, deletes = _writes(course_id, course, plan)
+        if len(updates) + len(deletes) > MAX_ATOMIC_WRITES:
+            raise InvalidSchedule("invalid schedule")
         if updates or deletes:
             self._firestore.commit_user_documents(updates=updates, deletes=deletes)
         return _response(plan)
