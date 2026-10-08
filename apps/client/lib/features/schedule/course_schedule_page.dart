@@ -449,6 +449,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     MaterialPageRoute(
       builder: (_) => AttendancePage(
         courseId: widget.course.id,
+        courseCode: widget.course.code,
         repository: widget.sessionRepository,
         logger: widget.logger,
         attendanceEvaluator: widget.attendanceEvaluator,

@@ -17,6 +17,8 @@ class AttendancePage extends StatefulWidget {
     required this.location,
     required this.now,
     this.attendanceEvaluator,
+    this.courseCode,
+    this.initialSessionId,
     super.key,
   });
 
@@ -26,6 +28,8 @@ class AttendancePage extends StatefulWidget {
   final tz.Location location;
   final DateTime Function() now;
   final BackendAttendanceEvaluator? attendanceEvaluator;
+  final String? courseCode;
+  final String? initialSessionId;
 
   @override
   State<AttendancePage> createState() => _AttendancePageState();
@@ -111,7 +115,13 @@ class _AttendancePageState extends State<AttendancePage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Frequência por aula')),
+    appBar: AppBar(
+      title: Text(
+        widget.courseCode == null
+            ? 'Frequência por aula'
+            : 'Frequência • ${widget.courseCode}',
+      ),
+    ),
     body: SafeArea(
       child: Center(
         child: ConstrainedBox(
@@ -142,40 +152,142 @@ class _AttendancePageState extends State<AttendancePage> {
     if (_sessions.isEmpty) {
       return const Center(child: Text('Nenhuma sessão gerada'));
     }
-    return ListView.separated(
-      itemCount: _sessions.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (_, index) {
-        final session = _sessions[index];
-        final local = tz.TZDateTime.from(session.startsAt, widget.location);
-        final inactive =
-            session.calendarStatus == SessionCalendarStatus.cancelled ||
-            session.calendarStatus == SessionCalendarStatus.holiday ||
-            session.calendarStatus == SessionCalendarStatus.noCall;
-        return Card(
-          elevation: 0,
-          child: ListTile(
-            title: Text(_dateTime(local)),
-            subtitle: Text(
-              inactive
-                  ? _calendarLabel(session.calendarStatus)
-                  : _attendanceLabel(session),
-            ),
-            trailing: IconButton(
-              tooltip: inactive
-                  ? session.calendarStatus == SessionCalendarStatus.noCall
-                        ? 'Presença garantida'
-                        : 'Sessão sem frequência'
-                  : 'Registrar frequência de ${_date(local)}',
-              onPressed: inactive ? null : () => _edit(session),
-              icon: const Icon(Icons.edit_outlined),
+    final sections = _sections();
+    return CustomScrollView(
+      slivers: [
+        for (var index = 0; index < sections.length; index++) ...[
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.only(top: index == 0 ? 0 : 20, bottom: 8),
+              child: Text(
+                sections[index].title,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
             ),
           ),
-        );
-      },
+          SliverList.separated(
+            itemCount: sections[index].sessions.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 8),
+            itemBuilder: (_, sessionIndex) =>
+                _sessionCard(sections[index].sessions[sessionIndex]),
+          ),
+        ],
+      ],
+    );
+  }
+
+  List<_AttendanceSection> _sections() {
+    final localNow = tz.TZDateTime.from(widget.now(), widget.location);
+    final today = DateTime(localNow.year, localNow.month, localNow.day);
+    final current = <SessionRecord>[];
+    final pending = <SessionRecord>[];
+    final upcoming = <SessionRecord>[];
+    final history = <SessionRecord>[];
+    for (final session in _sessions) {
+      final local = tz.TZDateTime.from(session.startsAt, widget.location);
+      final day = DateTime(local.year, local.month, local.day);
+      if (day == today) {
+        current.add(session);
+      } else if (_requiresAttendance(session) &&
+          session.absences == null &&
+          day.isBefore(today)) {
+        pending.add(session);
+      } else if (day.isAfter(today)) {
+        upcoming.add(session);
+      } else {
+        history.add(session);
+      }
+    }
+    pending.sort((left, right) => right.startsAt.compareTo(left.startsAt));
+    history.sort((left, right) => right.startsAt.compareTo(left.startsAt));
+    final ordered = <_AttendanceSection>[
+      if (widget.initialSessionId != null && pending.isNotEmpty)
+        _AttendanceSection('Pendências anteriores', pending),
+      if (current.isNotEmpty) _AttendanceSection('Hoje', current),
+      if (widget.initialSessionId == null && pending.isNotEmpty)
+        _AttendanceSection('Pendências anteriores', pending),
+      if (upcoming.isNotEmpty) _AttendanceSection('Próximas aulas', upcoming),
+      if (history.isNotEmpty) _AttendanceSection('Histórico', history),
+    ];
+    return ordered;
+  }
+
+  Widget _sessionCard(SessionRecord session) {
+    final local = tz.TZDateTime.from(session.startsAt, widget.location);
+    final inactive = !_requiresAttendance(session);
+    final selected = session.id == widget.initialSessionId;
+    final localNow = tz.TZDateTime.from(widget.now(), widget.location);
+    final today = DateTime(localNow.year, localNow.month, localNow.day);
+    final day = DateTime(local.year, local.month, local.day);
+    final overdue =
+        !inactive && session.absences == null && day.isBefore(today);
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      key: Key('attendance-session-${session.id}'),
+      elevation: 0,
+      color: selected
+          ? colorScheme.tertiaryContainer
+          : overdue
+          ? colorScheme.errorContainer
+          : null,
+      child: ListTile(
+        title: Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(_dateTime(local)),
+            if (overdue) const _StatusBadge('Pendente de registro'),
+            if (selected) const _StatusBadge('Selecionada pelo alerta'),
+          ],
+        ),
+        subtitle: Text(
+          inactive
+              ? _calendarLabel(session.calendarStatus)
+              : _attendanceLabel(session),
+        ),
+        trailing: IconButton(
+          tooltip: inactive
+              ? session.calendarStatus == SessionCalendarStatus.noCall
+                    ? 'Presença garantida'
+                    : 'Sessão sem frequência'
+              : 'Registrar frequência de ${_date(local)}',
+          onPressed: inactive ? null : () => _edit(session),
+          icon: const Icon(Icons.edit_outlined),
+        ),
+      ),
     );
   }
 }
+
+final class _AttendanceSection {
+  const _AttendanceSection(this.title, this.sessions);
+
+  final String title;
+  final List<SessionRecord> sessions;
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surface,
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Text(label, style: Theme.of(context).textTheme.labelMedium),
+    ),
+  );
+}
+
+bool _requiresAttendance(SessionRecord session) =>
+    session.calendarStatus == SessionCalendarStatus.scheduled ||
+    session.calendarStatus == SessionCalendarStatus.makeup;
 
 class _AttendanceDialog extends StatefulWidget {
   const _AttendanceDialog({

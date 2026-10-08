@@ -971,7 +971,7 @@ void main() {
     await tester.pumpAndSettle();
     await _chooseScheduleAction(tester, 'Registrar frequência');
     await tester.pumpAndSettle();
-    expect(find.text('Frequência por aula'), findsOneWidget);
+    expect(find.text('Frequência • DCC203'), findsOneWidget);
   });
 
   testWidgets('opens the general calendar filtered by the selected course', (
