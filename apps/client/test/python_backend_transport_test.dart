@@ -226,11 +226,7 @@ void main() {
               {
                 'course': _courseJson,
                 'sessions': [
-                  {
-                    ..._sessionJson,
-                    'call_count': 2,
-                    'second_ping': 'fora',
-                  },
+                  {..._sessionJson, 'call_count': 2, 'second_ping': 'fora'},
                 ],
               },
             ],
