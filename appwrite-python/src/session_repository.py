@@ -32,7 +32,12 @@ class SessionMutationRepository:
             payload,
             now=self._now(),
         )
-        self._save(course, session, updated)
+        self._save(
+            course,
+            session,
+            updated,
+            ("attendanceStatus", "absences", "updatedAt"),
+        )
         return {
             "status": updated["attendance_status"],
             "absences": updated["absences"],
@@ -51,7 +56,7 @@ class SessionMutationRepository:
             payload,
             now=self._now(),
         )
-        self._save(course, session, updated)
+        self._save(course, session, updated, ("calendarStatus", "updatedAt"))
         return {
             "calendar_status": updated["calendar_status"],
             "updated_at": updated["updated_at"],
@@ -72,15 +77,17 @@ class SessionMutationRepository:
         course_id: str,
         session_id: str,
         session: Mapping[str, Any],
+        field_names: tuple[str, ...],
     ) -> None:
-        self._firestore.commit_user_documents(
-            updates=[
-                (
-                    ("courses", course_id, "sessions", session_id),
-                    _session_to_firestore(session),
-                )
-            ],
-            deletes=[],
+        complete_fields = _session_to_firestore(session)
+        fields = {field: complete_fields[field] for field in field_names}
+        self._firestore.patch_user_document(
+            "courses",
+            course_id,
+            "sessions",
+            session_id,
+            fields=fields,
+            update_mask=field_names,
         )
 
     @staticmethod

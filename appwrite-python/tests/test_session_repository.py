@@ -33,21 +33,27 @@ class FakeFirestore:
     def __init__(self) -> None:
         self.document = {"name": f"root/{SESSION_ID}", "fields": _fields()}
         self.reads: list[tuple[str, ...]] = []
-        self.commits: list[tuple[list[Any], list[Any]]] = []
+        self.patches: list[tuple[tuple[str, ...], dict[str, Any], tuple[str, ...]]] = []
 
     def get_user_document(self, *segments: str) -> dict[str, Any]:
         self.reads.append(segments)
         return self.document
 
-    def commit_user_documents(self, *, updates: list[Any], deletes: list[Any]) -> None:
-        self.commits.append((updates, deletes))
+    def patch_user_document(
+        self,
+        *segments: str,
+        fields: dict[str, Any],
+        update_mask: tuple[str, ...],
+    ) -> dict[str, Any]:
+        self.patches.append((segments, fields, update_mask))
+        return {"fields": fields}
 
 
 def _repository(store: FakeFirestore) -> SessionMutationRepository:
     return SessionMutationRepository(store, now=lambda: NOW)  # type: ignore[arg-type]
 
 
-def test_save_attendance_reads_one_session_and_commits_one_complete_document() -> None:
+def test_save_attendance_updates_only_authoritative_fields() -> None:
     store = FakeFirestore()
 
     result = _repository(store).save_attendance(
@@ -57,14 +63,12 @@ def test_save_attendance_reads_one_session_and_commits_one_complete_document() -
     )
 
     assert store.reads == [("courses", "poo", "sessions", SESSION_ID)]
-    updates, deletes = store.commits[0]
-    assert deletes == []
-    path, fields = updates[0]
+    path, fields, update_mask = store.patches[0]
     assert path == ("courses", "poo", "sessions", SESSION_ID)
+    assert update_mask == ("attendanceStatus", "absences", "updatedAt")
+    assert set(fields) == set(update_mask)
     assert fields["attendanceStatus"] == {"stringValue": "chegou_atrasado"}
     assert fields["absences"] == {"integerValue": "1"}
-    assert fields["firstPing"] == {"stringValue": "no_campus"}
-    assert fields["assessmentTitle"] == {"stringValue": "Prova 1"}
     assert result == {
         "status": "chegou_atrasado",
         "absences": 1,
@@ -85,10 +89,10 @@ def test_save_calendar_status_preserves_attendance_fields() -> None:
         {"calendar_status": "no_call"},
     )
 
-    fields = store.commits[0][0][0][1]
+    _, fields, update_mask = store.patches[0]
+    assert update_mask == ("calendarStatus", "updatedAt")
+    assert set(fields) == set(update_mask)
     assert fields["calendarStatus"] == {"stringValue": "no_call"}
-    assert fields["attendanceStatus"] == {"stringValue": "presente"}
-    assert fields["absences"] == {"integerValue": "0"}
     assert result == {
         "calendar_status": "no_call",
         "updated_at": "2026-10-08T18:30:00Z",
@@ -106,4 +110,4 @@ def test_repository_rejects_unsafe_identifiers_before_reading(
         _repository(store).save_attendance(course_id, session_id, {"status": "presente"})
 
     assert store.reads == []
-    assert store.commits == []
+    assert store.patches == []

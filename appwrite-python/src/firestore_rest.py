@@ -71,6 +71,7 @@ class FirestoreRestClient:
         self,
         *segments: str,
         fields: Mapping[str, Any],
+        update_mask: tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
         """Create or replace fields on a document owned by the verified user."""
 
@@ -84,7 +85,19 @@ class FirestoreRestClient:
             raise ValueError("Firestore fields must be JSON serializable") from None
         if len(body) > MAX_PAYLOAD_BYTES:
             raise ValueError("Firestore payload is too large")
-        return self._request("PATCH", segments, body)
+        query = None
+        if update_mask is not None:
+            if (
+                not update_mask
+                or len(set(update_mask)) != len(update_mask)
+                or set(update_mask) != set(fields)
+                or any(
+                    re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", field) is None for field in update_mask
+                )
+            ):
+                raise ValueError("invalid Firestore update mask")
+            query = [("updateMask.fieldPaths", field) for field in update_mask]
+        return self._request("PATCH", segments, body, query=query)
 
     def list_user_documents(self, *segments: str) -> list[dict[str, Any]]:
         """List at most 500 documents below a user-owned collection."""
@@ -154,7 +167,7 @@ class FirestoreRestClient:
         segments: tuple[str, ...],
         body: bytes | None = None,
         *,
-        query: Mapping[str, str] | None = None,
+        query: Mapping[str, str] | list[tuple[str, str]] | None = None,
         collection: bool = False,
         allow_empty: bool = False,
     ) -> dict[str, Any]:

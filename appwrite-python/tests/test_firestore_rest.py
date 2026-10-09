@@ -63,6 +63,52 @@ def test_patch_user_document_sends_only_firestore_fields() -> None:
     assert document == {"fields": fields}
 
 
+def test_patch_user_document_can_preserve_unmasked_fields() -> None:
+    calls: list[Any] = []
+
+    def transport(request: Any, _timeout: float) -> tuple[int, bytes]:
+        calls.append(request)
+        return 200, request.data
+
+    client = FirestoreRestClient("project", "user", "token", transport=transport)
+    fields = {
+        "attendanceStatus": {"stringValue": "presente"},
+        "absences": {"integerValue": "0"},
+        "updatedAt": {"timestampValue": "2026-10-08T18:30:00Z"},
+    }
+
+    client.patch_user_document(
+        "courses",
+        "dcc203",
+        fields=fields,
+        update_mask=tuple(fields),
+    )
+
+    assert calls[0].full_url.endswith(
+        "/users/user/courses/dcc203"
+        "?updateMask.fieldPaths=attendanceStatus"
+        "&updateMask.fieldPaths=absences"
+        "&updateMask.fieldPaths=updatedAt"
+    )
+
+
+def test_patch_user_document_rejects_an_invalid_update_mask() -> None:
+    client = FirestoreRestClient(
+        "project",
+        "user",
+        "token",
+        transport=lambda _request, _timeout: (200, b"{}"),
+    )
+
+    with pytest.raises(ValueError, match="invalid Firestore update mask"):
+        client.patch_user_document(
+            "courses",
+            "dcc203",
+            fields={"name": {"stringValue": "POO"}},
+            update_mask=(),
+        )
+
+
 def test_list_user_documents_follows_bounded_pagination() -> None:
     calls: list[Any] = []
 
