@@ -12,10 +12,12 @@ import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/python_course_repository.dart';
 import 'package:frequencia_ufmg/main.dart' as app;
 import 'package:frequencia_ufmg/observability/app_logger.dart';
+import 'package:timezone/data/latest.dart' as tz_data;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   TestFirebaseCoreHostApi.setUp(_FirebaseCoreHostApi());
+  tz_data.initializeTimeZones();
 
   test('selects Python course persistence only for a course gateway', () {
     final logger = _FakeAppLogger();
