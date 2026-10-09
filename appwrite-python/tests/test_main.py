@@ -469,6 +469,7 @@ def test_identity_route_rejects_invalid_firebase_user(
     assert result["body"] == {"error": "unauthorized"}
     assert result["status"] == 401
     assert context.errors == ['{"event":"firebase_identity_rejected"}']
+    assert json.loads(context.logs[-1])["status"] == 401
     assert "private-token" not in "".join(context.errors)
 
 
@@ -650,18 +651,6 @@ def test_firestore_telemetry_aggregates_without_identifiers(
         "firestore_writes": 1,
     }
     assert "private-user" not in json.dumps(metrics.snapshot())
-
-
-@pytest.mark.parametrize(
-    ("response", "expected"),
-    [
-        (type("Response", (), {"status_code": 201})(), 201),
-        (type("Response", (), {"status_code": "bad"})(), 200),
-        ({"status": "bad"}, 200),
-    ],
-)
-def test_response_status_is_bounded(response: Any, expected: int) -> None:
-    assert function._response_status(response) == expected
 
 
 @pytest.mark.parametrize(

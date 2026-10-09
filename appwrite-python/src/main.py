@@ -68,6 +68,7 @@ from session_service import (  # noqa: E402
 
 MAX_REQUEST_BYTES = 16_384
 _REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="")
+_RESPONSE_STATUS: ContextVar[int] = ContextVar("response_status", default=200)
 _REQUEST_METRICS: ContextVar["_RequestMetrics | None"] = ContextVar(
     "request_metrics", default=None
 )
@@ -115,6 +116,7 @@ def main(context: Any) -> Any:
     request_id = _validated_request_id(context.req.headers)
     metrics = _RequestMetrics()
     request_token = _REQUEST_ID.set(request_id)
+    status_token = _RESPONSE_STATUS.set(200)
     metrics_token = _REQUEST_METRICS.set(metrics)
     try:
         result = _dispatch(context, started)
@@ -125,7 +127,7 @@ def main(context: Any) -> Any:
             method=method,
             request_id=request_id,
             route=_route_name(path),
-            status=_response_status(result),
+            status=_RESPONSE_STATUS.get(),
             **metrics.snapshot(),
         )
         return result
@@ -142,6 +144,7 @@ def main(context: Any) -> Any:
         raise
     finally:
         _REQUEST_METRICS.reset(metrics_token)
+        _RESPONSE_STATUS.reset(status_token)
         _REQUEST_ID.reset(request_token)
 
 
@@ -611,6 +614,7 @@ def _respond(
     origin: str | None = None,
     extra_headers: dict[str, str] | None = None,
 ) -> Any:
+    _RESPONSE_STATUS.set(status)
     headers = {
         "Cache-Control": "no-store",
         "Vary": "Origin",
@@ -630,16 +634,17 @@ def _health(context: Any, started: float) -> Any:
         value = _read_probe_value(context.req.headers)
     except Exception:
         _error(context, "database_probe_failed")
-        return context.res.json({"error": "database_unavailable"}, 503)
+        return _respond(context, {"error": "database_unavailable"}, 503)
 
     elapsed = _elapsed_ms(started)
     _log(context, "health_probe_completed", handler_ms=elapsed)
-    return context.res.json(
+    return _respond(
+        context,
         {
             "database": value,
             "handler_ms": elapsed,
             "runtime": _runtime_metadata(),
-        }
+        },
     )
 
 
@@ -654,11 +659,11 @@ def _domain(context: Any, started: float) -> Any:
         absences = calculate_absences(status, lessons, calls)
     except (KeyError, TypeError, ValueError):
         _error(context, "domain_probe_rejected")
-        return context.res.json({"error": "invalid_request"}, 400)
+        return _respond(context, {"error": "invalid_request"}, 400)
 
     elapsed = _elapsed_ms(started)
     _log(context, "domain_probe_completed", handler_ms=elapsed)
-    return context.res.json({"absences": absences, "handler_ms": elapsed})
+    return _respond(context, {"absences": absences, "handler_ms": elapsed})
 
 
 def _pdf(context: Any, started: float) -> Any:
@@ -666,7 +671,7 @@ def _pdf(context: Any, started: float) -> Any:
         summary = extract_pdf_summary(context.req.body_binary)
     except Exception:
         _error(context, "pdf_probe_rejected")
-        return context.res.json({"error": "invalid_pdf"}, 400)
+        return _respond(context, {"error": "invalid_pdf"}, 400)
 
     elapsed = _elapsed_ms(started)
     _log(
@@ -676,7 +681,7 @@ def _pdf(context: Any, started: float) -> Any:
         handler_ms=elapsed,
         pages=summary.get("pages"),
     )
-    return context.res.json({"handler_ms": elapsed, "summary": summary})
+    return _respond(context, {"handler_ms": elapsed, "summary": summary})
 
 
 def _read_probe_value(headers: dict[str, str]) -> str:
@@ -736,14 +741,6 @@ def _route_name(path: str) -> str:
     if path.startswith("/v1/courses/"):
         return "/v1/courses/:course_id"
     return "unmatched"
-
-
-def _response_status(response: Any) -> int:
-    if isinstance(response, Mapping):
-        status = response.get("status", 200)
-        return status if isinstance(status, int) else 200
-    status = getattr(response, "status_code", 200)
-    return status if isinstance(status, int) else 200
 
 
 def _log(context: Any, event: str, **fields: Any) -> None:
