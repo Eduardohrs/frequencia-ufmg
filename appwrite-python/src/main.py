@@ -1,10 +1,14 @@
 """Appwrite Function entrypoint for the Python platform feasibility gate."""
 
 import json
+import re
+import secrets
 from collections.abc import Mapping
+from contextvars import ContextVar
 from os import environ
 from pathlib import Path
 from sys import path as module_search_path
+from threading import Lock
 from time import perf_counter, time
 from typing import Any, cast
 
@@ -63,12 +67,87 @@ from session_service import (  # noqa: E402
 )
 
 MAX_REQUEST_BYTES = 16_384
+_REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="")
+_REQUEST_METRICS: ContextVar["_RequestMetrics | None"] = ContextVar(
+    "request_metrics", default=None
+)
+_SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}")
+
+
+class _RequestMetrics:
+    """Accumulate dependency counts safely across overview worker threads."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._reads = 0
+        self._writes = 0
+        self._failures = 0
+        self._duration_ms = 0.0
+
+    def record(self, _event: str, fields: Mapping[str, object]) -> None:
+        with self._lock:
+            if fields.get("kind") == "read":
+                self._reads += 1
+            else:
+                self._writes += 1
+            if fields.get("outcome") != "succeeded":
+                self._failures += 1
+            duration = fields.get("duration_ms")
+            if isinstance(duration, int | float):
+                self._duration_ms += duration
+
+    def snapshot(self) -> dict[str, int | float]:
+        with self._lock:
+            return {
+                "firestore_duration_ms": round(self._duration_ms, 3),
+                "firestore_failures": self._failures,
+                "firestore_reads": self._reads,
+                "firestore_writes": self._writes,
+            }
 
 
 def main(context: Any) -> Any:
-    """Dispatch public routes through bounded browser and payload guards."""
+    """Dispatch one correlated request without making telemetry a dependency."""
 
     started = perf_counter()
+    method = context.req.method.upper()
+    path = context.req.path.rstrip("/") or "/"
+    request_id = _validated_request_id(context.req.headers)
+    metrics = _RequestMetrics()
+    request_token = _REQUEST_ID.set(request_id)
+    metrics_token = _REQUEST_METRICS.set(metrics)
+    try:
+        result = _dispatch(context, started)
+        _log(
+            context,
+            "request_completed",
+            duration_ms=_elapsed_ms(started),
+            method=method,
+            request_id=request_id,
+            route=_route_name(path),
+            status=_response_status(result),
+            **metrics.snapshot(),
+        )
+        return result
+    except Exception:
+        _error(
+            context,
+            "request_failed",
+            duration_ms=_elapsed_ms(started),
+            method=method,
+            request_id=request_id,
+            route=_route_name(path),
+            **metrics.snapshot(),
+        )
+        raise
+    finally:
+        _REQUEST_METRICS.reset(metrics_token)
+        _REQUEST_ID.reset(request_token)
+
+
+def _dispatch(context: Any, started: float) -> Any:
+    """Apply bounded browser, payload, authentication, and route guards."""
+
     method = context.req.method.upper()
     path = context.req.path.rstrip("/") or "/"
     headers = context.req.headers
@@ -85,7 +164,9 @@ def main(context: Any) -> Any:
             204,
             allowed_origin,
             {
-                "Access-Control-Allow-Headers": ("Authorization,Content-Type,X-Firebase-AppCheck"),
+                "Access-Control-Allow-Headers": (
+                    "Authorization,Content-Type,X-Firebase-AppCheck,X-Request-ID"
+                ),
                 "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
                 "Access-Control-Max-Age": "600",
             },
@@ -384,10 +465,13 @@ def _overview_repository(headers: dict[str, str], user_id: str) -> AcademicOverv
 
 
 def _firestore(headers: dict[str, str], user_id: str) -> FirestoreRestClient:
+    metrics = _REQUEST_METRICS.get()
+
     return FirestoreRestClient(
         project_id=environ.get("FIREBASE_PROJECT_ID", ""),
         user_id=user_id,
         id_token=firebase_bearer_token(headers),
+        telemetry=metrics.record if metrics is not None else None,
     )
 
 
@@ -531,9 +615,11 @@ def _respond(
         "Cache-Control": "no-store",
         "Vary": "Origin",
         "X-Content-Type-Options": "nosniff",
+        "X-Request-ID": _REQUEST_ID.get(),
     }
     if origin:
         headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Expose-Headers"] = "X-Request-ID"
     if extra_headers:
         headers.update(extra_headers)
     return context.res.json(body, status, headers)
@@ -632,9 +718,56 @@ def _elapsed_ms(started: float) -> float:
     return round((perf_counter() - started) * 1_000, 3)
 
 
+def _validated_request_id(headers: dict[str, str]) -> str:
+    candidate = _header(headers, "x-request-id")
+    if _SAFE_REQUEST_ID.fullmatch(candidate):
+        return candidate
+    return f"request-{secrets.token_urlsafe(18)}"
+
+
+def _route_name(path: str) -> str:
+    if path in {"/v1/identity", "/v1/attendance/evaluate", "/v1/overview", "/v1/courses"}:
+        return path
+    if _session_mutation_path(path) is not None:
+        mutation = path.rsplit("/", 1)[-1]
+        return f"/v1/courses/:course_id/sessions/:session_id/{mutation}"
+    if path.startswith("/v1/courses/") and path.endswith("/schedule"):
+        return "/v1/courses/:course_id/schedule"
+    if path.startswith("/v1/courses/"):
+        return "/v1/courses/:course_id"
+    return "unmatched"
+
+
+def _response_status(response: Any) -> int:
+    if isinstance(response, Mapping):
+        status = response.get("status", 200)
+        return status if isinstance(status, int) else 200
+    status = getattr(response, "status_code", 200)
+    return status if isinstance(status, int) else 200
+
+
 def _log(context: Any, event: str, **fields: Any) -> None:
-    context.log(json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True))
+    try:
+        context.log(json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True))
+    except Exception:
+        _fallback_delivery(context.error, "log")
 
 
 def _error(context: Any, event: str, **fields: Any) -> None:
-    context.error(json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True))
+    try:
+        context.error(json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True))
+    except Exception:
+        _fallback_delivery(context.log, "error")
+
+
+def _fallback_delivery(deliver: Any, sink: str) -> None:
+    try:
+        deliver(
+            json.dumps(
+                {"event": "observability_delivery_failed", "sink": sink},
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+    except Exception:
+        return

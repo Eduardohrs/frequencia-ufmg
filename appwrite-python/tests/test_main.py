@@ -396,6 +396,7 @@ def test_course_repository_uses_verified_uid_and_bearer_token(
     repository = function._course_repository({"authorization": "private"}, "verified-user")
 
     assert repository is not None
+    assert captured.pop("telemetry") is None
     assert captured == {
         "id_token": "token",
         "project_id": "project",
@@ -497,7 +498,170 @@ def test_preflight_allows_only_configured_exact_origin(
     )
     assert result["headers"]["Access-Control-Allow-Methods"] == ("GET,POST,PUT,DELETE,OPTIONS")
     assert "X-Firebase-AppCheck" in result["headers"]["Access-Control-Allow-Headers"]
+    assert "X-Request-ID" in result["headers"]["Access-Control-Allow-Headers"]
+    assert result["headers"]["Access-Control-Expose-Headers"] == "X-Request-ID"
     assert result["headers"]["Vary"] == "Origin"
+
+
+def test_request_id_is_echoed_and_correlates_the_request_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://frequencia-ufmg-eduardo.web.app")
+    context = FakeContext(
+        FakeRequest(
+            "OPTIONS",
+            "/v1/identity",
+            headers={
+                "origin": "https://frequencia-ufmg-eduardo.web.app",
+                "X-Request-ID": "audit-course-list-123",
+            },
+        )
+    )
+
+    result = function.main(context)
+
+    assert result["headers"]["X-Request-ID"] == "audit-course-list-123"
+    assert json.loads(context.logs[-1]) == {
+        "duration_ms": pytest.approx(0, abs=100),
+        "event": "request_completed",
+        "firestore_duration_ms": 0.0,
+        "firestore_failures": 0,
+        "firestore_reads": 0,
+        "firestore_writes": 0,
+        "method": "OPTIONS",
+        "request_id": "audit-course-list-123",
+        "route": "/v1/identity",
+        "status": 204,
+    }
+
+
+def test_invalid_request_id_is_replaced_without_leaking_it() -> None:
+    private_value = "private user@example.com"
+    context = FakeContext(
+        FakeRequest("OPTIONS", "/v1/identity", headers={"X-Request-ID": private_value})
+    )
+
+    result = function.main(context)
+
+    request_id = result["headers"]["X-Request-ID"]
+    assert request_id != private_value
+    assert len(request_id) <= 64
+    assert private_value not in "".join(context.logs)
+
+
+def test_observability_failure_does_not_block_the_request() -> None:
+    context = FakeContext(FakeRequest("OPTIONS", "/v1/identity"))
+
+    def fail(_message: str) -> None:
+        raise RuntimeError("logger unavailable")
+
+    context.log = fail  # type: ignore[method-assign]
+
+    result = function.main(context)
+
+    assert result["status"] == 204
+    assert json.loads(context.errors[-1]) == {
+        "event": "observability_delivery_failed",
+        "sink": "log",
+    }
+
+
+def test_error_observability_failure_does_not_block_the_rejection() -> None:
+    context = FakeContext(
+        FakeRequest("GET", "/v1/identity", headers={"origin": "https://evil.example"})
+    )
+
+    def fail(_message: str) -> None:
+        raise RuntimeError("logger unavailable")
+
+    context.error = fail  # type: ignore[method-assign]
+
+    result = function.main(context)
+
+    assert result["status"] == 403
+    assert any(
+        json.loads(message) == {"event": "observability_delivery_failed", "sink": "error"}
+        for message in context.logs
+    )
+
+
+def test_total_observability_failure_does_not_block_the_request() -> None:
+    context = FakeContext(FakeRequest("OPTIONS", "/v1/identity"))
+
+    def fail(_message: str) -> None:
+        raise RuntimeError("all telemetry unavailable")
+
+    context.log = fail  # type: ignore[method-assign]
+    context.error = fail  # type: ignore[method-assign]
+
+    assert function.main(context)["status"] == 204
+
+
+def test_unhandled_failure_is_correlated_and_re_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = FakeContext(FakeRequest("GET", "/v1/identity"))
+    monkeypatch.setattr(function, "_dispatch", lambda *_args: (_ for _ in ()).throw(RuntimeError()))
+
+    with pytest.raises(RuntimeError):
+        function.main(context)
+
+    event = json.loads(context.errors[-1])
+    assert event["event"] == "request_failed"
+    assert event["request_id"].startswith("request-")
+    assert event["route"] == "/v1/identity"
+
+
+def test_firestore_telemetry_aggregates_without_identifiers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class Client:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(function, "FirestoreRestClient", Client)
+    monkeypatch.setattr(function, "firebase_bearer_token", lambda _headers: "token")
+    monkeypatch.setattr(function, "environ", {"FIREBASE_PROJECT_ID": "project"})
+    metrics = function._RequestMetrics()
+    metrics_token = function._REQUEST_METRICS.set(metrics)
+    try:
+        function._firestore({}, "private-user")
+        captured["telemetry"](
+            "firestore_request_completed",
+            {"duration_ms": 12.25, "kind": "read", "outcome": "succeeded"},
+        )
+        captured["telemetry"](
+            "firestore_request_completed",
+            {"duration_ms": 2, "kind": "write", "outcome": "failed"},
+        )
+        captured["telemetry"](
+            "firestore_request_completed",
+            {"duration_ms": "invalid", "kind": "read", "outcome": "succeeded"},
+        )
+    finally:
+        function._REQUEST_METRICS.reset(metrics_token)
+
+    assert metrics.snapshot() == {
+        "firestore_duration_ms": 14.25,
+        "firestore_failures": 1,
+        "firestore_reads": 2,
+        "firestore_writes": 1,
+    }
+    assert "private-user" not in json.dumps(metrics.snapshot())
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (type("Response", (), {"status_code": 201})(), 201),
+        (type("Response", (), {"status_code": "bad"})(), 200),
+        ({"status": "bad"}, 200),
+    ],
+)
+def test_response_status_is_bounded(response: Any, expected: int) -> None:
+    assert function._response_status(response) == expected
 
 
 @pytest.mark.parametrize(

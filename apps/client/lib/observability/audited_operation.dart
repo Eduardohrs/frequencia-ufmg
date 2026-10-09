@@ -2,6 +2,17 @@ import 'dart:async';
 
 import 'app_logger.dart';
 
+final Object _operationIdZoneKey = Object();
+int _correlationSequence = 0;
+
+String? get currentOperationId => Zone.current[_operationIdZoneKey] as String?;
+
+String newCorrelationId(String label) {
+  final sequence = _correlationSequence++;
+  return '${DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(36)}-'
+      '${sequence.toRadixString(36)}-$label';
+}
+
 enum AuditedOperation {
   googleSignIn('auth_google_sign_in'),
   logout('auth_logout'),
@@ -34,55 +45,56 @@ Future<T> runAuditedOperation<T>({
 }) async {
   final stopwatch = Stopwatch()..start();
   final eventPrefix = operation.eventPrefix;
-  final operationId =
-      '${DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(36)}-${operation.name}';
-  _deliver(
-    logger.logEvent(
-      '${eventPrefix}_started',
-      parameters: {
-        'operation': eventPrefix,
-        'operation_id': operationId,
-        'outcome': 'started',
-      },
-    ),
-  );
-  try {
-    final result = await action();
+  final operationId = newCorrelationId(operation.name);
+  return runZoned<Future<T>>(() async {
     _deliver(
       logger.logEvent(
-        '${eventPrefix}_succeeded',
+        '${eventPrefix}_started',
         parameters: {
           'operation': eventPrefix,
           'operation_id': operationId,
-          'outcome': 'succeeded',
-          'duration_ms': stopwatch.elapsedMilliseconds,
+          'outcome': 'started',
         },
       ),
     );
-    return result;
-  } catch (error, stackTrace) {
-    final duration = stopwatch.elapsedMilliseconds;
-    _deliver(
-      logger.recordError(
-        error,
-        stackTrace,
-        context: eventPrefix,
-        parameters: {'operation_id': operationId, 'duration_ms': duration},
-      ),
-    );
-    _deliver(
-      logger.logEvent(
-        '${eventPrefix}_failed',
-        parameters: {
-          'operation': eventPrefix,
-          'operation_id': operationId,
-          'outcome': 'failed',
-          'duration_ms': duration,
-        },
-      ),
-    );
-    rethrow;
-  }
+    try {
+      final result = await action();
+      _deliver(
+        logger.logEvent(
+          '${eventPrefix}_succeeded',
+          parameters: {
+            'operation': eventPrefix,
+            'operation_id': operationId,
+            'outcome': 'succeeded',
+            'duration_ms': stopwatch.elapsedMilliseconds,
+          },
+        ),
+      );
+      return result;
+    } catch (error, stackTrace) {
+      final duration = stopwatch.elapsedMilliseconds;
+      _deliver(
+        logger.recordError(
+          error,
+          stackTrace,
+          context: eventPrefix,
+          parameters: {'operation_id': operationId, 'duration_ms': duration},
+        ),
+      );
+      _deliver(
+        logger.logEvent(
+          '${eventPrefix}_failed',
+          parameters: {
+            'operation': eventPrefix,
+            'operation_id': operationId,
+            'outcome': 'failed',
+            'duration_ms': duration,
+          },
+        ),
+      );
+      rethrow;
+    }
+  }, zoneValues: {_operationIdZoneKey: operationId});
 }
 
 void _deliver(Future<void> delivery) {
