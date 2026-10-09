@@ -88,6 +88,10 @@ abstract interface class BackendSessionGateway {
   });
 }
 
+abstract interface class BackendOverviewGateway {
+  Future<List<PythonOverviewItem>> loadOverview();
+}
+
 final class PythonCourse {
   const PythonCourse({
     required this.id,
@@ -384,6 +388,142 @@ final class PythonCalendarStatusMutation {
   final DateTime updatedAt;
 }
 
+final class PythonSession {
+  const PythonSession({
+    required this.id,
+    required this.startsAt,
+    required this.endsAt,
+    required this.lessonCount,
+    required this.callCount,
+    required this.firstPing,
+    required this.secondPing,
+    required this.attendanceStatus,
+    required this.absences,
+    required this.calendarStatus,
+    required this.assessmentTitle,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory PythonSession.fromJson(Map<String, Object?> json) {
+    const keys = {
+      'id',
+      'starts_at',
+      'ends_at',
+      'lesson_count',
+      'call_count',
+      'first_ping',
+      'second_ping',
+      'attendance_status',
+      'absences',
+      'calendar_status',
+      'assessment_title',
+      'created_at',
+      'updated_at',
+    };
+    if (!_hasExactKeys(json, keys)) throw const FormatException();
+    final id = json['id'];
+    final startsAt = PythonCourse._requiredDate(json['starts_at']);
+    final endsAt = PythonCourse._requiredDate(json['ends_at']);
+    final lessonCount = json['lesson_count'];
+    final callCount = json['call_count'];
+    final firstPing = json['first_ping'];
+    final secondPing = json['second_ping'];
+    final attendanceStatus = json['attendance_status'];
+    final absences = json['absences'];
+    final calendarStatus = json['calendar_status'];
+    final assessmentTitle = json['assessment_title'];
+    final createdAt = PythonCourse._requiredDate(json['created_at']);
+    final updatedAt = PythonCourse._requiredDate(json['updated_at']);
+    const pingStates = {'no_campus', 'fora', 'indisponivel'};
+    const attendanceStates = {
+      'presente',
+      'chegou_atrasado',
+      'saiu_mais_cedo',
+      'ausente',
+      'pendente',
+    };
+    const calendarStates = {
+      'scheduled',
+      'cancelled',
+      'holiday',
+      'no_call',
+      'makeup',
+    };
+    final unresolved =
+        attendanceStatus == null || attendanceStatus == 'pendente';
+    if (id is! String ||
+        id.isEmpty ||
+        id.length > 128 ||
+        id.trim() != id ||
+        id.contains('/') ||
+        id.contains(r'\') ||
+        lessonCount is! int ||
+        !{1, 2, 4}.contains(lessonCount) ||
+        callCount is! int ||
+        !{1, 2}.contains(callCount) ||
+        lessonCount == 1 && callCount == 2 ||
+        !endsAt.isAfter(startsAt) ||
+        endsAt.difference(startsAt) != Duration(minutes: lessonCount * 50) ||
+        firstPing != null &&
+            (firstPing is! String || !pingStates.contains(firstPing)) ||
+        secondPing != null &&
+            (secondPing is! String || !pingStates.contains(secondPing)) ||
+        attendanceStatus != null &&
+            (attendanceStatus is! String ||
+                !attendanceStates.contains(attendanceStatus)) ||
+        unresolved != (absences == null) ||
+        absences != null &&
+            (absences is! int || absences < 0 || absences > lessonCount) ||
+        calendarStatus is! String ||
+        !calendarStates.contains(calendarStatus) ||
+        assessmentTitle != null &&
+            (assessmentTitle is! String ||
+                assessmentTitle.trim() != assessmentTitle ||
+                assessmentTitle.isEmpty ||
+                assessmentTitle.length > 120) ||
+        updatedAt.isBefore(createdAt)) {
+      throw const FormatException();
+    }
+    return PythonSession(
+      id: id,
+      startsAt: startsAt,
+      endsAt: endsAt,
+      lessonCount: lessonCount,
+      callCount: callCount,
+      firstPing: firstPing as String?,
+      secondPing: secondPing as String?,
+      attendanceStatus: attendanceStatus as String?,
+      absences: absences as int?,
+      calendarStatus: calendarStatus,
+      assessmentTitle: assessmentTitle as String?,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
+  }
+
+  final String id;
+  final DateTime startsAt;
+  final DateTime endsAt;
+  final int lessonCount;
+  final int callCount;
+  final String? firstPing;
+  final String? secondPing;
+  final String? attendanceStatus;
+  final int? absences;
+  final String calendarStatus;
+  final String? assessmentTitle;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+}
+
+final class PythonOverviewItem {
+  const PythonOverviewItem({required this.course, required this.sessions});
+
+  final PythonCourse course;
+  final List<PythonSession> sessions;
+}
+
 final class PythonBackendSettings {
   const PythonBackendSettings({required this.enabled, required this.endpoint});
 
@@ -415,7 +555,8 @@ final class PythonBackendTransport
         BackendAttendanceEvaluator,
         BackendCourseGateway,
         BackendScheduleGateway,
-        BackendSessionGateway {
+        BackendSessionGateway,
+        BackendOverviewGateway {
   PythonBackendTransport({
     required Uri endpoint,
     required PythonBackendTokens tokens,
@@ -463,6 +604,43 @@ final class PythonBackendTransport
             (item) =>
                 PythonCourse.fromJson(Map<String, Object?>.from(item as Map)),
           )
+          .toList(growable: false);
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<List<PythonOverviewItem>> loadOverview() async {
+    final response = await _authenticatedRequest(path: '/v1/overview');
+    try {
+      final value = jsonDecode(response.body);
+      if (value is! Map<String, dynamic> || !_hasExactKeys(value, {'items'})) {
+        throw const FormatException();
+      }
+      final items = value['items'];
+      if (items is! List) throw const FormatException();
+      return items
+          .map((item) {
+            final json = Map<String, Object?>.from(item as Map);
+            if (!_hasExactKeys(json, {'course', 'sessions'})) {
+              throw const FormatException();
+            }
+            final sessions = json['sessions'];
+            if (sessions is! List) throw const FormatException();
+            return PythonOverviewItem(
+              course: PythonCourse.fromJson(
+                Map<String, Object?>.from(json['course']! as Map),
+              ),
+              sessions: sessions
+                  .map(
+                    (session) => PythonSession.fromJson(
+                      Map<String, Object?>.from(session as Map),
+                    ),
+                  )
+                  .toList(growable: false),
+            );
+          })
           .toList(growable: false);
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);

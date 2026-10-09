@@ -213,6 +213,70 @@ void main() {
     },
   );
 
+  test('loads one validated academic overview snapshot', () async {
+    late http.Request captured;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'items': [
+              {
+                'course': _courseJson,
+                'sessions': [_sessionJson],
+              },
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final overview = await transport.loadOverview();
+
+    expect(captured.url, Uri.parse('https://backend.example/v1/overview'));
+    expect(overview, hasLength(1));
+    expect(overview.single.course.code, 'DCC203');
+    expect(overview.single.sessions.single.id, 'session-1');
+    expect(overview.single.sessions.single.calendarStatus, 'no_call');
+    expect(overview.single.sessions.single.absences, 0);
+  });
+
+  test('rejects malformed academic overview data', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'items': [
+              {
+                'course': _courseJson,
+                'sessions': [
+                  {..._sessionJson, 'absences': 3},
+                ],
+              },
+            ],
+          }),
+          200,
+        ),
+      ),
+    );
+
+    await expectLater(
+      transport.loadOverview(),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'code',
+          PythonBackendError.invalidResponse,
+        ),
+      ),
+    );
+  });
+
   test('previews and atomically saves a complete schedule', () async {
     final requests = <http.Request>[];
     final response = {
@@ -698,6 +762,22 @@ const _meetingJson = <String, Object?>{
   'call_count': 1,
   'created_at': '2026-08-01T12:00:00Z',
   'updated_at': '2026-08-01T12:00:00Z',
+};
+
+const _sessionJson = <String, Object?>{
+  'id': 'session-1',
+  'starts_at': '2026-10-08T10:00:00Z',
+  'ends_at': '2026-10-08T11:40:00Z',
+  'lesson_count': 2,
+  'call_count': 1,
+  'first_ping': 'no_campus',
+  'second_ping': null,
+  'attendance_status': 'presente',
+  'absences': 0,
+  'calendar_status': 'no_call',
+  'assessment_title': 'Prova 1',
+  'created_at': '2026-08-01T12:00:00Z',
+  'updated_at': '2026-10-08T12:00:00Z',
 };
 
 final class _Tokens implements PythonBackendTokens {
