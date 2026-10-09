@@ -381,6 +381,43 @@ void main() {
     },
   );
 
+  test('rejects a session mutation that changes the requested value', () async {
+    final responses = [
+      {
+        'status': 'ausente',
+        'absences': 2,
+        'updated_at': '2026-10-08T18:30:00Z',
+      },
+      {'calendar_status': 'cancelled', 'updated_at': '2026-10-08T18:30:00Z'},
+    ];
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(jsonEncode(responses.removeAt(0)), 200),
+      ),
+    );
+
+    await expectLater(
+      transport.saveAttendance(
+        courseId: 'course-1',
+        sessionId: 'session-1',
+        status: 'presente',
+        maximumAbsences: 2,
+        useDefaultAbsences: true,
+      ),
+      throwsA(isA<PythonBackendException>()),
+    );
+    await expectLater(
+      transport.saveCalendarStatus(
+        courseId: 'course-1',
+        sessionId: 'session-1',
+        calendarStatus: 'no_call',
+      ),
+      throwsA(isA<PythonBackendException>()),
+    );
+  });
+
   test('preserves the bounded destructive-conflict count', () async {
     final transport = PythonBackendTransport(
       endpoint: Uri.parse('https://backend.example'),

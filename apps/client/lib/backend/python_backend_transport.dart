@@ -559,6 +559,9 @@ final class PythonBackendTransport
       maximumAbsences: maximumAbsences,
       expectedKeys: const {'status', 'absences', 'updated_at'},
     );
+    if (decision.status != status) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
     final updatedAt = _updatedAt(response.body);
     return PythonAttendanceMutation(
       status: decision.status,
@@ -593,6 +596,7 @@ final class PythonBackendTransport
       if (savedStatus is! String || !allowed.contains(savedStatus)) {
         throw const FormatException();
       }
+      if (savedStatus != calendarStatus) throw const FormatException();
       return PythonCalendarStatusMutation(
         calendarStatus: savedStatus,
         updatedAt: PythonCourse._requiredDate(value['updated_at']),
