@@ -31,7 +31,8 @@ enum AuditedOperation {
   calendarException('calendar_exception'),
   assessmentUpdate('assessment_update'),
   manualAttendance('manual_attendance'),
-  academicOverviewLoad('academic_overview_load');
+  academicOverviewLoad('academic_overview_load'),
+  academicOverviewFallback('academic_overview_fallback');
 
   const AuditedOperation(this.eventPrefix);
 

@@ -34,6 +34,7 @@ class CoursePage extends StatefulWidget {
     required this.user,
     required this.logger,
     required this.onSignOut,
+    CourseRepository? fallbackCourseRepository,
     this.attendanceEvaluator,
     this.scheduleGateway,
     this.sessionGateway,
@@ -45,11 +46,13 @@ class CoursePage extends StatefulWidget {
     CourseIdGenerator? idGenerator,
     CurrentTime? now,
     super.key,
-  }) : idGenerator = idGenerator ?? _newCourseId,
+  }) : fallbackCourseRepository = fallbackCourseRepository ?? repository,
+       idGenerator = idGenerator ?? _newCourseId,
        now = now ?? DateTime.now,
        assert(!overviewReadsEnabled || overviewRepository != null);
 
   final CourseRepository repository;
+  final CourseRepository fallbackCourseRepository;
   final MeetingRepository meetingRepository;
   final SessionRepository sessionRepository;
   final AuthUser user;
@@ -79,6 +82,7 @@ class _CoursePageState extends State<CoursePage> {
   int _pastPendingCount = 0;
   _PendingAttendance? _nextPastPending;
   Map<String, List<SessionRecord>> _sessionsByCourse = const {};
+  bool _usingOverviewSnapshot = false;
 
   @override
   void initState() {
@@ -92,11 +96,27 @@ class _CoursePageState extends State<CoursePage> {
       _loadFailed = false;
     });
     try {
-      final snapshot = widget.overviewReadsEnabled
-          ? await widget.overviewRepository!.loadOverview()
-          : null;
-      final courses =
-          snapshot?.courses.toList() ?? await widget.repository.listCourses();
+      AcademicOverviewSnapshot? snapshot;
+      var overviewFallback = false;
+      if (widget.overviewReadsEnabled) {
+        try {
+          snapshot = await widget.overviewRepository!.loadOverview();
+        } catch (_) {
+          overviewFallback = true;
+        }
+      }
+      late final List<CourseRecord> courses;
+      if (snapshot != null) {
+        courses = snapshot.courses.toList();
+      } else if (overviewFallback) {
+        courses = await runAuditedOperation(
+          logger: widget.logger,
+          operation: AuditedOperation.academicOverviewFallback,
+          action: widget.fallbackCourseRepository.listCourses,
+        );
+      } else {
+        courses = await widget.repository.listCourses();
+      }
       final sessionsByCourse = snapshot == null
           ? <String, List<SessionRecord>>{}
           : {
@@ -112,9 +132,12 @@ class _CoursePageState extends State<CoursePage> {
       setState(() {
         _courses = courses;
         _sessionsByCourse = sessionsByCourse;
+        _usingOverviewSnapshot = snapshot != null;
       });
       if (snapshot == null) {
-        unawaited(_loadPastPendingCount(courses));
+        unawaited(
+          _loadPastPendingCount(courses, retryOverview: !overviewFallback),
+        );
       } else {
         _setPastPending(courses, [
           for (final course in courses)
@@ -128,8 +151,11 @@ class _CoursePageState extends State<CoursePage> {
     }
   }
 
-  Future<void> _loadPastPendingCount(List<CourseRecord> courses) async {
-    if (widget.overviewReadsEnabled) {
+  Future<void> _loadPastPendingCount(
+    List<CourseRecord> courses, {
+    bool retryOverview = true,
+  }) async {
+    if (_usingOverviewSnapshot && retryOverview) {
       await _load();
       return;
     }
@@ -279,7 +305,7 @@ class _CoursePageState extends State<CoursePage> {
           repository: widget.sessionRepository,
           location: tz.getLocation('America/Sao_Paulo'),
           now: widget.now,
-          initialSessionsByCourse: widget.overviewReadsEnabled
+          initialSessionsByCourse: _usingOverviewSnapshot
               ? _sessionsByCourse
               : null,
         ),
@@ -296,7 +322,7 @@ class _CoursePageState extends State<CoursePage> {
           repository: widget.sessionRepository,
           location: tz.getLocation('America/Sao_Paulo'),
           now: widget.now,
-          initialSessionsByCourse: widget.overviewReadsEnabled
+          initialSessionsByCourse: _usingOverviewSnapshot
               ? _sessionsByCourse
               : null,
         ),

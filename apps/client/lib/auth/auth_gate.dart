@@ -16,6 +16,7 @@ class AuthGate extends StatefulWidget {
     required this.authGateway,
     required this.logger,
     required this.courseRepositoryFactory,
+    this.fallbackCourseRepositoryFactory,
     required this.meetingRepositoryFactory,
     required this.sessionRepositoryFactory,
     this.backendIdentityVerifier,
@@ -33,6 +34,8 @@ class AuthGate extends StatefulWidget {
   final AuthGateway authGateway;
   final AppLogger logger;
   final CourseRepository Function(String userId) courseRepositoryFactory;
+  final CourseRepository Function(String userId)?
+  fallbackCourseRepositoryFactory;
   final MeetingRepository Function(String userId) meetingRepositoryFactory;
   final SessionRepository Function(String userId) sessionRepositoryFactory;
   final BackendIdentityVerifier? backendIdentityVerifier;
@@ -54,6 +57,7 @@ class _AuthGateState extends State<AuthGate> {
   String? _error;
   String? _repositoryUserId;
   CourseRepository? _courseRepository;
+  CourseRepository? _fallbackCourseRepository;
   MeetingRepository? _meetingRepository;
   SessionRepository? _sessionRepository;
   String? _verifiedBackendUserId;
@@ -82,6 +86,9 @@ class _AuthGateState extends State<AuthGate> {
     if (_repositoryUserId != userId) {
       _repositoryUserId = userId;
       _courseRepository = widget.courseRepositoryFactory(userId);
+      _fallbackCourseRepository =
+          widget.fallbackCourseRepositoryFactory?.call(userId) ??
+          _courseRepository;
       _meetingRepository = widget.meetingRepositoryFactory(userId);
       _sessionRepository = widget.sessionRepositoryFactory(userId);
     }
@@ -122,6 +129,7 @@ class _AuthGateState extends State<AuthGate> {
           _verifyBackendFor(user.id);
           return CoursePage(
             repository: _repositoryFor(user.id),
+            fallbackCourseRepository: _fallbackCourseRepository,
             meetingRepository: _meetingRepository!,
             sessionRepository: _sessionRepository!,
             user: user,

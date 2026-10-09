@@ -89,6 +89,8 @@ Future<void> main() async {
       logger: logger,
       courseRepositoryFactory: (userId) =>
           effectiveCourseRepositoryFactory(userId, logger),
+      fallbackCourseRepositoryFactory: (userId) =>
+          courseRepositoryFactory(userId, logger),
       meetingRepositoryFactory: (userId) =>
           meetingRepositoryFactory(userId, logger),
       sessionRepositoryFactory: (userId) =>
@@ -119,6 +121,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
     required this.authGateway,
     required this.logger,
     required this.courseRepositoryFactory,
+    this.fallbackCourseRepositoryFactory,
     required this.meetingRepositoryFactory,
     required this.sessionRepositoryFactory,
     this.backendIdentityVerifier,
@@ -136,6 +139,8 @@ class FrequenciaUFMGApp extends StatelessWidget {
   final AuthGateway authGateway;
   final AppLogger logger;
   final CourseRepository Function(String userId) courseRepositoryFactory;
+  final CourseRepository Function(String userId)?
+  fallbackCourseRepositoryFactory;
   final MeetingRepository Function(String userId) meetingRepositoryFactory;
   final SessionRepository Function(String userId) sessionRepositoryFactory;
   final BackendIdentityVerifier? backendIdentityVerifier;
@@ -175,6 +180,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
         authGateway: authGateway,
         logger: logger,
         courseRepositoryFactory: courseRepositoryFactory,
+        fallbackCourseRepositoryFactory: fallbackCourseRepositoryFactory,
         meetingRepositoryFactory: meetingRepositoryFactory,
         sessionRepositoryFactory: sessionRepositoryFactory,
         backendIdentityVerifier: backendIdentityVerifier,
