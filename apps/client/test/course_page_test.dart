@@ -543,6 +543,59 @@ void main() {
     expect(overview.loadCalls, 0);
   });
 
+  testWidgets(
+    'falls back to direct courses when Python overview is unavailable',
+    (tester) async {
+      final course = CourseRecord(
+        id: 'course-1',
+        code: 'DCC203',
+        name: 'POO',
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final courseRepository = _FakeCourseRepository(courses: [course]);
+      final sessionRepository = _FakeSessionRepository({
+        'course-1': [_session('session-1', DateTime.utc(2026, 9, 28, 12))],
+      });
+      final logger = _RecordingAppLogger();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CoursePage(
+            repository: courseRepository,
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: sessionRepository,
+            overviewRepository: _FailingOverviewRepository(),
+            overviewReadsEnabled: true,
+            user: user,
+            logger: logger,
+            onSignOut: () async {},
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('DCC203'), findsOneWidget);
+      expect(
+        find.text('Não foi possível carregar suas disciplinas.'),
+        findsNothing,
+      );
+      expect(courseRepository.listCalls, 1);
+      expect(logger.events, contains('academic_overview_fallback_succeeded'));
+      sessionRepository.listedCourseIds.clear();
+
+      tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('nav-general-calendar')));
+      await tester.pumpAndSettle();
+
+      expect(sessionRepository.listedCourseIds, contains('course-1'));
+    },
+  );
+
   testWidgets('alerts about unresolved attendance from an earlier day', (
     tester,
   ) async {
@@ -1061,6 +1114,12 @@ final class _FakeOverviewRepository implements AcademicOverviewRepository {
     loadCalls++;
     return snapshot;
   }
+}
+
+final class _FailingOverviewRepository implements AcademicOverviewRepository {
+  @override
+  Future<AcademicOverviewSnapshot> loadOverview() =>
+      Future.error(StateError('backend unavailable'));
 }
 
 SessionRecord _session(

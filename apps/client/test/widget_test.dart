@@ -10,6 +10,7 @@ import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/python_course_repository.dart';
+import 'package:frequencia_ufmg/data/python_overview_repository.dart';
 import 'package:frequencia_ufmg/main.dart' as app;
 import 'package:frequencia_ufmg/observability/app_logger.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
@@ -124,6 +125,48 @@ void main() {
       FlutterError.onError = previousFlutterHandler;
       PlatformDispatcher.instance.onError = previousPlatformHandler;
     }
+  });
+
+  testWidgets('bootstraps the Firebase fallback when Python overview fails', (
+    tester,
+  ) async {
+    final gateway = _FakeAuthGateway(
+      initialUser: AuthUser(id: 'user-42', email: 'aluno@ufmg.br'),
+    );
+    final logger = _FakeAppLogger();
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: DateTime.utc(2026, 7),
+      updatedAt: DateTime.utc(2026, 7),
+    );
+    final backend = _FailingFullBackend();
+    addTearDown(gateway.close);
+    await tester.pumpWidget(
+      app.FrequenciaUFMGApp(
+        authGateway: gateway,
+        logger: logger,
+        courseRepositoryFactory: (_) =>
+            app.resolveCourseRepositoryFactory(backend)('user-42', logger),
+        fallbackCourseRepositoryFactory: (_) => _FakeCourseRepository([course]),
+        meetingRepositoryFactory: (_) => _FakeMeetingRepository(),
+        sessionRepositoryFactory: (_) => _FakeSessionRepository(),
+        backendIdentityVerifier: backend,
+        overviewRepository: PythonOverviewRepository(
+          gateway: backend,
+          logger: logger,
+        ),
+        overviewReadsEnabled: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('DCC203'), findsOneWidget);
+    expect(logger.events, contains('academic_overview_fallback_succeeded'));
+    expect(logger.errorContexts, contains('academic_overview_load'));
   });
 
   testWidgets(
@@ -331,12 +374,39 @@ final class _FakeOverviewBackend
   Future<List<PythonOverviewItem>> loadOverview() async => [];
 }
 
+final class _FailingFullBackend
+    implements
+        BackendIdentityVerifier,
+        BackendOverviewGateway,
+        BackendCourseGateway {
+  @override
+  Future<void> verifyIdentity() async {}
+
+  @override
+  Future<List<PythonOverviewItem>> loadOverview() =>
+      Future.error(StateError('backend unavailable'));
+
+  @override
+  Future<List<PythonCourse>> listCourses() =>
+      Future.error(StateError('backend unavailable'));
+
+  @override
+  Future<PythonCourse> saveCourse(PythonCourse course) async => course;
+
+  @override
+  Future<void> deleteCourse(String courseId) async {}
+}
+
 final class _FakeCourseRepository implements CourseRepository {
+  _FakeCourseRepository([this.courses = const []]);
+
+  final List<CourseRecord> courses;
+
   @override
   Future<void> deleteCourse(String courseId) async {}
 
   @override
-  Future<List<CourseRecord>> listCourses() async => [];
+  Future<List<CourseRecord>> listCourses() async => List.of(courses);
 
   @override
   Future<void> saveCourse(CourseRecord course) async {}
