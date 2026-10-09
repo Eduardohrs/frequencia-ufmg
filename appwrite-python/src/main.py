@@ -1,6 +1,7 @@
 """Appwrite Function entrypoint for the Python platform feasibility gate."""
 
 import json
+from collections.abc import Mapping
 from os import environ
 from pathlib import Path
 from sys import path as module_search_path
@@ -51,6 +52,11 @@ from schedule_repository import (  # noqa: E402
     ScheduleRepository,
 )
 from schedule_service import InvalidSchedule, ScheduleOverlap  # noqa: E402
+from session_repository import SessionMutationRepository  # noqa: E402
+from session_service import (  # noqa: E402
+    InactiveAttendanceSession,
+    InvalidSessionMutation,
+)
 
 MAX_REQUEST_BYTES = 16_384
 
@@ -100,6 +106,16 @@ def main(context: Any) -> Any:
         return _attendance(context, allowed_origin)
     if method == "GET" and path == "/v1/courses":
         return _courses_list(context, allowed_origin)
+    session_mutation = _session_mutation_path(path)
+    if method == "PUT" and session_mutation is not None:
+        course_id, session_id, mutation = session_mutation
+        return _session_mutation(
+            context,
+            allowed_origin,
+            course_id,
+            session_id,
+            mutation,
+        )
     if (
         path.startswith("/v1/courses/")
         and path.endswith("/schedule")
@@ -175,6 +191,55 @@ def _attendance(context: Any, origin: str | None) -> Any:
         _error(context, "attendance_rejected")
         return _respond(context, {"error": "invalid_request"}, 400, origin)
     _log(context, "attendance_evaluated")
+    return _respond(context, result, origin=origin)
+
+
+def _session_mutation(
+    context: Any,
+    origin: str | None,
+    course_id: str,
+    session_id: str,
+    mutation: str,
+) -> Any:
+    route = f"/v1/sessions/{mutation}/put"
+    user_id, rejected = _authentication(context, origin, route)
+    if rejected is not None:
+        return rejected
+    if environ.get("ENABLE_SESSION_WRITES", "").lower() != "true":
+        return _session_error(context, origin, "session_writes_disabled", 503)
+    try:
+        repository = _session_repository(context.req.headers, cast(str, user_id))
+        if mutation == "attendance":
+            result = repository.save_attendance(
+                course_id,
+                session_id,
+                context.req.body_json,
+            )
+            body = context.req.body_json
+            _log(
+                context,
+                "attendance_save_succeeded",
+                manual_correction=isinstance(body, Mapping) and "absences" in body,
+            )
+        else:
+            result = repository.save_calendar_status(
+                course_id,
+                session_id,
+                context.req.body_json,
+            )
+            _log(context, "calendar_status_save_succeeded")
+    except InactiveAttendanceSession:
+        return _session_error(context, origin, "attendance_inactive_session", 409)
+    except (InvalidSessionMutation, InvalidCourse, TypeError, ValueError):
+        return _session_error(context, origin, "session_mutation_rejected", 400)
+    except (InvalidSchedule, FirestoreRequestRejected):
+        return _session_error(context, origin, "session_data_invalid", 500)
+    except FirestoreNotFound:
+        return _session_error(context, origin, "session_not_found", 404)
+    except FirestoreAccessDenied:
+        return _session_error(context, origin, "session_access_denied", 403)
+    except FirestoreUnavailable:
+        return _session_error(context, origin, "session_store_unavailable", 503)
     return _respond(context, result, origin=origin)
 
 
@@ -279,6 +344,10 @@ def _schedule_repository(headers: dict[str, str], user_id: str) -> ScheduleRepos
     return ScheduleRepository(_firestore(headers, user_id))
 
 
+def _session_repository(headers: dict[str, str], user_id: str) -> SessionMutationRepository:
+    return SessionMutationRepository(_firestore(headers, user_id))
+
+
 def _firestore(headers: dict[str, str], user_id: str) -> FirestoreRestClient:
     return FirestoreRestClient(
         project_id=environ.get("FIREBASE_PROJECT_ID", ""),
@@ -301,6 +370,24 @@ def _schedule_error(
 ) -> Any:
     _error(context, error, **fields)
     return _respond(context, {"error": error, **fields}, status, origin)
+
+
+def _session_error(context: Any, origin: str | None, error: str, status: int) -> Any:
+    _error(context, error)
+    return _respond(context, {"error": error}, status, origin)
+
+
+def _session_mutation_path(path: str) -> tuple[str, str, str] | None:
+    segments = path.strip("/").split("/")
+    if (
+        len(segments) == 6
+        and segments[:2] == ["v1", "courses"]
+        and segments[3] == "sessions"
+        and segments[5] in {"attendance", "calendar-status"}
+    ):
+        mutation = "attendance" if segments[5] == "attendance" else "calendar_status"
+        return segments[2], segments[4], mutation
+    return None
 
 
 def _is_public_api_path(path: str) -> bool:

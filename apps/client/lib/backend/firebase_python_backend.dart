@@ -17,6 +17,9 @@ const _webSiteKey = String.fromEnvironment('FIREBASE_APP_CHECK_WEB_SITE_KEY');
 const pythonScheduleWritesEnabled = bool.fromEnvironment(
   'ENABLE_PYTHON_SCHEDULE_WRITES',
 );
+const pythonSessionWritesEnabled = bool.fromEnvironment(
+  'ENABLE_PYTHON_SESSION_WRITES',
+);
 
 BackendIdentityVerifier? createFirebasePythonBackendVerifier() {
   final endpoint = _settings.endpointUri;
@@ -29,7 +32,8 @@ final class _FirebasePythonBackendVerifier
         BackendIdentityVerifier,
         BackendAttendanceEvaluator,
         BackendCourseGateway,
-        BackendScheduleGateway {
+        BackendScheduleGateway,
+        BackendSessionGateway {
   _FirebasePythonBackendVerifier(Uri endpoint)
     : _transport = PythonBackendTransport(
         endpoint: endpoint,
@@ -99,6 +103,40 @@ final class _FirebasePythonBackendVerifier
       endsOn: endsOn,
       meetings: meetings,
       confirmDestructive: confirmDestructive,
+    );
+  }
+
+  @override
+  Future<PythonAttendanceMutation> saveAttendance({
+    required String courseId,
+    required String sessionId,
+    required String status,
+    required int maximumAbsences,
+    required bool useDefaultAbsences,
+    int? correctedAbsences,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.saveAttendance(
+      courseId: courseId,
+      sessionId: sessionId,
+      status: status,
+      maximumAbsences: maximumAbsences,
+      useDefaultAbsences: useDefaultAbsences,
+      correctedAbsences: correctedAbsences,
+    );
+  }
+
+  @override
+  Future<PythonCalendarStatusMutation> saveCalendarStatus({
+    required String courseId,
+    required String sessionId,
+    required String calendarStatus,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.saveCalendarStatus(
+      courseId: courseId,
+      sessionId: sessionId,
+      calendarStatus: calendarStatus,
     );
   }
 

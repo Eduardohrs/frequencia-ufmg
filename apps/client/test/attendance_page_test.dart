@@ -208,6 +208,49 @@ void main() {
     expect(repository.byId('python').absences, 1);
   });
 
+  testWidgets('persists initial attendance and corrections through Python', (
+    tester,
+  ) async {
+    final repository = _FakeRepository([_session('python', now)]);
+    final gateway = _SessionGateway(now);
+    await tester.pumpWidget(
+      _app(
+        repository,
+        _Logger(),
+        location,
+        now,
+        sessionGateway: gateway,
+        sessionWritesEnabled: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.attendanceCalls.single.useDefaultAbsences, isTrue);
+    expect(gateway.attendanceCalls.single.correctedAbsences, isNull);
+    expect(repository.saveCalls, isEmpty);
+    expect(repository.byId('python').attendanceStatus, isNull);
+    expect(find.text('Presente • 0 faltas'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('attendance-status')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Saiu mais cedo').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('attendance-absences')), '1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.attendanceCalls.last.useDefaultAbsences, isFalse);
+    expect(gateway.attendanceCalls.last.correctedAbsences, 1);
+    expect(find.text('Saiu mais cedo • 1 faltas'), findsOneWidget);
+  });
+
   testWidgets('does not save when the Python authority is unavailable', (
     tester,
   ) async {
@@ -280,6 +323,8 @@ Widget _app(
   tz.Location location,
   DateTime now, {
   BackendAttendanceEvaluator? attendanceEvaluator,
+  BackendSessionGateway? sessionGateway,
+  bool sessionWritesEnabled = false,
   String? courseCode,
   String? initialSessionId,
 }) => MaterialApp(
@@ -292,6 +337,8 @@ Widget _app(
     location: location,
     now: () => now,
     attendanceEvaluator: attendanceEvaluator,
+    sessionGateway: sessionGateway,
+    sessionWritesEnabled: sessionWritesEnabled,
   ),
 );
 
@@ -319,6 +366,7 @@ final class _FakeRepository implements SessionRepository {
   final List<SessionRecord> sessions;
   Object? listError;
   Object? saveError;
+  final saveCalls = <SessionRecord>[];
   SessionRecord byId(String id) =>
       sessions.singleWhere((item) => item.id == id);
   @override
@@ -332,9 +380,58 @@ final class _FakeRepository implements SessionRepository {
   @override
   Future<void> saveSession(String courseId, SessionRecord session) async {
     if (saveError case final error?) throw error;
+    saveCalls.add(session);
     sessions.removeWhere((item) => item.id == session.id);
     sessions.add(session);
   }
+}
+
+final class _SessionGateway implements BackendSessionGateway {
+  _SessionGateway(this.updatedAt);
+
+  final DateTime updatedAt;
+  final attendanceCalls =
+      <
+        ({
+          String courseId,
+          String sessionId,
+          String status,
+          int maximumAbsences,
+          bool useDefaultAbsences,
+          int? correctedAbsences,
+        })
+      >[];
+
+  @override
+  Future<PythonAttendanceMutation> saveAttendance({
+    required String courseId,
+    required String sessionId,
+    required String status,
+    required int maximumAbsences,
+    required bool useDefaultAbsences,
+    int? correctedAbsences,
+  }) async {
+    attendanceCalls.add((
+      courseId: courseId,
+      sessionId: sessionId,
+      status: status,
+      maximumAbsences: maximumAbsences,
+      useDefaultAbsences: useDefaultAbsences,
+      correctedAbsences: correctedAbsences,
+    ));
+    return PythonAttendanceMutation(
+      status: status,
+      absences: useDefaultAbsences ? 0 : correctedAbsences,
+      updatedAt: updatedAt,
+    );
+  }
+
+  @override
+  Future<PythonCalendarStatusMutation> saveCalendarStatus({
+    required String courseId,
+    required String sessionId,
+    required String calendarStatus,
+  }) => throw UnimplementedError();
 }
 
 final class _Logger implements AppLogger {

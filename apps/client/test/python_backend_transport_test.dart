@@ -265,6 +265,159 @@ void main() {
     });
   });
 
+  test(
+    'saves automatic and corrected attendance through session endpoints',
+    () async {
+      final requests = <http.Request>[];
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((request) async {
+          requests.add(request);
+          return http.Response(
+            jsonEncode({
+              'status': requests.length == 1 ? 'chegou_atrasado' : 'pendente',
+              'absences': requests.length == 1 ? 1 : null,
+              'updated_at': '2026-10-08T18:30:00Z',
+            }),
+            200,
+          );
+        }),
+      );
+
+      final automatic = await transport.saveAttendance(
+        courseId: 'course-1',
+        sessionId: 'session-1',
+        status: 'chegou_atrasado',
+        maximumAbsences: 2,
+        useDefaultAbsences: true,
+      );
+      final correction = await transport.saveAttendance(
+        courseId: 'course-1',
+        sessionId: 'session-1',
+        status: 'pendente',
+        maximumAbsences: 2,
+        useDefaultAbsences: false,
+      );
+
+      expect(requests.map((request) => request.method), ['PUT', 'PUT']);
+      expect(
+        requests.first.url.path,
+        '/v1/courses/course-1/sessions/session-1/attendance',
+      );
+      expect(jsonDecode(requests.first.body), {'status': 'chegou_atrasado'});
+      expect(jsonDecode(requests.last.body), {
+        'status': 'pendente',
+        'absences': null,
+      });
+      expect(automatic.absences, 1);
+      expect(automatic.updatedAt, DateTime.utc(2026, 10, 8, 18, 30));
+      expect(correction.status, 'pendente');
+      expect(correction.absences, isNull);
+    },
+  );
+
+  test('saves a calendar category and validates the response', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (request) async => http.Response(
+          jsonEncode({
+            'calendar_status': 'no_call',
+            'updated_at': '2026-10-08T18:30:00Z',
+          }),
+          200,
+        ),
+      ),
+    );
+
+    final result = await transport.saveCalendarStatus(
+      courseId: 'course-1',
+      sessionId: 'session-1',
+      calendarStatus: 'no_call',
+    );
+
+    expect(result.calendarStatus, 'no_call');
+    expect(result.updatedAt, DateTime.utc(2026, 10, 8, 18, 30));
+  });
+
+  test(
+    'rejects malformed session mutation responses and unsafe session ids',
+    () async {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'status': 'presente',
+              'absences': 0,
+              'updated_at': 'not-a-date',
+            }),
+            200,
+          ),
+        ),
+      );
+
+      await expectLater(
+        transport.saveAttendance(
+          courseId: 'course-1',
+          sessionId: 'session-1',
+          status: 'presente',
+          maximumAbsences: 2,
+          useDefaultAbsences: true,
+        ),
+        throwsA(isA<PythonBackendException>()),
+      );
+      await expectLater(
+        transport.saveCalendarStatus(
+          courseId: 'course-1',
+          sessionId: 'bad/id',
+          calendarStatus: 'scheduled',
+        ),
+        throwsArgumentError,
+      );
+    },
+  );
+
+  test('rejects a session mutation that changes the requested value', () async {
+    final responses = [
+      {
+        'status': 'ausente',
+        'absences': 2,
+        'updated_at': '2026-10-08T18:30:00Z',
+      },
+      {'calendar_status': 'cancelled', 'updated_at': '2026-10-08T18:30:00Z'},
+    ];
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(jsonEncode(responses.removeAt(0)), 200),
+      ),
+    );
+
+    await expectLater(
+      transport.saveAttendance(
+        courseId: 'course-1',
+        sessionId: 'session-1',
+        status: 'presente',
+        maximumAbsences: 2,
+        useDefaultAbsences: true,
+      ),
+      throwsA(isA<PythonBackendException>()),
+    );
+    await expectLater(
+      transport.saveCalendarStatus(
+        courseId: 'course-1',
+        sessionId: 'session-1',
+        calendarStatus: 'no_call',
+      ),
+      throwsA(isA<PythonBackendException>()),
+    );
+  });
+
   test('preserves the bounded destructive-conflict count', () async {
     final transport = PythonBackendTransport(
       endpoint: Uri.parse('https://backend.example'),

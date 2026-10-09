@@ -71,6 +71,23 @@ abstract interface class BackendScheduleGateway {
   });
 }
 
+abstract interface class BackendSessionGateway {
+  Future<PythonAttendanceMutation> saveAttendance({
+    required String courseId,
+    required String sessionId,
+    required String status,
+    required int maximumAbsences,
+    required bool useDefaultAbsences,
+    int? correctedAbsences,
+  });
+
+  Future<PythonCalendarStatusMutation> saveCalendarStatus({
+    required String courseId,
+    required String sessionId,
+    required String calendarStatus,
+  });
+}
+
 final class PythonCourse {
   const PythonCourse({
     required this.id,
@@ -345,6 +362,28 @@ final class PythonAttendanceDecision {
   final int? absences;
 }
 
+final class PythonAttendanceMutation {
+  const PythonAttendanceMutation({
+    required this.status,
+    required this.absences,
+    required this.updatedAt,
+  });
+
+  final String status;
+  final int? absences;
+  final DateTime updatedAt;
+}
+
+final class PythonCalendarStatusMutation {
+  const PythonCalendarStatusMutation({
+    required this.calendarStatus,
+    required this.updatedAt,
+  });
+
+  final String calendarStatus;
+  final DateTime updatedAt;
+}
+
 final class PythonBackendSettings {
   const PythonBackendSettings({required this.enabled, required this.endpoint});
 
@@ -375,7 +414,8 @@ final class PythonBackendTransport
         BackendIdentityVerifier,
         BackendAttendanceEvaluator,
         BackendCourseGateway,
-        BackendScheduleGateway {
+        BackendScheduleGateway,
+        BackendSessionGateway {
   PythonBackendTransport({
     required Uri endpoint,
     required PythonBackendTokens tokens,
@@ -493,6 +533,79 @@ final class PythonBackendTransport
     return _schedule(response.body);
   }
 
+  @override
+  Future<PythonAttendanceMutation> saveAttendance({
+    required String courseId,
+    required String sessionId,
+    required String status,
+    required int maximumAbsences,
+    required bool useDefaultAbsences,
+    int? correctedAbsences,
+  }) async {
+    _validateCourseId(courseId);
+    _validateCourseId(sessionId);
+    final response = await _authenticatedRequest(
+      path:
+          '/v1/courses/${Uri.encodeComponent(courseId)}/sessions/'
+          '${Uri.encodeComponent(sessionId)}/attendance',
+      method: _BackendMethod.put,
+      body: {
+        'status': status,
+        if (!useDefaultAbsences) 'absences': correctedAbsences,
+      },
+    );
+    final decision = _attendanceDecision(
+      response.body,
+      maximumAbsences: maximumAbsences,
+      expectedKeys: const {'status', 'absences', 'updated_at'},
+    );
+    if (decision.status != status) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+    final updatedAt = _updatedAt(response.body);
+    return PythonAttendanceMutation(
+      status: decision.status,
+      absences: decision.absences,
+      updatedAt: updatedAt,
+    );
+  }
+
+  @override
+  Future<PythonCalendarStatusMutation> saveCalendarStatus({
+    required String courseId,
+    required String sessionId,
+    required String calendarStatus,
+  }) async {
+    _validateCourseId(courseId);
+    _validateCourseId(sessionId);
+    final response = await _authenticatedRequest(
+      path:
+          '/v1/courses/${Uri.encodeComponent(courseId)}/sessions/'
+          '${Uri.encodeComponent(sessionId)}/calendar-status',
+      method: _BackendMethod.put,
+      body: {'calendar_status': calendarStatus},
+    );
+    try {
+      final value = jsonDecode(response.body);
+      if (value is! Map<String, dynamic> ||
+          !_hasExactKeys(value, const {'calendar_status', 'updated_at'})) {
+        throw const FormatException();
+      }
+      final savedStatus = value['calendar_status'];
+      const allowed = {'scheduled', 'cancelled', 'holiday', 'no_call'};
+      if (savedStatus is! String || !allowed.contains(savedStatus)) {
+        throw const FormatException();
+      }
+      if (savedStatus != calendarStatus) throw const FormatException();
+      return PythonCalendarStatusMutation(
+        calendarStatus: savedStatus,
+        updatedAt: PythonCourse._requiredDate(value['updated_at']),
+      );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
   Future<http.Response> _authenticatedRequest({
     required String path,
     _BackendMethod method = _BackendMethod.get,
@@ -580,11 +693,12 @@ final class PythonBackendTransport
   static PythonAttendanceDecision _attendanceDecision(
     String body, {
     required int maximumAbsences,
+    Set<String> expectedKeys = const {'status', 'absences'},
   }) {
     try {
       final value = jsonDecode(body);
       if (value is! Map<String, dynamic> ||
-          value.keys.toSet().difference({'status', 'absences'}).isNotEmpty) {
+          !_hasExactKeys(value, expectedKeys)) {
         throw const FormatException();
       }
       final status = value['status'];
@@ -609,6 +723,15 @@ final class PythonBackendTransport
         status: status,
         absences: absences as int?,
       );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  static DateTime _updatedAt(String body) {
+    try {
+      final value = jsonDecode(body) as Map<String, dynamic>;
+      return PythonCourse._requiredDate(value['updated_at']);
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
     }

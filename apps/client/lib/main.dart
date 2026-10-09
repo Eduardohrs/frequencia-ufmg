@@ -93,7 +93,11 @@ Future<void> main() async {
       scheduleGateway: backend is BackendScheduleGateway
           ? backend as BackendScheduleGateway
           : null,
+      sessionGateway: backend is BackendSessionGateway
+          ? backend as BackendSessionGateway
+          : null,
       scheduleWritesEnabled: pythonScheduleWritesEnabled,
+      sessionWritesEnabled: pythonSessionWritesEnabled,
     ),
   );
   await logger.logEvent('app_started');
@@ -109,7 +113,9 @@ class FrequenciaUFMGApp extends StatelessWidget {
     this.backendIdentityVerifier,
     this.attendanceEvaluator,
     this.scheduleGateway,
+    this.sessionGateway,
     this.scheduleWritesEnabled = false,
+    this.sessionWritesEnabled = false,
     super.key,
   });
 
@@ -121,7 +127,9 @@ class FrequenciaUFMGApp extends StatelessWidget {
   final BackendIdentityVerifier? backendIdentityVerifier;
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
+  final BackendSessionGateway? sessionGateway;
   final bool scheduleWritesEnabled;
+  final bool sessionWritesEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -155,7 +163,9 @@ class FrequenciaUFMGApp extends StatelessWidget {
         backendIdentityVerifier: backendIdentityVerifier,
         attendanceEvaluator: attendanceEvaluator,
         scheduleGateway: scheduleGateway,
+        sessionGateway: sessionGateway,
         scheduleWritesEnabled: scheduleWritesEnabled,
+        sessionWritesEnabled: sessionWritesEnabled,
       ),
     );
   }

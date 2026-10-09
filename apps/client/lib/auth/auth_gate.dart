@@ -20,7 +20,9 @@ class AuthGate extends StatefulWidget {
     this.backendIdentityVerifier,
     this.attendanceEvaluator,
     this.scheduleGateway,
+    this.sessionGateway,
     this.scheduleWritesEnabled = false,
+    this.sessionWritesEnabled = false,
     super.key,
   });
 
@@ -32,7 +34,9 @@ class AuthGate extends StatefulWidget {
   final BackendIdentityVerifier? backendIdentityVerifier;
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
+  final BackendSessionGateway? sessionGateway;
   final bool scheduleWritesEnabled;
+  final bool sessionWritesEnabled;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -117,7 +121,9 @@ class _AuthGateState extends State<AuthGate> {
             logger: widget.logger,
             attendanceEvaluator: widget.attendanceEvaluator,
             scheduleGateway: widget.scheduleGateway,
+            sessionGateway: widget.sessionGateway,
             scheduleWritesEnabled: widget.scheduleWritesEnabled,
+            sessionWritesEnabled: widget.sessionWritesEnabled,
             onSignOut: () =>
                 _run(AuditedOperation.logout, widget.authGateway.signOut),
           );
