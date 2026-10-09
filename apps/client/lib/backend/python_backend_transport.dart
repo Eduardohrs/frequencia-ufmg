@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../observability/audited_operation.dart';
+
 enum PythonBackendError {
   appCheckInvalid,
   credentialsUnavailable,
@@ -790,9 +792,11 @@ final class PythonBackendTransport
     Map<String, Object?>? body,
   }) async {
     var forceIdentityRefresh = false;
+    final requestId = currentOperationId ?? newCorrelationId('request');
     for (var attempt = 0; attempt < 2; attempt += 1) {
       final response = await _request(
         forceIdentityRefresh: forceIdentityRefresh,
+        requestId: requestId,
         path: path,
         method: method,
         body: body,
@@ -816,6 +820,7 @@ final class PythonBackendTransport
 
   Future<http.Response> _request({
     required bool forceIdentityRefresh,
+    required String requestId,
     required String path,
     required _BackendMethod method,
     required Map<String, Object?>? body,
@@ -833,6 +838,7 @@ final class PythonBackendTransport
       final headers = {
         'Authorization': 'Bearer $idToken',
         'X-Firebase-AppCheck': appCheckToken,
+        'X-Request-ID': requestId,
       };
       final uri = _endpoint.resolve(path);
       final request = switch (method) {

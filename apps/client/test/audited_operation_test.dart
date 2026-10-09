@@ -10,7 +10,10 @@ void main() {
       final result = await runAuditedOperation(
         logger: logger,
         operation: operation,
-        action: () async => 42,
+        action: () async {
+          expect(currentOperationId, isNotEmpty);
+          return 42;
+        },
       );
 
       expect(result, 42);
@@ -81,6 +84,30 @@ void main() {
 
     expect(result, 42);
     expect(actionCalls, 1);
+    expect(currentOperationId, isNull);
+  });
+
+  test('concurrent operations receive distinct correlation ids', () async {
+    final first = _FakeAppLogger();
+    final second = _FakeAppLogger();
+
+    await Future.wait([
+      runAuditedOperation(
+        logger: first,
+        operation: AuditedOperation.courseList,
+        action: () async {},
+      ),
+      runAuditedOperation(
+        logger: second,
+        operation: AuditedOperation.courseList,
+        action: () async {},
+      ),
+    ]);
+
+    expect(
+      first.parameters.first!['operation_id'],
+      isNot(second.parameters.first!['operation_id']),
+    );
   });
 }
 

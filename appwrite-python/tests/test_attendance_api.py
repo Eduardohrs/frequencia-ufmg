@@ -55,7 +55,7 @@ def test_authenticated_api_matches_every_shared_attendance_case(
         "status": case["situacao"],
         "absences": case["faltas"],
     }
-    assert json.loads(context.logs[-1]) == {"event": "attendance_evaluated"}
+    assert json.loads(context.logs[0]) == {"event": "attendance_evaluated"}
 
 
 @pytest.mark.parametrize(

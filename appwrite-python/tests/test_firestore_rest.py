@@ -337,6 +337,48 @@ def test_request_sanitizes_transport_failures() -> None:
     assert caught.value.__cause__ is None
 
 
+def test_request_emits_sanitized_dependency_telemetry() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    client = FirestoreRestClient(
+        "project",
+        "private-user",
+        "private-token",
+        transport=lambda _request, _timeout: (200, b"{}"),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    )
+
+    client.get_user_document("courses", "private-course")
+
+    assert events == [
+        (
+            "firestore_request_completed",
+            {
+                "duration_ms": pytest.approx(0, abs=100),
+                "kind": "read",
+                "method": "GET",
+                "outcome": "succeeded",
+                "status_class": "2xx",
+            },
+        )
+    ]
+    assert "private" not in json.dumps(events)
+
+
+def test_dependency_telemetry_failure_never_blocks_firestore() -> None:
+    def fail(_event: str, _fields: Mapping[str, object]) -> None:
+        raise RuntimeError("telemetry unavailable")
+
+    client = FirestoreRestClient(
+        "project",
+        "user",
+        "token",
+        transport=lambda _request, _timeout: (200, b"{}"),
+        telemetry=fail,
+    )
+
+    assert client.get_user_document("courses", "course") == {}
+
+
 @pytest.mark.parametrize(
     ("project_id", "user_id", "id_token", "segments"),
     [

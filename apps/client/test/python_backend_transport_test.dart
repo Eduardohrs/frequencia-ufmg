@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
+import 'package:frequencia_ufmg/observability/app_logger.dart';
+import 'package:frequencia_ufmg/observability/audited_operation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -69,8 +71,43 @@ void main() {
       expect(captured.url, Uri.parse('https://backend.example/v1/identity'));
       expect(captured.headers['Authorization'], 'Bearer id-1-cached');
       expect(captured.headers['X-Firebase-AppCheck'], 'app-1');
+      expect(
+        captured.headers['X-Request-ID'],
+        matches(RegExp(r'^[a-z0-9-]+$')),
+      );
       expect(tokens.idTokenRefreshes, [false]);
       expect(tokens.appCheckCalls, 1);
+    },
+  );
+
+  test(
+    'reuses the audited operation id across an authentication retry',
+    () async {
+      final requests = <http.Request>[];
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((request) async {
+          requests.add(request);
+          if (requests.length == 1) {
+            return http.Response(jsonEncode({'error': 'unauthorized'}), 401);
+          }
+          return http.Response(jsonEncode({'authenticated': true}), 200);
+        }),
+      );
+
+      await runAuditedOperation(
+        logger: _SilentLogger(),
+        operation: AuditedOperation.courseList,
+        action: transport.verifyIdentity,
+      );
+
+      expect(requests, hasLength(2));
+      expect(requests[0].headers['X-Request-ID'], isNotEmpty);
+      expect(
+        requests[1].headers['X-Request-ID'],
+        requests[0].headers['X-Request-ID'],
+      );
     },
   );
 
@@ -742,6 +779,20 @@ void main() {
       ),
     );
   });
+}
+
+final class _SilentLogger implements AppLogger {
+  @override
+  Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {}
+
+  @override
+  Future<void> recordError(
+    Object error,
+    StackTrace stackTrace, {
+    required String context,
+    bool fatal = false,
+    Map<String, Object>? parameters,
+  }) async {}
 }
 
 const _courseJson = <String, Object?>{

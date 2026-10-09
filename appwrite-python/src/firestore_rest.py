@@ -4,6 +4,7 @@ import json
 import re
 from collections.abc import Callable, Mapping
 from os import environ
+from time import perf_counter
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
@@ -13,6 +14,7 @@ MAX_PAYLOAD_BYTES = 1_048_576
 MAX_TOKEN_LENGTH = 16_384
 PRODUCTION_BASE_URL = "https://firestore.googleapis.com/v1"
 Transport = Callable[[Request, float], tuple[int, bytes]]
+Telemetry = Callable[[str, Mapping[str, object]], None]
 
 
 class FirestoreRestError(Exception):
@@ -46,6 +48,7 @@ class FirestoreRestClient:
         *,
         timeout_seconds: float = 10,
         transport: Transport | None = None,
+        telemetry: Telemetry | None = None,
     ) -> None:
         self._project_id = _segment(project_id, "project_id")
         self._user_id = _segment(user_id, "user_id")
@@ -60,6 +63,7 @@ class FirestoreRestClient:
         self._id_token = id_token
         self._timeout_seconds = timeout_seconds
         self._transport = transport or _urlopen_transport
+        self._telemetry = telemetry
         self.base_url = _base_url()
 
     def get_user_document(self, *segments: str) -> dict[str, Any]:
@@ -184,33 +188,58 @@ class FirestoreRestClient:
         *,
         allow_empty: bool = False,
     ) -> dict[str, Any]:
+        started = perf_counter()
+        status: int | None = None
+        outcome = "failed"
         headers = {"Authorization": f"Bearer {self._id_token}"}
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = Request(url, data=body, headers=headers, method=method)
 
         try:
-            status, response_body = self._transport(request, self._timeout_seconds)
-        except OSError:
-            raise FirestoreUnavailable("Firestore is unavailable") from None
+            try:
+                status, response_body = self._transport(request, self._timeout_seconds)
+            except OSError:
+                raise FirestoreUnavailable("Firestore is unavailable") from None
 
-        if status in (401, 403):
-            raise FirestoreAccessDenied("Firestore denied the request")
-        if status == 404:
-            raise FirestoreNotFound("Firestore document was not found")
-        if status == 400:
-            raise FirestoreRequestRejected("Firestore rejected the request")
-        if not 200 <= status < 300 or len(response_body) > MAX_PAYLOAD_BYTES:
-            raise FirestoreUnavailable("Firestore is unavailable")
-        if not response_body and allow_empty:
-            return {}
+            if status in (401, 403):
+                raise FirestoreAccessDenied("Firestore denied the request")
+            if status == 404:
+                raise FirestoreNotFound("Firestore document was not found")
+            if status == 400:
+                raise FirestoreRequestRejected("Firestore rejected the request")
+            if not 200 <= status < 300 or len(response_body) > MAX_PAYLOAD_BYTES:
+                raise FirestoreUnavailable("Firestore is unavailable")
+            if not response_body and allow_empty:
+                outcome = "succeeded"
+                return {}
+            try:
+                decoded = json.loads(response_body)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise FirestoreUnavailable("Firestore is unavailable") from None
+            if not isinstance(decoded, dict):
+                raise FirestoreUnavailable("Firestore is unavailable")
+            outcome = "succeeded"
+            return decoded
+        finally:
+            self._emit_telemetry(
+                "firestore_request_completed",
+                {
+                    "duration_ms": round((perf_counter() - started) * 1_000, 3),
+                    "kind": "read" if method == "GET" else "write",
+                    "method": method,
+                    "outcome": outcome,
+                    "status_class": f"{status // 100}xx" if status is not None else "network",
+                },
+            )
+
+    def _emit_telemetry(self, event: str, fields: Mapping[str, object]) -> None:
+        if self._telemetry is None:
+            return
         try:
-            decoded = json.loads(response_body)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise FirestoreUnavailable("Firestore is unavailable") from None
-        if not isinstance(decoded, dict):
-            raise FirestoreUnavailable("Firestore is unavailable")
-        return decoded
+            self._telemetry(event, fields)
+        except Exception:
+            return
 
     def _resource_url(self, segments: tuple[str, ...], *, collection: bool) -> str:
         expected_remainder = 1 if collection else 0
