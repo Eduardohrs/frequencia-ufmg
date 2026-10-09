@@ -34,6 +34,7 @@ class CourseSchedulePage extends StatefulWidget {
     this.sessionGateway,
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
+    this.androidOfflineQueueEnabled = false,
     this.courseRepository,
     Iterable<CourseRecord>? allCourses,
     Iterable<String>? allCourseIds,
@@ -58,6 +59,7 @@ class CourseSchedulePage extends StatefulWidget {
   final BackendSessionGateway? sessionGateway;
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
+  final bool androidOfflineQueueEnabled;
   final List<CourseRecord> allCourses;
   final List<String> allCourseIds;
   final SessionGenerator? generator;
@@ -448,6 +450,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         now: widget.now,
         sessionGateway: widget.sessionGateway,
         sessionWritesEnabled: widget.sessionWritesEnabled,
+        androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
       ),
     ),
   );
@@ -462,6 +465,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         attendanceEvaluator: widget.attendanceEvaluator,
         sessionGateway: widget.sessionGateway,
         sessionWritesEnabled: widget.sessionWritesEnabled,
+        androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
         location: _generator.location,
         now: widget.now,
       ),

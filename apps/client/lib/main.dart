@@ -107,6 +107,8 @@ Future<void> main() async {
       scheduleWritesEnabled: pythonScheduleWritesEnabled,
       sessionWritesEnabled: pythonSessionWritesEnabled,
       overviewReadsEnabled: pythonOverviewReadsEnabled,
+      androidOfflineQueueEnabled:
+          !kIsWeb && defaultTargetPlatform == TargetPlatform.android,
     ),
   );
   await logger.logEvent('app_started');
@@ -127,6 +129,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
     this.overviewReadsEnabled = false,
+    this.androidOfflineQueueEnabled = false,
     super.key,
   });
 
@@ -143,6 +146,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
   final bool overviewReadsEnabled;
+  final bool androidOfflineQueueEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -181,6 +185,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
         scheduleWritesEnabled: scheduleWritesEnabled,
         sessionWritesEnabled: sessionWritesEnabled,
         overviewReadsEnabled: overviewReadsEnabled,
+        androidOfflineQueueEnabled: androidOfflineQueueEnabled,
       ),
     );
   }

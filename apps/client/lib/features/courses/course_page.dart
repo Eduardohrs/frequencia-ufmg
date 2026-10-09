@@ -41,6 +41,7 @@ class CoursePage extends StatefulWidget {
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
     this.overviewReadsEnabled = false,
+    this.androidOfflineQueueEnabled = false,
     CourseIdGenerator? idGenerator,
     CurrentTime? now,
     super.key,
@@ -61,6 +62,7 @@ class CoursePage extends StatefulWidget {
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
   final bool overviewReadsEnabled;
+  final bool androidOfflineQueueEnabled;
   final CourseIdGenerator idGenerator;
   final CurrentTime now;
 
@@ -259,6 +261,7 @@ class _CoursePageState extends State<CoursePage> {
           sessionGateway: widget.sessionGateway,
           scheduleWritesEnabled: widget.scheduleWritesEnabled,
           sessionWritesEnabled: widget.sessionWritesEnabled,
+          androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
           allCourses: _courses,
           allCourseIds: _courses.map((item) => item.id),
         ),
@@ -316,6 +319,7 @@ class _CoursePageState extends State<CoursePage> {
           attendanceEvaluator: widget.attendanceEvaluator,
           sessionGateway: widget.sessionGateway,
           sessionWritesEnabled: widget.sessionWritesEnabled,
+          androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
           location: tz.getLocation('America/Sao_Paulo'),
           now: widget.now,
         ),

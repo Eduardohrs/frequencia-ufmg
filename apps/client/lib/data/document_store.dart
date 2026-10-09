@@ -10,6 +10,8 @@ abstract interface class DocumentStore {
 
   Future<void> set(String documentPath, Map<String, Object?> data);
 
+  Future<void> update(String documentPath, Map<String, Object?> data);
+
   Future<void> deleteAll(Iterable<String> documentPaths);
 }
 
@@ -29,6 +31,10 @@ final class TimeoutDocumentStore implements DocumentStore {
   @override
   Future<void> set(String documentPath, Map<String, Object?> data) =>
       _delegate.set(documentPath, data).timeout(_timeout);
+
+  @override
+  Future<void> update(String documentPath, Map<String, Object?> data) =>
+      _delegate.update(documentPath, data).timeout(_timeout);
 
   @override
   Future<void> deleteAll(Iterable<String> documentPaths) =>

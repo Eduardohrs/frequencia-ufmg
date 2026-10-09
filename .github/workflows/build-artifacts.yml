@@ -75,6 +75,7 @@ jobs:
       - name: Build Android debug APK
         run: |
           flutter build apk --debug \
+            --build-number="$GITHUB_RUN_NUMBER" \
             --dart-define="ENABLE_PYTHON_BACKEND=$ENABLE_PYTHON_BACKEND" \
             --dart-define="ENABLE_PYTHON_SCHEDULE_WRITES=$ENABLE_PYTHON_SCHEDULE_WRITES" \
             --dart-define="ENABLE_PYTHON_SESSION_WRITES=$ENABLE_PYTHON_SESSION_WRITES" \
@@ -82,7 +83,8 @@ jobs:
             --dart-define="PYTHON_BACKEND_ORIGIN=$PYTHON_BACKEND_ORIGIN"
       - name: Verify APK signing certificate
         run: |
-          apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          apksigner="$build_tools/apksigner"
           certificates=$("$apksigner" verify --print-certs \
             build/app/outputs/flutter-apk/app-debug.apk)
           printf '%s\n' "$certificates"
@@ -96,6 +98,12 @@ jobs:
           test -n "$expected"
           test -n "$actual"
           test "$actual" = "$expected"
+          package=$("$build_tools/aapt" dump badging \
+            build/app/outputs/flutter-apk/app-debug.apk | head -n 1)
+          printf '%s\n' "$package"
+          [[ "$package" == *"name='br.ufmg.frequencia.frequencia_ufmg'"* ]]
+          [[ "$package" == *"versionCode='$GITHUB_RUN_NUMBER'"* ]]
+          sha256sum build/app/outputs/flutter-apk/app-debug.apk
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: frequencia-ufmg-web-${{ github.sha }}

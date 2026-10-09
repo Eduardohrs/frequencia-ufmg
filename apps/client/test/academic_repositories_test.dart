@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
+import 'package:frequencia_ufmg/data/calendar_status.dart';
 import 'package:frequencia_ufmg/data/document_store.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
 import 'package:frequencia_ufmg/observability/app_logger.dart';
@@ -146,6 +147,44 @@ void main() {
     ]);
   });
 
+  test(
+    'offline session mutations patch only their authoritative fields',
+    () async {
+      final repository = FirestoreSessionRepository(
+        userId: 'user-1',
+        store: store,
+        logger: logger,
+      );
+
+      await repository.patchAttendance(
+        'poo',
+        'session-1',
+        status: SituacaoFrequencia.arrivedLate,
+        absences: 1,
+        updatedAt: updatedAt,
+      );
+      await repository.patchCalendarStatus(
+        'poo',
+        'session-1',
+        status: SessionCalendarStatus.noCall,
+        updatedAt: updatedAt,
+      );
+
+      expect(store.updatedPaths, [
+        'users/user-1/courses/poo/sessions/session-1',
+        'users/user-1/courses/poo/sessions/session-1',
+      ]);
+      expect(store.updatedData, [
+        {
+          'attendanceStatus': 'chegou_atrasado',
+          'absences': 1,
+          'updatedAt': updatedAt,
+        },
+        {'calendarStatus': 'no_call', 'updatedAt': updatedAt},
+      ]);
+    },
+  );
+
   test('repositories reject unsafe identifiers before store access', () async {
     final courseRepository = FirestoreCourseRepository(
       userId: 'user-1',
@@ -225,6 +264,8 @@ final class _FakeDocumentStore implements DocumentStore {
   final listedPaths = <String>[];
   final savedPaths = <String>[];
   final savedData = <Map<String, Object?>>[];
+  final updatedPaths = <String>[];
+  final updatedData = <Map<String, Object?>>[];
   final deletedPaths = <String>[];
 
   @override
@@ -242,6 +283,12 @@ final class _FakeDocumentStore implements DocumentStore {
   Future<void> set(String documentPath, Map<String, Object?> data) async {
     savedPaths.add(documentPath);
     savedData.add(data);
+  }
+
+  @override
+  Future<void> update(String documentPath, Map<String, Object?> data) async {
+    updatedPaths.add(documentPath);
+    updatedData.add(data);
   }
 }
 

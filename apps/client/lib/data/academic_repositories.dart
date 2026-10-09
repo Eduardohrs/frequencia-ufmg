@@ -1,6 +1,8 @@
 import '../observability/app_logger.dart';
 import '../observability/audited_operation.dart';
+import '../domain/attendance.dart';
 import 'academic_records.dart';
+import 'calendar_status.dart';
 import 'document_store.dart';
 import 'firestore_schema.dart';
 
@@ -26,6 +28,23 @@ abstract interface class SessionRepository {
   Future<void> saveSession(String courseId, SessionRecord session);
 
   Future<void> deleteSession(String courseId, String sessionId);
+}
+
+abstract interface class OfflineSessionMutationQueue {
+  Future<void> patchAttendance(
+    String courseId,
+    String sessionId, {
+    required SituacaoFrequencia status,
+    required int? absences,
+    required DateTime updatedAt,
+  });
+
+  Future<void> patchCalendarStatus(
+    String courseId,
+    String sessionId, {
+    required SessionCalendarStatus status,
+    required DateTime updatedAt,
+  });
 }
 
 final class FirestoreCourseRepository implements CourseRepository {
@@ -147,7 +166,8 @@ final class FirestoreMeetingRepository implements MeetingRepository {
       );
 }
 
-final class FirestoreSessionRepository implements SessionRepository {
+final class FirestoreSessionRepository
+    implements SessionRepository, OfflineSessionMutationQueue {
   FirestoreSessionRepository({
     required String userId,
     required DocumentStore store,
@@ -190,6 +210,41 @@ final class FirestoreSessionRepository implements SessionRepository {
           session.toFirestore(),
         ),
       );
+
+  @override
+  Future<void> patchAttendance(
+    String courseId,
+    String sessionId, {
+    required SituacaoFrequencia status,
+    required int? absences,
+    required DateTime updatedAt,
+  }) => runAuditedOperation(
+    logger: _logger,
+    operation: AuditedOperation.sessionSave,
+    action: () => _store.update(
+      FirestoreSchema.sessionDocument(_userId, courseId, sessionId),
+      {
+        'attendanceStatus': status.code,
+        'absences': absences,
+        'updatedAt': updatedAt,
+      },
+    ),
+  );
+
+  @override
+  Future<void> patchCalendarStatus(
+    String courseId,
+    String sessionId, {
+    required SessionCalendarStatus status,
+    required DateTime updatedAt,
+  }) => runAuditedOperation(
+    logger: _logger,
+    operation: AuditedOperation.sessionSave,
+    action: () => _store.update(
+      FirestoreSchema.sessionDocument(_userId, courseId, sessionId),
+      {'calendarStatus': status.code, 'updatedAt': updatedAt},
+    ),
+  );
 
   @override
   Future<void> deleteSession(String courseId, String sessionId) =>

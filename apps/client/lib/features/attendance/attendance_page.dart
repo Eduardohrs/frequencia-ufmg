@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:timezone/timezone.dart' as tz;
 
@@ -19,10 +21,15 @@ class AttendancePage extends StatefulWidget {
     this.attendanceEvaluator,
     this.sessionGateway,
     this.sessionWritesEnabled = false,
+    this.androidOfflineQueueEnabled = false,
     this.courseCode,
     this.initialSessionId,
     super.key,
-  }) : assert(!sessionWritesEnabled || sessionGateway != null);
+  }) : assert(!sessionWritesEnabled || sessionGateway != null),
+       assert(
+         !androidOfflineQueueEnabled ||
+             repository is OfflineSessionMutationQueue,
+       );
 
   final String courseId;
   final SessionRepository repository;
@@ -32,6 +39,7 @@ class AttendancePage extends StatefulWidget {
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendSessionGateway? sessionGateway;
   final bool sessionWritesEnabled;
+  final bool androidOfflineQueueEnabled;
   final String? courseCode;
   final String? initialSessionId;
 
@@ -85,6 +93,7 @@ class _AttendancePageState extends State<AttendancePage> {
   ) async {
     try {
       late SessionRecord updated;
+      var queuedOffline = false;
       await runAuditedOperation<void>(
         logger: widget.logger,
         operation: AuditedOperation.manualAttendance,
@@ -93,19 +102,27 @@ class _AttendancePageState extends State<AttendancePage> {
           var savedAbsences = absences;
           var savedAt = widget.now().toUtc();
           if (widget.sessionWritesEnabled) {
-            final result = await widget.sessionGateway!.saveAttendance(
-              courseId: widget.courseId,
-              sessionId: source.id,
-              status: status.code,
-              maximumAbsences: source.lessonCount.value,
-              useDefaultAbsences: source.attendanceStatus == null,
-              correctedAbsences: source.attendanceStatus == null
-                  ? null
-                  : absences,
-            );
-            savedStatus = SituacaoFrequencia.fromCode(result.status);
-            savedAbsences = result.absences;
-            savedAt = result.updatedAt;
+            try {
+              final result = await widget.sessionGateway!.saveAttendance(
+                courseId: widget.courseId,
+                sessionId: source.id,
+                status: status.code,
+                maximumAbsences: source.lessonCount.value,
+                useDefaultAbsences: source.attendanceStatus == null,
+                correctedAbsences: source.attendanceStatus == null
+                    ? null
+                    : absences,
+              );
+              savedStatus = SituacaoFrequencia.fromCode(result.status);
+              savedAbsences = result.absences;
+              savedAt = result.updatedAt;
+            } catch (error) {
+              if (!widget.androidOfflineQueueEnabled ||
+                  !isTransientPythonBackendFailure(error)) {
+                rethrow;
+              }
+              queuedOffline = true;
+            }
           }
           updated = SessionRecord(
             id: source.id,
@@ -122,8 +139,40 @@ class _AttendancePageState extends State<AttendancePage> {
             createdAt: source.createdAt,
             updatedAt: savedAt,
           );
-          if (!widget.sessionWritesEnabled) {
-            await widget.repository.saveSession(widget.courseId, updated);
+          if (!widget.sessionWritesEnabled || queuedOffline) {
+            final delivery = queuedOffline
+                ? (widget.repository as OfflineSessionMutationQueue)
+                      .patchAttendance(
+                        widget.courseId,
+                        updated.id,
+                        status: savedStatus,
+                        absences: savedAbsences,
+                        updatedAt: savedAt,
+                      )
+                : widget.repository.saveSession(widget.courseId, updated);
+            if (queuedOffline) {
+              unawaited(
+                widget.logger.logEvent(
+                  'android_offline_attendance_queued',
+                  parameters: {
+                    'operation': 'manual_attendance',
+                    'operation_id': currentOperationId!,
+                    'outcome': 'queued',
+                  },
+                ),
+              );
+              unawaited(
+                delivery.catchError((Object error, StackTrace stackTrace) {
+                  return widget.logger.recordError(
+                    error,
+                    stackTrace,
+                    context: 'android_offline_attendance_delivery',
+                  );
+                }),
+              );
+            } else {
+              await delivery;
+            }
           }
         },
       );
@@ -136,10 +185,22 @@ class _AttendancePageState extends State<AttendancePage> {
           ]..sort((a, b) => a.startsAt.compareTo(b.startsAt));
         });
       }
+      if (queuedOffline && mounted) {
+        _message(
+          'Salvo no aparelho. A sincronização continuará automaticamente.',
+        );
+      }
       return null;
     } catch (_) {
       return 'Não foi possível salvar a frequência.';
     }
+  }
+
+  void _message(String value) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(value)));
   }
 
   @override
