@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/calendar_status.dart';
@@ -75,6 +76,42 @@ void main() {
     await tester.tap(find.text('Entendi'));
     await tester.pumpAndSettle();
     expect(find.text('Como as aulas entram no cálculo'), findsNothing);
+  });
+
+  testWidgets('persists calendar categories through Python when enabled', (
+    tester,
+  ) async {
+    final repository = _FakeSessionRepository([
+      _session('first', DateTime.utc(2026, 8, 3, 11), now),
+    ]);
+    final gateway = _SessionGateway(now);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CalendarExceptionsPage(
+          courseId: courseId,
+          repository: repository,
+          logger: _RecordingAppLogger(),
+          location: location,
+          now: () => now,
+          sessionGateway: gateway,
+          sessionWritesEnabled: true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Alterar sessão de 03/08/2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Aula sem chamada'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.calendarCalls.single, ('poo', 'first', 'no_call'));
+    expect(repository.saveCalls, isEmpty);
+    expect(
+      repository.byId('first').calendarStatus,
+      SessionCalendarStatus.scheduled,
+    );
+    expect(find.text('Aula sem chamada'), findsOneWidget);
   });
 
   testWidgets('adds and removes an evaluative activity independently', (
@@ -353,6 +390,7 @@ final class _FakeSessionRepository implements SessionRepository {
   final List<SessionRecord> sessions;
   Object? listError;
   Object? saveError;
+  final saveCalls = <SessionRecord>[];
 
   SessionRecord byId(String id) =>
       sessions.singleWhere((item) => item.id == id);
@@ -369,9 +407,40 @@ final class _FakeSessionRepository implements SessionRepository {
   @override
   Future<void> saveSession(String courseId, SessionRecord session) async {
     if (saveError case final error?) throw error;
+    saveCalls.add(session);
     sessions.removeWhere((item) => item.id == session.id);
     sessions.add(session);
   }
+}
+
+final class _SessionGateway implements BackendSessionGateway {
+  _SessionGateway(this.updatedAt);
+
+  final DateTime updatedAt;
+  final calendarCalls = <(String, String, String)>[];
+
+  @override
+  Future<PythonCalendarStatusMutation> saveCalendarStatus({
+    required String courseId,
+    required String sessionId,
+    required String calendarStatus,
+  }) async {
+    calendarCalls.add((courseId, sessionId, calendarStatus));
+    return PythonCalendarStatusMutation(
+      calendarStatus: calendarStatus,
+      updatedAt: updatedAt,
+    );
+  }
+
+  @override
+  Future<PythonAttendanceMutation> saveAttendance({
+    required String courseId,
+    required String sessionId,
+    required String status,
+    required int maximumAbsences,
+    required bool useDefaultAbsences,
+    int? correctedAbsences,
+  }) => throw UnimplementedError();
 }
 
 final class _RecordingAppLogger implements AppLogger {

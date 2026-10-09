@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:timezone/timezone.dart' as tz;
 
+import '../../backend/python_backend_transport.dart';
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/calendar_status.dart';
@@ -21,16 +22,21 @@ class CalendarExceptionsPage extends StatefulWidget {
     required this.repository,
     required this.logger,
     required this.location,
+    this.sessionGateway,
+    this.sessionWritesEnabled = false,
     ExceptionIdGenerator? idGenerator,
     ExceptionCurrentTime? now,
     super.key,
   }) : idGenerator = idGenerator ?? _newExceptionId,
-       now = now ?? DateTime.now;
+       now = now ?? DateTime.now,
+       assert(!sessionWritesEnabled || sessionGateway != null);
 
   final String courseId;
   final SessionRepository repository;
   final AppLogger logger;
   final tz.Location location;
+  final BackendSessionGateway? sessionGateway;
+  final bool sessionWritesEnabled;
   final ExceptionIdGenerator idGenerator;
   final ExceptionCurrentTime now;
 
@@ -71,16 +77,32 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
   ) async {
     setState(() => _savingId = session.id);
     try {
-      final updated = _copySession(
-        session,
-        calendarStatus: status,
-        assessmentTitle: session.assessmentTitle,
-        updatedAt: widget.now().toUtc(),
-      );
+      late SessionRecord updated;
       await runAuditedOperation<void>(
         logger: widget.logger,
         operation: AuditedOperation.calendarException,
-        action: () => widget.repository.saveSession(widget.courseId, updated),
+        action: () async {
+          var savedStatus = status;
+          var savedAt = widget.now().toUtc();
+          if (widget.sessionWritesEnabled) {
+            final result = await widget.sessionGateway!.saveCalendarStatus(
+              courseId: widget.courseId,
+              sessionId: session.id,
+              calendarStatus: status.code,
+            );
+            savedStatus = SessionCalendarStatus.fromCode(result.calendarStatus);
+            savedAt = result.updatedAt;
+          }
+          updated = _copySession(
+            session,
+            calendarStatus: savedStatus,
+            assessmentTitle: session.assessmentTitle,
+            updatedAt: savedAt,
+          );
+          if (!widget.sessionWritesEnabled) {
+            await widget.repository.saveSession(widget.courseId, updated);
+          }
+        },
       );
       if (mounted) {
         setState(() {

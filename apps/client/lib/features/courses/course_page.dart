@@ -35,7 +35,9 @@ class CoursePage extends StatefulWidget {
     required this.onSignOut,
     this.attendanceEvaluator,
     this.scheduleGateway,
+    this.sessionGateway,
     this.scheduleWritesEnabled = false,
+    this.sessionWritesEnabled = false,
     CourseIdGenerator? idGenerator,
     CurrentTime? now,
     super.key,
@@ -50,7 +52,9 @@ class CoursePage extends StatefulWidget {
   final Future<void> Function() onSignOut;
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
+  final BackendSessionGateway? sessionGateway;
   final bool scheduleWritesEnabled;
+  final bool sessionWritesEnabled;
   final CourseIdGenerator idGenerator;
   final CurrentTime now;
 
@@ -203,7 +207,9 @@ class _CoursePageState extends State<CoursePage> {
           logger: widget.logger,
           attendanceEvaluator: widget.attendanceEvaluator,
           scheduleGateway: widget.scheduleGateway,
+          sessionGateway: widget.sessionGateway,
           scheduleWritesEnabled: widget.scheduleWritesEnabled,
+          sessionWritesEnabled: widget.sessionWritesEnabled,
           allCourses: _courses,
           allCourseIds: _courses.map((item) => item.id),
         ),
@@ -253,6 +259,8 @@ class _CoursePageState extends State<CoursePage> {
           repository: widget.sessionRepository,
           logger: widget.logger,
           attendanceEvaluator: widget.attendanceEvaluator,
+          sessionGateway: widget.sessionGateway,
+          sessionWritesEnabled: widget.sessionWritesEnabled,
           location: tz.getLocation('America/Sao_Paulo'),
           now: widget.now,
         ),

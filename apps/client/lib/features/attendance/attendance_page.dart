@@ -17,10 +17,12 @@ class AttendancePage extends StatefulWidget {
     required this.location,
     required this.now,
     this.attendanceEvaluator,
+    this.sessionGateway,
+    this.sessionWritesEnabled = false,
     this.courseCode,
     this.initialSessionId,
     super.key,
-  });
+  }) : assert(!sessionWritesEnabled || sessionGateway != null);
 
   final String courseId;
   final SessionRepository repository;
@@ -28,6 +30,8 @@ class AttendancePage extends StatefulWidget {
   final tz.Location location;
   final DateTime Function() now;
   final BackendAttendanceEvaluator? attendanceEvaluator;
+  final BackendSessionGateway? sessionGateway;
+  final bool sessionWritesEnabled;
   final String? courseCode;
   final String? initialSessionId;
 
@@ -67,7 +71,9 @@ class _AttendancePageState extends State<AttendancePage> {
     barrierDismissible: false,
     builder: (_) => _AttendanceDialog(
       session: session,
-      attendanceEvaluator: widget.attendanceEvaluator,
+      attendanceEvaluator: widget.sessionWritesEnabled
+          ? null
+          : widget.attendanceEvaluator,
       onSave: (status, absences) => _save(session, status, absences),
     ),
   );
@@ -77,26 +83,49 @@ class _AttendancePageState extends State<AttendancePage> {
     SituacaoFrequencia status,
     int? absences,
   ) async {
-    final updated = SessionRecord(
-      id: source.id,
-      startsAt: source.startsAt,
-      endsAt: source.endsAt,
-      lessonCount: source.lessonCount,
-      callCount: source.callCount,
-      firstPing: source.firstPing,
-      secondPing: source.secondPing,
-      attendanceStatus: status,
-      absences: absences,
-      calendarStatus: source.calendarStatus,
-      assessmentTitle: source.assessmentTitle,
-      createdAt: source.createdAt,
-      updatedAt: widget.now().toUtc(),
-    );
     try {
+      late SessionRecord updated;
       await runAuditedOperation<void>(
         logger: widget.logger,
         operation: AuditedOperation.manualAttendance,
-        action: () => widget.repository.saveSession(widget.courseId, updated),
+        action: () async {
+          var savedStatus = status;
+          var savedAbsences = absences;
+          var savedAt = widget.now().toUtc();
+          if (widget.sessionWritesEnabled) {
+            final result = await widget.sessionGateway!.saveAttendance(
+              courseId: widget.courseId,
+              sessionId: source.id,
+              status: status.code,
+              maximumAbsences: source.lessonCount.value,
+              useDefaultAbsences: source.attendanceStatus == null,
+              correctedAbsences: source.attendanceStatus == null
+                  ? null
+                  : absences,
+            );
+            savedStatus = SituacaoFrequencia.fromCode(result.status);
+            savedAbsences = result.absences;
+            savedAt = result.updatedAt;
+          }
+          updated = SessionRecord(
+            id: source.id,
+            startsAt: source.startsAt,
+            endsAt: source.endsAt,
+            lessonCount: source.lessonCount,
+            callCount: source.callCount,
+            firstPing: source.firstPing,
+            secondPing: source.secondPing,
+            attendanceStatus: savedStatus,
+            absences: savedAbsences,
+            calendarStatus: source.calendarStatus,
+            assessmentTitle: source.assessmentTitle,
+            createdAt: source.createdAt,
+            updatedAt: savedAt,
+          );
+          if (!widget.sessionWritesEnabled) {
+            await widget.repository.saveSession(widget.courseId, updated);
+          }
+        },
       );
       if (mounted) {
         setState(() {

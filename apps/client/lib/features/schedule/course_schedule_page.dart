@@ -31,7 +31,9 @@ class CourseSchedulePage extends StatefulWidget {
     required this.logger,
     this.attendanceEvaluator,
     this.scheduleGateway,
+    this.sessionGateway,
     this.scheduleWritesEnabled = false,
+    this.sessionWritesEnabled = false,
     this.courseRepository,
     Iterable<CourseRecord>? allCourses,
     Iterable<String>? allCourseIds,
@@ -53,7 +55,9 @@ class CourseSchedulePage extends StatefulWidget {
   final AppLogger logger;
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
+  final BackendSessionGateway? sessionGateway;
   final bool scheduleWritesEnabled;
+  final bool sessionWritesEnabled;
   final List<CourseRecord> allCourses;
   final List<String> allCourseIds;
   final SessionGenerator? generator;
@@ -441,6 +445,9 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         repository: widget.sessionRepository,
         logger: widget.logger,
         location: _generator.location,
+        now: widget.now,
+        sessionGateway: widget.sessionGateway,
+        sessionWritesEnabled: widget.sessionWritesEnabled,
       ),
     ),
   );
@@ -453,6 +460,8 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         repository: widget.sessionRepository,
         logger: widget.logger,
         attendanceEvaluator: widget.attendanceEvaluator,
+        sessionGateway: widget.sessionGateway,
+        sessionWritesEnabled: widget.sessionWritesEnabled,
         location: _generator.location,
         now: widget.now,
       ),
