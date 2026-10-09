@@ -20,6 +20,9 @@ const pythonScheduleWritesEnabled = bool.fromEnvironment(
 const pythonSessionWritesEnabled = bool.fromEnvironment(
   'ENABLE_PYTHON_SESSION_WRITES',
 );
+const pythonOverviewReadsEnabled = bool.fromEnvironment(
+  'ENABLE_PYTHON_OVERVIEW_READS',
+);
 
 BackendIdentityVerifier? createFirebasePythonBackendVerifier() {
   final endpoint = _settings.endpointUri;
@@ -33,7 +36,8 @@ final class _FirebasePythonBackendVerifier
         BackendAttendanceEvaluator,
         BackendCourseGateway,
         BackendScheduleGateway,
-        BackendSessionGateway {
+        BackendSessionGateway,
+        BackendOverviewGateway {
   _FirebasePythonBackendVerifier(Uri endpoint)
     : _transport = PythonBackendTransport(
         endpoint: endpoint,
@@ -68,6 +72,12 @@ final class _FirebasePythonBackendVerifier
   Future<List<PythonCourse>> listCourses() async {
     await (_activation ??= _activateAppCheck());
     return _transport.listCourses();
+  }
+
+  @override
+  Future<List<PythonOverviewItem>> loadOverview() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.loadOverview();
   }
 
   @override

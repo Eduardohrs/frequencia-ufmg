@@ -13,6 +13,7 @@ import 'data/academic_repositories.dart';
 import 'data/firebase_course_repository.dart';
 import 'data/firestore_configuration.dart';
 import 'data/python_course_repository.dart';
+import 'data/python_overview_repository.dart';
 import 'firebase_options.dart';
 import 'observability/app_logger.dart';
 import 'observability/error_reporting.dart';
@@ -75,6 +76,12 @@ Future<void> main() async {
   final effectiveCourseRepositoryFactory = resolveCourseRepositoryFactory(
     backend,
   );
+  final overviewRepository = backend is BackendOverviewGateway
+      ? PythonOverviewRepository(
+          gateway: backend as BackendOverviewGateway,
+          logger: logger,
+        )
+      : null;
   configureErrorReporting(logger);
   runApp(
     FrequenciaUFMGApp(
@@ -96,8 +103,10 @@ Future<void> main() async {
       sessionGateway: backend is BackendSessionGateway
           ? backend as BackendSessionGateway
           : null,
+      overviewRepository: overviewRepository,
       scheduleWritesEnabled: pythonScheduleWritesEnabled,
       sessionWritesEnabled: pythonSessionWritesEnabled,
+      overviewReadsEnabled: pythonOverviewReadsEnabled,
     ),
   );
   await logger.logEvent('app_started');
@@ -114,8 +123,10 @@ class FrequenciaUFMGApp extends StatelessWidget {
     this.attendanceEvaluator,
     this.scheduleGateway,
     this.sessionGateway,
+    this.overviewRepository,
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
+    this.overviewReadsEnabled = false,
     super.key,
   });
 
@@ -128,8 +139,10 @@ class FrequenciaUFMGApp extends StatelessWidget {
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
+  final AcademicOverviewRepository? overviewRepository;
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
+  final bool overviewReadsEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -164,8 +177,10 @@ class FrequenciaUFMGApp extends StatelessWidget {
         attendanceEvaluator: attendanceEvaluator,
         scheduleGateway: scheduleGateway,
         sessionGateway: sessionGateway,
+        overviewRepository: overviewRepository,
         scheduleWritesEnabled: scheduleWritesEnabled,
         sessionWritesEnabled: sessionWritesEnabled,
+        overviewReadsEnabled: overviewReadsEnabled,
       ),
     );
   }

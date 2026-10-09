@@ -40,6 +40,10 @@ from firestore_rest import (  # noqa: E402
     FirestoreRestClient,
     FirestoreUnavailable,
 )
+from overview_repository import (  # noqa: E402
+    AcademicOverviewRepository,
+    OverviewTooLarge,
+)
 from pdf_probe import extract_pdf_summary  # noqa: E402
 from quota_guard import (  # noqa: E402
     AppwriteSecurityStore,
@@ -104,6 +108,8 @@ def main(context: Any) -> Any:
         return _identity(context, allowed_origin)
     if method == "POST" and path == "/v1/attendance/evaluate":
         return _attendance(context, allowed_origin)
+    if method == "GET" and path == "/v1/overview":
+        return _overview(context, allowed_origin)
     if method == "GET" and path == "/v1/courses":
         return _courses_list(context, allowed_origin)
     session_mutation = _session_mutation_path(path)
@@ -192,6 +198,31 @@ def _attendance(context: Any, origin: str | None) -> Any:
         return _respond(context, {"error": "invalid_request"}, 400, origin)
     _log(context, "attendance_evaluated")
     return _respond(context, result, origin=origin)
+
+
+def _overview(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/overview")
+    if rejected is not None:
+        return rejected
+    if environ.get("ENABLE_OVERVIEW_READS", "").lower() != "true":
+        return _overview_error(context, origin, "overview_reads_disabled", 503)
+    try:
+        items = _overview_repository(context.req.headers, cast(str, user_id)).load()
+    except OverviewTooLarge:
+        return _overview_error(context, origin, "overview_too_large", 409)
+    except (InvalidCourse, InvalidSchedule, FirestoreRequestRejected, TypeError, ValueError):
+        return _overview_error(context, origin, "overview_data_invalid", 500)
+    except FirestoreAccessDenied:
+        return _overview_error(context, origin, "overview_access_denied", 403)
+    except FirestoreUnavailable:
+        return _overview_error(context, origin, "overview_store_unavailable", 503)
+    _log(
+        context,
+        "overview_load_succeeded",
+        course_count=len(items),
+        session_count=sum(len(item["sessions"]) for item in items),
+    )
+    return _respond(context, {"items": items}, origin=origin)
 
 
 def _session_mutation(
@@ -348,6 +379,10 @@ def _session_repository(headers: dict[str, str], user_id: str) -> SessionMutatio
     return SessionMutationRepository(_firestore(headers, user_id))
 
 
+def _overview_repository(headers: dict[str, str], user_id: str) -> AcademicOverviewRepository:
+    return AcademicOverviewRepository(_firestore(headers, user_id))
+
+
 def _firestore(headers: dict[str, str], user_id: str) -> FirestoreRestClient:
     return FirestoreRestClient(
         project_id=environ.get("FIREBASE_PROJECT_ID", ""),
@@ -357,6 +392,11 @@ def _firestore(headers: dict[str, str], user_id: str) -> FirestoreRestClient:
 
 
 def _course_error(context: Any, origin: str | None, error: str, status: int) -> Any:
+    _error(context, error)
+    return _respond(context, {"error": error}, status, origin)
+
+
+def _overview_error(context: Any, origin: str | None, error: str, status: int) -> Any:
     _error(context, error)
     return _respond(context, {"error": error}, status, origin)
 
@@ -391,9 +431,12 @@ def _session_mutation_path(path: str) -> tuple[str, str, str] | None:
 
 
 def _is_public_api_path(path: str) -> bool:
-    return path in {"/v1/identity", "/v1/attendance/evaluate", "/v1/courses"} or path.startswith(
-        "/v1/courses/"
-    )
+    return path in {
+        "/v1/identity",
+        "/v1/attendance/evaluate",
+        "/v1/courses",
+        "/v1/overview",
+    } or path.startswith("/v1/courses/")
 
 
 def _firebase_identity(headers: dict[str, str]) -> str:
