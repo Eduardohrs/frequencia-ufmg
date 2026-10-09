@@ -504,6 +504,45 @@ void main() {
     expect(sessionRepository.listedCourseIds, isEmpty);
   });
 
+  testWidgets('uses the direct repository when overview rollout is disabled', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final courseRepository = _FakeCourseRepository(courses: [course]);
+    final overview = _FakeOverviewRepository(
+      AcademicOverviewSnapshot(courses: const [], sessionsByCourse: const {}),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: courseRepository,
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          overviewRepository: overview,
+          overviewReadsEnabled: false,
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('DCC203'), findsOneWidget);
+    expect(courseRepository.listCalls, 1);
+    expect(overview.loadCalls, 0);
+  });
+
   testWidgets('alerts about unresolved attendance from an earlier day', (
     tester,
   ) async {
