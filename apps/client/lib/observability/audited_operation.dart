@@ -19,7 +19,8 @@ enum AuditedOperation {
   sessionGeneration('session_generation'),
   calendarException('calendar_exception'),
   assessmentUpdate('assessment_update'),
-  manualAttendance('manual_attendance');
+  manualAttendance('manual_attendance'),
+  academicOverviewLoad('academic_overview_load');
 
   const AuditedOperation(this.eventPrefix);
 

@@ -14,8 +14,9 @@ final class PythonCourseRepository implements CourseRepository {
   Future<List<CourseRecord>> listCourses() => runAuditedOperation(
     logger: logger,
     operation: AuditedOperation.courseList,
-    action: () async =>
-        (await gateway.listCourses()).map(_toRecord).toList(growable: false),
+    action: () async => (await gateway.listCourses())
+        .map(courseRecordFromPython)
+        .toList(growable: false),
   );
 
   @override
@@ -34,18 +35,6 @@ final class PythonCourseRepository implements CourseRepository {
     action: () => gateway.deleteCourse(courseId),
   );
 
-  static CourseRecord _toRecord(PythonCourse course) => CourseRecord(
-    id: course.id,
-    code: course.code,
-    name: course.name,
-    workload: course.workload,
-    term: course.term,
-    startsOn: course.startsOn,
-    endsOn: course.endsOn,
-    createdAt: course.createdAt,
-    updatedAt: course.updatedAt,
-  );
-
   static PythonCourse _toPython(CourseRecord course) => PythonCourse(
     id: course.id,
     code: course.code,
@@ -58,3 +47,15 @@ final class PythonCourseRepository implements CourseRepository {
     updatedAt: course.updatedAt,
   );
 }
+
+CourseRecord courseRecordFromPython(PythonCourse course) => CourseRecord(
+  id: course.id,
+  code: course.code,
+  name: course.name,
+  workload: course.workload,
+  term: course.term,
+  startsOn: course.startsOn,
+  endsOn: course.endsOn,
+  createdAt: course.createdAt,
+  updatedAt: course.updatedAt,
+);
