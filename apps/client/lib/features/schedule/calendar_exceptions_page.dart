@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -24,12 +25,17 @@ class CalendarExceptionsPage extends StatefulWidget {
     required this.location,
     this.sessionGateway,
     this.sessionWritesEnabled = false,
+    this.androidOfflineQueueEnabled = false,
     ExceptionIdGenerator? idGenerator,
     ExceptionCurrentTime? now,
     super.key,
   }) : idGenerator = idGenerator ?? _newExceptionId,
        now = now ?? DateTime.now,
-       assert(!sessionWritesEnabled || sessionGateway != null);
+       assert(!sessionWritesEnabled || sessionGateway != null),
+       assert(
+         !androidOfflineQueueEnabled ||
+             repository is OfflineSessionMutationQueue,
+       );
 
   final String courseId;
   final SessionRepository repository;
@@ -37,6 +43,7 @@ class CalendarExceptionsPage extends StatefulWidget {
   final tz.Location location;
   final BackendSessionGateway? sessionGateway;
   final bool sessionWritesEnabled;
+  final bool androidOfflineQueueEnabled;
   final ExceptionIdGenerator idGenerator;
   final ExceptionCurrentTime now;
 
@@ -78,6 +85,7 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
     setState(() => _savingId = session.id);
     try {
       late SessionRecord updated;
+      var queuedOffline = false;
       await runAuditedOperation<void>(
         logger: widget.logger,
         operation: AuditedOperation.calendarException,
@@ -85,13 +93,23 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
           var savedStatus = status;
           var savedAt = widget.now().toUtc();
           if (widget.sessionWritesEnabled) {
-            final result = await widget.sessionGateway!.saveCalendarStatus(
-              courseId: widget.courseId,
-              sessionId: session.id,
-              calendarStatus: status.code,
-            );
-            savedStatus = SessionCalendarStatus.fromCode(result.calendarStatus);
-            savedAt = result.updatedAt;
+            try {
+              final result = await widget.sessionGateway!.saveCalendarStatus(
+                courseId: widget.courseId,
+                sessionId: session.id,
+                calendarStatus: status.code,
+              );
+              savedStatus = SessionCalendarStatus.fromCode(
+                result.calendarStatus,
+              );
+              savedAt = result.updatedAt;
+            } catch (error) {
+              if (!widget.androidOfflineQueueEnabled ||
+                  !isTransientPythonBackendFailure(error)) {
+                rethrow;
+              }
+              queuedOffline = true;
+            }
           }
           updated = _copySession(
             session,
@@ -99,8 +117,39 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
             assessmentTitle: session.assessmentTitle,
             updatedAt: savedAt,
           );
-          if (!widget.sessionWritesEnabled) {
-            await widget.repository.saveSession(widget.courseId, updated);
+          if (!widget.sessionWritesEnabled || queuedOffline) {
+            final delivery = queuedOffline
+                ? (widget.repository as OfflineSessionMutationQueue)
+                      .patchCalendarStatus(
+                        widget.courseId,
+                        updated.id,
+                        status: savedStatus,
+                        updatedAt: savedAt,
+                      )
+                : widget.repository.saveSession(widget.courseId, updated);
+            if (queuedOffline) {
+              unawaited(
+                widget.logger.logEvent(
+                  'android_offline_calendar_status_queued',
+                  parameters: {
+                    'operation': 'calendar_exception',
+                    'operation_id': currentOperationId!,
+                    'outcome': 'queued',
+                  },
+                ),
+              );
+              unawaited(
+                delivery.catchError((Object error, StackTrace stackTrace) {
+                  return widget.logger.recordError(
+                    error,
+                    stackTrace,
+                    context: 'android_offline_calendar_status_delivery',
+                  );
+                }),
+              );
+            } else {
+              await delivery;
+            }
           }
         },
       );
@@ -112,6 +161,11 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
             updated,
           ]);
         });
+        if (queuedOffline) {
+          _message(
+            'Salvo no aparelho. A sincronização continuará automaticamente.',
+          );
+        }
       }
     } catch (_) {
       if (mounted) _message('Não foi possível alterar a sessão.');

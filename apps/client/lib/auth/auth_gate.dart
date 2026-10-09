@@ -26,6 +26,7 @@ class AuthGate extends StatefulWidget {
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
     this.overviewReadsEnabled = false,
+    this.androidOfflineQueueEnabled = false,
     super.key,
   });
 
@@ -42,6 +43,7 @@ class AuthGate extends StatefulWidget {
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
   final bool overviewReadsEnabled;
+  final bool androidOfflineQueueEnabled;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -131,6 +133,7 @@ class _AuthGateState extends State<AuthGate> {
             scheduleWritesEnabled: widget.scheduleWritesEnabled,
             sessionWritesEnabled: widget.sessionWritesEnabled,
             overviewReadsEnabled: widget.overviewReadsEnabled,
+            androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
             onSignOut: () =>
                 _run(AuditedOperation.logout, widget.authGateway.signOut),
           );

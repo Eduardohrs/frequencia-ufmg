@@ -9,9 +9,10 @@ void main() {
     final store = TimeoutDocumentStore(delegate);
 
     await store.set('users/1', {'name': 'Eduardo'});
+    await store.update('users/1', {'name': 'Eduardo H.'});
     final documents = await store.list('users');
     expect(documents.single.id, '1');
-    expect(documents.single.data, {'name': 'Eduardo'});
+    expect(documents.single.data, {'name': 'Eduardo H.'});
     await store.deleteAll(['users/1']);
 
     expect(delegate.documents, isEmpty);
@@ -25,6 +26,7 @@ void main() {
 
     expect(store.list('users'), throwsA(isA<TimeoutException>()));
     expect(store.set('users/1', const {}), throwsA(isA<TimeoutException>()));
+    expect(store.update('users/1', const {}), throwsA(isA<TimeoutException>()));
     expect(store.deleteAll(['users/1']), throwsA(isA<TimeoutException>()));
   });
 }
@@ -52,6 +54,11 @@ final class _MemoryDocumentStore implements DocumentStore {
   Future<void> set(String documentPath, Map<String, Object?> data) async {
     documents[documentPath] = data;
   }
+
+  @override
+  Future<void> update(String documentPath, Map<String, Object?> data) async {
+    documents[documentPath] = {...?documents[documentPath], ...data};
+  }
 }
 
 final class _PendingDocumentStore implements DocumentStore {
@@ -65,5 +72,9 @@ final class _PendingDocumentStore implements DocumentStore {
 
   @override
   Future<void> set(String documentPath, Map<String, Object?> data) =>
+      Completer<void>().future;
+
+  @override
+  Future<void> update(String documentPath, Map<String, Object?> data) =>
       Completer<void>().future;
 }

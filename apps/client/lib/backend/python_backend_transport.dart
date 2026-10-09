@@ -35,6 +35,11 @@ final class PythonBackendException implements Exception {
   String toString() => 'PythonBackendException(${code.name})';
 }
 
+bool isTransientPythonBackendFailure(Object error) =>
+    error is PythonBackendException &&
+    (error.code == PythonBackendError.timeout ||
+        error.code == PythonBackendError.unavailable);
+
 abstract interface class PythonBackendTokens {
   Future<String> firebaseIdToken({required bool forceRefresh});
 

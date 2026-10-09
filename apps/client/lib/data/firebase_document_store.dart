@@ -27,6 +27,10 @@ final class FirebaseDocumentStore implements DocumentStore {
       _firestore.doc(documentPath).set(data);
 
   @override
+  Future<void> update(String documentPath, Map<String, Object?> data) =>
+      _firestore.doc(documentPath).update(data);
+
+  @override
   Future<void> deleteAll(Iterable<String> documentPaths) {
     final batch = _firestore.batch();
     for (final path in documentPaths) {

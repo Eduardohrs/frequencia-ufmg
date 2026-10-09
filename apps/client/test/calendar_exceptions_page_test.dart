@@ -114,6 +114,86 @@ void main() {
     expect(find.text('Aula sem chamada'), findsOneWidget);
   });
 
+  testWidgets('queues a calendar status when Android loses the backend', (
+    tester,
+  ) async {
+    final repository = _FakeSessionRepository([
+      _session('first', DateTime.utc(2026, 8, 3, 11), now),
+    ]);
+    final logger = _RecordingAppLogger();
+    final gateway = _SessionGateway(
+      now,
+      failure: const PythonBackendException(PythonBackendError.timeout),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CalendarExceptionsPage(
+          courseId: courseId,
+          repository: repository,
+          logger: logger,
+          location: location,
+          now: () => now,
+          sessionGateway: gateway,
+          sessionWritesEnabled: true,
+          androidOfflineQueueEnabled: true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Alterar sessão de 03/08/2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Aula sem chamada'));
+    await tester.pumpAndSettle();
+
+    expect(
+      repository.saveCalls.single.calendarStatus,
+      SessionCalendarStatus.noCall,
+    );
+    expect(
+      find.text(
+        'Salvo no aparelho. A sincronização continuará automaticamente.',
+      ),
+      findsOneWidget,
+    );
+    expect(logger.events, contains('android_offline_calendar_status_queued'));
+  });
+
+  testWidgets('observes a rejected offline calendar delivery', (tester) async {
+    final repository = _FakeSessionRepository([
+      _session('first', DateTime.utc(2026, 8, 3, 11), now),
+    ])..saveError = StateError('delivery rejected');
+    final logger = _RecordingAppLogger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CalendarExceptionsPage(
+          courseId: courseId,
+          repository: repository,
+          logger: logger,
+          location: location,
+          now: () => now,
+          sessionGateway: _SessionGateway(
+            now,
+            failure: const PythonBackendException(PythonBackendError.timeout),
+          ),
+          sessionWritesEnabled: true,
+          androidOfflineQueueEnabled: true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Alterar sessão de 03/08/2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Aula sem chamada'));
+    await tester.pumpAndSettle();
+
+    expect(
+      logger.errorContexts,
+      contains('android_offline_calendar_status_delivery'),
+    );
+  });
+
   testWidgets('adds and removes an evaluative activity independently', (
     tester,
   ) async {
@@ -383,7 +463,28 @@ SessionRecord _session(
   updatedAt: now,
 );
 
-final class _FakeSessionRepository implements SessionRepository {
+SessionRecord _copySession(
+  SessionRecord source, {
+  required SessionCalendarStatus calendarStatus,
+  required DateTime updatedAt,
+}) => SessionRecord(
+  id: source.id,
+  startsAt: source.startsAt,
+  endsAt: source.endsAt,
+  lessonCount: source.lessonCount,
+  callCount: source.callCount,
+  firstPing: source.firstPing,
+  secondPing: source.secondPing,
+  attendanceStatus: source.attendanceStatus,
+  absences: source.absences,
+  calendarStatus: calendarStatus,
+  assessmentTitle: source.assessmentTitle,
+  createdAt: source.createdAt,
+  updatedAt: updatedAt,
+);
+
+final class _FakeSessionRepository
+    implements SessionRepository, OfflineSessionMutationQueue {
   _FakeSessionRepository(List<SessionRecord> sessions)
     : sessions = [...sessions];
 
@@ -411,12 +512,33 @@ final class _FakeSessionRepository implements SessionRepository {
     sessions.removeWhere((item) => item.id == session.id);
     sessions.add(session);
   }
+
+  @override
+  Future<void> patchAttendance(
+    String courseId,
+    String sessionId, {
+    required SituacaoFrequencia status,
+    required int? absences,
+    required DateTime updatedAt,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> patchCalendarStatus(
+    String courseId,
+    String sessionId, {
+    required SessionCalendarStatus status,
+    required DateTime updatedAt,
+  }) => saveSession(
+    courseId,
+    _copySession(byId(sessionId), calendarStatus: status, updatedAt: updatedAt),
+  );
 }
 
 final class _SessionGateway implements BackendSessionGateway {
-  _SessionGateway(this.updatedAt);
+  _SessionGateway(this.updatedAt, {this.failure});
 
   final DateTime updatedAt;
+  final Object? failure;
   final calendarCalls = <(String, String, String)>[];
 
   @override
@@ -425,6 +547,7 @@ final class _SessionGateway implements BackendSessionGateway {
     required String sessionId,
     required String calendarStatus,
   }) async {
+    if (failure case final error?) throw error;
     calendarCalls.add((courseId, sessionId, calendarStatus));
     return PythonCalendarStatusMutation(
       calendarStatus: calendarStatus,
@@ -445,6 +568,7 @@ final class _SessionGateway implements BackendSessionGateway {
 
 final class _RecordingAppLogger implements AppLogger {
   final events = <String>[];
+  final errorContexts = <String>[];
 
   @override
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
@@ -458,5 +582,5 @@ final class _RecordingAppLogger implements AppLogger {
     required String context,
     bool fatal = false,
     Map<String, Object>? parameters,
-  }) async {}
+  }) async => errorContexts.add(context);
 }

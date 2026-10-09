@@ -251,6 +251,111 @@ void main() {
     expect(find.text('Saiu mais cedo • 1 faltas'), findsOneWidget);
   });
 
+  testWidgets('queues attendance in Firestore when Android loses the backend', (
+    tester,
+  ) async {
+    final repository = _FakeRepository([_session('offline', now)]);
+    final logger = _Logger();
+    final gateway = _SessionGateway(
+      now,
+      failure: const PythonBackendException(PythonBackendError.unavailable),
+    );
+    await tester.pumpWidget(
+      _app(
+        repository,
+        logger,
+        location,
+        now,
+        sessionGateway: gateway,
+        sessionWritesEnabled: true,
+        androidOfflineQueueEnabled: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(
+      repository.saveCalls.single.attendanceStatus,
+      SituacaoFrequencia.present,
+    );
+    expect(repository.saveCalls.single.absences, 0);
+    expect(find.text('Presente • 0 faltas'), findsOneWidget);
+    expect(
+      find.text(
+        'Salvo no aparelho. A sincronização continuará automaticamente.',
+      ),
+      findsOneWidget,
+    );
+    expect(logger.events, contains('android_offline_attendance_queued'));
+  });
+
+  testWidgets('never bypasses Python for an authentication rejection', (
+    tester,
+  ) async {
+    final repository = _FakeRepository([_session('rejected', now)]);
+    final gateway = _SessionGateway(
+      now,
+      failure: const PythonBackendException(PythonBackendError.unauthorized),
+    );
+    await tester.pumpWidget(
+      _app(
+        repository,
+        _Logger(),
+        location,
+        now,
+        sessionGateway: gateway,
+        sessionWritesEnabled: true,
+        androidOfflineQueueEnabled: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(repository.saveCalls, isEmpty);
+    expect(find.text('Não foi possível salvar a frequência.'), findsOneWidget);
+  });
+
+  testWidgets('observes a rejected offline attendance delivery', (
+    tester,
+  ) async {
+    final repository = _FakeRepository([_session('offline', now)])
+      ..saveError = StateError('delivery rejected');
+    final logger = _Logger();
+    await tester.pumpWidget(
+      _app(
+        repository,
+        logger,
+        location,
+        now,
+        sessionGateway: _SessionGateway(
+          now,
+          failure: const PythonBackendException(PythonBackendError.timeout),
+        ),
+        sessionWritesEnabled: true,
+        androidOfflineQueueEnabled: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(
+      logger.errorContexts,
+      contains('android_offline_attendance_delivery'),
+    );
+  });
+
   testWidgets('does not save when the Python authority is unavailable', (
     tester,
   ) async {
@@ -325,6 +430,7 @@ Widget _app(
   BackendAttendanceEvaluator? attendanceEvaluator,
   BackendSessionGateway? sessionGateway,
   bool sessionWritesEnabled = false,
+  bool androidOfflineQueueEnabled = false,
   String? courseCode,
   String? initialSessionId,
 }) => MaterialApp(
@@ -339,6 +445,7 @@ Widget _app(
     attendanceEvaluator: attendanceEvaluator,
     sessionGateway: sessionGateway,
     sessionWritesEnabled: sessionWritesEnabled,
+    androidOfflineQueueEnabled: androidOfflineQueueEnabled,
   ),
 );
 
@@ -361,7 +468,8 @@ SessionRecord _session(
   updatedAt: startsAt,
 );
 
-final class _FakeRepository implements SessionRepository {
+final class _FakeRepository
+    implements SessionRepository, OfflineSessionMutationQueue {
   _FakeRepository(this.sessions);
   final List<SessionRecord> sessions;
   Object? listError;
@@ -384,12 +492,59 @@ final class _FakeRepository implements SessionRepository {
     sessions.removeWhere((item) => item.id == session.id);
     sessions.add(session);
   }
+
+  @override
+  Future<void> patchAttendance(
+    String courseId,
+    String sessionId, {
+    required SituacaoFrequencia status,
+    required int? absences,
+    required DateTime updatedAt,
+  }) => saveSession(
+    courseId,
+    _copySession(
+      byId(sessionId),
+      status: status,
+      absences: absences,
+      updatedAt: updatedAt,
+    ),
+  );
+
+  @override
+  Future<void> patchCalendarStatus(
+    String courseId,
+    String sessionId, {
+    required SessionCalendarStatus status,
+    required DateTime updatedAt,
+  }) => throw UnimplementedError();
 }
 
+SessionRecord _copySession(
+  SessionRecord source, {
+  required SituacaoFrequencia status,
+  required int? absences,
+  required DateTime updatedAt,
+}) => SessionRecord(
+  id: source.id,
+  startsAt: source.startsAt,
+  endsAt: source.endsAt,
+  lessonCount: source.lessonCount,
+  callCount: source.callCount,
+  firstPing: source.firstPing,
+  secondPing: source.secondPing,
+  attendanceStatus: status,
+  absences: absences,
+  calendarStatus: source.calendarStatus,
+  assessmentTitle: source.assessmentTitle,
+  createdAt: source.createdAt,
+  updatedAt: updatedAt,
+);
+
 final class _SessionGateway implements BackendSessionGateway {
-  _SessionGateway(this.updatedAt);
+  _SessionGateway(this.updatedAt, {this.failure});
 
   final DateTime updatedAt;
+  final Object? failure;
   final attendanceCalls =
       <
         ({
@@ -411,6 +566,7 @@ final class _SessionGateway implements BackendSessionGateway {
     required bool useDefaultAbsences,
     int? correctedAbsences,
   }) async {
+    if (failure case final error?) throw error;
     attendanceCalls.add((
       courseId: courseId,
       sessionId: sessionId,
@@ -436,6 +592,7 @@ final class _SessionGateway implements BackendSessionGateway {
 
 final class _Logger implements AppLogger {
   final events = <String>[];
+  final errorContexts = <String>[];
   @override
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async =>
       events.add(name);
@@ -446,7 +603,7 @@ final class _Logger implements AppLogger {
     required String context,
     bool fatal = false,
     Map<String, Object>? parameters,
-  }) async {}
+  }) async => errorContexts.add(context);
 }
 
 final class _Evaluator implements BackendAttendanceEvaluator {

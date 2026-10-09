@@ -1096,6 +1096,9 @@ final class _RecordingDocumentStore implements DocumentStore {
       ..clear()
       ..add(StoredDocument(id: documentPath.split('/').last, data: data));
   }
+
+  @override
+  Future<void> update(String documentPath, Map<String, Object?> data) async {}
 }
 
 final class _ReloadBlockingCourseRepository implements CourseRepository {
