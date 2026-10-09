@@ -8,6 +8,7 @@ import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/document_store.dart';
 import 'package:frequencia_ufmg/data/calendar_status.dart';
+import 'package:frequencia_ufmg/data/python_overview_repository.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
 import 'package:frequencia_ufmg/features/courses/course_page.dart';
 import 'package:frequencia_ufmg/observability/app_logger.dart';
@@ -438,6 +439,69 @@ void main() {
     await tester.tap(find.byKey(const Key('nav-general-calendar')));
     await tester.pumpAndSettle();
     expect(find.text('Calendário operacional'), findsOneWidget);
+  });
+
+  testWidgets('loads and reuses one Python overview snapshot', (tester) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final sessionRepository = _FakeSessionRepository();
+    final courseRepository = _FakeCourseRepository();
+    final overview = _FakeOverviewRepository(
+      AcademicOverviewSnapshot(
+        courses: [course],
+        sessionsByCourse: {
+          'course-1': [_session('past', DateTime.utc(2026, 9, 26, 12))],
+        },
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: courseRepository,
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: sessionRepository,
+          overviewRepository: overview,
+          overviewReadsEnabled: true,
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 aula anterior está sem frequência'), findsOneWidget);
+    expect(overview.loadCalls, 1);
+    expect(courseRepository.listCalls, 0);
+    expect(sessionRepository.listedCourseIds, isEmpty);
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('nav-absence-dashboard')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Faltas restantes'), findsOneWidget);
+    expect(sessionRepository.listedCourseIds, isEmpty);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(overview.loadCalls, 2);
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('nav-general-calendar')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Calendário operacional'), findsOneWidget);
+    expect(sessionRepository.listedCourseIds, isEmpty);
   });
 
   testWidgets('alerts about unresolved attendance from an earlier day', (
@@ -886,6 +950,7 @@ final class _FakeCourseRepository implements CourseRepository {
   Object? listError;
   Object? saveError;
   Object? deleteError;
+  int listCalls = 0;
 
   @override
   Future<void> deleteCourse(String courseId) async {
@@ -896,6 +961,7 @@ final class _FakeCourseRepository implements CourseRepository {
 
   @override
   Future<List<CourseRecord>> listCourses() async {
+    listCalls++;
     if (listError case final error?) throw error;
     return List.of(courses);
   }
@@ -928,6 +994,7 @@ final class _FakeSessionRepository implements SessionRepository {
   _FakeSessionRepository([this.sessions = const {}]);
 
   final Map<String, List<SessionRecord>> sessions;
+  final listedCourseIds = <String>[];
   Object? listError;
 
   @override
@@ -935,12 +1002,26 @@ final class _FakeSessionRepository implements SessionRepository {
 
   @override
   Future<List<SessionRecord>> listSessions(String courseId) async {
+    listedCourseIds.add(courseId);
     if (listError case final error?) throw error;
     return List.of(sessions[courseId] ?? const []);
   }
 
   @override
   Future<void> saveSession(String courseId, SessionRecord session) async {}
+}
+
+final class _FakeOverviewRepository implements AcademicOverviewRepository {
+  _FakeOverviewRepository(this.snapshot);
+
+  final AcademicOverviewSnapshot snapshot;
+  int loadCalls = 0;
+
+  @override
+  Future<AcademicOverviewSnapshot> loadOverview() async {
+    loadCalls++;
+    return snapshot;
+  }
 }
 
 SessionRecord _session(

@@ -10,6 +10,7 @@ import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/academic_period.dart';
 import '../../data/calendar_status.dart';
+import '../../data/python_overview_repository.dart';
 import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
@@ -36,13 +37,16 @@ class CoursePage extends StatefulWidget {
     this.attendanceEvaluator,
     this.scheduleGateway,
     this.sessionGateway,
+    this.overviewRepository,
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
+    this.overviewReadsEnabled = false,
     CourseIdGenerator? idGenerator,
     CurrentTime? now,
     super.key,
   }) : idGenerator = idGenerator ?? _newCourseId,
-       now = now ?? DateTime.now;
+       now = now ?? DateTime.now,
+       assert(!overviewReadsEnabled || overviewRepository != null);
 
   final CourseRepository repository;
   final MeetingRepository meetingRepository;
@@ -53,8 +57,10 @@ class CoursePage extends StatefulWidget {
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
+  final AcademicOverviewRepository? overviewRepository;
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
+  final bool overviewReadsEnabled;
   final CourseIdGenerator idGenerator;
   final CurrentTime now;
 
@@ -70,6 +76,7 @@ class _CoursePageState extends State<CoursePage> {
   final _savingIds = <String>{};
   int _pastPendingCount = 0;
   _PendingAttendance? _nextPastPending;
+  Map<String, List<SessionRecord>> _sessionsByCourse = const {};
 
   @override
   void initState() {
@@ -83,12 +90,35 @@ class _CoursePageState extends State<CoursePage> {
       _loadFailed = false;
     });
     try {
-      final courses = await widget.repository.listCourses();
+      final snapshot = widget.overviewReadsEnabled
+          ? await widget.overviewRepository!.loadOverview()
+          : null;
+      final courses =
+          snapshot?.courses.toList() ?? await widget.repository.listCourses();
+      final sessionsByCourse = snapshot == null
+          ? <String, List<SessionRecord>>{}
+          : {
+              for (final entry in snapshot.sessionsByCourse.entries)
+                entry.key: List<SessionRecord>.of(entry.value),
+            };
       await _removeExpiredCourses(courses);
+      sessionsByCourse.removeWhere(
+        (courseId, _) => courses.every((course) => course.id != courseId),
+      );
       if (!mounted) return;
       courses.sort((left, right) => left.code.compareTo(right.code));
-      setState(() => _courses = courses);
-      unawaited(_loadPastPendingCount(courses));
+      setState(() {
+        _courses = courses;
+        _sessionsByCourse = sessionsByCourse;
+      });
+      if (snapshot == null) {
+        unawaited(_loadPastPendingCount(courses));
+      } else {
+        _setPastPending(courses, [
+          for (final course in courses)
+            sessionsByCourse[course.id] ?? const <SessionRecord>[],
+        ]);
+      }
     } catch (_) {
       if (mounted) setState(() => _loadFailed = true);
     } finally {
@@ -97,6 +127,10 @@ class _CoursePageState extends State<CoursePage> {
   }
 
   Future<void> _loadPastPendingCount(List<CourseRecord> courses) async {
+    if (widget.overviewReadsEnabled) {
+      await _load();
+      return;
+    }
     try {
       final location = tz.getLocation('America/Sao_Paulo');
       final localNow = tz.TZDateTime.from(widget.now(), location);
@@ -105,35 +139,7 @@ class _CoursePageState extends State<CoursePage> {
         for (final course in courses)
           widget.sessionRepository.listSessions(course.id),
       ]);
-      final pending = <_PendingAttendance>[];
-      for (var index = 0; index < courses.length; index++) {
-        for (final session in loaded[index]) {
-          final requiresAttendance =
-              session.calendarStatus == SessionCalendarStatus.scheduled ||
-              session.calendarStatus == SessionCalendarStatus.makeup;
-          final localSession = tz.TZDateTime.from(session.startsAt, location);
-          final day = DateTime(
-            localSession.year,
-            localSession.month,
-            localSession.day,
-          );
-          if (requiresAttendance &&
-              session.absences == null &&
-              day.isBefore(today)) {
-            pending.add(_PendingAttendance(courses[index], session));
-          }
-        }
-      }
-      pending.sort(
-        (left, right) =>
-            right.session.startsAt.compareTo(left.session.startsAt),
-      );
-      if (mounted) {
-        setState(() {
-          _pastPendingCount = pending.length;
-          _nextPastPending = pending.isEmpty ? null : pending.first;
-        });
-      }
+      _setPastPending(courses, loaded, today: today, location: location);
     } catch (error, stackTrace) {
       unawaited(
         widget.logger.recordError(
@@ -142,6 +148,49 @@ class _CoursePageState extends State<CoursePage> {
           context: 'past_attendance_pending_load',
         ),
       );
+    }
+  }
+
+  void _setPastPending(
+    List<CourseRecord> courses,
+    List<List<SessionRecord>> loaded, {
+    DateTime? today,
+    tz.Location? location,
+  }) {
+    final effectiveLocation = location ?? tz.getLocation('America/Sao_Paulo');
+    final localNow = tz.TZDateTime.from(widget.now(), effectiveLocation);
+    final effectiveToday =
+        today ?? DateTime(localNow.year, localNow.month, localNow.day);
+    final pending = <_PendingAttendance>[];
+    for (var index = 0; index < courses.length; index++) {
+      for (final session in loaded[index]) {
+        final requiresAttendance =
+            session.calendarStatus == SessionCalendarStatus.scheduled ||
+            session.calendarStatus == SessionCalendarStatus.makeup;
+        final localSession = tz.TZDateTime.from(
+          session.startsAt,
+          effectiveLocation,
+        );
+        final day = DateTime(
+          localSession.year,
+          localSession.month,
+          localSession.day,
+        );
+        if (requiresAttendance &&
+            session.absences == null &&
+            day.isBefore(effectiveToday)) {
+          pending.add(_PendingAttendance(courses[index], session));
+        }
+      }
+    }
+    pending.sort(
+      (left, right) => right.session.startsAt.compareTo(left.session.startsAt),
+    );
+    if (mounted) {
+      setState(() {
+        _pastPendingCount = pending.length;
+        _nextPastPending = pending.isEmpty ? null : pending.first;
+      });
     }
   }
 
@@ -227,6 +276,9 @@ class _CoursePageState extends State<CoursePage> {
           repository: widget.sessionRepository,
           location: tz.getLocation('America/Sao_Paulo'),
           now: widget.now,
+          initialSessionsByCourse: widget.overviewReadsEnabled
+              ? _sessionsByCourse
+              : null,
         ),
       ),
     );
@@ -241,6 +293,9 @@ class _CoursePageState extends State<CoursePage> {
           repository: widget.sessionRepository,
           location: tz.getLocation('America/Sao_Paulo'),
           now: widget.now,
+          initialSessionsByCourse: widget.overviewReadsEnabled
+              ? _sessionsByCourse
+              : null,
         ),
       ),
     );

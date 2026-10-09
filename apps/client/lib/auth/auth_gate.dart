@@ -6,6 +6,7 @@ import 'auth_gateway.dart';
 import 'auth_user.dart';
 import '../backend/python_backend_transport.dart';
 import '../data/academic_repositories.dart';
+import '../data/python_overview_repository.dart';
 import '../features/courses/course_page.dart';
 import '../observability/app_logger.dart';
 import '../observability/audited_operation.dart';
@@ -21,8 +22,10 @@ class AuthGate extends StatefulWidget {
     this.attendanceEvaluator,
     this.scheduleGateway,
     this.sessionGateway,
+    this.overviewRepository,
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
+    this.overviewReadsEnabled = false,
     super.key,
   });
 
@@ -35,8 +38,10 @@ class AuthGate extends StatefulWidget {
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
+  final AcademicOverviewRepository? overviewRepository;
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
+  final bool overviewReadsEnabled;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -122,8 +127,10 @@ class _AuthGateState extends State<AuthGate> {
             attendanceEvaluator: widget.attendanceEvaluator,
             scheduleGateway: widget.scheduleGateway,
             sessionGateway: widget.sessionGateway,
+            overviewRepository: widget.overviewRepository,
             scheduleWritesEnabled: widget.scheduleWritesEnabled,
             sessionWritesEnabled: widget.sessionWritesEnabled,
+            overviewReadsEnabled: widget.overviewReadsEnabled,
             onSignOut: () =>
                 _run(AuditedOperation.logout, widget.authGateway.signOut),
           );

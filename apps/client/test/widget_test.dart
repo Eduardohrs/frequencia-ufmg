@@ -101,6 +101,7 @@ void main() {
     addTearDown(gateway.close);
     app.authGatewayFactory = () => gateway;
     app.appLoggerFactory = () => logger;
+    app.backendIdentityVerifierFactory = () => _FakeOverviewBackend();
     app.courseRepositoryFactory = (userId, _) {
       repositoryUserId = userId;
       return _FakeCourseRepository();
@@ -317,6 +318,15 @@ final class _FakeCourseBackend
 
   @override
   Future<void> deleteCourse(String courseId) async {}
+}
+
+final class _FakeOverviewBackend
+    implements BackendIdentityVerifier, BackendOverviewGateway {
+  @override
+  Future<void> verifyIdentity() async {}
+
+  @override
+  Future<List<PythonOverviewItem>> loadOverview() async => [];
 }
 
 final class _FakeCourseRepository implements CourseRepository {

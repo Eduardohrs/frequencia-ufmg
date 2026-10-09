@@ -19,6 +19,7 @@ void main() {
       expect(snapshot.courses.single.code, 'DCC203');
       final session = snapshot.sessionsByCourse['course-1']!.single;
       expect(session.firstPing, EstadoPing.onCampus);
+      expect(session.secondPing, EstadoPing.away);
       expect(session.attendanceStatus, SituacaoFrequencia.present);
       expect(session.absences, 0);
       expect(logger.events, [
@@ -50,9 +51,9 @@ final class _Gateway implements BackendOverviewGateway {
           'starts_at': '2026-10-08T10:00:00Z',
           'ends_at': '2026-10-08T11:40:00Z',
           'lesson_count': 2,
-          'call_count': 1,
+          'call_count': 2,
           'first_ping': 'no_campus',
-          'second_ping': null,
+          'second_ping': 'fora',
           'attendance_status': 'presente',
           'absences': 0,
           'calendar_status': 'scheduled',

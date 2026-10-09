@@ -14,6 +14,7 @@ class GeneralCalendarPage extends StatefulWidget {
     required this.location,
     required this.now,
     this.initialCourseId,
+    this.initialSessionsByCourse,
     super.key,
   });
 
@@ -22,6 +23,7 @@ class GeneralCalendarPage extends StatefulWidget {
   final tz.Location location;
   final DateTime Function() now;
   final String? initialCourseId;
+  final Map<String, List<SessionRecord>>? initialSessionsByCourse;
 
   @override
   State<GeneralCalendarPage> createState() => _GeneralCalendarPageState();
@@ -50,17 +52,27 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
       _failed = false;
     });
     try {
-      final loaded = await Future.wait([
-        for (final course in widget.courses)
-          widget.repository
-              .listSessions(course.id)
-              .then(
-                (sessions) => [
-                  for (final session in sessions)
+      final initial = widget.initialSessionsByCourse;
+      final loaded = initial != null
+          ? [
+              for (final course in widget.courses)
+                [
+                  for (final session
+                      in initial[course.id] ?? const <SessionRecord>[])
                     _CalendarEntry(course, session),
                 ],
-              ),
-      ]);
+            ]
+          : await Future.wait([
+              for (final course in widget.courses)
+                widget.repository
+                    .listSessions(course.id)
+                    .then(
+                      (sessions) => [
+                        for (final session in sessions)
+                          _CalendarEntry(course, session),
+                      ],
+                    ),
+            ]);
       final entries = loaded.expand((items) => items).toList()
         ..sort((a, b) => a.session.startsAt.compareTo(b.session.startsAt));
       if (mounted) setState(() => _entries = entries);

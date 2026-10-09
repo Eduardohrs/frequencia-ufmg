@@ -225,7 +225,13 @@ void main() {
             'items': [
               {
                 'course': _courseJson,
-                'sessions': [_sessionJson],
+                'sessions': [
+                  {
+                    ..._sessionJson,
+                    'call_count': 2,
+                    'second_ping': 'fora',
+                  },
+                ],
               },
             ],
           }),
@@ -240,6 +246,7 @@ void main() {
     expect(overview, hasLength(1));
     expect(overview.single.course.code, 'DCC203');
     expect(overview.single.sessions.single.id, 'session-1');
+    expect(overview.single.sessions.single.secondPing, 'fora');
     expect(overview.single.sessions.single.calendarStatus, 'no_call');
     expect(overview.single.sessions.single.absences, 0);
   });

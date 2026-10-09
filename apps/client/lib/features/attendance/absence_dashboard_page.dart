@@ -113,6 +113,7 @@ class AbsenceDashboardPage extends StatefulWidget {
     required this.repository,
     required this.location,
     required this.now,
+    this.initialSessionsByCourse,
     super.key,
   });
 
@@ -120,6 +121,7 @@ class AbsenceDashboardPage extends StatefulWidget {
   final SessionRepository repository;
   final tz.Location location;
   final DateTime Function() now;
+  final Map<String, List<SessionRecord>>? initialSessionsByCourse;
 
   @override
   State<AbsenceDashboardPage> createState() => _AbsenceDashboardPageState();
@@ -142,19 +144,30 @@ class _AbsenceDashboardPageState extends State<AbsenceDashboardPage> {
       _failed = false;
     });
     try {
-      final summaries = await Future.wait([
-        for (final course in widget.courses)
-          widget.repository
-              .listSessions(course.id)
-              .then(
-                (sessions) => CourseAbsenceSummary.from(
+      final initial = widget.initialSessionsByCourse;
+      final summaries = initial != null
+          ? [
+              for (final course in widget.courses)
+                CourseAbsenceSummary.from(
                   course,
-                  sessions,
+                  initial[course.id] ?? const [],
                   now: widget.now(),
                   location: widget.location,
                 ),
-              ),
-      ]);
+            ]
+          : await Future.wait([
+              for (final course in widget.courses)
+                widget.repository
+                    .listSessions(course.id)
+                    .then(
+                      (sessions) => CourseAbsenceSummary.from(
+                        course,
+                        sessions,
+                        now: widget.now(),
+                        location: widget.location,
+                      ),
+                    ),
+            ]);
       summaries.sort(
         (left, right) => left.course.code.compareTo(right.course.code),
       );

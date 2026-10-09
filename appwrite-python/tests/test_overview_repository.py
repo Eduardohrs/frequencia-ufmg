@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -90,6 +89,13 @@ def test_overview_rejects_more_than_the_bounded_course_count() -> None:
     with pytest.raises(OverviewTooLarge):
         AcademicOverviewRepository(store).load()  # type: ignore[arg-type]
 
+    assert store.calls == [("courses",)]
+
+
+def test_overview_returns_empty_without_requesting_sessions() -> None:
+    store = FakeFirestore([], {})
+
+    assert AcademicOverviewRepository(store).load() == []  # type: ignore[arg-type]
     assert store.calls == [("courses",)]
 
 

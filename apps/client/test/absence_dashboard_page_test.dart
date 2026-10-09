@@ -281,6 +281,29 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Nenhuma disciplina cadastrada'), findsOneWidget);
   });
+
+  testWidgets('uses an aggregate snapshot without repository reads', (
+    tester,
+  ) async {
+    final repository = _Repository({})..error = StateError('must not read');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AbsenceDashboardPage(
+          courses: [poo],
+          repository: repository,
+          location: location,
+          now: () => now,
+          initialSessionsByCourse: {
+            'poo': [_session('present', now, absences: 0)],
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('0 encontros restantes'), findsOneWidget);
+    expect(repository.listCalls, 0);
+  });
 }
 
 CourseRecord _course(String id, String code, int workload, DateTime now) =>
@@ -325,9 +348,11 @@ final class _Repository implements SessionRepository {
 
   final Map<String, List<SessionRecord>> sessions;
   Object? error;
+  int listCalls = 0;
 
   @override
   Future<List<SessionRecord>> listSessions(String courseId) async {
+    listCalls++;
     if (error case final value?) throw value;
     return [...sessions[courseId] ?? const []];
   }
