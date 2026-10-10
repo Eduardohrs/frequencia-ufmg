@@ -73,6 +73,53 @@ void main() {
     expect(gateway.saveCount, 0);
   });
 
+  testWidgets('marks a restored schedule as an offline local copy', (
+    tester,
+  ) async {
+    final meeting = MeetingRecord(
+      id: 'cached',
+      weekday: DateTime.monday,
+      startMinutes: 480,
+      endMinutes: 580,
+      lessonCount: QuantidadeAulas.two,
+      callCount: NumeroChamadas.one,
+      createdAt: now,
+      updatedAt: now,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          scheduleGateway: _FakeScheduleGateway(
+            course: course,
+            meetings: [meeting],
+            isLocalCopy: true,
+          ),
+          scheduleWritesEnabled: true,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('offline-schedule-banner')), findsOneWidget);
+    expect(
+      find.text('Exibindo a última grade salva neste aparelho.'),
+      findsOneWidget,
+    );
+    expect(find.text('Segunda-feira • 08:00–09:40'), findsOneWidget);
+    expect(find.text('Reconecte-se para alterar a grade.'), findsOneWidget);
+    expect(
+      tester
+          .widget<FloatingActionButton>(find.byKey(const Key('add-meeting')))
+          .onPressed,
+      isNull,
+    );
+  });
+
   testWidgets(
     'saves a complete schedule only through the authoritative gateway',
     (tester) async {
@@ -1203,8 +1250,11 @@ final class _RecordingAppLogger implements AppLogger {
 }
 
 final class _FakeScheduleGateway implements BackendScheduleGateway {
-  _FakeScheduleGateway({required this.course, List<MeetingRecord>? meetings})
-    : meetings = meetings ?? [];
+  _FakeScheduleGateway({
+    required this.course,
+    List<MeetingRecord>? meetings,
+    this.isLocalCopy = false,
+  }) : meetings = meetings ?? [];
 
   CourseRecord course;
   List<MeetingRecord> meetings;
@@ -1215,6 +1265,7 @@ final class _FakeScheduleGateway implements BackendScheduleGateway {
   DateTime? startsOn;
   DateTime? endsOn;
   final confirmations = <bool>[];
+  final bool isLocalCopy;
 
   @override
   Future<PythonSchedule> getSchedule(String courseId) async {
@@ -1302,5 +1353,6 @@ final class _FakeScheduleGateway implements BackendScheduleGateway {
       sessionDeletes: 0,
       destructiveDeletes: 0,
     ),
+    isLocalCopy: isLocalCopy,
   );
 }

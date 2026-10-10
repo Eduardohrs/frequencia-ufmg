@@ -35,6 +35,7 @@ class CourseSchedulePage extends StatefulWidget {
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
     this.androidOfflineQueueEnabled = false,
+    this.initialSessionsByCourse,
     this.courseRepository,
     Iterable<CourseRecord>? allCourses,
     Iterable<String>? allCourseIds,
@@ -60,6 +61,7 @@ class CourseSchedulePage extends StatefulWidget {
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
   final bool androidOfflineQueueEnabled;
+  final Map<String, List<SessionRecord>>? initialSessionsByCourse;
   final List<CourseRecord> allCourses;
   final List<String> allCourseIds;
   final SessionGenerator? generator;
@@ -77,6 +79,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
   bool _loadFailed = false;
   String? _deletingId;
   bool _syncing = false;
+  bool _usingLocalCopy = false;
 
   SessionGenerator get _generator =>
       widget.generator ?? SessionGenerator(tz.getLocation('America/Sao_Paulo'));
@@ -104,6 +107,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       setState(() {
         if (schedule != null) _course = _courseFromPython(schedule.course);
         _meetings = _sorted(meetings);
+        _usingLocalCopy = schedule?.isLocalCopy ?? false;
       });
       if (schedule != null) {
         unawaited(
@@ -451,6 +455,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         sessionGateway: widget.sessionGateway,
         sessionWritesEnabled: widget.sessionWritesEnabled,
         androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
+        initialSessions: widget.initialSessionsByCourse?[widget.course.id],
       ),
     ),
   );
@@ -468,6 +473,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
         location: _generator.location,
         now: widget.now,
+        initialSessions: widget.initialSessionsByCourse?[widget.course.id],
       ),
     ),
   );
@@ -485,6 +491,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
               repository: widget.sessionRepository,
               location: _generator.location,
               initialCourseId: widget.course.id,
+              initialSessionsByCourse: widget.initialSessionsByCourse,
               now: widget.now,
             ),
           ),
@@ -564,6 +571,18 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     }
     return ListView(
       children: [
+        if (_usingLocalCopy) ...[
+          Card(
+            key: const Key('offline-schedule-banner'),
+            color: Theme.of(context).colorScheme.secondaryContainer,
+            child: const ListTile(
+              leading: Icon(Icons.cloud_off_outlined),
+              title: Text('Modo offline'),
+              subtitle: Text('Exibindo a última grade salva neste aparelho.'),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         _PeriodCard(
           course: _course,
           syncing: _syncing,
@@ -571,8 +590,10 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         ),
         if (!_writesAvailable) ...[
           const SizedBox(height: 12),
-          const Text(
-            'A grade está em validação segura. A edição será liberada após a conferência dos dados.',
+          Text(
+            _usingLocalCopy
+                ? 'Reconecte-se para alterar a grade.'
+                : 'A grade está em validação segura. A edição será liberada após a conferência dos dados.',
             textAlign: TextAlign.center,
           ),
         ],
@@ -649,7 +670,8 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
   }
 
   bool get _writesAvailable =>
-      widget.scheduleGateway == null || widget.scheduleWritesEnabled;
+      !_usingLocalCopy &&
+      (widget.scheduleGateway == null || widget.scheduleWritesEnabled);
 }
 
 CourseRecord _courseFromPython(PythonCourse course) => CourseRecord(

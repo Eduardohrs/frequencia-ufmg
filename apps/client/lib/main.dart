@@ -8,6 +8,7 @@ import 'auth/auth_gate.dart';
 import 'auth/auth_gateway.dart';
 import 'auth/firebase_auth_gateway.dart';
 import 'backend/firebase_python_backend.dart';
+import 'backend/cached_schedule_gateway.dart';
 import 'backend/python_backend_transport.dart';
 import 'data/academic_repositories.dart';
 import 'data/cached_academic_overview_repository.dart';
@@ -17,6 +18,7 @@ import 'data/firestore_configuration.dart';
 import 'data/python_course_repository.dart';
 import 'data/python_overview_repository.dart';
 import 'data/shared_preferences_academic_overview_cache.dart';
+import 'data/shared_preferences_schedule_cache.dart';
 import 'firebase_options.dart';
 import 'observability/app_logger.dart';
 import 'observability/error_reporting.dart';
@@ -90,6 +92,14 @@ Future<void> main() async {
           logger: logger,
         )
       : null;
+  final scheduleGateway = backend is BackendScheduleGateway
+      ? CachedScheduleGateway(
+          remote: backend as BackendScheduleGateway,
+          cache: SharedPreferencesScheduleCache(),
+          currentUserId: currentFirebaseUserId,
+          logger: logger,
+        )
+      : null;
   configureErrorReporting(logger);
   runApp(
     FrequenciaUFMGApp(
@@ -107,9 +117,7 @@ Future<void> main() async {
       attendanceEvaluator: backend is BackendAttendanceEvaluator
           ? backend as BackendAttendanceEvaluator
           : null,
-      scheduleGateway: backend is BackendScheduleGateway
-          ? backend as BackendScheduleGateway
-          : null,
+      scheduleGateway: scheduleGateway,
       sessionGateway: backend is BackendSessionGateway
           ? backend as BackendSessionGateway
           : null,

@@ -16,6 +16,31 @@ void main() {
   final now = DateTime.utc(2026, 8, 1, 12);
   const courseId = 'poo';
 
+  testWidgets('uses saved sessions when the direct repository is offline', (
+    tester,
+  ) async {
+    final saved = _session('saved', DateTime.utc(2026, 8, 3, 11), now);
+    final repository = _FakeSessionRepository([])
+      ..listError = StateError('offline');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CalendarExceptionsPage(
+          courseId: courseId,
+          repository: repository,
+          logger: _RecordingAppLogger(),
+          location: location,
+          now: () => now,
+          initialSessions: [saved],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Alterar sessão de 03/08/2026'), findsOneWidget);
+    expect(find.text('Não foi possível carregar o calendário.'), findsNothing);
+  });
+
   testWidgets('marks a session as cancelled or without roll call', (
     tester,
   ) async {

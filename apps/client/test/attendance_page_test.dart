@@ -15,6 +15,24 @@ void main() {
   final location = tz.getLocation('America/Sao_Paulo');
   final now = DateTime.utc(2026, 8, 1, 12);
 
+  testWidgets('uses saved sessions when the direct repository is offline', (
+    tester,
+  ) async {
+    final repository = _FakeRepository([])..listError = StateError('offline');
+    final saved = _session('saved', now);
+
+    await tester.pumpWidget(
+      _app(repository, _Logger(), location, now, initialSessions: [saved]),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byTooltip('Registrar frequência de 01/08/2026'),
+      findsOneWidget,
+    );
+    expect(find.text('Não foi possível carregar as aulas.'), findsNothing);
+  });
+
   testWidgets('registers and corrects every manual attendance result', (
     tester,
   ) async {
@@ -433,11 +451,13 @@ Widget _app(
   bool androidOfflineQueueEnabled = false,
   String? courseCode,
   String? initialSessionId,
+  List<SessionRecord>? initialSessions,
 }) => MaterialApp(
   home: AttendancePage(
     courseId: 'poo',
     courseCode: courseCode,
     initialSessionId: initialSessionId,
+    initialSessions: initialSessions,
     repository: repository,
     logger: logger,
     location: location,

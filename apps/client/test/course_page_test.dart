@@ -516,17 +516,25 @@ void main() {
       createdAt: now,
       updatedAt: now,
     );
+    final savedSession = _session(
+      'saved-session',
+      now.subtract(const Duration(days: 1)),
+    );
+    final directSessions = _FakeSessionRepository()
+      ..listError = StateError('offline');
 
     await tester.pumpWidget(
       MaterialApp(
         home: CoursePage(
           repository: _FakeCourseRepository(),
           meetingRepository: _FakeMeetingRepository(),
-          sessionRepository: _FakeSessionRepository(),
+          sessionRepository: directSessions,
           overviewRepository: _FakeOverviewRepository(
             AcademicOverviewSnapshot(
               courses: [course],
-              sessionsByCourse: const {'course-1': []},
+              sessionsByCourse: {
+                'course-1': [savedSession],
+              },
               isLocalCopy: true,
             ),
           ),
@@ -546,6 +554,10 @@ void main() {
       find.text('Exibindo a última cópia salva neste aparelho.'),
       findsOneWidget,
     );
+    await tester.tap(find.byKey(const Key('past-attendance-pending-alert')));
+    await tester.pumpAndSettle();
+    expect(find.text('Frequência • DCC203'), findsOneWidget);
+    expect(directSessions.listedCourseIds, isEmpty);
   });
 
   testWidgets('uses the direct repository when overview rollout is disabled', (

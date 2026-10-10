@@ -336,6 +336,7 @@ final class PythonSchedule {
     required this.course,
     required this.meetings,
     required this.changes,
+    this.isLocalCopy = false,
   });
 
   factory PythonSchedule.fromJson(Map<String, Object?> json) {
@@ -363,6 +364,7 @@ final class PythonSchedule {
   final PythonCourse course;
   final List<PythonMeeting> meetings;
   final PythonScheduleChanges changes;
+  final bool isLocalCopy;
 }
 
 bool _hasExactKeys(Map<String, Object?> json, Set<String> keys) =>

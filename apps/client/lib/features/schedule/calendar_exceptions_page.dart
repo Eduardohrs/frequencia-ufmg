@@ -26,6 +26,7 @@ class CalendarExceptionsPage extends StatefulWidget {
     this.sessionGateway,
     this.sessionWritesEnabled = false,
     this.androidOfflineQueueEnabled = false,
+    this.initialSessions,
     ExceptionIdGenerator? idGenerator,
     ExceptionCurrentTime? now,
     super.key,
@@ -44,6 +45,7 @@ class CalendarExceptionsPage extends StatefulWidget {
   final BackendSessionGateway? sessionGateway;
   final bool sessionWritesEnabled;
   final bool androidOfflineQueueEnabled;
+  final List<SessionRecord>? initialSessions;
   final ExceptionIdGenerator idGenerator;
   final ExceptionCurrentTime now;
 
@@ -69,7 +71,9 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
       _loadFailed = false;
     });
     try {
-      final sessions = await widget.repository.listSessions(widget.courseId);
+      final sessions =
+          widget.initialSessions ??
+          await widget.repository.listSessions(widget.courseId);
       if (mounted) setState(() => _sessions = _sorted(sessions));
     } catch (_) {
       if (mounted) setState(() => _loadFailed = true);
