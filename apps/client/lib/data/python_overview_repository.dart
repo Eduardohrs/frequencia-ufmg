@@ -26,6 +26,11 @@ abstract interface class AcademicOverviewRepository {
   Future<AcademicOverviewSnapshot> loadOverview();
 }
 
+abstract interface class LocalFirstAcademicOverviewRepository
+    implements AcademicOverviewRepository {
+  Future<AcademicOverviewSnapshot?> loadCachedOverview();
+}
+
 final class PythonOverviewRepository implements AcademicOverviewRepository {
   const PythonOverviewRepository({required this.gateway, required this.logger});
 
