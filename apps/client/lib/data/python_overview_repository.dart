@@ -10,6 +10,7 @@ final class AcademicOverviewSnapshot {
   AcademicOverviewSnapshot({
     required List<CourseRecord> courses,
     required Map<String, List<SessionRecord>> sessionsByCourse,
+    this.isLocalCopy = false,
   }) : courses = List.unmodifiable(courses),
        sessionsByCourse = Map<String, List<SessionRecord>>.unmodifiable({
          for (final entry in sessionsByCourse.entries)
@@ -18,6 +19,7 @@ final class AcademicOverviewSnapshot {
 
   final List<CourseRecord> courses;
   final Map<String, List<SessionRecord>> sessionsByCourse;
+  final bool isLocalCopy;
 }
 
 abstract interface class AcademicOverviewRepository {

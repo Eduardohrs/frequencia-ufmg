@@ -10,10 +10,13 @@ import 'auth/firebase_auth_gateway.dart';
 import 'backend/firebase_python_backend.dart';
 import 'backend/python_backend_transport.dart';
 import 'data/academic_repositories.dart';
+import 'data/cached_academic_overview_repository.dart';
+import 'data/firebase_current_user.dart';
 import 'data/firebase_course_repository.dart';
 import 'data/firestore_configuration.dart';
 import 'data/python_course_repository.dart';
 import 'data/python_overview_repository.dart';
+import 'data/shared_preferences_academic_overview_cache.dart';
 import 'firebase_options.dart';
 import 'observability/app_logger.dart';
 import 'observability/error_reporting.dart';
@@ -77,8 +80,13 @@ Future<void> main() async {
     backend,
   );
   final overviewRepository = backend is BackendOverviewGateway
-      ? PythonOverviewRepository(
-          gateway: backend as BackendOverviewGateway,
+      ? CachedAcademicOverviewRepository(
+          remote: PythonOverviewRepository(
+            gateway: backend as BackendOverviewGateway,
+            logger: logger,
+          ),
+          cache: SharedPreferencesAcademicOverviewCache(),
+          currentUserId: currentFirebaseUserId,
           logger: logger,
         )
       : null;

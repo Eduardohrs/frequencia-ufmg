@@ -83,6 +83,7 @@ class _CoursePageState extends State<CoursePage> {
   _PendingAttendance? _nextPastPending;
   Map<String, List<SessionRecord>> _sessionsByCourse = const {};
   bool _usingOverviewSnapshot = false;
+  bool _usingLocalCopy = false;
 
   @override
   void initState() {
@@ -133,6 +134,7 @@ class _CoursePageState extends State<CoursePage> {
         _courses = courses;
         _sessionsByCourse = sessionsByCourse;
         _usingOverviewSnapshot = snapshot != null;
+        _usingLocalCopy = snapshot?.isLocalCopy ?? false;
       });
       if (snapshot == null) {
         unawaited(
@@ -551,6 +553,20 @@ class _CoursePageState extends State<CoursePage> {
                     ),
                   ),
                   const SizedBox(height: 28),
+                  if (_usingLocalCopy) ...[
+                    Card(
+                      key: const Key('offline-copy-banner'),
+                      color: Theme.of(context).colorScheme.secondaryContainer,
+                      child: const ListTile(
+                        leading: Icon(Icons.cloud_off_outlined),
+                        title: Text('Modo offline'),
+                        subtitle: Text(
+                          'Exibindo a última cópia salva neste aparelho.',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   if (_pastPendingCount > 0) ...[
                     Card(
                       color: Theme.of(context).colorScheme.errorContainer,

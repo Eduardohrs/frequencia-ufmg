@@ -504,6 +504,50 @@ void main() {
     expect(sessionRepository.listedCourseIds, isEmpty);
   });
 
+  testWidgets('warns when disciplines come from the saved offline copy', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          overviewRepository: _FakeOverviewRepository(
+            AcademicOverviewSnapshot(
+              courses: [course],
+              sessionsByCourse: const {'course-1': []},
+              isLocalCopy: true,
+            ),
+          ),
+          overviewReadsEnabled: true,
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('offline-copy-banner')), findsOneWidget);
+    expect(find.text('Modo offline'), findsOneWidget);
+    expect(
+      find.text('Exibindo a última cópia salva neste aparelho.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('uses the direct repository when overview rollout is disabled', (
     tester,
   ) async {

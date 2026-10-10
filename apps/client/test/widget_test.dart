@@ -13,11 +13,15 @@ import 'package:frequencia_ufmg/data/python_course_repository.dart';
 import 'package:frequencia_ufmg/data/python_overview_repository.dart';
 import 'package:frequencia_ufmg/main.dart' as app;
 import 'package:frequencia_ufmg/observability/app_logger.dart';
+import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   TestFirebaseCoreHostApi.setUp(_FirebaseCoreHostApi());
+  SharedPreferencesAsyncPlatform.instance =
+      InMemorySharedPreferencesAsync.empty();
   tz_data.initializeTimeZones();
 
   test('selects Python course persistence only for a course gateway', () {
