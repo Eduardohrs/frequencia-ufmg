@@ -8,7 +8,7 @@ final class SharedPreferencesScheduleCache implements ScheduleCache {
   SharedPreferencesScheduleCache({SharedPreferencesAsync? preferences})
     : _preferences = preferences ?? SharedPreferencesAsync();
 
-  static const _keyPrefix = 'academic_schedule.v1.';
+  static const _storagePrefix = 'academic_schedule.v1.';
 
   final SharedPreferencesAsync _preferences;
 
@@ -25,7 +25,7 @@ final class SharedPreferencesScheduleCache implements ScheduleCache {
       _preferences.remove(_key(userId, courseId));
 
   static String _key(String userId, String courseId) =>
-      '$_keyPrefix${_part(userId)}.${_part(courseId)}';
+      '$_storagePrefix${_part(userId)}.${_part(courseId)}';
 
   static String _part(String value) =>
       base64Url.encode(utf8.encode(value)).replaceAll('=', '');
