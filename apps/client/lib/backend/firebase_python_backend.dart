@@ -14,6 +14,9 @@ const _settings = PythonBackendSettings(
   endpoint: String.fromEnvironment('PYTHON_BACKEND_ORIGIN'),
 );
 const _webSiteKey = String.fromEnvironment('FIREBASE_APP_CHECK_WEB_SITE_KEY');
+const _androidDebugProviderEnabled = bool.fromEnvironment(
+  'FIREBASE_APP_CHECK_ANDROID_DEBUG_PROVIDER',
+);
 const pythonScheduleWritesEnabled = bool.fromEnvironment(
   'ENABLE_PYTHON_SCHEDULE_WRITES',
 );
@@ -156,12 +159,19 @@ final class _FirebasePythonBackendVerifier
     }
     await FirebaseAppCheck.instance.activate(
       providerWeb: ReCaptchaEnterpriseProvider(_webSiteKey),
-      providerAndroid: kDebugMode
-          ? const AndroidDebugProvider()
-          : const AndroidPlayIntegrityProvider(),
+      providerAndroid: selectAndroidAppCheckProvider(
+        debugProviderEnabled: _androidDebugProviderEnabled,
+      ),
     );
   }
 }
+
+@visibleForTesting
+AndroidAppCheckProvider selectAndroidAppCheckProvider({
+  required bool debugProviderEnabled,
+}) => debugProviderEnabled
+    ? const AndroidDebugProvider()
+    : const AndroidPlayIntegrityProvider();
 
 final class _FirebasePythonBackendTokens implements PythonBackendTokens {
   @override
