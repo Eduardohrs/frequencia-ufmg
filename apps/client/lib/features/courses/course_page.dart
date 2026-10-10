@@ -96,6 +96,18 @@ class _CoursePageState extends State<CoursePage> {
       _loading = true;
       _loadFailed = false;
     });
+    var cachedSnapshotShown = false;
+    final overviewRepository = widget.overviewRepository;
+    if (widget.overviewReadsEnabled &&
+        overviewRepository is LocalFirstAcademicOverviewRepository) {
+      final cached = await overviewRepository.loadCachedOverview();
+      if (cached != null && mounted) {
+        _applyOverviewSnapshot(cached);
+        unawaited(widget.logger.logEvent('academic_overview_cache_presented'));
+        cachedSnapshotShown = true;
+        setState(() => _loading = false);
+      }
+    }
     try {
       AcademicOverviewSnapshot? snapshot;
       var overviewFallback = false;
@@ -147,10 +159,34 @@ class _CoursePageState extends State<CoursePage> {
         ]);
       }
     } catch (_) {
-      if (mounted) setState(() => _loadFailed = true);
+      if (mounted && !cachedSnapshotShown) {
+        setState(() => _loadFailed = true);
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _applyOverviewSnapshot(AcademicOverviewSnapshot snapshot) {
+    final courses = snapshot.courses.toList()
+      ..sort((left, right) => left.code.compareTo(right.code));
+    final sessionsByCourse = {
+      for (final entry in snapshot.sessionsByCourse.entries)
+        entry.key: List<SessionRecord>.of(entry.value),
+    };
+    sessionsByCourse.removeWhere(
+      (courseId, _) => courses.every((course) => course.id != courseId),
+    );
+    setState(() {
+      _courses = courses;
+      _sessionsByCourse = sessionsByCourse;
+      _usingOverviewSnapshot = true;
+      _usingLocalCopy = true;
+    });
+    _setPastPending(courses, [
+      for (final course in courses)
+        sessionsByCourse[course.id] ?? const <SessionRecord>[],
+    ]);
   }
 
   Future<void> _loadPastPendingCount(

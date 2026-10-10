@@ -19,7 +19,7 @@ abstract interface class AcademicOverviewCache {
 }
 
 final class CachedAcademicOverviewRepository
-    implements AcademicOverviewRepository {
+    implements LocalFirstAcademicOverviewRepository {
   const CachedAcademicOverviewRepository({
     required this.remote,
     required this.cache,
@@ -47,37 +47,39 @@ final class CachedAcademicOverviewRepository
       }
       return snapshot;
     } catch (remoteError, remoteStackTrace) {
-      final userId = currentUserId();
-      if (userId == null) rethrow;
+      final snapshot = await loadCachedOverview();
+      if (snapshot != null) return snapshot;
+      Error.throwWithStackTrace(remoteError, remoteStackTrace);
+    }
+  }
 
-      late final String? encoded;
+  @override
+  Future<AcademicOverviewSnapshot?> loadCachedOverview() async {
+    final userId = currentUserId();
+    if (userId == null) return null;
+    late final String? encoded;
+    try {
+      encoded = await cache.read(userId);
+    } catch (error, stackTrace) {
+      _error(error, stackTrace, 'academic_overview_cache_read');
+      return null;
+    }
+    if (encoded == null) {
+      _event('academic_overview_cache_miss');
+      return null;
+    }
+    try {
+      final snapshot = _decode(encoded);
+      _event('academic_overview_cache_hit');
+      return snapshot;
+    } catch (error, stackTrace) {
+      _error(error, stackTrace, 'academic_overview_cache_decode');
       try {
-        encoded = await cache.read(userId);
-      } catch (error, stackTrace) {
-        _error(error, stackTrace, 'academic_overview_cache_read');
-        Error.throwWithStackTrace(remoteError, remoteStackTrace);
+        await cache.remove(userId);
+      } catch (removeError, removeStackTrace) {
+        _error(removeError, removeStackTrace, 'academic_overview_cache_remove');
       }
-      if (encoded == null) {
-        _event('academic_overview_cache_miss');
-        Error.throwWithStackTrace(remoteError, remoteStackTrace);
-      }
-      try {
-        final snapshot = _decode(encoded);
-        _event('academic_overview_cache_hit');
-        return snapshot;
-      } catch (error, stackTrace) {
-        _error(error, stackTrace, 'academic_overview_cache_decode');
-        try {
-          await cache.remove(userId);
-        } catch (removeError, removeStackTrace) {
-          _error(
-            removeError,
-            removeStackTrace,
-            'academic_overview_cache_remove',
-          );
-        }
-        Error.throwWithStackTrace(remoteError, remoteStackTrace);
-      }
+      return null;
     }
   }
 

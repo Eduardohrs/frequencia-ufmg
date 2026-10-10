@@ -560,6 +560,75 @@ void main() {
     expect(directSessions.listedCourseIds, isEmpty);
   });
 
+  testWidgets(
+    'shows the saved overview before a slow authoritative refresh finishes',
+    (tester) async {
+      final cachedCourse = CourseRecord(
+        id: 'course-1',
+        code: 'DCC203',
+        name: 'POO salva',
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final refreshedCourse = CourseRecord(
+        id: 'course-1',
+        code: 'DCC203',
+        name: 'POO atualizada',
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final refresh = Completer<AcademicOverviewSnapshot>();
+      final logger = _RecordingAppLogger();
+      final overview = _LocalFirstOverviewRepository(
+        cached: AcademicOverviewSnapshot(
+          courses: [cachedCourse],
+          sessionsByCourse: const {'course-1': []},
+          isLocalCopy: true,
+        ),
+        refreshed: refresh.future,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CoursePage(
+            repository: _FakeCourseRepository(),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            overviewRepository: overview,
+            overviewReadsEnabled: true,
+            user: user,
+            logger: logger,
+            onSignOut: () async {},
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('POO salva'), findsOneWidget);
+      expect(find.byKey(const Key('offline-copy-banner')), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+
+      refresh.complete(
+        AcademicOverviewSnapshot(
+          courses: [refreshedCourse],
+          sessionsByCourse: const {'course-1': []},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('POO atualizada'), findsOneWidget);
+      expect(find.byKey(const Key('offline-copy-banner')), findsNothing);
+      expect(overview.cachedCalls, 1);
+      expect(overview.loadCalls, 1);
+      expect(logger.events, contains('academic_overview_cache_presented'));
+    },
+  );
+
   testWidgets('uses the direct repository when overview rollout is disabled', (
     tester,
   ) async {
@@ -1169,6 +1238,31 @@ final class _FakeOverviewRepository implements AcademicOverviewRepository {
   Future<AcademicOverviewSnapshot> loadOverview() async {
     loadCalls++;
     return snapshot;
+  }
+}
+
+final class _LocalFirstOverviewRepository
+    implements LocalFirstAcademicOverviewRepository {
+  _LocalFirstOverviewRepository({
+    required this.cached,
+    required this.refreshed,
+  });
+
+  final AcademicOverviewSnapshot? cached;
+  final Future<AcademicOverviewSnapshot> refreshed;
+  int cachedCalls = 0;
+  int loadCalls = 0;
+
+  @override
+  Future<AcademicOverviewSnapshot?> loadCachedOverview() async {
+    cachedCalls++;
+    return cached;
+  }
+
+  @override
+  Future<AcademicOverviewSnapshot> loadOverview() {
+    loadCalls++;
+    return refreshed;
   }
 }
 

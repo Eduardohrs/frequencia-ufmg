@@ -84,6 +84,11 @@ abstract interface class BackendScheduleGateway {
   });
 }
 
+abstract interface class LocalFirstScheduleGateway
+    implements BackendScheduleGateway {
+  Future<PythonSchedule?> getCachedSchedule(String courseId);
+}
+
 abstract interface class BackendSessionGateway {
   Future<PythonAttendanceMutation> saveAttendance({
     required String courseId,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
@@ -119,6 +121,66 @@ void main() {
       isNull,
     );
   });
+
+  testWidgets(
+    'shows the saved grade before a slow authoritative refresh finishes',
+    (tester) async {
+      final cachedMeeting = MeetingRecord(
+        id: 'cached',
+        weekday: DateTime.monday,
+        startMinutes: 480,
+        endMinutes: 580,
+        lessonCount: QuantidadeAulas.two,
+        callCount: NumeroChamadas.one,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final refreshedMeeting = MeetingRecord(
+        id: 'refreshed',
+        weekday: DateTime.tuesday,
+        startMinutes: 1140,
+        endMinutes: 1240,
+        lessonCount: QuantidadeAulas.two,
+        callCount: NumeroChamadas.one,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final refresh = Completer<PythonSchedule>();
+      final logger = _RecordingAppLogger();
+      final gateway = _LocalFirstScheduleGateway(
+        cached: _pythonSchedule(course, [cachedMeeting], isLocalCopy: true),
+        refreshed: refresh.future,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CourseSchedulePage(
+            course: course,
+            repository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            logger: logger,
+            scheduleGateway: gateway,
+            scheduleWritesEnabled: true,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Segunda-feira • 08:00–09:40'), findsOneWidget);
+      expect(find.byKey(const Key('offline-schedule-banner')), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+
+      refresh.complete(_pythonSchedule(course, [refreshedMeeting]));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Terça-feira • 19:00–20:40'), findsOneWidget);
+      expect(find.byKey(const Key('offline-schedule-banner')), findsNothing);
+      expect(gateway.cachedCalls, 1);
+      expect(gateway.getCount, 1);
+      expect(logger.events, contains('schedule_cache_presented'));
+    },
+  );
 
   testWidgets(
     'saves a complete schedule only through the authoritative gateway',
@@ -1356,3 +1418,72 @@ final class _FakeScheduleGateway implements BackendScheduleGateway {
     isLocalCopy: isLocalCopy,
   );
 }
+
+final class _LocalFirstScheduleGateway implements LocalFirstScheduleGateway {
+  _LocalFirstScheduleGateway({required this.cached, required this.refreshed});
+
+  final PythonSchedule? cached;
+  final Future<PythonSchedule> refreshed;
+  int cachedCalls = 0;
+  int getCount = 0;
+
+  @override
+  Future<PythonSchedule?> getCachedSchedule(String courseId) async {
+    cachedCalls++;
+    return cached;
+  }
+
+  @override
+  Future<PythonSchedule> getSchedule(String courseId) {
+    getCount++;
+    return refreshed;
+  }
+
+  @override
+  Future<PythonSchedule> saveSchedule({
+    required String courseId,
+    required DateTime? startsOn,
+    required DateTime? endsOn,
+    required List<PythonMeeting> meetings,
+    required bool confirmDestructive,
+  }) => throw UnimplementedError();
+}
+
+PythonSchedule _pythonSchedule(
+  CourseRecord course,
+  List<MeetingRecord> meetings, {
+  bool isLocalCopy = false,
+}) => PythonSchedule(
+  course: PythonCourse(
+    id: course.id,
+    code: course.code,
+    name: course.name,
+    workload: course.workload,
+    term: course.term,
+    startsOn: course.startsOn,
+    endsOn: course.endsOn,
+    createdAt: course.createdAt,
+    updatedAt: course.updatedAt,
+  ),
+  meetings: [
+    for (final meeting in meetings)
+      PythonMeeting(
+        id: meeting.id,
+        weekday: meeting.weekday,
+        startMinutes: meeting.startMinutes,
+        endMinutes: meeting.endMinutes,
+        lessonCount: meeting.lessonCount.value,
+        callCount: meeting.callCount.value,
+        createdAt: meeting.createdAt,
+        updatedAt: meeting.updatedAt,
+      ),
+  ],
+  changes: const PythonScheduleChanges(
+    meetingUpserts: 0,
+    meetingDeletes: 0,
+    sessionUpserts: 0,
+    sessionDeletes: 0,
+    destructiveDeletes: 0,
+  ),
+  isLocalCopy: isLocalCopy,
+);

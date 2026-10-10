@@ -14,7 +14,7 @@ abstract interface class ScheduleCache {
   Future<void> remove(String userId, String courseId);
 }
 
-final class CachedScheduleGateway implements BackendScheduleGateway {
+final class CachedScheduleGateway implements LocalFirstScheduleGateway {
   const CachedScheduleGateway({
     required this.remote,
     required this.cache,
@@ -34,28 +34,35 @@ final class CachedScheduleGateway implements BackendScheduleGateway {
       await _writeBestEffort(courseId, schedule);
       return schedule;
     } catch (remoteError, remoteStackTrace) {
-      final userId = currentUserId();
-      if (userId == null) rethrow;
-      try {
-        final encoded = await cache.read(userId, courseId);
-        if (encoded == null) {
-          _event('schedule_cache_miss');
-          Error.throwWithStackTrace(remoteError, remoteStackTrace);
-        }
-        try {
-          final schedule = _decode(encoded);
-          _event('schedule_cache_hit');
-          return schedule;
-        } catch (error, stackTrace) {
-          _error(error, stackTrace, 'schedule_cache_decode');
-          await _removeBestEffort(userId, courseId);
-          Error.throwWithStackTrace(remoteError, remoteStackTrace);
-        }
-      } catch (error, stackTrace) {
-        if (identical(error, remoteError)) rethrow;
-        _error(error, stackTrace, 'schedule_cache_read');
-        Error.throwWithStackTrace(remoteError, remoteStackTrace);
-      }
+      final schedule = await getCachedSchedule(courseId);
+      if (schedule != null) return schedule;
+      Error.throwWithStackTrace(remoteError, remoteStackTrace);
+    }
+  }
+
+  @override
+  Future<PythonSchedule?> getCachedSchedule(String courseId) async {
+    final userId = currentUserId();
+    if (userId == null) return null;
+    late final String? encoded;
+    try {
+      encoded = await cache.read(userId, courseId);
+    } catch (error, stackTrace) {
+      _error(error, stackTrace, 'schedule_cache_read');
+      return null;
+    }
+    if (encoded == null) {
+      _event('schedule_cache_miss');
+      return null;
+    }
+    try {
+      final schedule = _decode(encoded);
+      _event('schedule_cache_hit');
+      return schedule;
+    } catch (error, stackTrace) {
+      _error(error, stackTrace, 'schedule_cache_decode');
+      await _removeBestEffort(userId, courseId);
+      return null;
     }
   }
 

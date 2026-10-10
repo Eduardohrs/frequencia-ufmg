@@ -96,6 +96,17 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       _loading = true;
       _loadFailed = false;
     });
+    var cachedScheduleShown = false;
+    final gateway = widget.scheduleGateway;
+    if (gateway is LocalFirstScheduleGateway) {
+      final cached = await gateway.getCachedSchedule(widget.course.id);
+      if (cached != null && mounted) {
+        _applySchedule(cached);
+        unawaited(widget.logger.logEvent('schedule_cache_presented'));
+        cachedScheduleShown = true;
+        setState(() => _loading = false);
+      }
+    }
     try {
       final schedule = await widget.scheduleGateway?.getSchedule(
         widget.course.id,
@@ -118,10 +129,22 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         );
       }
     } catch (_) {
-      if (mounted) setState(() => _loadFailed = true);
+      if (mounted && !cachedScheduleShown) {
+        setState(() => _loadFailed = true);
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _applySchedule(PythonSchedule schedule) {
+    setState(() {
+      _course = _courseFromPython(schedule.course);
+      _meetings = _sorted(
+        schedule.meetings.map(_meetingFromPython).toList(growable: false),
+      );
+      _usingLocalCopy = true;
+    });
   }
 
   Future<void> _openEditor([MeetingRecord? meeting]) => showDialog<void>(
