@@ -771,14 +771,55 @@ void main() {
     await expectLater(
       transport.verifyIdentity(),
       throwsA(
-        isA<PythonBackendException>().having(
-          (error) => error.code,
-          'code',
-          PythonBackendError.credentialsUnavailable,
-        ),
+        isA<PythonBackendException>()
+            .having(
+              (error) => error.code,
+              'code',
+              PythonBackendError.credentialsUnavailable,
+            )
+            .having(
+              (error) => error.credential,
+              'credential',
+              PythonBackendCredential.firebaseIdentity,
+            ),
       ),
     );
   });
+
+  test(
+    'classifies App Check acquisition failures before the network boundary',
+    () async {
+      final client = MockClient((_) async => fail('must not call backend'));
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _FailingAppCheckTokens(),
+        client: client,
+      );
+
+      await expectLater(
+        transport.verifyIdentity(),
+        throwsA(
+          isA<PythonBackendException>()
+              .having(
+                (error) => error.code,
+                'code',
+                PythonBackendError.credentialsUnavailable,
+              )
+              .having(
+                (error) => error.credential,
+                'credential',
+                PythonBackendCredential.appCheck,
+              )
+              .having(
+                (error) => error.toString(),
+                'sanitized diagnostic',
+                'PythonBackendException(credentialsUnavailable, '
+                    'credential=appCheck)',
+              ),
+        ),
+      );
+    },
+  );
 }
 
 final class _SilentLogger implements AppLogger {
@@ -854,5 +895,15 @@ final class _Tokens implements PythonBackendTokens {
     appCheckCalls += 1;
     if (appCheckToken.isEmpty) return '';
     return '$appCheckToken-$appCheckCalls';
+  }
+}
+
+final class _FailingAppCheckTokens implements PythonBackendTokens {
+  @override
+  Future<String> firebaseIdToken({required bool forceRefresh}) async => 'id';
+
+  @override
+  Future<String> limitedUseAppCheckToken() async {
+    throw StateError('App Check attestation failed');
   }
 }

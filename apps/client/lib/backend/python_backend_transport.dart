@@ -18,6 +18,8 @@ enum PythonBackendError {
   unavailable,
 }
 
+enum PythonBackendCredential { firebaseIdentity, appCheck }
+
 enum _BackendMethod { get, post, put, delete }
 
 final class PythonBackendException implements Exception {
@@ -25,14 +27,18 @@ final class PythonBackendException implements Exception {
     this.code, {
     this.retryAfter,
     this.destructiveSessions,
+    this.credential,
   });
 
   final PythonBackendError code;
   final Duration? retryAfter;
   final int? destructiveSessions;
+  final PythonBackendCredential? credential;
 
   @override
-  String toString() => 'PythonBackendException(${code.name})';
+  String toString() => credential == null
+      ? 'PythonBackendException(${code.name})'
+      : 'PythonBackendException(${code.name}, credential=${credential!.name})';
 }
 
 bool isTransientPythonBackendFailure(Object error) =>
@@ -831,15 +837,9 @@ final class PythonBackendTransport
     required Map<String, Object?>? body,
   }) async {
     try {
-      final idToken = await _tokens.firebaseIdToken(
-        forceRefresh: forceIdentityRefresh,
+      final (idToken, appCheckToken) = await _credentials(
+        forceIdentityRefresh: forceIdentityRefresh,
       );
-      final appCheckToken = await _tokens.limitedUseAppCheckToken();
-      if (idToken.isEmpty || appCheckToken.isEmpty) {
-        throw const PythonBackendException(
-          PythonBackendError.credentialsUnavailable,
-        );
-      }
       final headers = {
         'Authorization': 'Bearer $idToken',
         'X-Firebase-AppCheck': appCheckToken,
@@ -868,6 +868,44 @@ final class PythonBackendTransport
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.unavailable);
     }
+  }
+
+  Future<(String, String)> _credentials({
+    required bool forceIdentityRefresh,
+  }) async {
+    late final String idToken;
+    try {
+      idToken = await _tokens.firebaseIdToken(
+        forceRefresh: forceIdentityRefresh,
+      );
+    } catch (_) {
+      throw const PythonBackendException(
+        PythonBackendError.credentialsUnavailable,
+        credential: PythonBackendCredential.firebaseIdentity,
+      );
+    }
+    if (idToken.isEmpty) {
+      throw const PythonBackendException(
+        PythonBackendError.credentialsUnavailable,
+        credential: PythonBackendCredential.firebaseIdentity,
+      );
+    }
+    late final String appCheckToken;
+    try {
+      appCheckToken = await _tokens.limitedUseAppCheckToken();
+    } catch (_) {
+      throw const PythonBackendException(
+        PythonBackendError.credentialsUnavailable,
+        credential: PythonBackendCredential.appCheck,
+      );
+    }
+    if (appCheckToken.isEmpty) {
+      throw const PythonBackendException(
+        PythonBackendError.credentialsUnavailable,
+        credential: PythonBackendCredential.appCheck,
+      );
+    }
+    return (idToken, appCheckToken);
   }
 
   static bool _isAuthenticated(String body) {
