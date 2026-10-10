@@ -290,6 +290,7 @@ class _CoursePageState extends State<CoursePage> {
           scheduleWritesEnabled: widget.scheduleWritesEnabled,
           sessionWritesEnabled: widget.sessionWritesEnabled,
           androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
+          initialSessionsByCourse: _usingLocalCopy ? _sessionsByCourse : null,
           allCourses: _courses,
           allCourseIds: _courses.map((item) => item.id),
         ),
@@ -342,6 +343,9 @@ class _CoursePageState extends State<CoursePage> {
           courseId: pending.course.id,
           courseCode: pending.course.code,
           initialSessionId: pending.session.id,
+          initialSessions: _usingLocalCopy
+              ? _sessionsByCourse[pending.course.id]
+              : null,
           repository: widget.sessionRepository,
           logger: widget.logger,
           attendanceEvaluator: widget.attendanceEvaluator,

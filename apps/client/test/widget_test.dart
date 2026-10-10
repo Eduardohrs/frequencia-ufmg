@@ -370,12 +370,28 @@ final class _FakeCourseBackend
 }
 
 final class _FakeOverviewBackend
-    implements BackendIdentityVerifier, BackendOverviewGateway {
+    implements
+        BackendIdentityVerifier,
+        BackendOverviewGateway,
+        BackendScheduleGateway {
   @override
   Future<void> verifyIdentity() async {}
 
   @override
   Future<List<PythonOverviewItem>> loadOverview() async => [];
+
+  @override
+  Future<PythonSchedule> getSchedule(String courseId) =>
+      throw UnimplementedError();
+
+  @override
+  Future<PythonSchedule> saveSchedule({
+    required String courseId,
+    required DateTime? startsOn,
+    required DateTime? endsOn,
+    required List<PythonMeeting> meetings,
+    required bool confirmDestructive,
+  }) => throw UnimplementedError();
 }
 
 final class _FailingFullBackend

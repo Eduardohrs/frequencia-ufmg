@@ -24,6 +24,7 @@ class AttendancePage extends StatefulWidget {
     this.androidOfflineQueueEnabled = false,
     this.courseCode,
     this.initialSessionId,
+    this.initialSessions,
     super.key,
   }) : assert(!sessionWritesEnabled || sessionGateway != null),
        assert(
@@ -42,6 +43,7 @@ class AttendancePage extends StatefulWidget {
   final bool androidOfflineQueueEnabled;
   final String? courseCode;
   final String? initialSessionId;
+  final List<SessionRecord>? initialSessions;
 
   @override
   State<AttendancePage> createState() => _AttendancePageState();
@@ -64,7 +66,10 @@ class _AttendancePageState extends State<AttendancePage> {
       _failed = false;
     });
     try {
-      final sessions = await widget.repository.listSessions(widget.courseId);
+      final sessions = List<SessionRecord>.of(
+        widget.initialSessions ??
+            await widget.repository.listSessions(widget.courseId),
+      );
       sessions.sort((a, b) => a.startsAt.compareTo(b.startsAt));
       if (mounted) setState(() => _sessions = sessions);
     } catch (_) {
