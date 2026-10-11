@@ -39,6 +39,7 @@ class CoursePage extends StatefulWidget {
     this.scheduleGateway,
     this.sessionGateway,
     this.overviewRepository,
+    this.scheduleReadsEnabled = true,
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
     this.overviewReadsEnabled = false,
@@ -62,6 +63,7 @@ class CoursePage extends StatefulWidget {
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
   final AcademicOverviewRepository? overviewRepository;
+  final bool scheduleReadsEnabled;
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
   final bool overviewReadsEnabled;
@@ -322,11 +324,14 @@ class _CoursePageState extends State<CoursePage> {
           logger: widget.logger,
           attendanceEvaluator: widget.attendanceEvaluator,
           scheduleGateway: widget.scheduleGateway,
+          scheduleReadsEnabled: widget.scheduleReadsEnabled,
           sessionGateway: widget.sessionGateway,
           scheduleWritesEnabled: widget.scheduleWritesEnabled,
           sessionWritesEnabled: widget.sessionWritesEnabled,
           androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
-          initialSessionsByCourse: _usingLocalCopy ? _sessionsByCourse : null,
+          initialSessionsByCourse: _usingOverviewSnapshot
+              ? _sessionsByCourse
+              : null,
           allCourses: _courses,
           allCourseIds: _courses.map((item) => item.id),
         ),
@@ -379,7 +384,7 @@ class _CoursePageState extends State<CoursePage> {
           courseId: pending.course.id,
           courseCode: pending.course.code,
           initialSessionId: pending.session.id,
-          initialSessions: _usingLocalCopy
+          initialSessions: _usingOverviewSnapshot
               ? _sessionsByCourse[pending.course.id]
               : null,
           repository: widget.sessionRepository,

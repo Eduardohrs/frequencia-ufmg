@@ -75,6 +75,51 @@ void main() {
     expect(gateway.saveCount, 0);
   });
 
+  testWidgets('loads the grade directly while keeping Python for writes', (
+    tester,
+  ) async {
+    final direct = _FakeMeetingRepository(
+      meetings: [
+        MeetingRecord(
+          id: 'direct',
+          weekday: DateTime.monday,
+          startMinutes: 480,
+          endMinutes: 580,
+          lessonCount: QuantidadeAulas.two,
+          callCount: NumeroChamadas.one,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      ],
+    );
+    final gateway = _FakeScheduleGateway(course: course);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseSchedulePage(
+          course: course,
+          repository: direct,
+          sessionRepository: _FakeSessionRepository(),
+          logger: _RecordingAppLogger(),
+          scheduleGateway: gateway,
+          scheduleReadsEnabled: false,
+          scheduleWritesEnabled: true,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Segunda-feira • 08:00–09:40'), findsOneWidget);
+    expect(gateway.getCount, 0);
+    expect(
+      tester
+          .widget<FloatingActionButton>(find.byKey(const Key('add-meeting')))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
   testWidgets('marks a restored schedule as an offline local copy', (
     tester,
   ) async {

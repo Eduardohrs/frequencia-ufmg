@@ -43,7 +43,8 @@ final class PythonBackendException implements Exception {
 
 bool isTransientPythonBackendFailure(Object error) =>
     error is PythonBackendException &&
-    (error.code == PythonBackendError.timeout ||
+    (error.code == PythonBackendError.credentialsUnavailable ||
+        error.code == PythonBackendError.timeout ||
         error.code == PythonBackendError.unavailable);
 
 abstract interface class PythonBackendTokens {

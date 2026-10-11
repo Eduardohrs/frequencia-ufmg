@@ -184,6 +184,55 @@ void main() {
     expect(logger.events, contains('android_offline_calendar_status_queued'));
   });
 
+  testWidgets(
+    'queues a calendar status when offline prevents credential acquisition',
+    (tester) async {
+      final repository = _FakeSessionRepository([
+        _session('first', DateTime.utc(2026, 8, 3, 11), now),
+      ]);
+      final logger = _RecordingAppLogger();
+      final gateway = _SessionGateway(
+        now,
+        failure: const PythonBackendException(
+          PythonBackendError.credentialsUnavailable,
+          credential: PythonBackendCredential.appCheck,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CalendarExceptionsPage(
+            courseId: courseId,
+            repository: repository,
+            logger: logger,
+            location: location,
+            now: () => now,
+            sessionGateway: gateway,
+            sessionWritesEnabled: true,
+            androidOfflineQueueEnabled: true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Alterar sessão de 03/08/2026'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Aula sem chamada'));
+      await tester.pumpAndSettle();
+
+      expect(
+        repository.saveCalls.single.calendarStatus,
+        SessionCalendarStatus.noCall,
+      );
+      expect(
+        find.text(
+          'Salvo no aparelho. A sincronização continuará automaticamente.',
+        ),
+        findsOneWidget,
+      );
+      expect(logger.events, contains('android_offline_calendar_status_queued'));
+    },
+  );
+
   testWidgets('observes a rejected offline calendar delivery', (tester) async {
     final repository = _FakeSessionRepository([
       _session('first', DateTime.utc(2026, 8, 3, 11), now),

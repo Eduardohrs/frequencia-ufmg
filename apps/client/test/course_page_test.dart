@@ -502,6 +502,11 @@ void main() {
 
     expect(find.text('Calendário operacional'), findsOneWidget);
     expect(sessionRepository.listedCourseIds, isEmpty);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Horários DCC203'));
+    await tester.pumpAndSettle();
+    expect(find.text('Grade • DCC203'), findsOneWidget);
   });
 
   testWidgets('warns when disciplines come from the saved offline copy', (

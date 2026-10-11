@@ -31,6 +31,7 @@ class CourseSchedulePage extends StatefulWidget {
     required this.logger,
     this.attendanceEvaluator,
     this.scheduleGateway,
+    this.scheduleReadsEnabled = true,
     this.sessionGateway,
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
@@ -57,6 +58,7 @@ class CourseSchedulePage extends StatefulWidget {
   final AppLogger logger;
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
+  final bool scheduleReadsEnabled;
   final BackendSessionGateway? sessionGateway;
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
@@ -97,7 +99,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       _loadFailed = false;
     });
     var cachedScheduleShown = false;
-    final gateway = widget.scheduleGateway;
+    final gateway = widget.scheduleReadsEnabled ? widget.scheduleGateway : null;
     if (gateway is LocalFirstScheduleGateway) {
       final cached = await gateway.getCachedSchedule(widget.course.id);
       if (cached != null && mounted) {
@@ -108,9 +110,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       }
     }
     try {
-      final schedule = await widget.scheduleGateway?.getSchedule(
-        widget.course.id,
-      );
+      final schedule = await gateway?.getSchedule(widget.course.id);
       final meetings = schedule == null
           ? await widget.repository.listMeetings(widget.course.id)
           : schedule.meetings.map(_meetingFromPython).toList(growable: false);
