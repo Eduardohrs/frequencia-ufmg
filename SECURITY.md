@@ -42,8 +42,11 @@ Toda pull request passa por análise estática, testes, cobertura integral do c�
 executável, auditoria de dependências Python, Codecov e Gitleaks. A `main` rejeita
 push direto, force push, exclusão e merge sem o `Quality Gate` verde.
 
-O GitHub também exige referências de Actions por SHA completo. Dependabot monitora
-semanalmente os pacotes Dart, npm, os dois projetos Python e GitHub Actions.
+Um teste do repositório exige SHA completo em todas as referências de Actions que
+controlamos. A imposição global do GitHub não pode ser ativada enquanto a Action do
+Flutter usar internamente uma referência por tag; ativá-la impede o job de iniciar.
+Dependabot monitora semanalmente os pacotes Dart, npm, os dois projetos Python e
+GitHub Actions.
 
 ## Limites aceitos neste checkpoint
 
