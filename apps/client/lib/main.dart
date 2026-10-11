@@ -17,6 +17,7 @@ import 'data/firebase_course_repository.dart';
 import 'data/firestore_configuration.dart';
 import 'data/python_course_repository.dart';
 import 'data/python_overview_repository.dart';
+import 'data/repository_academic_overview.dart';
 import 'data/shared_preferences_academic_overview_cache.dart';
 import 'data/shared_preferences_schedule_cache.dart';
 import 'firebase_options.dart';
@@ -83,8 +84,16 @@ Future<void> main() async {
   );
   final overviewRepository = backend is BackendOverviewGateway
       ? CachedAcademicOverviewRepository(
-          remote: PythonOverviewRepository(
-            gateway: backend as BackendOverviewGateway,
+          remote: CurrentUserAcademicOverviewRepository(
+            currentUserId: currentFirebaseUserId,
+            // These closures only compose the Firebase plugin boundary. The
+            // aggregate behavior is covered with injected repositories.
+            // coverage:ignore-start
+            courseRepositoryFor: (userId) =>
+                courseRepositoryFactory(userId, logger),
+            sessionRepositoryFor: (userId) =>
+                sessionRepositoryFactory(userId, logger),
+            // coverage:ignore-end
             logger: logger,
           ),
           cache: SharedPreferencesAcademicOverviewCache(),
@@ -122,6 +131,7 @@ Future<void> main() async {
           ? backend as BackendSessionGateway
           : null,
       overviewRepository: overviewRepository,
+      scheduleReadsEnabled: false,
       scheduleWritesEnabled: pythonScheduleWritesEnabled,
       sessionWritesEnabled: pythonSessionWritesEnabled,
       overviewReadsEnabled: pythonOverviewReadsEnabled,
@@ -145,6 +155,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
     this.scheduleGateway,
     this.sessionGateway,
     this.overviewRepository,
+    this.scheduleReadsEnabled = true,
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
     this.overviewReadsEnabled = false,
@@ -164,6 +175,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
   final AcademicOverviewRepository? overviewRepository;
+  final bool scheduleReadsEnabled;
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
   final bool overviewReadsEnabled;
@@ -204,6 +216,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
         scheduleGateway: scheduleGateway,
         sessionGateway: sessionGateway,
         overviewRepository: overviewRepository,
+        scheduleReadsEnabled: scheduleReadsEnabled,
         scheduleWritesEnabled: scheduleWritesEnabled,
         sessionWritesEnabled: sessionWritesEnabled,
         overviewReadsEnabled: overviewReadsEnabled,

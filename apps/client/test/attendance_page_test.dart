@@ -311,6 +311,51 @@ void main() {
     expect(logger.events, contains('android_offline_attendance_queued'));
   });
 
+  testWidgets(
+    'queues attendance when offline prevents credential acquisition',
+    (tester) async {
+      final repository = _FakeRepository([_session('offline-token', now)]);
+      final logger = _Logger();
+      final gateway = _SessionGateway(
+        now,
+        failure: const PythonBackendException(
+          PythonBackendError.credentialsUnavailable,
+          credential: PythonBackendCredential.appCheck,
+        ),
+      );
+      await tester.pumpWidget(
+        _app(
+          repository,
+          logger,
+          location,
+          now,
+          sessionGateway: gateway,
+          sessionWritesEnabled: true,
+          androidOfflineQueueEnabled: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
+      await tester.pumpAndSettle();
+
+      expect(
+        repository.saveCalls.single.attendanceStatus,
+        SituacaoFrequencia.present,
+      );
+      expect(find.text('Presente • 0 faltas'), findsOneWidget);
+      expect(
+        find.text(
+          'Salvo no aparelho. A sincronização continuará automaticamente.',
+        ),
+        findsOneWidget,
+      );
+      expect(logger.events, contains('android_offline_attendance_queued'));
+    },
+  );
+
   testWidgets('never bypasses Python for an authentication rejection', (
     tester,
   ) async {
