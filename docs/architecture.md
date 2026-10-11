@@ -12,8 +12,13 @@ O Frequência UFMG é um único produto com clientes Flutter para Android e web 
 - Firebase Analytics: eventos operacionais sanitizados no Android e na web.
 - Firebase Crashlytics: crashes e erros não tratados no Android.
 - Logs JSON em `stdout`: diagnóstico local do backend, sem conteúdo do usuário.
+- Appwrite TablesDB: somente rate limit e anti-replay do backend, com chaves
+  derivadas e expiração; não armazena dados acadêmicos.
 
-O backend verifica o token emitido pelo Firebase antes de acessar dados do usuário. Credenciais administrativas nunca ficam no aplicativo ou no repositório.
+As leituras interativas usam Firestore/cache diretamente para não bloquear a UI em
+cold starts. As escritas de grade e sessões passam pelo Python, que verifica o token
+Firebase e o App Check e acessa o Firestore com a identidade do próprio usuário.
+Credenciais administrativas nunca ficam no aplicativo ou no repositório.
 
 ## Fluxo de presença
 
@@ -34,6 +39,15 @@ localização. Cada requisição recebe apenas um identificador aleatório de co
 
 Serviços que exigem faturamento, como Cloud Run, não devem ser habilitados sem uma
 decisão explícita de arquitetura e autorização do responsável pelo projeto.
+
+## Recuperação
+
+O Git e as releases preservam código e artefatos, mas não os dados acadêmicos. O
+cache local é uma réplica para disponibilidade e não constitui backup. Como backup,
+PITR e exportação gerenciada do Firestore exigem Blaze, o MVP mantém faturamento
+desativado e usa cópias privadas somente antes de mudanças de risco. Antes do beta,
+o aplicativo deve oferecer exportação versionada, validação e restauração explícita
+dos dados do próprio usuário; consulte `docs/backup-recovery.md`.
 
 ## CI, builds e releases
 
