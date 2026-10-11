@@ -1,4 +1,4 @@
-"""Appwrite Function entrypoint for the Python platform feasibility gate."""
+"""Appwrite Function entrypoint for the Frequência UFMG API."""
 
 import json
 import re
@@ -26,7 +26,6 @@ from course_repository import (  # noqa: E402
     validate_course_id,
 )
 from course_service import InvalidCourse  # noqa: E402
-from domain_probe import AttendanceStatus, calculate_absences  # noqa: E402
 from firebase_app_check import (  # noqa: E402
     FirebaseAppIdentity,
     InvalidAppCheck,
@@ -48,7 +47,6 @@ from overview_repository import (  # noqa: E402
     AcademicOverviewRepository,
     OverviewTooLarge,
 )
-from pdf_probe import extract_pdf_summary  # noqa: E402
 from quota_guard import (  # noqa: E402
     AppwriteSecurityStore,
     RateLimitExceeded,
@@ -119,7 +117,7 @@ def main(context: Any) -> Any:
     status_token = _RESPONSE_STATUS.set(200)
     metrics_token = _REQUEST_METRICS.set(metrics)
     try:
-        result = _dispatch(context, started)
+        result = _dispatch(context)
         _log(
             context,
             "request_completed",
@@ -148,7 +146,7 @@ def main(context: Any) -> Any:
         _REQUEST_ID.reset(request_token)
 
 
-def _dispatch(context: Any, started: float) -> Any:
+def _dispatch(context: Any) -> Any:
     """Apply bounded browser, payload, authentication, and route guards."""
 
     method = context.req.method.upper()
@@ -181,13 +179,6 @@ def _dispatch(context: Any, started: float) -> Any:
         _error(context, payload_error)
         return _respond(context, {"error": payload_error}, status, allowed_origin)
 
-    spike_enabled = environ.get("ENABLE_SPIKE_ROUTES", "").lower() == "true"
-    if spike_enabled and method == "GET" and path == "/health":
-        return _health(context, started)
-    if spike_enabled and method == "POST" and path == "/domain":
-        return _domain(context, started)
-    if spike_enabled and method == "POST" and path == "/pdf":
-        return _pdf(context, started)
     if method == "GET" and path == "/v1/identity":
         return _identity(context, allowed_origin)
     if method == "POST" and path == "/v1/attendance/evaluate":
@@ -627,96 +618,6 @@ def _respond(
     if extra_headers:
         headers.update(extra_headers)
     return context.res.json(body, status, headers)
-
-
-def _health(context: Any, started: float) -> Any:
-    try:
-        value = _read_probe_value(context.req.headers)
-    except Exception:
-        _error(context, "database_probe_failed")
-        return _respond(context, {"error": "database_unavailable"}, 503)
-
-    elapsed = _elapsed_ms(started)
-    _log(context, "health_probe_completed", handler_ms=elapsed)
-    return _respond(
-        context,
-        {
-            "database": value,
-            "handler_ms": elapsed,
-            "runtime": _runtime_metadata(),
-        },
-    )
-
-
-def _domain(context: Any, started: float) -> Any:
-    try:
-        body = context.req.body_json
-        status = AttendanceStatus(body["status"])
-        lessons = body["lessons"]
-        calls = body["calls"]
-        if type(lessons) is not int or type(calls) is not int:
-            raise ValueError("integer fields required")
-        absences = calculate_absences(status, lessons, calls)
-    except (KeyError, TypeError, ValueError):
-        _error(context, "domain_probe_rejected")
-        return _respond(context, {"error": "invalid_request"}, 400)
-
-    elapsed = _elapsed_ms(started)
-    _log(context, "domain_probe_completed", handler_ms=elapsed)
-    return _respond(context, {"absences": absences, "handler_ms": elapsed})
-
-
-def _pdf(context: Any, started: float) -> Any:
-    try:
-        summary = extract_pdf_summary(context.req.body_binary)
-    except Exception:
-        _error(context, "pdf_probe_rejected")
-        return _respond(context, {"error": "invalid_pdf"}, 400)
-
-    elapsed = _elapsed_ms(started)
-    _log(
-        context,
-        "pdf_probe_completed",
-        bytes=summary.get("bytes"),
-        handler_ms=elapsed,
-        pages=summary.get("pages"),
-    )
-    return _respond(context, {"handler_ms": elapsed, "summary": summary})
-
-
-def _read_probe_value(headers: dict[str, str]) -> str:
-    values = {
-        "endpoint": environ.get("APPWRITE_FUNCTION_API_ENDPOINT"),
-        "project": environ.get("APPWRITE_FUNCTION_PROJECT_ID"),
-        "database": environ.get("SPIKE_DATABASE_ID"),
-        "table": environ.get("SPIKE_TABLE_ID"),
-        "row": environ.get("SPIKE_ROW_ID"),
-        "key": {key.lower(): value for key, value in headers.items()}.get("x-appwrite-key"),
-    }
-    if any(not value for value in values.values()):
-        raise RuntimeError("runtime configuration missing")
-
-    client = (
-        Client()
-        .set_endpoint(values["endpoint"])
-        .set_project(values["project"])
-        .set_key(values["key"])
-    )
-    row = TablesDB(client).get_row(values["database"], values["table"], values["row"])
-    value = row.data.get("value")
-    if not isinstance(value, str):
-        raise RuntimeError("invalid probe row")
-    return value
-
-
-def _runtime_metadata() -> dict[str, str | None]:
-    return {
-        "cpus": environ.get("APPWRITE_FUNCTION_CPUS"),
-        "memory_mb": environ.get("APPWRITE_FUNCTION_MEMORY"),
-        "region": environ.get("APPWRITE_FUNCTION_REGION"),
-        "runtime": environ.get("APPWRITE_FUNCTION_RUNTIME_NAME"),
-        "runtime_version": environ.get("APPWRITE_FUNCTION_RUNTIME_VERSION"),
-    }
 
 
 def _elapsed_ms(started: float) -> float:

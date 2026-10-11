@@ -57,36 +57,6 @@ jobs:
       - run: uv sync --project appwrite-python --frozen
       - run: npm run test:firestore
 
-  broker:
-    name: UFMG broker
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-    defaults:
-      run:
-        working-directory: broker
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 2
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: broker/package-lock.json
-      - run: npm ci --ignore-scripts
-      - run: npm audit --audit-level=high
-      - run: npm run check
-      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
-        with:
-          files: broker/coverage/lcov.info
-          flags: broker
-          use_oidc: true
-          fail_ci_if_error: true
-
   backend:
     name: Backend
     runs-on: ubuntu-latest
@@ -121,48 +91,8 @@ jobs:
           use_oidc: true
           fail_ci_if_error: true
 
-  python-worker:
-    name: Python Worker spike
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      id-token: write
-    defaults:
-      run:
-        working-directory: worker-python
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 2
-          persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: "3.14"
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: worker-python/package-lock.json
-      - run: npm ci --ignore-scripts
-      - run: npm audit --audit-level=high
-      - run: python -m pip install "uv==0.12.21"
-      - run: uv sync --frozen
-      - run: uv run python -m pip check
-      - run: uv run pip-audit
-      - run: uv run ruff check .
-      - run: uv run mypy
-      - run: uv run pytest
-      - run: uv run pywrangler deploy --dry-run --outdir dist
-      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
-        with:
-          files: worker-python/coverage.xml
-          flags: python-worker
-          use_oidc: true
-          fail_ci_if_error: true
-
   appwrite-python:
-    name: Appwrite Python spike
+    name: Appwrite Python API
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -263,7 +193,7 @@ jobs:
   quality-gate:
     name: Quality Gate
     if: always()
-    needs: [secret-scan, firestore, broker, backend, python-worker, appwrite-python, client]
+    needs: [secret-scan, firestore, backend, appwrite-python, client]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -271,8 +201,6 @@ jobs:
         run: |
           test "${{ needs.secret-scan.result }}" = "success"
           test "${{ needs.firestore.result }}" = "success"
-          test "${{ needs.broker.result }}" = "success"
           test "${{ needs.backend.result }}" = "success"
-          test "${{ needs.python-worker.result }}" = "success"
           test "${{ needs.appwrite-python.result }}" = "success"
           test "${{ needs.client.result }}" = "success"
