@@ -177,7 +177,12 @@ def test_ufmg_session_service_builds_only_with_complete_secure_configuration(
 @pytest.mark.parametrize(
     ("failure", "method", "status", "error"),
     [
-        (InvalidUFMGCredentials(), "POST", 401, "ufmg_credentials_invalid"),
+        (
+            InvalidUFMGCredentials("login_response_rejected"),
+            "POST",
+            401,
+            "ufmg_credentials_invalid",
+        ),
         (UFMGAuthenticationUnavailable(), "POST", 503, "ufmg_authentication_unavailable"),
         (UFMGSessionStoreUnavailable(), "GET", 503, "ufmg_session_store_unavailable"),
         (InvalidUFMGSession(), "DELETE", 400, "ufmg_session_rejected"),
@@ -217,7 +222,10 @@ def test_ufmg_session_routes_map_failures_without_leaking_input(
     assert result["status"] == status
     assert result["body"] == {"error": error}
     emitted = "".join(context.logs + context.errors)
-    assert json.loads(context.errors[0]) == {"event": error}
+    expected_log = {"event": error}
+    if isinstance(failure, InvalidUFMGCredentials):
+        expected_log["reason"] = "login_response_rejected"
+    assert json.loads(context.errors[0]) == expected_log
     assert "private" not in emitted
 
 

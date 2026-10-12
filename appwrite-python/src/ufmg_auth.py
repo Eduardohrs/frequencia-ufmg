@@ -20,10 +20,26 @@ _TRUSTED_HOST = "sistemas.ufmg.br"
 _USERNAME_MAX_LENGTH = 64
 _PASSWORD_MAX_LENGTH = 256
 _TOKEN_MAX_LENGTH = 8_192
+_INVALID_CREDENTIAL_REASONS = frozenset(
+    {
+        "credentials_rejected",
+        "input_rejected",
+        "login_context_missing",
+        "login_entry_rejected",
+        "login_response_rejected",
+        "session_cookie_missing",
+    }
+)
 
 
 class InvalidUFMGCredentials(Exception):
     """Raised when credentials are invalid or the institutional flow is incomplete."""
+
+    def __init__(self, reason: str) -> None:
+        if reason not in _INVALID_CREDENTIAL_REASONS:
+            raise ValueError("invalid UFMG credential failure reason")
+        self.reason = reason
+        super().__init__("UFMG authentication failed")
 
 
 class UFMGAuthenticationUnavailable(Exception):
@@ -76,9 +92,9 @@ class UFMGAuthenticator:
                 timeout=self._timeout_seconds,
             ) as response:
                 if not _trusted_response(response.geturl(), "/idp/login.jsp"):
-                    raise InvalidUFMGCredentials("UFMG authentication failed")
+                    raise InvalidUFMGCredentials("login_entry_rejected")
             if _cookie_value(jar, "WASReqURL") is None:
-                raise InvalidUFMGCredentials("UFMG authentication failed")
+                raise InvalidUFMGCredentials("login_context_missing")
 
             body = urlencode(
                 {"j_username": username, "j_password": password}
@@ -96,7 +112,12 @@ class UFMGAuthenticator:
                 timeout=self._timeout_seconds,
             ) as response:
                 if not _trusted_response(response.geturl(), _SUCCESS_PATH):
-                    raise InvalidUFMGCredentials("UFMG authentication failed")
+                    reason = (
+                        "credentials_rejected"
+                        if _trusted_response(response.geturl(), "/idp/login.jsp")
+                        else "login_response_rejected"
+                    )
+                    raise InvalidUFMGCredentials(reason)
         except InvalidUFMGCredentials:
             raise
         except OSError:
@@ -110,7 +131,7 @@ class UFMGAuthenticator:
             or not 8 <= len(token) <= _TOKEN_MAX_LENGTH
             or any(character.isspace() for character in token)
         ):
-            raise InvalidUFMGCredentials("UFMG authentication failed")
+            raise InvalidUFMGCredentials("session_cookie_missing")
         return token
 
 
@@ -123,7 +144,7 @@ def _validate_credentials(username: object, password: object) -> None:
         or not 1 <= len(password) <= _PASSWORD_MAX_LENGTH
         or any(ord(character) < 32 or ord(character) == 127 for character in password)
     ):
-        raise InvalidUFMGCredentials("UFMG authentication failed")
+        raise InvalidUFMGCredentials("input_rejected")
 
 
 def _request_headers() -> dict[str, str]:

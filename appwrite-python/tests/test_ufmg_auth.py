@@ -106,16 +106,18 @@ def test_login_reproduces_the_required_two_step_flow_and_returns_only_ltpa_token
 
 
 @pytest.mark.parametrize(
-    "outcome",
+    ("outcome", "reason"),
     [
-        "bad-initial",
-        "missing-state",
-        "invalid-credentials",
-        "foreign-redirect",
-        "bad-token",
+        ("bad-initial", "login_entry_rejected"),
+        ("missing-state", "login_context_missing"),
+        ("invalid-credentials", "credentials_rejected"),
+        ("foreign-redirect", "login_response_rejected"),
+        ("bad-token", "session_cookie_missing"),
     ],
 )
-def test_login_rejects_incomplete_or_untrusted_authentication(outcome: str) -> None:
+def test_login_rejects_incomplete_or_untrusted_authentication(
+    outcome: str, reason: str
+) -> None:
     captured: list[FakeOpener] = []
 
     def factory(jar: CookieJar) -> FakeOpener:
@@ -129,6 +131,7 @@ def test_login_rejects_incomplete_or_untrusted_authentication(outcome: str) -> N
     assert "private-password" not in str(caught.value)
     assert "private-state" not in str(caught.value)
     assert "private-ltpa-token" not in str(caught.value)
+    assert caught.value.reason == reason
 
 
 def test_login_sanitizes_transport_failures() -> None:
@@ -190,7 +193,13 @@ def test_login_rejects_invalid_input_before_any_network_call(
         called = True
         raise AssertionError
 
-    with pytest.raises(InvalidUFMGCredentials):
+    with pytest.raises(InvalidUFMGCredentials) as caught:
         UFMGAuthenticator(opener_factory=factory).login(username, password)
 
     assert called is False
+    assert caught.value.reason == "input_rejected"
+
+
+def test_invalid_failure_reason_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        InvalidUFMGCredentials("private-or-unbounded-detail")
