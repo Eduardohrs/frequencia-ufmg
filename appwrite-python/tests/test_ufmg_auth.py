@@ -31,17 +31,23 @@ class FakeResponse:
         return self.url
 
 
-def _cookie(name: str, value: str) -> Cookie:
+def _cookie(
+    name: str,
+    value: str,
+    *,
+    domain: str = "sistemas.ufmg.br",
+    path: str = "/",
+) -> Cookie:
     return Cookie(
         version=0,
         name=name,
         value=value,
         port=None,
         port_specified=False,
-        domain="sistemas.ufmg.br",
+        domain=domain,
         domain_specified=True,
         domain_initial_dot=False,
-        path="/",
+        path=path,
         path_specified=True,
         secure=True,
         expires=None,
@@ -70,9 +76,23 @@ class FakeOpener:
                 self.jar.set_cookie(_cookie("WASReqURL", "private-state"))
             return FakeResponse("https://sistemas.ufmg.br/portal/../idp/login.jsp")
         if self.outcome == "success":
-            self.jar.set_cookie(_cookie("LtpaToken2", "private-ltpa-token"))
+            self.jar.set_cookie(
+                _cookie(
+                    "LtpaToken2",
+                    "private-ltpa-token",
+                    domain=".ufmg.br",
+                    path="/portal",
+                )
+            )
             return FakeResponse("https://sistemas.ufmg.br/portal/revalidate.html")
         if self.outcome == "bad-token":
+            self.jar.set_cookie(
+                _cookie(
+                    "LtpaToken2",
+                    "external-cookie-must-not-be-used",
+                    domain="attacker.example",
+                )
+            )
             self.jar.set_cookie(_cookie("LtpaToken2", "short"))
             return FakeResponse("https://sistemas.ufmg.br/portal/revalidate.html")
         if self.outcome == "foreign-redirect":

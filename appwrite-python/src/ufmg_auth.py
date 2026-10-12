@@ -175,6 +175,11 @@ def _trusted_response(url: str, expected_path: str) -> bool:
 
 def _cookie_value(jar: CookieJar, name: str) -> str | None:
     for cookie in jar:
-        if cookie.name == name and cookie.domain == _TRUSTED_HOST and cookie.path == "/":
+        if cookie.name == name and _trusted_cookie_domain(cookie.domain):
             return cookie.value
     return None
+
+
+def _trusted_cookie_domain(domain: str) -> bool:
+    normalized = domain.removeprefix(".").lower()
+    return normalized == _TRUSTED_HOST or _TRUSTED_HOST.endswith(f".{normalized}")
