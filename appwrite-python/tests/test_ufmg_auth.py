@@ -68,7 +68,7 @@ class FakeOpener:
                 return FakeResponse("http://sistemas.ufmg.br/idp/login.jsp")
             if self.outcome != "missing-state":
                 self.jar.set_cookie(_cookie("WASReqURL", "private-state"))
-            return FakeResponse("https://sistemas.ufmg.br/idp/login.jsp")
+            return FakeResponse("https://sistemas.ufmg.br/portal/../idp/login.jsp")
         if self.outcome == "success":
             self.jar.set_cookie(_cookie("LtpaToken2", "private-ltpa-token"))
             return FakeResponse("https://sistemas.ufmg.br/portal/revalidate.html")
