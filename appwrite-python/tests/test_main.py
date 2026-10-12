@@ -20,8 +20,13 @@ from quota_guard import RateLimitExceeded, ReplayDetected, SecurityStoreUnavaila
 from schedule_repository import DestructiveScheduleChange
 from schedule_service import InvalidSchedule, ScheduleOverlap
 from ufmg_auth import InvalidUFMGCredentials, UFMGAuthenticationUnavailable
+from ufmg_course_import import (
+    InvalidUFMGEnrollmentResponse,
+    UFMGEnrollmentUnavailable,
+)
 from ufmg_session_store import (
     InvalidUFMGSession,
+    UFMGReauthenticationRequired,
     UFMGSessionStoreUnavailable,
 )
 
@@ -252,6 +257,134 @@ def test_ufmg_connect_rejects_malformed_payload(
 
     assert result["status"] == 400
     assert result["body"] == {"error": "ufmg_session_rejected"}
+
+
+def test_ufmg_course_import_route_is_authenticated_and_logs_only_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    routes: list[str] = []
+
+    def authenticate(_context: Any, _origin: Any, route: str) -> tuple[str, None]:
+        routes.append(route)
+        return "firebase-user", None
+
+    class Service:
+        def import_courses(self, user_id: str, *, now: int) -> dict[str, int]:
+            assert user_id == "firebase-user"
+            assert now > 0
+            return {"created": 2, "existing": 3, "total": 5}
+
+    monkeypatch.setattr(function, "_authentication", authenticate)
+    monkeypatch.setattr(function, "_ufmg_course_import_service", lambda *_args: Service())
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/import/courses"))
+
+    result = function.main(context)
+
+    assert result["body"] == {"created": 2, "existing": 3, "total": 5}
+    assert routes == ["/v1/ufmg/import/courses/post"]
+    assert json.loads(context.logs[0]) == {
+        "created": 2,
+        "event": "ufmg_course_import_succeeded",
+        "existing": 3,
+        "total": 5,
+    }
+
+
+def test_ufmg_course_import_returns_authentication_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_args: (None, rejection))
+
+    assert function.main(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/import/courses"))
+    ) is rejection
+
+
+def test_ufmg_course_import_rejects_an_unexpected_request_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+    monkeypatch.setattr(
+        function,
+        "_ufmg_course_import_service",
+        lambda *_args: pytest.fail("must reject before import"),
+    )
+
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/ufmg/import/courses",
+                body_json={"unexpected": True},
+            )
+        )
+    )
+
+    assert result["status"] == 400
+    assert result["body"] == {"error": "ufmg_course_import_rejected"}
+
+
+def test_ufmg_course_import_service_uses_shared_secure_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = object()
+    courses = object()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(function, "_ufmg_session_store", lambda _headers: store)
+    monkeypatch.setattr(function, "_course_repository", lambda _headers, _user: courses)
+    monkeypatch.setattr(function, "UFMGEnrollmentClient", lambda: "enrollments")
+
+    class Service:
+        def __init__(self, sessions: object, enrollments: object, repository: object) -> None:
+            captured.update(
+                sessions=sessions, enrollments=enrollments, repository=repository
+            )
+
+    monkeypatch.setattr(function, "UFMGCourseImportService", Service)
+
+    assert function._ufmg_course_import_service({}, "user").__class__ is Service
+    assert captured == {
+        "sessions": store,
+        "enrollments": "enrollments",
+        "repository": courses,
+    }
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "error"),
+    [
+        (UFMGReauthenticationRequired(), 401, "ufmg_reauthentication_required"),
+        (UFMGEnrollmentUnavailable(), 503, "ufmg_enrollment_unavailable"),
+        (InvalidUFMGEnrollmentResponse(), 502, "ufmg_enrollment_invalid"),
+        (UFMGSessionStoreUnavailable(), 503, "ufmg_session_store_unavailable"),
+        (FirestoreAccessDenied(), 403, "course_access_denied"),
+        (FirestoreUnavailable(), 503, "course_store_unavailable"),
+        (FirestoreRequestRejected(), 502, "course_import_rejected"),
+        (InvalidCourse(), 502, "course_import_rejected"),
+    ],
+)
+def test_ufmg_course_import_sanitizes_failures(
+    failure: Exception,
+    status: int,
+    error: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+
+    class Service:
+        def import_courses(self, *_args: Any, **_kwargs: Any) -> None:
+            raise failure
+
+    monkeypatch.setattr(function, "_ufmg_course_import_service", lambda *_args: Service())
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/import/courses"))
+
+    result = function.main(context)
+
+    assert result["status"] == status
+    assert result["body"] == {"error": error}
+    assert json.loads(context.errors[0]) == {"event": error}
 
 
 def test_course_routes_list_save_and_delete(monkeypatch: pytest.MonkeyPatch) -> None:
