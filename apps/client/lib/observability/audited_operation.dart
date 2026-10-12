@@ -32,7 +32,10 @@ enum AuditedOperation {
   assessmentUpdate('assessment_update'),
   manualAttendance('manual_attendance'),
   academicOverviewLoad('academic_overview_load'),
-  academicOverviewFallback('academic_overview_fallback');
+  academicOverviewFallback('academic_overview_fallback'),
+  ufmgSessionStatus('ufmg_session_status'),
+  ufmgSessionConnect('ufmg_session_connect'),
+  ufmgSessionDisconnect('ufmg_session_disconnect');
 
   const AuditedOperation(this.eventPrefix);
 

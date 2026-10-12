@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ufmg_session_service import UFMGSessionService
+from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,10 @@ class Store:
     def delete(self, user_id: str) -> None:
         self.calls.append(("delete", (user_id,), {}))
 
+    def load(self, user_id: str, *, now: int) -> UFMGSession | None:
+        self.calls.append(("load", (user_id,), {"now": now}))
+        return None
+
 
 def test_connect_exchanges_credentials_and_returns_only_non_secret_metadata() -> None:
     authenticator = Authenticator()
@@ -56,3 +61,38 @@ def test_disconnect_is_idempotent_at_the_service_boundary() -> None:
 
     assert result == {"connected": False}
     assert store.calls == [("delete", ("firebase-user",), {})]
+
+
+def test_status_returns_only_non_secret_metadata() -> None:
+    store = Store()
+    store.load = lambda user_id, *, now: UFMGSession("private-token", 1_000, 33_400)
+    service = UFMGSessionService(Authenticator(), store)
+
+    result = service.status("firebase-user", now=2_000)
+
+    assert result == {
+        "connected": True,
+        "created_at": 1_000,
+        "expires_at": 33_400,
+        "reauthentication_required": False,
+    }
+    assert "private" not in repr(result)
+
+
+def test_status_distinguishes_absent_and_expired_sessions() -> None:
+    store = Store()
+    service = UFMGSessionService(Authenticator(), store)
+
+    assert service.status("firebase-user", now=2_000) == {
+        "connected": False,
+        "reauthentication_required": False,
+    }
+
+    def expired(_user_id: str, *, now: int) -> None:
+        raise UFMGReauthenticationRequired
+
+    store.load = expired
+    assert service.status("firebase-user", now=2_000) == {
+        "connected": False,
+        "reauthentication_required": True,
+    }

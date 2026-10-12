@@ -1,0 +1,285 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
+import 'package:frequencia_ufmg/features/ufmg/ufmg_connection_page.dart';
+import 'package:frequencia_ufmg/observability/app_logger.dart';
+
+void main() {
+  testWidgets('connects without displaying or retaining the password', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: false,
+        reauthenticationRequired: false,
+      ),
+    );
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Conectar à UFMG'), findsOneWidget);
+    expect(find.textContaining('senha não é armazenada'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('ufmg-username')),
+      '2025019259',
+    );
+    await tester.enterText(
+      find.byKey(const Key('ufmg-password')),
+      'private-password',
+    );
+    await tester.tap(find.byKey(const Key('ufmg-connect')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.credentials, [('2025019259', 'private-password')]);
+    expect(find.text('UFMG conectada'), findsOneWidget);
+    expect(find.text('private-password'), findsNothing);
+    expect(find.byKey(const Key('ufmg-password')), findsNothing);
+    expect(
+      logger.events,
+      containsAll([
+        'ufmg_session_status_succeeded',
+        'ufmg_session_connect_succeeded',
+      ]),
+    );
+  });
+
+  testWidgets(
+    'shows expired state, reconnects, and disconnects after confirmation',
+    (tester) async {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: false,
+          reauthenticationRequired: true,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Sua sessão expirou'), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('ufmg-username')), 'student');
+      await tester.enterText(find.byKey(const Key('ufmg-password')), 'secret');
+      await tester.tap(find.byKey(const Key('ufmg-connect')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ufmg-disconnect')));
+      await tester.pumpAndSettle();
+      expect(find.text('Desconectar da UFMG?'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Desconectar'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.disconnectCalls, 1);
+      expect(find.text('Conectar à UFMG'), findsOneWidget);
+    },
+  );
+
+  testWidgets('explains invalid credentials and lets the user retry', (
+    tester,
+  ) async {
+    final gateway =
+        _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: false,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..connectError = const PythonBackendException(
+            PythonBackendError.ufmgCredentialsInvalid,
+          );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('ufmg-username')), 'student');
+    await tester.enterText(find.byKey(const Key('ufmg-password')), 'wrong');
+    await tester.tap(find.byKey(const Key('ufmg-connect')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Usuário ou senha da UFMG inválidos.'), findsOneWidget);
+    expect(find.byKey(const Key('ufmg-password')), findsOneWidget);
+    expect(find.text('wrong'), findsNothing);
+  });
+
+  testWidgets(
+    'reports status and disconnect failures and supports cancellation',
+    (tester) async {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: false,
+          reauthenticationRequired: false,
+        ),
+      )..statusError = StateError('offline');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Não foi possível consultar a conexão com a UFMG.'),
+        findsOneWidget,
+      );
+
+      gateway.statusError = null;
+      gateway.status = PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+        createdAt: DateTime.utc(2026, 10, 12, 12),
+        expiresAt: DateTime.utc(2026, 10, 12, 21),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          key: const Key('connected-app'),
+          home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ufmg-reconnect')));
+      await tester.pumpAndSettle();
+      expect(find.text('Renovar conexão'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('ufmg-username')),
+        'temporary',
+      );
+      await tester.enterText(
+        find.byKey(const Key('ufmg-password')),
+        'temporary',
+      );
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('ufmg-username')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('ufmg-disconnect')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, 'Cancelar'));
+      await tester.pumpAndSettle();
+      expect(gateway.disconnectCalls, 0);
+
+      gateway.disconnectError = const PythonBackendException(
+        PythonBackendError.ufmgUnavailable,
+      );
+      await tester.tap(find.byKey(const Key('ufmg-disconnect')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Desconectar'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'A UFMG está indisponível no momento. Tente novamente mais tarde.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('validates the form and maps retryable and generic failures', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: false,
+        reauthenticationRequired: false,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-connect')));
+    await tester.pumpAndSettle();
+    expect(find.text('Informe seu usuário da UFMG.'), findsOneWidget);
+    expect(find.text('Informe sua senha da UFMG.'), findsOneWidget);
+
+    for (final entry in [
+      (
+        const PythonBackendException(PythonBackendError.rateLimited),
+        'Muitas tentativas seguidas. Aguarde um pouco e tente novamente.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.timeout),
+        'A UFMG está indisponível no momento. Tente novamente mais tarde.',
+      ),
+      (
+        StateError('unexpected'),
+        'Não foi possível atualizar a conexão com a UFMG.',
+      ),
+    ]) {
+      gateway.connectError = entry.$1;
+      await tester.enterText(find.byKey(const Key('ufmg-username')), 'student');
+      await tester.enterText(find.byKey(const Key('ufmg-password')), 'secret');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(find.text(entry.$2), findsOneWidget);
+    }
+  });
+}
+
+final class _Gateway implements BackendUFMGSessionGateway {
+  _Gateway({required this.status});
+
+  PythonUFMGSessionStatus status;
+  Object? connectError;
+  Object? statusError;
+  Object? disconnectError;
+  final credentials = <(String, String)>[];
+  int disconnectCalls = 0;
+
+  @override
+  Future<PythonUFMGSessionStatus> getUFMGSessionStatus() async {
+    if (statusError case final error?) throw error;
+    return status;
+  }
+
+  @override
+  Future<PythonUFMGSessionStatus> connectUFMG({
+    required String username,
+    required String password,
+  }) async {
+    credentials.add((username, password));
+    if (connectError case final error?) throw error;
+    return status = PythonUFMGSessionStatus(
+      connected: true,
+      reauthenticationRequired: false,
+      createdAt: DateTime.utc(2026, 10, 12, 12),
+      expiresAt: DateTime.utc(2026, 10, 12, 21),
+    );
+  }
+
+  @override
+  Future<PythonUFMGSessionStatus> disconnectUFMG() async {
+    disconnectCalls++;
+    if (disconnectError case final error?) throw error;
+    return status = const PythonUFMGSessionStatus(
+      connected: false,
+      reauthenticationRequired: false,
+    );
+  }
+}
+
+final class _Logger implements AppLogger {
+  final events = <String>[];
+
+  @override
+  Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
+    events.add(name);
+  }
+
+  @override
+  Future<void> recordError(
+    Object error,
+    StackTrace stackTrace, {
+    required String context,
+    bool fatal = false,
+    Map<String, Object>? parameters,
+  }) async {}
+}

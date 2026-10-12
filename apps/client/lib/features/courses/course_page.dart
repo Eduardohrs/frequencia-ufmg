@@ -18,6 +18,7 @@ import '../attendance/absence_dashboard_page.dart';
 import '../attendance/attendance_page.dart';
 import '../schedule/course_schedule_page.dart';
 import '../schedule/general_calendar_page.dart';
+import '../ufmg/ufmg_connection_page.dart';
 import 'course_editor_dialog.dart';
 
 typedef CourseIdGenerator = String Function();
@@ -38,6 +39,7 @@ class CoursePage extends StatefulWidget {
     this.attendanceEvaluator,
     this.scheduleGateway,
     this.sessionGateway,
+    this.ufmgSessionGateway,
     this.overviewRepository,
     this.scheduleReadsEnabled = true,
     this.scheduleWritesEnabled = false,
@@ -62,6 +64,7 @@ class CoursePage extends StatefulWidget {
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
+  final BackendUFMGSessionGateway? ufmgSessionGateway;
   final AcademicOverviewRepository? overviewRepository;
   final bool scheduleReadsEnabled;
   final bool scheduleWritesEnabled;
@@ -357,6 +360,18 @@ class _CoursePageState extends State<CoursePage> {
     );
   }
 
+  Future<void> _openUFMGConnection() async {
+    final gateway = widget.ufmgSessionGateway;
+    if (gateway == null) return;
+    Navigator.of(context).pop();
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) =>
+            UFMGConnectionPage(gateway: gateway, logger: widget.logger),
+      ),
+    );
+  }
+
   Future<void> _openAbsenceDashboard({bool closeDrawer = true}) async {
     if (closeDrawer) Navigator.of(context).pop();
     await Navigator.of(context).push<void>(
@@ -560,6 +575,13 @@ class _CoursePageState extends State<CoursePage> {
                 title: const Text('Faltas restantes'),
                 onTap: () => _openAbsenceDashboard(),
               ),
+              if (widget.ufmgSessionGateway != null)
+                ListTile(
+                  key: const Key('nav-ufmg-connection'),
+                  leading: const Icon(Icons.account_balance_outlined),
+                  title: const Text('Conexão UFMG'),
+                  onTap: _openUFMGConnection,
+                ),
             ],
           ),
         ),

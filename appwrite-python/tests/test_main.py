@@ -1,4 +1,5 @@
 import json
+from base64 import b64encode
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -18,6 +19,11 @@ from firestore_rest import (
 from quota_guard import RateLimitExceeded, ReplayDetected, SecurityStoreUnavailable
 from schedule_repository import DestructiveScheduleChange
 from schedule_service import InvalidSchedule, ScheduleOverlap
+from ufmg_auth import InvalidUFMGCredentials, UFMGAuthenticationUnavailable
+from ufmg_session_store import (
+    InvalidUFMGSession,
+    UFMGSessionStoreUnavailable,
+)
 
 
 @dataclass
@@ -59,6 +65,185 @@ def test_unknown_route_returns_not_found() -> None:
     result = function.main(context)
     assert result["body"] == {"error": "not_found"}
     assert result["status"] == 404
+
+
+def test_ufmg_session_routes_are_authenticated_and_sanitized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    routes: list[str] = []
+
+    def authenticate(_context: Any, _origin: Any, route: str) -> tuple[str, None]:
+        routes.append(route)
+        return "firebase-user", None
+
+    class Service:
+        def status(self, user_id: str, *, now: int) -> dict[str, Any]:
+            assert user_id == "firebase-user"
+            assert now > 0
+            return {"connected": False, "reauthentication_required": False}
+
+        def connect(
+            self,
+            user_id: str,
+            username: str,
+            password: str,
+            *,
+            now: int,
+        ) -> dict[str, Any]:
+            assert (user_id, username, password) == (
+                "firebase-user",
+                "2025019259",
+                "private-password",
+            )
+            return {"connected": True, "created_at": now, "expires_at": now + 32_400}
+
+        def disconnect(self, user_id: str) -> dict[str, bool]:
+            assert user_id == "firebase-user"
+            return {"connected": False}
+
+    monkeypatch.setattr(function, "_authentication", authenticate)
+    monkeypatch.setattr(function, "_ufmg_session_service", lambda *_args: Service())
+    status = FakeContext(FakeRequest("GET", "/v1/ufmg/session"))
+    connected = FakeContext(
+        FakeRequest(
+            "POST",
+            "/v1/ufmg/session",
+            body_json={"username": "2025019259", "password": "private-password"},
+        )
+    )
+    disconnected = FakeContext(FakeRequest("DELETE", "/v1/ufmg/session"))
+
+    assert function.main(status)["body"]["connected"] is False
+    assert function.main(connected)["body"]["connected"] is True
+    assert function.main(disconnected)["body"] == {"connected": False}
+    assert routes == [
+        "/v1/ufmg/session/get",
+        "/v1/ufmg/session/post",
+        "/v1/ufmg/session/delete",
+    ]
+    emitted = "".join(status.logs + connected.logs + disconnected.logs)
+    assert "private-password" not in emitted
+    assert "2025019259" not in emitted
+    assert [
+        json.loads(item)["event"]
+        for item in status.logs + connected.logs + disconnected.logs
+        if json.loads(item)["event"] != "request_completed"
+    ] == [
+        "ufmg_session_status_succeeded",
+        "ufmg_session_connect_succeeded",
+        "ufmg_session_disconnect_succeeded",
+    ]
+
+
+def test_ufmg_session_route_returns_authentication_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_args: (None, rejection))
+
+    assert function.main(FakeContext(FakeRequest("GET", "/v1/ufmg/session"))) is rejection
+
+
+def test_ufmg_session_service_builds_only_with_complete_secure_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = (
+        "APPWRITE_FUNCTION_API_ENDPOINT",
+        "APPWRITE_FUNCTION_PROJECT_ID",
+        "SECURITY_DATABASE_ID",
+        "UFMG_SESSION_TABLE_ID",
+        "UFMG_SESSION_ACTIVE_KEY_VERSION",
+        "UFMG_SESSION_ENCRYPTION_KEY_V1",
+        "UFMG_SESSION_INDEX_KEY",
+    )
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(UFMGSessionStoreUnavailable):
+        function._ufmg_session_service({})
+
+    monkeypatch.setenv("APPWRITE_FUNCTION_API_ENDPOINT", "https://appwrite.example/v1")
+    monkeypatch.setenv("APPWRITE_FUNCTION_PROJECT_ID", "project")
+    monkeypatch.setenv("SECURITY_DATABASE_ID", "database")
+    monkeypatch.setenv("UFMG_SESSION_TABLE_ID", "sessions")
+    monkeypatch.setenv("UFMG_SESSION_ACTIVE_KEY_VERSION", "1")
+    monkeypatch.setenv("UFMG_SESSION_ENCRYPTION_KEY_V1", b64encode(b"e" * 32).decode())
+    monkeypatch.setenv("UFMG_SESSION_INDEX_KEY", b64encode(b"i" * 32).decode())
+
+    service = function._ufmg_session_service({"x-appwrite-key": "runtime-key"})
+
+    assert service.__class__.__name__ == "UFMGSessionService"
+
+
+@pytest.mark.parametrize(
+    ("failure", "method", "status", "error"),
+    [
+        (InvalidUFMGCredentials(), "POST", 401, "ufmg_credentials_invalid"),
+        (UFMGAuthenticationUnavailable(), "POST", 503, "ufmg_authentication_unavailable"),
+        (UFMGSessionStoreUnavailable(), "GET", 503, "ufmg_session_store_unavailable"),
+        (InvalidUFMGSession(), "DELETE", 400, "ufmg_session_rejected"),
+        (ValueError(), "POST", 503, "ufmg_session_configuration_invalid"),
+    ],
+)
+def test_ufmg_session_routes_map_failures_without_leaking_input(
+    failure: Exception,
+    method: str,
+    status: int,
+    error: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+
+    class Service:
+        def status(self, *_args: Any, **_kwargs: Any) -> None:
+            raise failure
+
+        def connect(self, *_args: Any, **_kwargs: Any) -> None:
+            raise failure
+
+        def disconnect(self, *_args: Any, **_kwargs: Any) -> None:
+            raise failure
+
+    monkeypatch.setattr(function, "_ufmg_session_service", lambda *_args: Service())
+    context = FakeContext(
+        FakeRequest(
+            method,
+            "/v1/ufmg/session",
+            body_json={"username": "private-user", "password": "private-password"},
+        )
+    )
+
+    result = function.main(context)
+
+    assert result["status"] == status
+    assert result["body"] == {"error": error}
+    emitted = "".join(context.logs + context.errors)
+    assert json.loads(context.errors[0]) == {"event": error}
+    assert "private" not in emitted
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"username": "student"},
+        {"username": "student", "password": "secret", "extra": True},
+        {"username": 1, "password": "secret"},
+    ],
+)
+def test_ufmg_connect_rejects_malformed_payload(
+    body: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+    monkeypatch.setattr(
+        function,
+        "_ufmg_session_service",
+        lambda *_args: pytest.fail("must reject before service"),
+    )
+
+    result = function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/session", body_json=body)))
+
+    assert result["status"] == 400
+    assert result["body"] == {"error": "ufmg_session_rejected"}
 
 
 def test_course_routes_list_save_and_delete(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -63,6 +63,19 @@ from session_service import (  # noqa: E402
     InactiveAttendanceSession,
     InvalidSessionMutation,
 )
+from ufmg_auth import (  # noqa: E402
+    InvalidUFMGCredentials,
+    UFMGAuthenticationUnavailable,
+    UFMGAuthenticator,
+)
+from ufmg_session_service import UFMGSessionService  # noqa: E402
+from ufmg_session_store import (  # noqa: E402
+    AppwriteUFMGSessionStore,
+    InvalidUFMGSession,
+    UFMGSessionCipher,
+    UFMGSessionSecrets,
+    UFMGSessionStoreUnavailable,
+)
 
 MAX_REQUEST_BYTES = 16_384
 _REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="")
@@ -187,6 +200,8 @@ def _dispatch(context: Any) -> Any:
         return _overview(context, allowed_origin)
     if method == "GET" and path == "/v1/courses":
         return _courses_list(context, allowed_origin)
+    if path == "/v1/ufmg/session" and method in {"GET", "POST", "DELETE"}:
+        return _ufmg_session(context, allowed_origin, method)
     session_mutation = _session_mutation_path(path)
     if method == "PUT" and session_mutation is not None:
         course_id, session_id, mutation = session_mutation
@@ -260,6 +275,60 @@ def _identity(context: Any, origin: str | None) -> Any:
         return rejected
     _log(context, "request_authenticated")
     return _respond(context, {"authenticated": True}, origin=origin)
+
+
+def _ufmg_session(context: Any, origin: str | None, method: str) -> Any:
+    user_id, rejected = _authentication(
+        context, origin, f"/v1/ufmg/session/{method.lower()}"
+    )
+    if rejected is not None:
+        return rejected
+    try:
+        payload: Mapping[str, Any] = {}
+        if method == "POST":
+            raw_payload = context.req.body_json
+            if (
+                not isinstance(raw_payload, Mapping)
+                or set(raw_payload) != {"username", "password"}
+                or not isinstance(raw_payload["username"], str)
+                or not isinstance(raw_payload["password"], str)
+            ):
+                raise InvalidUFMGSession
+            payload = raw_payload
+        service = _ufmg_session_service(context.req.headers)
+        result: dict[str, Any]
+        if method == "GET":
+            result = service.status(cast(str, user_id), now=int(time()))
+            event = "ufmg_session_status_succeeded"
+        elif method == "POST":
+            result = service.connect(
+                cast(str, user_id),
+                payload["username"],
+                payload["password"],
+                now=int(time()),
+            )
+            event = "ufmg_session_connect_succeeded"
+        else:
+            result = service.disconnect(cast(str, user_id))
+            event = "ufmg_session_disconnect_succeeded"
+    except InvalidUFMGCredentials:
+        return _ufmg_session_error(context, origin, "ufmg_credentials_invalid", 401)
+    except UFMGAuthenticationUnavailable:
+        return _ufmg_session_error(
+            context, origin, "ufmg_authentication_unavailable", 503
+        )
+    except UFMGSessionStoreUnavailable:
+        return _ufmg_session_error(
+            context, origin, "ufmg_session_store_unavailable", 503
+        )
+    except InvalidUFMGSession:
+        return _ufmg_session_error(context, origin, "ufmg_session_rejected", 400)
+    except ValueError:
+        return _ufmg_session_error(
+            context, origin, "ufmg_session_configuration_invalid", 503
+        )
+    _log(context, event)
+    return _respond(context, result, origin=origin)
 
 
 def _attendance(context: Any, origin: str | None) -> Any:
@@ -458,6 +527,29 @@ def _overview_repository(headers: dict[str, str], user_id: str) -> AcademicOverv
     return AcademicOverviewRepository(_firestore(headers, user_id))
 
 
+def _ufmg_session_service(headers: dict[str, str]) -> UFMGSessionService:
+    endpoint = environ.get("APPWRITE_FUNCTION_API_ENDPOINT", "")
+    project = environ.get("APPWRITE_FUNCTION_PROJECT_ID", "")
+    database = environ.get("SECURITY_DATABASE_ID", "")
+    table = environ.get("UFMG_SESSION_TABLE_ID", "")
+    key = _header(headers, "x-appwrite-key")
+    if not all((endpoint, project, database, table, key)):
+        raise UFMGSessionStoreUnavailable("UFMG session store unavailable")
+    secrets = UFMGSessionSecrets.from_environment(environ)
+    client = Client().set_endpoint(endpoint).set_project(project).set_key(key)
+    store = AppwriteUFMGSessionStore(
+        TablesDB(client),
+        database_id=database,
+        table_id=table,
+        cipher=UFMGSessionCipher(
+            secrets.encryption_keys,
+            active_version=secrets.active_version,
+        ),
+        index_key=secrets.index_key,
+    )
+    return UFMGSessionService(UFMGAuthenticator(), store)
+
+
 def _firestore(headers: dict[str, str], user_id: str) -> FirestoreRestClient:
     metrics = _REQUEST_METRICS.get()
 
@@ -470,6 +562,13 @@ def _firestore(headers: dict[str, str], user_id: str) -> FirestoreRestClient:
 
 
 def _course_error(context: Any, origin: str | None, error: str, status: int) -> Any:
+    _error(context, error)
+    return _respond(context, {"error": error}, status, origin)
+
+
+def _ufmg_session_error(
+    context: Any, origin: str | None, error: str, status: int
+) -> Any:
     _error(context, error)
     return _respond(context, {"error": error}, status, origin)
 
@@ -514,6 +613,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/attendance/evaluate",
         "/v1/courses",
         "/v1/overview",
+        "/v1/ufmg/session",
     } or path.startswith("/v1/courses/")
 
 
@@ -632,7 +732,13 @@ def _validated_request_id(headers: dict[str, str]) -> str:
 
 
 def _route_name(path: str) -> str:
-    if path in {"/v1/identity", "/v1/attendance/evaluate", "/v1/overview", "/v1/courses"}:
+    if path in {
+        "/v1/identity",
+        "/v1/attendance/evaluate",
+        "/v1/overview",
+        "/v1/courses",
+        "/v1/ufmg/session",
+    }:
         return path
     if _session_mutation_path(path) is not None:
         mutation = path.rsplit("/", 1)[-1]

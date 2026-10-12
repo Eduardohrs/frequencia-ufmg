@@ -15,6 +15,8 @@ enum PythonBackendError {
   scheduleConflict,
   timeout,
   unauthorized,
+  ufmgCredentialsInvalid,
+  ufmgUnavailable,
   unavailable,
 }
 
@@ -55,6 +57,31 @@ abstract interface class PythonBackendTokens {
 
 abstract interface class BackendIdentityVerifier {
   Future<void> verifyIdentity();
+}
+
+abstract interface class BackendUFMGSessionGateway {
+  Future<PythonUFMGSessionStatus> getUFMGSessionStatus();
+
+  Future<PythonUFMGSessionStatus> connectUFMG({
+    required String username,
+    required String password,
+  });
+
+  Future<PythonUFMGSessionStatus> disconnectUFMG();
+}
+
+final class PythonUFMGSessionStatus {
+  const PythonUFMGSessionStatus({
+    required this.connected,
+    required this.reauthenticationRequired,
+    this.createdAt,
+    this.expiresAt,
+  });
+
+  final bool connected;
+  final bool reauthenticationRequired;
+  final DateTime? createdAt;
+  final DateTime? expiresAt;
 }
 
 abstract interface class BackendAttendanceEvaluator {
@@ -577,6 +604,7 @@ final class PythonBackendTransport
         BackendCourseGateway,
         BackendScheduleGateway,
         BackendSessionGateway,
+        BackendUFMGSessionGateway,
         BackendOverviewGateway {
   PythonBackendTransport({
     required Uri endpoint,
@@ -597,6 +625,34 @@ final class PythonBackendTransport
     final response = await _authenticatedRequest(path: '/v1/identity');
     if (_isAuthenticated(response.body)) return;
     throw const PythonBackendException(PythonBackendError.invalidResponse);
+  }
+
+  @override
+  Future<PythonUFMGSessionStatus> getUFMGSessionStatus() async {
+    final response = await _authenticatedRequest(path: '/v1/ufmg/session');
+    return _ufmgSessionStatus(response.body);
+  }
+
+  @override
+  Future<PythonUFMGSessionStatus> connectUFMG({
+    required String username,
+    required String password,
+  }) async {
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/session',
+      method: _BackendMethod.post,
+      body: {'username': username, 'password': password},
+    );
+    return _ufmgSessionStatus(response.body);
+  }
+
+  @override
+  Future<PythonUFMGSessionStatus> disconnectUFMG() async {
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/session',
+      method: _BackendMethod.delete,
+    );
+    return _ufmgSessionStatus(response.body);
   }
 
   @override
@@ -925,6 +981,70 @@ final class PythonBackendTransport
     }
   }
 
+  static PythonUFMGSessionStatus _ufmgSessionStatus(String body) {
+    try {
+      final value = jsonDecode(body);
+      if (value is! Map<String, dynamic> || value['connected'] is! bool) {
+        throw const FormatException();
+      }
+      final connected = value['connected'] as bool;
+      if (!connected) {
+        final onlyConnected = _hasExactKeys(value, const {'connected'});
+        final withReason = _hasExactKeys(value, const {
+          'connected',
+          'reauthentication_required',
+        });
+        if (!onlyConnected &&
+            (!withReason || value['reauthentication_required'] is! bool)) {
+          throw const FormatException();
+        }
+        return PythonUFMGSessionStatus(
+          connected: false,
+          reauthenticationRequired: withReason
+              ? value['reauthentication_required'] as bool
+              : false,
+        );
+      }
+      final withoutReason = _hasExactKeys(value, const {
+        'connected',
+        'created_at',
+        'expires_at',
+      });
+      final withReason = _hasExactKeys(value, const {
+        'connected',
+        'created_at',
+        'expires_at',
+        'reauthentication_required',
+      });
+      if (!withoutReason &&
+          (!withReason || value['reauthentication_required'] != false)) {
+        throw const FormatException();
+      }
+      final createdAt = value['created_at'];
+      final expiresAt = value['expires_at'];
+      if (createdAt is! int ||
+          expiresAt is! int ||
+          createdAt < 0 ||
+          expiresAt <= createdAt) {
+        throw const FormatException();
+      }
+      return PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(
+          createdAt * 1000,
+          isUtc: true,
+        ),
+        expiresAt: DateTime.fromMillisecondsSinceEpoch(
+          expiresAt * 1000,
+          isUtc: true,
+        ),
+      );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
   static PythonAttendanceDecision _attendanceDecision(
     String body, {
     required int maximumAbsences,
@@ -1013,6 +1133,11 @@ final class PythonBackendTransport
     if (status == 401 && error == 'app_check_invalid') {
       return const PythonBackendException(PythonBackendError.appCheckInvalid);
     }
+    if (status == 401 && error == 'ufmg_credentials_invalid') {
+      return const PythonBackendException(
+        PythonBackendError.ufmgCredentialsInvalid,
+      );
+    }
     if (status == 401) {
       return const PythonBackendException(PythonBackendError.unauthorized);
     }
@@ -1040,6 +1165,10 @@ final class PythonBackendTransport
       );
     }
     if (status == 503) {
+      if (error == 'ufmg_authentication_unavailable' ||
+          error == 'ufmg_session_store_unavailable') {
+        return const PythonBackendException(PythonBackendError.ufmgUnavailable);
+      }
       return const PythonBackendException(PythonBackendError.unavailable);
     }
     return const PythonBackendException(PythonBackendError.invalidResponse);

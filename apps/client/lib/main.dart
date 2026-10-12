@@ -130,6 +130,9 @@ Future<void> main() async {
       sessionGateway: backend is BackendSessionGateway
           ? backend as BackendSessionGateway
           : null,
+      ufmgSessionGateway: backend is BackendUFMGSessionGateway
+          ? backend as BackendUFMGSessionGateway
+          : null,
       overviewRepository: overviewRepository,
       scheduleReadsEnabled: false,
       scheduleWritesEnabled: pythonScheduleWritesEnabled,
@@ -154,6 +157,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
     this.attendanceEvaluator,
     this.scheduleGateway,
     this.sessionGateway,
+    this.ufmgSessionGateway,
     this.overviewRepository,
     this.scheduleReadsEnabled = true,
     this.scheduleWritesEnabled = false,
@@ -174,6 +178,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
+  final BackendUFMGSessionGateway? ufmgSessionGateway;
   final AcademicOverviewRepository? overviewRepository;
   final bool scheduleReadsEnabled;
   final bool scheduleWritesEnabled;
@@ -215,6 +220,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
         attendanceEvaluator: attendanceEvaluator,
         scheduleGateway: scheduleGateway,
         sessionGateway: sessionGateway,
+        ufmgSessionGateway: ufmgSessionGateway,
         overviewRepository: overviewRepository,
         scheduleReadsEnabled: scheduleReadsEnabled,
         scheduleWritesEnabled: scheduleWritesEnabled,

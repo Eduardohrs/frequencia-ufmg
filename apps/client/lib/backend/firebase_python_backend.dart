@@ -40,6 +40,7 @@ final class _FirebasePythonBackendVerifier
         BackendCourseGateway,
         BackendScheduleGateway,
         BackendSessionGateway,
+        BackendUFMGSessionGateway,
         BackendOverviewGateway {
   _FirebasePythonBackendVerifier(Uri endpoint)
     : _transport = PythonBackendTransport(
@@ -55,6 +56,27 @@ final class _FirebasePythonBackendVerifier
   Future<void> verifyIdentity() async {
     await (_activation ??= _activateAppCheck());
     await _transport.verifyIdentity();
+  }
+
+  @override
+  Future<PythonUFMGSessionStatus> getUFMGSessionStatus() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.getUFMGSessionStatus();
+  }
+
+  @override
+  Future<PythonUFMGSessionStatus> connectUFMG({
+    required String username,
+    required String password,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.connectUFMG(username: username, password: password);
+  }
+
+  @override
+  Future<PythonUFMGSessionStatus> disconnectUFMG() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.disconnectUFMG();
   }
 
   @override

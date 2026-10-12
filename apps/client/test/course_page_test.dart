@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/auth/auth_user.dart';
+import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/document_store.dart';
@@ -1131,6 +1132,36 @@ void main() {
     expect(find.text('DCC203'), findsNothing);
     expect(find.textContaining('Código: permission-denied'), findsOneWidget);
   });
+
+  testWidgets('opens the UFMG connection from the navigation drawer', (
+    tester,
+  ) async {
+    final repository = _FakeCourseRepository();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: repository,
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          ufmgSessionGateway: _UFMGGateway(),
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('nav-ufmg-connection')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('nav-ufmg-connection')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Conexão UFMG'), findsOneWidget);
+    expect(find.text('Conectar à UFMG'), findsOneWidget);
+  });
 }
 
 Future<void> _fillNewCourse(
@@ -1392,4 +1423,23 @@ final class _RecordingAppLogger implements AppLogger {
   }) async {
     errorContexts.add(context);
   }
+}
+
+final class _UFMGGateway implements BackendUFMGSessionGateway {
+  @override
+  Future<PythonUFMGSessionStatus> getUFMGSessionStatus() async =>
+      const PythonUFMGSessionStatus(
+        connected: false,
+        reauthenticationRequired: false,
+      );
+
+  @override
+  Future<PythonUFMGSessionStatus> connectUFMG({
+    required String username,
+    required String password,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<PythonUFMGSessionStatus> disconnectUFMG() =>
+      throw UnimplementedError();
 }
