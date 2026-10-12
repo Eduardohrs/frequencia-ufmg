@@ -149,10 +149,7 @@ void main() {
         tokens: _Tokens(),
         client: MockClient(
           (_) async => http.Response(
-            jsonEncode({
-              'connected': false,
-              'reauthentication_required': true,
-            }),
+            jsonEncode({'connected': false, 'reauthentication_required': true}),
             200,
           ),
         ),
