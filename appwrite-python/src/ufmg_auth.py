@@ -18,8 +18,9 @@ _PORTAL_URL = "https://sistemas.ufmg.br/portal/render.userLayoutRootNode.uP"
 _LOGIN_URL = "https://sistemas.ufmg.br/idp/j_security_check"
 _SUCCESS_PATH = "/portal/revalidate.html"
 _TRUSTED_HOST = "sistemas.ufmg.br"
-_USERNAME_MAX_LENGTH = 64
-_PASSWORD_MAX_LENGTH = 256
+_FORM_ORIGIN = "https://sistemas.ufmg.br"
+_USERNAME_MAX_LENGTH = 50
+_PASSWORD_MAX_LENGTH = 50
 _TOKEN_MAX_LENGTH = 8_192
 _INVALID_CREDENTIAL_REASONS = frozenset(
     {
@@ -92,14 +93,20 @@ class UFMGAuthenticator:
                 Request(_PORTAL_URL, headers=_request_headers()),
                 timeout=self._timeout_seconds,
             ) as response:
-                if not _trusted_response(response.geturl(), "/idp/login.jsp"):
+                login_page_url = response.geturl()
+                if not _trusted_response(login_page_url, "/idp/login.jsp"):
                     raise InvalidUFMGCredentials("login_entry_rejected")
             if _cookie_value(jar, "WASReqURL") is None:
                 raise InvalidUFMGCredentials("login_context_missing")
 
             body = urlencode(
-                {"j_username": username, "j_password": password}
-            ).encode("utf-8")
+                {
+                    "j_username": username,
+                    "j_password": password,
+                    "submit": "Entrar",
+                },
+                encoding="iso-8859-1",
+            ).encode("ascii")
             with opener.open(
                 Request(
                     _LOGIN_URL,
@@ -107,6 +114,8 @@ class UFMGAuthenticator:
                     headers={
                         **_request_headers(),
                         "Content-Type": "application/x-www-form-urlencoded",
+                        "Origin": _FORM_ORIGIN,
+                        "Referer": login_page_url,
                     },
                     method="POST",
                 ),

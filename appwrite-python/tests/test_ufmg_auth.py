@@ -89,7 +89,7 @@ def test_login_reproduces_the_required_two_step_flow_and_returns_only_ltpa_token
         return opener
 
     token = UFMGAuthenticator(opener_factory=factory, timeout_seconds=7).login(
-        "2025019259", "private-password"
+        "2025019259", "private-sênha"
     )
 
     assert token == "private-ltpa-token"
@@ -98,10 +98,15 @@ def test_login_reproduces_the_required_two_step_flow_and_returns_only_ltpa_token
     assert first[0].get_method() == "GET"
     assert second[0].full_url == "https://sistemas.ufmg.br/idp/j_security_check"
     assert second[0].get_method() == "POST"
-    assert parse_qs(second[0].data.decode()) == {
+    assert parse_qs(second[0].data.decode(), encoding="iso-8859-1") == {
         "j_username": ["2025019259"],
-        "j_password": ["private-password"],
+        "j_password": ["private-sênha"],
+        "submit": ["Entrar"],
     }
+    assert second[0].get_header("Origin") == "https://sistemas.ufmg.br"
+    assert second[0].get_header("Referer") == (
+        "https://sistemas.ufmg.br/portal/../idp/login.jsp"
+    )
     assert first[1] == second[1] == 7
 
 
@@ -177,9 +182,9 @@ def test_default_opener_and_timeout_configuration_are_bounded() -> None:
     [
         ("", "valid-password"),
         ("student name", "valid-password"),
-        ("x" * 65, "valid-password"),
+        ("x" * 51, "valid-password"),
         ("student", ""),
-        ("student", "x" * 257),
+        ("student", "x" * 51),
         ("student", "line\nbreak"),
     ],
 )
