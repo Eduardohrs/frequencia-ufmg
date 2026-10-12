@@ -311,8 +311,11 @@ def _ufmg_session(context: Any, origin: str | None, method: str) -> Any:
         else:
             result = service.disconnect(cast(str, user_id))
             event = "ufmg_session_disconnect_succeeded"
-    except InvalidUFMGCredentials:
-        return _ufmg_session_error(context, origin, "ufmg_credentials_invalid", 401)
+    except InvalidUFMGCredentials as error:
+        _error(context, "ufmg_credentials_invalid", reason=error.reason)
+        return _respond(
+            context, {"error": "ufmg_credentials_invalid"}, 401, origin
+        )
     except UFMGAuthenticationUnavailable:
         return _ufmg_session_error(
             context, origin, "ufmg_authentication_unavailable", 503
