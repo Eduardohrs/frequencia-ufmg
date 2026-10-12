@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from http.cookiejar import CookieJar
+from posixpath import normpath
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlencode, urlsplit
@@ -159,7 +160,7 @@ def _trusted_response(url: str, expected_path: str) -> bool:
     return (
         parsed.scheme == "https"
         and parsed.hostname == _TRUSTED_HOST
-        and parsed.path == expected_path
+        and normpath(parsed.path) == expected_path
     )
 
 
