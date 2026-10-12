@@ -35,7 +35,8 @@ enum AuditedOperation {
   academicOverviewFallback('academic_overview_fallback'),
   ufmgSessionStatus('ufmg_session_status'),
   ufmgSessionConnect('ufmg_session_connect'),
-  ufmgSessionDisconnect('ufmg_session_disconnect');
+  ufmgSessionDisconnect('ufmg_session_disconnect'),
+  ufmgCourseImport('ufmg_course_import');
 
   const AuditedOperation(this.eventPrefix);
 

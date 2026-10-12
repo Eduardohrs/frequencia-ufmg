@@ -1161,6 +1161,9 @@ void main() {
 
     expect(find.text('Conexão UFMG'), findsOneWidget);
     expect(find.text('Conectar à UFMG'), findsOneWidget);
+    Navigator.of(tester.element(find.text('Conectar à UFMG'))).pop();
+    await tester.pumpAndSettle();
+    expect(repository.listCalls, 2);
   });
 }
 
@@ -1426,6 +1429,10 @@ final class _RecordingAppLogger implements AppLogger {
 }
 
 final class _UFMGGateway implements BackendUFMGSessionGateway {
+  @override
+  Future<PythonUFMGCourseImportResult> importUFMGCourses() async =>
+      const PythonUFMGCourseImportResult(created: 0, existing: 0, total: 0);
+
   @override
   Future<PythonUFMGSessionStatus> getUFMGSessionStatus() async =>
       const PythonUFMGSessionStatus(

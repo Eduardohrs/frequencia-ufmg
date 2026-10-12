@@ -27,6 +27,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   bool _busy = false;
   bool _showReconnectForm = false;
   String? _error;
+  String? _importSummary;
 
   @override
   void initState() {
@@ -129,6 +130,44 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
+  Future<void> _importCourses() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+      _importSummary = null;
+    });
+    try {
+      final result = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.ufmgCourseImport,
+        action: widget.gateway.importUFMGCourses,
+      );
+      if (mounted) {
+        setState(() {
+          _importSummary =
+              '${result.created} ${_plural(result.created, 'disciplina importada', 'disciplinas importadas')}. '
+              '${result.existing} já ${result.existing == 1 ? 'estava cadastrada' : 'estavam cadastradas'}.';
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PythonBackendException &&
+          error.code == PythonBackendError.ufmgReauthenticationRequired) {
+        setState(() {
+          _status = const PythonUFMGSessionStatus(
+            connected: false,
+            reauthenticationRequired: true,
+          );
+          _error = 'Sua sessão expirou. Reconecte para importar.';
+        });
+      } else {
+        setState(() => _error = _importMessageFor(error));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -202,9 +241,36 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             ),
           ),
         ],
+        if (_importSummary != null) ...[
+          const SizedBox(height: 16),
+          Semantics(
+            liveRegion: true,
+            child: Card(
+              child: ListTile(
+                leading: const Icon(Icons.check_circle_outline),
+                title: Text(_importSummary!),
+                subtitle: const Text(
+                  'Dados já cadastrados foram preservados. Horários não foram importados nesta etapa.',
+                ),
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 24),
         if (!connected || _showReconnectForm) _connectionForm(),
         if (connected && !_showReconnectForm) ...[
+          FilledButton.icon(
+            key: const Key('ufmg-import-courses'),
+            onPressed: _busy ? null : _importCourses,
+            icon: _busy
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.download_outlined),
+            label: const Text('Importar disciplinas'),
+          ),
+          const SizedBox(height: 8),
           FilledButton.icon(
             key: const Key('ufmg-reconnect'),
             onPressed: _busy
@@ -307,7 +373,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       return switch (error.code) {
         PythonBackendError.ufmgCredentialsInvalid =>
           'Usuário ou senha da UFMG inválidos.',
-        PythonBackendError.ufmgUnavailable || PythonBackendError.timeout =>
+        PythonBackendError.ufmgUnavailable ||
+        PythonBackendError.unavailable ||
+        PythonBackendError.timeout =>
           'A UFMG está indisponível no momento. Tente novamente mais tarde.',
         PythonBackendError.rateLimited =>
           'Muitas tentativas seguidas. Aguarde um pouco e tente novamente.',
@@ -316,4 +384,22 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
     return 'Não foi possível atualizar a conexão com a UFMG.';
   }
+
+  static String _importMessageFor(Object error) {
+    if (error is PythonBackendException) {
+      return switch (error.code) {
+        PythonBackendError.ufmgUnavailable ||
+        PythonBackendError.unavailable ||
+        PythonBackendError.timeout =>
+          'Não foi possível consultar as matrículas na UFMG agora.',
+        PythonBackendError.rateLimited =>
+          'Muitas tentativas seguidas. Aguarde um pouco e tente novamente.',
+        _ => 'Não foi possível importar as disciplinas.',
+      };
+    }
+    return 'Não foi possível importar as disciplinas.';
+  }
+
+  static String _plural(int count, String singular, String plural) =>
+      count == 1 ? singular : plural;
 }

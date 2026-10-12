@@ -68,10 +68,17 @@ from ufmg_auth import (  # noqa: E402
     UFMGAuthenticationUnavailable,
     UFMGAuthenticator,
 )
+from ufmg_course_import import (  # noqa: E402
+    InvalidUFMGEnrollmentResponse,
+    UFMGCourseImportService,
+    UFMGEnrollmentClient,
+    UFMGEnrollmentUnavailable,
+)
 from ufmg_session_service import UFMGSessionService  # noqa: E402
 from ufmg_session_store import (  # noqa: E402
     AppwriteUFMGSessionStore,
     InvalidUFMGSession,
+    UFMGReauthenticationRequired,
     UFMGSessionCipher,
     UFMGSessionSecrets,
     UFMGSessionStoreUnavailable,
@@ -202,6 +209,8 @@ def _dispatch(context: Any) -> Any:
         return _courses_list(context, allowed_origin)
     if path == "/v1/ufmg/session" and method in {"GET", "POST", "DELETE"}:
         return _ufmg_session(context, allowed_origin, method)
+    if path == "/v1/ufmg/import/courses" and method == "POST":
+        return _ufmg_course_import(context, allowed_origin)
     session_mutation = _session_mutation_path(path)
     if method == "PUT" and session_mutation is not None:
         course_id, session_id, mutation = session_mutation
@@ -331,6 +340,44 @@ def _ufmg_session(context: Any, origin: str | None, method: str) -> Any:
             context, origin, "ufmg_session_configuration_invalid", 503
         )
     _log(context, event)
+    return _respond(context, result, origin=origin)
+
+
+def _ufmg_course_import(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(
+        context, origin, "/v1/ufmg/import/courses/post"
+    )
+    if rejected is not None:
+        return rejected
+    if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
+        return _ufmg_session_error(
+            context, origin, "ufmg_course_import_rejected", 400
+        )
+    try:
+        result = _ufmg_course_import_service(
+            context.req.headers, cast(str, user_id)
+        ).import_courses(cast(str, user_id), now=int(time()))
+    except UFMGReauthenticationRequired:
+        return _ufmg_session_error(
+            context, origin, "ufmg_reauthentication_required", 401
+        )
+    except UFMGEnrollmentUnavailable:
+        return _ufmg_session_error(
+            context, origin, "ufmg_enrollment_unavailable", 503
+        )
+    except InvalidUFMGEnrollmentResponse:
+        return _ufmg_session_error(context, origin, "ufmg_enrollment_invalid", 502)
+    except UFMGSessionStoreUnavailable:
+        return _ufmg_session_error(
+            context, origin, "ufmg_session_store_unavailable", 503
+        )
+    except FirestoreAccessDenied:
+        return _course_error(context, origin, "course_access_denied", 403)
+    except FirestoreUnavailable:
+        return _course_error(context, origin, "course_store_unavailable", 503)
+    except (InvalidCourse, FirestoreRequestRejected, DuplicateCourseCode):
+        return _course_error(context, origin, "course_import_rejected", 502)
+    _log(context, "ufmg_course_import_succeeded", **result)
     return _respond(context, result, origin=origin)
 
 
@@ -531,6 +578,20 @@ def _overview_repository(headers: dict[str, str], user_id: str) -> AcademicOverv
 
 
 def _ufmg_session_service(headers: dict[str, str]) -> UFMGSessionService:
+    return UFMGSessionService(UFMGAuthenticator(), _ufmg_session_store(headers))
+
+
+def _ufmg_course_import_service(
+    headers: dict[str, str], user_id: str
+) -> UFMGCourseImportService:
+    return UFMGCourseImportService(
+        _ufmg_session_store(headers),
+        UFMGEnrollmentClient(),
+        _course_repository(headers, user_id),
+    )
+
+
+def _ufmg_session_store(headers: dict[str, str]) -> AppwriteUFMGSessionStore:
     endpoint = environ.get("APPWRITE_FUNCTION_API_ENDPOINT", "")
     project = environ.get("APPWRITE_FUNCTION_PROJECT_ID", "")
     database = environ.get("SECURITY_DATABASE_ID", "")
@@ -550,7 +611,7 @@ def _ufmg_session_service(headers: dict[str, str]) -> UFMGSessionService:
         ),
         index_key=secrets.index_key,
     )
-    return UFMGSessionService(UFMGAuthenticator(), store)
+    return store
 
 
 def _firestore(headers: dict[str, str], user_id: str) -> FirestoreRestClient:
@@ -617,6 +678,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/courses",
         "/v1/overview",
         "/v1/ufmg/session",
+        "/v1/ufmg/import/courses",
     } or path.startswith("/v1/courses/")
 
 
@@ -741,6 +803,7 @@ def _route_name(path: str) -> str:
         "/v1/overview",
         "/v1/courses",
         "/v1/ufmg/session",
+        "/v1/ufmg/import/courses",
     }:
         return path
     if _session_mutation_path(path) is not None:

@@ -48,6 +48,114 @@ void main() {
     );
   });
 
+  testWidgets('imports courses while connected and shows the safe summary', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+        createdAt: DateTime.utc(2026, 10, 12, 12),
+        expiresAt: DateTime.utc(2026, 10, 12, 21),
+      ),
+    );
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('ufmg-import-courses')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.importCalls, 1);
+    expect(
+      find.text('2 disciplinas importadas. 3 já estavam cadastradas.'),
+      findsOneWidget,
+    );
+    expect(logger.events, contains('ufmg_course_import_succeeded'));
+  });
+
+  testWidgets('asks for reconnection when the saved UFMG session expired', (
+    tester,
+  ) async {
+    final gateway =
+        _Gateway(
+            status: PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+              createdAt: DateTime.utc(2026, 10, 12, 12),
+              expiresAt: DateTime.utc(2026, 10, 12, 21),
+            ),
+          )
+          ..importError = const PythonBackendException(
+            PythonBackendError.ufmgReauthenticationRequired,
+          );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('ufmg-import-courses')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Sua sessão expirou. Reconecte para importar.'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('ufmg-username')), findsOneWidget);
+  });
+
+  testWidgets('explains import outages, throttling, and unexpected failures', (
+    tester,
+  ) async {
+    final failures = <(Object, String)>[
+      (
+        const PythonBackendException(PythonBackendError.timeout),
+        'Não foi possível consultar as matrículas na UFMG agora.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.unavailable),
+        'Não foi possível consultar as matrículas na UFMG agora.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.rateLimited),
+        'Muitas tentativas seguidas. Aguarde um pouco e tente novamente.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.invalidResponse),
+        'Não foi possível importar as disciplinas.',
+      ),
+      (StateError('unexpected'), 'Não foi possível importar as disciplinas.'),
+    ];
+    for (var index = 0; index < failures.length; index++) {
+      final gateway = _Gateway(
+        status: PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+          createdAt: DateTime.utc(2026, 10, 12, 12),
+          expiresAt: DateTime.utc(2026, 10, 12, 21),
+        ),
+      )..importError = failures[index].$1;
+      await tester.pumpWidget(
+        MaterialApp(
+          key: ValueKey(index),
+          home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('ufmg-import-courses')));
+      await tester.pumpAndSettle();
+
+      expect(find.text(failures[index].$2), findsOneWidget);
+    }
+  });
+
   testWidgets(
     'shows expired state, reconnects, and disconnects after confirmation',
     (tester) async {
@@ -231,8 +339,21 @@ final class _Gateway implements BackendUFMGSessionGateway {
   Object? connectError;
   Object? statusError;
   Object? disconnectError;
+  Object? importError;
   final credentials = <(String, String)>[];
   int disconnectCalls = 0;
+  int importCalls = 0;
+
+  @override
+  Future<PythonUFMGCourseImportResult> importUFMGCourses() async {
+    importCalls++;
+    if (importError case final error?) throw error;
+    return const PythonUFMGCourseImportResult(
+      created: 2,
+      existing: 3,
+      total: 5,
+    );
+  }
 
   @override
   Future<PythonUFMGSessionStatus> getUFMGSessionStatus() async {
