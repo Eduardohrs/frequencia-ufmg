@@ -2,6 +2,8 @@
 
 from typing import Any, Protocol
 
+from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
+
 
 class _Authenticator(Protocol):
     def login(self, username: str, password: str) -> str: ...
@@ -11,6 +13,8 @@ class _SessionStore(Protocol):
     def save(self, user_id: str, token: str, *, now: int) -> Any: ...
 
     def delete(self, user_id: str) -> None: ...
+
+    def load(self, user_id: str, *, now: int) -> UFMGSession | None: ...
 
 
 class UFMGSessionService:
@@ -34,6 +38,20 @@ class UFMGSessionService:
             "connected": True,
             "created_at": metadata.created_at,
             "expires_at": metadata.expires_at,
+        }
+
+    def status(self, user_id: str, *, now: int) -> dict[str, bool | int]:
+        try:
+            session = self._store.load(user_id, now=now)
+        except UFMGReauthenticationRequired:
+            return {"connected": False, "reauthentication_required": True}
+        if session is None:
+            return {"connected": False, "reauthentication_required": False}
+        return {
+            "connected": True,
+            "created_at": session.created_at,
+            "expires_at": session.expires_at,
+            "reauthentication_required": False,
         }
 
     def disconnect(self, user_id: str) -> dict[str, bool]:

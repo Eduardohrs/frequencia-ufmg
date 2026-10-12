@@ -23,6 +23,7 @@ class AuthGate extends StatefulWidget {
     this.attendanceEvaluator,
     this.scheduleGateway,
     this.sessionGateway,
+    this.ufmgSessionGateway,
     this.overviewRepository,
     this.scheduleReadsEnabled = true,
     this.scheduleWritesEnabled = false,
@@ -43,6 +44,7 @@ class AuthGate extends StatefulWidget {
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
+  final BackendUFMGSessionGateway? ufmgSessionGateway;
   final AcademicOverviewRepository? overviewRepository;
   final bool scheduleReadsEnabled;
   final bool scheduleWritesEnabled;
@@ -139,6 +141,7 @@ class _AuthGateState extends State<AuthGate> {
             attendanceEvaluator: widget.attendanceEvaluator,
             scheduleGateway: widget.scheduleGateway,
             sessionGateway: widget.sessionGateway,
+            ufmgSessionGateway: widget.ufmgSessionGateway,
             overviewRepository: widget.overviewRepository,
             scheduleReadsEnabled: widget.scheduleReadsEnabled,
             scheduleWritesEnabled: widget.scheduleWritesEnabled,
