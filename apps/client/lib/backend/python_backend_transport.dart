@@ -16,6 +16,7 @@ enum PythonBackendError {
   timeout,
   unauthorized,
   ufmgCredentialsInvalid,
+  ufmgReauthenticationRequired,
   ufmgUnavailable,
   unavailable,
 }
@@ -68,6 +69,20 @@ abstract interface class BackendUFMGSessionGateway {
   });
 
   Future<PythonUFMGSessionStatus> disconnectUFMG();
+
+  Future<PythonUFMGCourseImportResult> importUFMGCourses();
+}
+
+final class PythonUFMGCourseImportResult {
+  const PythonUFMGCourseImportResult({
+    required this.created,
+    required this.existing,
+    required this.total,
+  });
+
+  final int created;
+  final int existing;
+  final int total;
 }
 
 final class PythonUFMGSessionStatus {
@@ -656,6 +671,40 @@ final class PythonBackendTransport
   }
 
   @override
+  Future<PythonUFMGCourseImportResult> importUFMGCourses() async {
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/import/courses',
+      method: _BackendMethod.post,
+      body: const {},
+    );
+    try {
+      final value = jsonDecode(response.body);
+      if (value is! Map<String, dynamic> ||
+          !_hasExactKeys(value, const {'created', 'existing', 'total'})) {
+        throw const FormatException();
+      }
+      final created = value['created'];
+      final existing = value['existing'];
+      final total = value['total'];
+      if (created is! int ||
+          existing is! int ||
+          total is! int ||
+          created < 0 ||
+          existing < 0 ||
+          total != created + existing) {
+        throw const FormatException();
+      }
+      return PythonUFMGCourseImportResult(
+        created: created,
+        existing: existing,
+        total: total,
+      );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
   Future<PythonAttendanceDecision> evaluateAttendanceStatus({
     required int lessons,
     required int calls,
@@ -1136,6 +1185,11 @@ final class PythonBackendTransport
     if (status == 401 && error == 'ufmg_credentials_invalid') {
       return const PythonBackendException(
         PythonBackendError.ufmgCredentialsInvalid,
+      );
+    }
+    if (status == 401 && error == 'ufmg_reauthentication_required') {
+      return const PythonBackendException(
+        PythonBackendError.ufmgReauthenticationRequired,
       );
     }
     if (status == 401) {

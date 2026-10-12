@@ -370,6 +370,7 @@ class _CoursePageState extends State<CoursePage> {
             UFMGConnectionPage(gateway: gateway, logger: widget.logger),
       ),
     );
+    if (mounted) await _load();
   }
 
   Future<void> _openAbsenceDashboard({bool closeDrawer = true}) async {

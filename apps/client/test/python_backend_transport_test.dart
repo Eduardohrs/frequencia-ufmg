@@ -160,6 +160,63 @@ void main() {
     },
   );
 
+  test(
+    'imports UFMG courses and accepts only a bounded count summary',
+    () async {
+      late http.Request captured;
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((request) async {
+          captured = request;
+          return http.Response(
+            jsonEncode({'created': 2, 'existing': 3, 'total': 5}),
+            200,
+          );
+        }),
+      );
+
+      final result = await transport.importUFMGCourses();
+
+      expect(result.created, 2);
+      expect(result.existing, 3);
+      expect(result.total, 5);
+      expect(captured.method, 'POST');
+      expect(captured.url.path, '/v1/ufmg/import/courses');
+      expect(captured.body, '{}');
+    },
+  );
+
+  test('rejects malformed UFMG import summaries', () async {
+    for (final body in [
+      {'created': 2, 'existing': 3, 'total': 4},
+      {'created': -1, 'existing': 0, 'total': -1},
+      {
+        'created': 1,
+        'existing': 0,
+        'total': 1,
+        'courses': ['private'],
+      },
+    ]) {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((_) async => http.Response(jsonEncode(body), 200)),
+      );
+
+      await expectLater(
+        transport.importUFMGCourses(),
+        throwsA(
+          isA<PythonBackendException>().having(
+            (error) => error.code,
+            'code',
+            PythonBackendError.invalidResponse,
+          ),
+        ),
+      );
+    }
+  });
+
   test('classifies invalid UFMG credentials separately from outages', () async {
     for (final entry in [
       (
