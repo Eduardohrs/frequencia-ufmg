@@ -7,6 +7,7 @@ import 'auth_user.dart';
 import '../backend/python_backend_transport.dart';
 import '../data/academic_repositories.dart';
 import '../data/python_overview_repository.dart';
+import '../data/ufmg_sync_schedule.dart';
 import '../features/courses/course_page.dart';
 import '../observability/app_logger.dart';
 import '../observability/audited_operation.dart';
@@ -24,6 +25,7 @@ class AuthGate extends StatefulWidget {
     this.scheduleGateway,
     this.sessionGateway,
     this.ufmgSessionGateway,
+    this.ufmgSyncSchedule,
     this.overviewRepository,
     this.scheduleReadsEnabled = true,
     this.scheduleWritesEnabled = false,
@@ -45,6 +47,7 @@ class AuthGate extends StatefulWidget {
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
   final BackendUFMGSessionGateway? ufmgSessionGateway;
+  final UFMGSyncScheduleGateway? ufmgSyncSchedule;
   final AcademicOverviewRepository? overviewRepository;
   final bool scheduleReadsEnabled;
   final bool scheduleWritesEnabled;
@@ -142,6 +145,7 @@ class _AuthGateState extends State<AuthGate> {
             scheduleGateway: widget.scheduleGateway,
             sessionGateway: widget.sessionGateway,
             ufmgSessionGateway: widget.ufmgSessionGateway,
+            ufmgSyncSchedule: widget.ufmgSyncSchedule,
             overviewRepository: widget.overviewRepository,
             scheduleReadsEnabled: widget.scheduleReadsEnabled,
             scheduleWritesEnabled: widget.scheduleWritesEnabled,

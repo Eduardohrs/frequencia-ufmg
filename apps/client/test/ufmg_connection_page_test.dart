@@ -1,10 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
+import 'package:frequencia_ufmg/data/ufmg_sync_schedule.dart';
 import 'package:frequencia_ufmg/features/ufmg/ufmg_connection_page.dart';
 import 'package:frequencia_ufmg/observability/app_logger.dart';
+import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
 void main() {
+  setUp(() {
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.empty();
+  });
+
   testWidgets('connects without displaying or retaining the password', (
     tester,
   ) async {
@@ -106,6 +114,89 @@ void main() {
       findsOneWidget,
     );
     expect(logger.events, contains('ufmg_schedule_import_succeeded'));
+  });
+
+  testWidgets('runs every ready import stage through one synchronization', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    final logger = _Logger();
+    final schedule = UFMGSyncSchedule(
+      now: () => DateTime.utc(2026, 10, 13, 12),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: gateway,
+          logger: logger,
+          userId: 'user-1',
+          syncSchedule: schedule,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('ufmg-sync')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.syncCalls, 1);
+    expect(find.textContaining('2 disciplinas importadas'), findsOneWidget);
+    expect(find.textContaining('2 grades atualizadas'), findsOneWidget);
+    expect(find.textContaining('1 conflito preservado'), findsOneWidget);
+    expect(logger.events, contains('ufmg_sync_succeeded'));
+    expect(await schedule.isDue('user-1'), isFalse);
+  });
+
+  testWidgets('explains synchronization failures and expired sessions', (
+    tester,
+  ) async {
+    final failures = <(Object, String)>[
+      (
+        const PythonBackendException(
+          PythonBackendError.ufmgReauthenticationRequired,
+        ),
+        'Sua sessão expirou. Reconecte para sincronizar.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.ufmgUnavailable),
+        'Não foi possível sincronizar com a UFMG agora.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.rateLimited),
+        'Muitas tentativas seguidas.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.invalidResponse),
+        'Não foi possível sincronizar os dados da UFMG.',
+      ),
+      (StateError('offline'), 'Não foi possível sincronizar os dados da UFMG.'),
+    ];
+
+    for (final failure in failures) {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      )..syncError = failure.$1;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('ufmg-sync')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining(failure.$2), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
   });
 
   testWidgets('handles expired and failed schedule imports safely', (
@@ -261,6 +352,7 @@ void main() {
       await tester.enterText(find.byKey(const Key('ufmg-password')), 'secret');
       await tester.tap(find.byKey(const Key('ufmg-connect')));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('ufmg-disconnect')));
       await tester.tap(find.byKey(const Key('ufmg-disconnect')));
       await tester.pumpAndSettle();
       expect(find.text('Desconectar da UFMG?'), findsOneWidget);
@@ -350,6 +442,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('ufmg-username')), findsNothing);
 
+      await tester.ensureVisible(find.byKey(const Key('ufmg-disconnect')));
       await tester.tap(find.byKey(const Key('ufmg-disconnect')));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(TextButton, 'Cancelar'));
@@ -359,6 +452,7 @@ void main() {
       gateway.disconnectError = const PythonBackendException(
         PythonBackendError.ufmgUnavailable,
       );
+      await tester.ensureVisible(find.byKey(const Key('ufmg-disconnect')));
       await tester.tap(find.byKey(const Key('ufmg-disconnect')));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Desconectar'));
@@ -425,10 +519,12 @@ final class _Gateway implements BackendUFMGSessionGateway {
   Object? disconnectError;
   Object? importError;
   Object? scheduleImportError;
+  Object? syncError;
   final credentials = <(String, String)>[];
   int disconnectCalls = 0;
   int importCalls = 0;
   int scheduleImportCalls = 0;
+  int syncCalls = 0;
 
   @override
   Future<PythonUFMGCourseImportResult> importUFMGCourses() async {
@@ -452,6 +548,29 @@ final class _Gateway implements BackendUFMGSessionGateway {
       conflicts: 1,
       missingCourses: 1,
       meetingsImported: 3,
+    );
+  }
+
+  @override
+  Future<PythonUFMGSyncResult> syncUFMG() async {
+    syncCalls++;
+    if (syncError case final error?) throw error;
+    return PythonUFMGSyncResult(
+      courses: const PythonUFMGCourseImportResult(
+        created: 2,
+        existing: 3,
+        total: 5,
+      ),
+      schedules: const PythonUFMGScheduleImportResult(
+        total: 5,
+        updated: 2,
+        unchanged: 2,
+        conflicts: 1,
+        missingCourses: 0,
+        meetingsImported: 3,
+      ),
+      checkedAt: DateTime.utc(2026, 10, 13, 12),
+      nextAutomaticSyncAt: DateTime.utc(2026, 12, 6),
     );
   }
 

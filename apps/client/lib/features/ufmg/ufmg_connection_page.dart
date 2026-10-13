@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../backend/python_backend_transport.dart';
+import '../../data/ufmg_sync_schedule.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 
@@ -8,11 +9,15 @@ class UFMGConnectionPage extends StatefulWidget {
   const UFMGConnectionPage({
     required this.gateway,
     required this.logger,
+    this.userId,
+    this.syncSchedule,
     super.key,
   });
 
   final BackendUFMGSessionGateway gateway;
   final AppLogger logger;
+  final String? userId;
+  final UFMGSyncScheduleGateway? syncSchedule;
 
   @override
   State<UFMGConnectionPage> createState() => _UFMGConnectionPageState();
@@ -208,6 +213,52 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
+  Future<void> _sync() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+      _importSummary = null;
+    });
+    try {
+      final result = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.ufmgSync,
+        action: widget.gateway.syncUFMG,
+      );
+      final userId = widget.userId;
+      final schedule = widget.syncSchedule;
+      if (userId != null && schedule != null) {
+        await schedule.record(userId, result.nextAutomaticSyncAt);
+      }
+      if (mounted) {
+        setState(() {
+          _importSummary =
+              '${result.courses.created} ${_plural(result.courses.created, 'disciplina importada', 'disciplinas importadas')}. '
+              '${result.courses.existing} já ${result.courses.existing == 1 ? 'estava cadastrada' : 'estavam cadastradas'}. '
+              '${result.schedules.updated} ${_plural(result.schedules.updated, 'grade atualizada', 'grades atualizadas')}. '
+              '${result.schedules.unchanged} ${_plural(result.schedules.unchanged, 'grade sem alteração', 'grades sem alteração')}. '
+              '${result.schedules.conflicts} ${_plural(result.schedules.conflicts, 'conflito preservado', 'conflitos preservados')}.';
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PythonBackendException &&
+          error.code == PythonBackendError.ufmgReauthenticationRequired) {
+        setState(() {
+          _status = const PythonUFMGSessionStatus(
+            connected: false,
+            reauthenticationRequired: true,
+          );
+          _error = 'Sua sessão expirou. Reconecte para sincronizar.';
+        });
+      } else {
+        setState(() => _error = _syncMessageFor(error));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -299,6 +350,18 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         const SizedBox(height: 24),
         if (!connected || _showReconnectForm) _connectionForm(),
         if (connected && !_showReconnectForm) ...[
+          FilledButton.icon(
+            key: const Key('ufmg-sync'),
+            onPressed: _busy ? null : _sync,
+            icon: _busy
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.sync),
+            label: const Text('Sincronizar agora'),
+          ),
+          const SizedBox(height: 8),
           FilledButton.icon(
             key: const Key('ufmg-import-courses'),
             onPressed: _busy ? null : _importCourses,
@@ -460,6 +523,21 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       };
     }
     return 'Não foi possível importar os horários.';
+  }
+
+  static String _syncMessageFor(Object error) {
+    if (error is PythonBackendException) {
+      return switch (error.code) {
+        PythonBackendError.ufmgUnavailable ||
+        PythonBackendError.unavailable ||
+        PythonBackendError.timeout =>
+          'Não foi possível sincronizar com a UFMG agora.',
+        PythonBackendError.rateLimited =>
+          'Muitas tentativas seguidas. Aguarde um pouco e tente novamente.',
+        _ => 'Não foi possível sincronizar os dados da UFMG.',
+      };
+    }
+    return 'Não foi possível sincronizar os dados da UFMG.';
   }
 
   static String _plural(int count, String singular, String plural) =>

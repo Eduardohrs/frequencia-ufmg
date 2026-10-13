@@ -373,7 +373,8 @@ final class _FakeOverviewBackend
     implements
         BackendIdentityVerifier,
         BackendOverviewGateway,
-        BackendScheduleGateway {
+        BackendScheduleGateway,
+        BackendUFMGSessionGateway {
   @override
   Future<void> verifyIdentity() async {}
 
@@ -392,6 +393,34 @@ final class _FakeOverviewBackend
     required List<PythonMeeting> meetings,
     required bool confirmDestructive,
   }) => throw UnimplementedError();
+
+  @override
+  Future<PythonUFMGSessionStatus> getUFMGSessionStatus() async =>
+      const PythonUFMGSessionStatus(
+        connected: false,
+        reauthenticationRequired: false,
+      );
+
+  @override
+  Future<PythonUFMGSessionStatus> connectUFMG({
+    required String username,
+    required String password,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<PythonUFMGSessionStatus> disconnectUFMG() =>
+      throw UnimplementedError();
+
+  @override
+  Future<PythonUFMGCourseImportResult> importUFMGCourses() =>
+      throw UnimplementedError();
+
+  @override
+  Future<PythonUFMGScheduleImportResult> importUFMGSchedules() =>
+      throw UnimplementedError();
+
+  @override
+  Future<PythonUFMGSyncResult> syncUFMG() => throw UnimplementedError();
 }
 
 final class _FailingFullBackend

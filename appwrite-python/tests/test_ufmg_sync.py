@@ -60,12 +60,14 @@ class _CourseImporter:
 
 
 class _ScheduleImporter:
-    def __init__(self) -> None:
+    def __init__(self, courses: _CourseImporter) -> None:
+        self._courses = courses
         self.received: list[dict[str, object]] | None = None
 
     def import_enrollments(
         self, values: list[dict[str, object]]
     ) -> dict[str, int]:
+        assert self._courses.received is values
         self.received = values
         return {
             "total": 1,
@@ -86,7 +88,7 @@ def _service(
     session_store = sessions or _Sessions(UFMGSession("private-token", 1, 99))
     client = enrollments or _Enrollments([_enrollment()])
     courses = _CourseImporter()
-    schedules = _ScheduleImporter()
+    schedules = _ScheduleImporter(courses)
     return (
         UFMGSyncService(
             session_store,

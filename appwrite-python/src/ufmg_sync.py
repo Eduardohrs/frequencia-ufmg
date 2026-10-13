@@ -52,6 +52,7 @@ class UFMGSyncService:
             raise
 
         checked_at = self._clock().astimezone(UTC)
+        course_result = self._courses.import_enrollments(enrollments)
         schedule_result = self._schedules.import_enrollments(enrollments)
         schedule_fields = (
             "total",
@@ -62,7 +63,7 @@ class UFMGSyncService:
             "meetings_imported",
         )
         return {
-            "courses": self._courses.import_enrollments(enrollments),
+            "courses": course_result,
             "schedules": {field: schedule_result[field] for field in schedule_fields},
             "checked_at": _timestamp(checked_at),
             "next_automatic_sync_at": _timestamp(

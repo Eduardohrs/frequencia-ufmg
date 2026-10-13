@@ -10,6 +10,7 @@ import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/document_store.dart';
 import 'package:frequencia_ufmg/data/calendar_status.dart';
 import 'package:frequencia_ufmg/data/python_overview_repository.dart';
+import 'package:frequencia_ufmg/data/ufmg_sync_schedule.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
 import 'package:frequencia_ufmg/features/courses/course_page.dart';
 import 'package:frequencia_ufmg/observability/app_logger.dart';
@@ -1165,6 +1166,149 @@ void main() {
     await tester.pumpAndSettle();
     expect(repository.listCalls, 2);
   });
+
+  testWidgets('runs a due UFMG synchronization after the dashboard loads', (
+    tester,
+  ) async {
+    final repository = _FakeCourseRepository();
+    final gateway = _UFMGGateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+      createdCourses: 1,
+    );
+    final syncSchedule = _FakeUFMGSyncSchedule(due: true);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: repository,
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          ufmgSessionGateway: gateway,
+          ufmgSyncSchedule: syncSchedule,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(gateway.statusCalls, 1);
+    expect(gateway.syncCalls, 1);
+    expect(syncSchedule.recordedUsers, ['user-1']);
+    expect(repository.listCalls, 2);
+  });
+
+  testWidgets('does not contact UFMG before the next scheduled check', (
+    tester,
+  ) async {
+    final gateway = _UFMGGateway();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          ufmgSessionGateway: gateway,
+          ufmgSyncSchedule: _FakeUFMGSyncSchedule(due: false),
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(gateway.statusCalls, 0);
+    expect(gateway.syncCalls, 0);
+  });
+
+  testWidgets('warns when an automatic synchronization needs reconnection', (
+    tester,
+  ) async {
+    final gateway = _UFMGGateway(
+      status: const PythonUFMGSessionStatus(
+        connected: false,
+        reauthenticationRequired: true,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          ufmgSessionGateway: gateway,
+          ufmgSyncSchedule: _FakeUFMGSyncSchedule(due: true),
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Reconecte à UFMG para atualizar'),
+      findsOneWidget,
+    );
+    expect(gateway.syncCalls, 0);
+  });
+
+  testWidgets('keeps local data available when automatic sync fails', (
+    tester,
+  ) async {
+    final failures = <(Object, String)>[
+      (
+        const PythonBackendException(
+          PythonBackendError.ufmgReauthenticationRequired,
+        ),
+        'Reconecte à UFMG para atualizar',
+      ),
+      (
+        StateError('temporary outage'),
+        'Não foi possível sincronizar com a UFMG agora',
+      ),
+    ];
+
+    for (final failure in failures) {
+      final gateway = _UFMGGateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+        syncError: failure.$1,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CoursePage(
+            repository: _FakeCourseRepository(),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            user: user,
+            logger: _RecordingAppLogger(),
+            onSignOut: () async {},
+            ufmgSessionGateway: gateway,
+            ufmgSyncSchedule: _FakeUFMGSyncSchedule(due: true),
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining(failure.$2), findsOneWidget);
+      expect(
+        find.text('Não foi possível carregar suas disciplinas.'),
+        findsNothing,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+  });
 }
 
 Future<void> _fillNewCourse(
@@ -1429,6 +1573,44 @@ final class _RecordingAppLogger implements AppLogger {
 }
 
 final class _UFMGGateway implements BackendUFMGSessionGateway {
+  _UFMGGateway({
+    this.status = const PythonUFMGSessionStatus(
+      connected: false,
+      reauthenticationRequired: false,
+    ),
+    this.createdCourses = 0,
+    this.syncError,
+  });
+
+  final PythonUFMGSessionStatus status;
+  final int createdCourses;
+  final Object? syncError;
+  int statusCalls = 0;
+  int syncCalls = 0;
+
+  @override
+  Future<PythonUFMGSyncResult> syncUFMG() async {
+    syncCalls++;
+    if (syncError case final error?) throw error;
+    return PythonUFMGSyncResult(
+      courses: PythonUFMGCourseImportResult(
+        created: createdCourses,
+        existing: 0,
+        total: createdCourses,
+      ),
+      schedules: PythonUFMGScheduleImportResult(
+        total: 0,
+        updated: 0,
+        unchanged: 0,
+        conflicts: 0,
+        missingCourses: 0,
+        meetingsImported: 0,
+      ),
+      checkedAt: DateTime.utc(2026, 10, 13),
+      nextAutomaticSyncAt: DateTime.utc(2026, 10, 20),
+    );
+  }
+
   @override
   Future<PythonUFMGScheduleImportResult> importUFMGSchedules() =>
       throw UnimplementedError();
@@ -1438,11 +1620,10 @@ final class _UFMGGateway implements BackendUFMGSessionGateway {
       const PythonUFMGCourseImportResult(created: 0, existing: 0, total: 0);
 
   @override
-  Future<PythonUFMGSessionStatus> getUFMGSessionStatus() async =>
-      const PythonUFMGSessionStatus(
-        connected: false,
-        reauthenticationRequired: false,
-      );
+  Future<PythonUFMGSessionStatus> getUFMGSessionStatus() async {
+    statusCalls++;
+    return status;
+  }
 
   @override
   Future<PythonUFMGSessionStatus> connectUFMG({
@@ -1453,4 +1634,19 @@ final class _UFMGGateway implements BackendUFMGSessionGateway {
   @override
   Future<PythonUFMGSessionStatus> disconnectUFMG() =>
       throw UnimplementedError();
+}
+
+final class _FakeUFMGSyncSchedule implements UFMGSyncScheduleGateway {
+  _FakeUFMGSyncSchedule({required this.due});
+
+  final bool due;
+  final recordedUsers = <String>[];
+
+  @override
+  Future<bool> isDue(String userId) async => due;
+
+  @override
+  Future<void> record(String userId, DateTime nextAutomaticSyncAt) async {
+    recordedUsers.add(userId);
+  }
 }
