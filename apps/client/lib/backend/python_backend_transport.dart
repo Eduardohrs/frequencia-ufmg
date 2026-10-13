@@ -71,6 +71,8 @@ abstract interface class BackendUFMGSessionGateway {
   Future<PythonUFMGSessionStatus> disconnectUFMG();
 
   Future<PythonUFMGCourseImportResult> importUFMGCourses();
+
+  Future<PythonUFMGScheduleImportResult> importUFMGSchedules();
 }
 
 final class PythonUFMGCourseImportResult {
@@ -83,6 +85,24 @@ final class PythonUFMGCourseImportResult {
   final int created;
   final int existing;
   final int total;
+}
+
+final class PythonUFMGScheduleImportResult {
+  const PythonUFMGScheduleImportResult({
+    required this.total,
+    required this.updated,
+    required this.unchanged,
+    required this.conflicts,
+    required this.missingCourses,
+    required this.meetingsImported,
+  });
+
+  final int total;
+  final int updated;
+  final int unchanged;
+  final int conflicts;
+  final int missingCourses;
+  final int meetingsImported;
 }
 
 final class PythonUFMGSessionStatus {
@@ -698,6 +718,53 @@ final class PythonBackendTransport
         created: created,
         existing: existing,
         total: total,
+      );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<PythonUFMGScheduleImportResult> importUFMGSchedules() async {
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/import/schedules',
+      method: _BackendMethod.post,
+      body: const {},
+    );
+    try {
+      final value = jsonDecode(response.body);
+      const keys = {
+        'total',
+        'updated',
+        'unchanged',
+        'conflicts',
+        'missing_courses',
+        'meetings_imported',
+      };
+      if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
+        throw const FormatException();
+      }
+      final counts = keys.map((key) => value[key]).toList();
+      if (counts.any((count) => count is! int || count < 0)) {
+        throw const FormatException();
+      }
+      final total = value['total'] as int;
+      final updated = value['updated'] as int;
+      final unchanged = value['unchanged'] as int;
+      final conflicts = value['conflicts'] as int;
+      final missingCourses = value['missing_courses'] as int;
+      final meetingsImported = value['meetings_imported'] as int;
+      if (total != updated + unchanged + conflicts + missingCourses ||
+          meetingsImported > updated * 32) {
+        throw const FormatException();
+      }
+      return PythonUFMGScheduleImportResult(
+        total: total,
+        updated: updated,
+        unchanged: unchanged,
+        conflicts: conflicts,
+        missingCourses: missingCourses,
+        meetingsImported: meetingsImported,
       );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
