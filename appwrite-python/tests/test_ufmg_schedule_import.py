@@ -92,16 +92,23 @@ class _Schedules:
         self.failure = failure
         self.saved: list[tuple[str, dict[str, object]]] = []
 
-    def get_schedule(self, course_id: str) -> dict[str, Any]:
-        return self.states[course_id]
+    def load_import_schedules(
+        self, courses: list[dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        assert {str(course["id"]) for course in courses} == set(self.states)
+        return self.states
 
-    def save_schedule(
-        self, course_id: str, payload: dict[str, object]
+    def save_import_schedule(
+        self,
+        course_id: str,
+        payload: dict[str, object],
+        schedules: dict[str, dict[str, Any]],
     ) -> dict[str, Any]:
+        assert schedules is self.states
         if self.failure is not None:
             raise self.failure
         self.saved.append((course_id, payload))
-        return {"course": {}, "meetings": [], "changes": {}}
+        return self.states[course_id]
 
 
 def _state(
@@ -264,7 +271,9 @@ def test_reports_safe_conflict_instead_of_overwriting(failure: Exception) -> Non
 def test_matches_code_and_term_and_reports_missing_course() -> None:
     old = _course(course_id="old", term="2026-1")
     current = _course(course_id="current")
-    schedules = _Schedules({"current": _state(current, [])})
+    schedules = _Schedules(
+        {"old": _state(old, []), "current": _state(current, [])}
+    )
 
     result = _service(
         [_remote(), _remote(code="MAT001")], [old, current], schedules
