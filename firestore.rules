@@ -200,6 +200,31 @@ service cloud.firestore {
         && hasValidAuditFields(data);
     }
 
+    function isValidAcademicDate(data) {
+      let fields = [
+        'schemaVersion',
+        'title',
+        'dueAt',
+        'kind',
+        'source',
+        'sourceId',
+        'createdAt',
+        'updatedAt'
+      ];
+      return hasExactFields(data, fields)
+        && data.schemaVersion == 1
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 120
+        && data.title.matches('^\\S(.*\\S)?$')
+        && data.dueAt is timestamp
+        && data.kind in ['assignment', 'quiz', 'event']
+        && data.source == 'moodle'
+        && data.sourceId is string
+        && data.sourceId.matches('^[A-Za-z0-9_-]{1,80}$')
+        && hasValidAuditFields(data);
+    }
+
     match /users/{userId}/courses/{courseId} {
       allow read, delete: if owns(userId);
       allow create: if owns(userId) && isValidCourse(request.resource.data);
@@ -224,6 +249,16 @@ service cloud.firestore {
           && isValidSession(request.resource.data);
         allow update: if owns(userId)
           && isValidSession(request.resource.data)
+          && preservesAuditFields();
+      }
+
+      match /academicDates/{dateId} {
+        allow read, delete: if owns(userId);
+        allow create: if owns(userId)
+          && exists(/databases/$(database)/documents/users/$(userId)/courses/$(courseId))
+          && isValidAcademicDate(request.resource.data);
+        allow update: if owns(userId)
+          && isValidAcademicDate(request.resource.data)
           && preservesAuditFields();
       }
     }

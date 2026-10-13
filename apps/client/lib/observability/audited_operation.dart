@@ -38,6 +38,8 @@ enum AuditedOperation {
   ufmgSessionDisconnect('ufmg_session_disconnect'),
   ufmgCourseImport('ufmg_course_import'),
   ufmgScheduleImport('ufmg_schedule_import'),
+  moodleDateImport('moodle_date_import'),
+  moodleDateList('moodle_date_list'),
   ufmgSync('ufmg_sync');
 
   const AuditedOperation(this.eventPrefix);

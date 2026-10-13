@@ -248,7 +248,7 @@ def test_save_rejects_a_plan_larger_than_one_atomic_commit(
     monkeypatch.setattr(
         module,
         "_writes",
-        lambda *_: ([(('courses', 'poo'), {})] * 501, []),
+        lambda *_: ([(("courses", "poo"), {})] * 501, []),
     )
     payload = {
         "starts_on": "2026-08-04T00:00:00Z",

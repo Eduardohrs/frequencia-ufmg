@@ -25,9 +25,7 @@ class _CourseRepository(Protocol):
 
 
 class _ScheduleRepository(Protocol):
-    def load_import_schedules(
-        self, courses: list[dict[str, Any]]
-    ) -> dict[str, dict[str, Any]]: ...
+    def load_import_schedules(self, courses: list[dict[str, Any]]) -> dict[str, dict[str, Any]]: ...
 
     def save_import_schedule(
         self,
@@ -64,16 +62,11 @@ class UFMGScheduleImportService:
 
         return self.import_enrollments(remote)
 
-    def import_enrollments(
-        self, remote: list[dict[str, object]]
-    ) -> dict[str, int]:
+    def import_enrollments(self, remote: list[dict[str, object]]) -> dict[str, int]:
         """Reconcile one already validated enrollment snapshot."""
 
         courses = self._courses.list_courses()
-        local = {
-            (str(course["code"]), str(course["term"])): course
-            for course in courses
-        }
+        local = {(str(course["code"]), str(course["term"])): course for course in courses}
         schedules = self._schedules.load_import_schedules(courses)
         summary = {
             "total": 0,
@@ -89,18 +82,14 @@ class UFMGScheduleImportService:
             "session_upserts": 0,
             "session_deletes": 0,
         }
-        unique = {
-            (str(course["code"]), str(course["term"])): course for course in remote
-        }
+        unique = {(str(course["code"]), str(course["term"])): course for course in remote}
         summary["total"] = len(unique)
         for key, enrollment in sorted(unique.items()):
             course = local.get(key)
             if course is None:
                 summary["missing_courses"] += 1
                 continue
-            outcome, count, diagnostics = self._reconcile(
-                course, enrollment, schedules
-            )
+            outcome, count, diagnostics = self._reconcile(course, enrollment, schedules)
             summary[outcome] += 1
             summary["meetings_imported"] += count
             for name, value in diagnostics.items():
@@ -132,8 +121,7 @@ class UFMGScheduleImportService:
         starts_on, ends_on = _dates(saved_course, enrollment)
         meeting_mismatch = _requested_structures(saved_meetings) != requested
         date_mismatch = (
-            saved_course.get("starts_on") != starts_on
-            or saved_course.get("ends_on") != ends_on
+            saved_course.get("starts_on") != starts_on or saved_course.get("ends_on") != ends_on
         )
         diagnostics = {
             "date_mismatches": int(date_mismatch),
@@ -196,13 +184,9 @@ def _meeting_id(meeting: Mapping[str, object]) -> str:
     return f"{_IMPORTED_PREFIX}{weekday}-{start}-{lessons}"
 
 
-def _imported_meetings(
-    remote: list[object], saved: list[object]
-) -> list[dict[str, object]]:
+def _imported_meetings(remote: list[object], saved: list[object]) -> list[dict[str, object]]:
     saved_calls = {
-        str(item["id"]): int(item["call_count"])
-        for item in saved
-        if isinstance(item, Mapping)
+        str(item["id"]): int(item["call_count"]) for item in saved if isinstance(item, Mapping)
     }
     result = []
     for item in remote:
@@ -222,14 +206,10 @@ def _imported_meetings(
 
 
 def _requested_structures(saved: list[object]) -> list[dict[str, object]]:
-    return _imported_meetings(
-        [item for item in saved if isinstance(item, Mapping)], saved
-    )
+    return _imported_meetings([item for item in saved if isinstance(item, Mapping)], saved)
 
 
-def _dates(
-    course: Mapping[str, object], enrollment: Mapping[str, object]
-) -> tuple[object, object]:
+def _dates(course: Mapping[str, object], enrollment: Mapping[str, object]) -> tuple[object, object]:
     current = (course.get("starts_on"), course.get("ends_on"))
     if current == (None, None) or current == _default_dates(str(course["term"])):
         return enrollment["starts_on"], enrollment["ends_on"]

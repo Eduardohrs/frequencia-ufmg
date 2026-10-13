@@ -41,16 +41,12 @@ def test_connect_exchanges_credentials_and_returns_only_non_secret_metadata() ->
     store = Store()
     service = UFMGSessionService(authenticator, store)
 
-    result = service.connect(
-        "firebase-user", "2025019259", "private-password", now=1_000
-    )
+    result = service.connect("firebase-user", "2025019259", "private-password", now=1_000)
 
     assert result == {"connected": True, "created_at": 1_000, "expires_at": 33_400}
     assert "private" not in repr(result)
     assert authenticator.calls == [("2025019259", "private-password")]
-    assert store.calls == [
-        ("save", ("firebase-user", "private-ltpa-token"), {"now": 1_000})
-    ]
+    assert store.calls == [("save", ("firebase-user", "private-ltpa-token"), {"now": 1_000})]
 
 
 def test_disconnect_is_idempotent_at_the_service_boundary() -> None:

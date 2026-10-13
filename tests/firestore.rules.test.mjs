@@ -43,6 +43,8 @@ const meetingPath = (userId, meetingId = "monday-0800") =>
   `${coursePath(userId)}/meetings/${meetingId}`;
 const sessionPath = (userId, sessionId = "2026-08-03") =>
   `${coursePath(userId)}/sessions/${sessionId}`;
+const academicDatePath = (userId, dateId = "moodle-910") =>
+  `${coursePath(userId)}/academicDates/${dateId}`;
 const logPath = (userId, logId = "log-1") =>
   `users/${userId}/logs/${logId}`;
 
@@ -86,6 +88,18 @@ const session = (overrides = {}) => ({
   absences: null,
   calendarStatus: "scheduled",
   assessmentTitle: null,
+  createdAt,
+  updatedAt,
+  ...overrides,
+});
+
+const academicDate = (overrides = {}) => ({
+  schemaVersion: 1,
+  title: "Trabalho prático 1",
+  dueAt: Timestamp.fromDate(new Date("2026-10-22T23:00:00Z")),
+  kind: "assignment",
+  source: "moodle",
+  sourceId: "910",
   createdAt,
   updatedAt,
   ...overrides,
@@ -267,6 +281,55 @@ describe("operational logs", () => {
     for (const [index, data] of invalidDocuments.entries()) {
       await assertFails(setDoc(doc(db, logPath("alice", `invalid-${index}`)), data));
     }
+  });
+});
+
+describe("academic date documents", () => {
+  test("owner can create, read, update, and delete a valid Moodle date", async () => {
+    await seed(coursePath("alice"), course());
+    const reference = doc(dbFor("alice"), academicDatePath("alice"));
+
+    await assertSucceeds(setDoc(reference, academicDate()));
+    await assertSucceeds(getDoc(reference));
+    await assertSucceeds(updateDoc(reference, { title: "Trabalho adiado" }));
+    await assertSucceeds(deleteDoc(reference));
+  });
+
+  test("requires an existing parent and isolates tenants", async () => {
+    await assertFails(
+      setDoc(doc(dbFor("alice"), academicDatePath("alice")), academicDate()),
+    );
+    await seed(coursePath("alice"), course());
+    await seed(academicDatePath("alice"), academicDate());
+    await assertFails(getDoc(doc(dbFor("bob"), academicDatePath("alice"))));
+  });
+
+  test("rejects malformed values, extra fields, and audit mutation", async () => {
+    await seed(coursePath("alice"), course());
+    const db = dbFor("alice");
+    const invalidDocuments = [
+      academicDate({ schemaVersion: 2 }),
+      academicDate({ title: "" }),
+      academicDate({ title: " data" }),
+      academicDate({ title: "x".repeat(121) }),
+      academicDate({ dueAt: "2026-10-22" }),
+      academicDate({ kind: "exam" }),
+      academicDate({ source: "manual" }),
+      academicDate({ sourceId: "bad/id" }),
+      academicDate({ createdAt: updatedAt, updatedAt: createdAt }),
+      withoutField(academicDate(), "dueAt"),
+      { ...academicDate(), privatePayload: "secret" },
+    ];
+    for (const [index, data] of invalidDocuments.entries()) {
+      await assertFails(
+        setDoc(doc(db, academicDatePath("alice", `invalid-${index}`)), data),
+      );
+    }
+
+    await seed(academicDatePath("alice"), academicDate());
+    await assertFails(
+      updateDoc(doc(db, academicDatePath("alice")), { createdAt: updatedAt }),
+    );
   });
 });
 

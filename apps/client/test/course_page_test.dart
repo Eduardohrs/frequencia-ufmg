@@ -1606,6 +1606,14 @@ final class _UFMGGateway implements BackendUFMGSessionGateway {
         missingCourses: 0,
         meetingsImported: 0,
       ),
+      dates: const PythonMoodleDateImportResult(
+        total: 0,
+        matched: 0,
+        unmatched: 0,
+        created: 0,
+        updated: 0,
+        unchanged: 0,
+      ),
       checkedAt: DateTime.utc(2026, 10, 13),
       nextAutomaticSyncAt: DateTime.utc(2026, 10, 20),
     );
@@ -1614,6 +1622,13 @@ final class _UFMGGateway implements BackendUFMGSessionGateway {
   @override
   Future<PythonUFMGScheduleImportResult> importUFMGSchedules() =>
       throw UnimplementedError();
+
+  @override
+  Future<PythonMoodleDateImportResult> importMoodleDates() =>
+      throw UnimplementedError();
+
+  @override
+  Future<List<PythonMoodleDate>> listMoodleDates() async => const [];
 
   @override
   Future<PythonUFMGCourseImportResult> importUFMGCourses() async =>

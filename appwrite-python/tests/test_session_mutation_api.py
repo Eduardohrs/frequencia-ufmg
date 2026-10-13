@@ -72,9 +72,7 @@ def test_put_attendance_persists_the_authoritative_decision_with_bounded_log(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _enable(monkeypatch, Repository())
-    context = FakeContext(
-        FakeRequest("PUT", ATTENDANCE_PATH, body_json={"status": "presente"})
-    )
+    context = FakeContext(FakeRequest("PUT", ATTENDANCE_PATH, body_json={"status": "presente"}))
 
     result = function.main(context)
 
@@ -159,9 +157,7 @@ def test_session_mutation_sanitizes_failures(
     repository = Repository()
     repository.failure = failure
     _enable(monkeypatch, repository)
-    context = FakeContext(
-        FakeRequest("PUT", ATTENDANCE_PATH, body_json={"private": "value"})
-    )
+    context = FakeContext(FakeRequest("PUT", ATTENDANCE_PATH, body_json={"private": "value"}))
 
     result = function.main(context)
 

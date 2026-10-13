@@ -54,9 +54,7 @@ class _HTTPSOnlyRedirectHandler(HTTPRedirectHandler):
         target = urlsplit(new_url)
         if target.scheme != "https" or target.hostname != "sistemas.ufmg.br":
             raise URLError("untrusted UFMG enrollment redirect")
-        return super().redirect_request(
-            request, file_pointer, code, message, headers, new_url
-        )
+        return super().redirect_request(request, file_pointer, code, message, headers, new_url)
 
 
 def _open_response(request: Request, *, timeout: float) -> Any:
@@ -101,16 +99,12 @@ class UFMGEnrollmentClient:
         try:
             with self._open(request, timeout=self._timeout_seconds) as response:
                 if not _is_enrollment_response(response):
-                    raise UFMGReauthenticationRequired(
-                        "UFMG reauthentication required"
-                    )
+                    raise UFMGReauthenticationRequired("UFMG reauthentication required")
                 raw = response.read(_MAX_RESPONSE_BYTES + 1)
         except UFMGReauthenticationRequired:
             raise
         except HTTPError as error:
-            raise UFMGEnrollmentUnavailable(
-                "http_error", upstream_status=error.code
-            ) from None
+            raise UFMGEnrollmentUnavailable("http_error", upstream_status=error.code) from None
         except OSError as error:
             raise UFMGEnrollmentUnavailable(_transport_reason(error)) from None
         if len(raw) > _MAX_RESPONSE_BYTES:
@@ -119,9 +113,7 @@ class UFMGEnrollmentClient:
             payload = json.loads(raw.decode("iso-8859-1"))
             return _parse_courses(payload)
         except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError):
-            raise InvalidUFMGEnrollmentResponse(
-                "invalid UFMG enrollment response"
-            ) from None
+            raise InvalidUFMGEnrollmentResponse("invalid UFMG enrollment response") from None
 
 
 class UFMGCourseImportService:
@@ -151,15 +143,11 @@ class UFMGCourseImportService:
             raise
         return self.import_enrollments(imported)
 
-    def import_enrollments(
-        self, imported: list[dict[str, object]]
-    ) -> dict[str, int]:
+    def import_enrollments(self, imported: list[dict[str, object]]) -> dict[str, int]:
         """Reconcile one already validated enrollment snapshot."""
 
         unique = {str(course["code"]): course for course in imported}
-        existing_codes = {
-            str(course["code"]) for course in self._courses.list_courses()
-        }
+        existing_codes = {str(course["code"]) for course in self._courses.list_courses()}
         timestamp = self._clock().astimezone(UTC).isoformat().replace("+00:00", "Z")
         created = 0
         for code, course in sorted(unique.items()):
@@ -235,7 +223,8 @@ def _parse_courses(payload: object) -> list[dict[str, object]]:
                 or not isinstance(name_value, str)
                 or isinstance(raw_workload, bool)
                 or not isinstance(raw_workload, int | str)
-                or isinstance(raw_workload, str) and not raw_workload.isdigit()
+                or isinstance(raw_workload, str)
+                and not raw_workload.isdigit()
             ):
                 raise ValueError
             code = raw_code.strip().upper()
@@ -244,12 +233,7 @@ def _parse_courses(payload: object) -> list[dict[str, object]]:
             meetings = _meetings(classroom.get("horarios", []))
         except (AttributeError, KeyError, TypeError, ValueError):
             raise ValueError from None
-        if (
-            _CODE.fullmatch(code) is None
-            or not name
-            or len(name) > 160
-            or workload <= 0
-        ):
+        if _CODE.fullmatch(code) is None or not name or len(name) > 160 or workload <= 0:
             raise ValueError
         courses.append(
             {

@@ -124,9 +124,7 @@ def test_login_reproduces_the_required_two_step_flow_and_returns_only_ltpa_token
         "submit": ["Entrar"],
     }
     assert second[0].get_header("Origin") == "https://sistemas.ufmg.br"
-    assert second[0].get_header("Referer") == (
-        "https://sistemas.ufmg.br/portal/../idp/login.jsp"
-    )
+    assert second[0].get_header("Referer") == ("https://sistemas.ufmg.br/portal/../idp/login.jsp")
     assert first[1] == second[1] == 7
 
 
@@ -140,9 +138,7 @@ def test_login_reproduces_the_required_two_step_flow_and_returns_only_ltpa_token
         ("bad-token", "session_cookie_missing"),
     ],
 )
-def test_login_rejects_incomplete_or_untrusted_authentication(
-    outcome: str, reason: str
-) -> None:
+def test_login_rejects_incomplete_or_untrusted_authentication(outcome: str, reason: str) -> None:
     captured: list[FakeOpener] = []
 
     def factory(jar: CookieJar) -> FakeOpener:
@@ -186,9 +182,7 @@ def test_redirects_are_limited_to_https_on_the_institutional_host() -> None:
     assert redirected.full_url == "https://sistemas.ufmg.br/portal/revalidate.html"
 
     with pytest.raises(URLError):
-        handler.redirect_request(
-            request, BytesIO(), 302, "Found", {}, "https://attacker.example/"
-        )
+        handler.redirect_request(request, BytesIO(), 302, "Found", {}, "https://attacker.example/")
 
 
 def test_default_opener_and_timeout_configuration_are_bounded() -> None:
@@ -208,9 +202,7 @@ def test_default_opener_and_timeout_configuration_are_bounded() -> None:
         ("student", "line\nbreak"),
     ],
 )
-def test_login_rejects_invalid_input_before_any_network_call(
-    username: str, password: str
-) -> None:
+def test_login_rejects_invalid_input_before_any_network_call(username: str, password: str) -> None:
     called = False
 
     def factory(_jar: CookieJar) -> FakeOpener:

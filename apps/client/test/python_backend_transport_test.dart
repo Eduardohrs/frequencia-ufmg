@@ -296,6 +296,151 @@ void main() {
     }
   });
 
+  test('imports bounded structured Moodle date counts', () async {
+    late http.Request captured;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'total': 4,
+            'matched': 3,
+            'unmatched': 1,
+            'created': 2,
+            'updated': 1,
+            'unchanged': 0,
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await transport.importMoodleDates();
+
+    expect(result.created, 2);
+    expect(result.updated, 1);
+    expect(result.unmatched, 1);
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/v1/ufmg/import/dates');
+    expect(captured.body, '{}');
+  });
+
+  test('rejects malformed Moodle date summaries', () async {
+    for (final body in [
+      {
+        'total': 4,
+        'matched': 3,
+        'unmatched': 0,
+        'created': 2,
+        'updated': 1,
+        'unchanged': 0,
+      },
+      {
+        'total': 501,
+        'matched': 501,
+        'unmatched': 0,
+        'created': 501,
+        'updated': 0,
+        'unchanged': 0,
+      },
+    ]) {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((_) async => http.Response(jsonEncode(body), 200)),
+      );
+      await expectLater(
+        transport.importMoodleDates(),
+        throwsA(
+          isA<PythonBackendException>().having(
+            (error) => error.code,
+            'code',
+            PythonBackendError.invalidResponse,
+          ),
+        ),
+      );
+    }
+  });
+
+  test('lists canonical Moodle dates in chronological order', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'dates': [
+              {
+                'id': 'moodle-910',
+                'course_id': 'dcc203',
+                'course_code': 'DCC203',
+                'title': 'Trabalho prático',
+                'due_at': '2026-10-22T23:00:00Z',
+                'kind': 'assignment',
+                'source': 'moodle',
+                'source_id': '910',
+                'created_at': '2026-10-13T20:00:00Z',
+                'updated_at': '2026-10-13T20:00:00Z',
+              },
+            ],
+          }),
+          200,
+        ),
+      ),
+    );
+
+    final dates = await transport.listMoodleDates();
+
+    expect(dates.single.courseCode, 'DCC203');
+    expect(dates.single.title, 'Trabalho prático');
+    expect(dates.single.dueAt, DateTime.utc(2026, 10, 22, 23));
+  });
+
+  test('rejects malformed or unsorted Moodle date lists', () async {
+    final valid = {
+      'id': 'moodle-910',
+      'course_id': 'dcc203',
+      'course_code': 'DCC203',
+      'title': 'Trabalho',
+      'due_at': '2026-10-22T23:00:00Z',
+      'kind': 'assignment',
+      'source': 'moodle',
+      'source_id': '910',
+      'created_at': '2026-10-13T20:00:00Z',
+      'updated_at': '2026-10-13T20:00:00Z',
+    };
+    for (final body in [
+      {
+        'dates': [
+          {...valid, 'source': 'manual'},
+        ],
+      },
+      {
+        'dates': [
+          valid,
+          {
+            ...valid,
+            'id': 'moodle-911',
+            'source_id': '911',
+            'due_at': '2026-10-01T00:00:00Z',
+          },
+        ],
+      },
+    ]) {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((_) async => http.Response(jsonEncode(body), 200)),
+      );
+      await expectLater(
+        transport.listMoodleDates(),
+        throwsA(isA<PythonBackendException>()),
+      );
+    }
+  });
+
   test('synchronizes UFMG stages through one bounded contract', () async {
     late http.Request captured;
     final transport = PythonBackendTransport(
@@ -314,6 +459,14 @@ void main() {
               'missing_courses': 0,
               'meetings_imported': 2,
             },
+            'dates': {
+              'total': 4,
+              'matched': 3,
+              'unmatched': 1,
+              'created': 2,
+              'updated': 1,
+              'unchanged': 0,
+            },
             'checked_at': '2026-10-13T12:00:00Z',
             'next_automatic_sync_at': '2026-12-06T00:00:00Z',
           }),
@@ -327,6 +480,7 @@ void main() {
     expect(result.courses.created, 1);
     expect(result.schedules.updated, 1);
     expect(result.schedules.conflicts, 1);
+    expect(result.dates.created, 2);
     expect(result.checkedAt, DateTime.utc(2026, 10, 13, 12));
     expect(result.nextAutomaticSyncAt, DateTime.utc(2026, 12, 6));
     expect(captured.method, 'POST');

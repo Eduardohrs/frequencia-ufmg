@@ -61,13 +61,9 @@ class ScheduleRepository:
 
         confirm = _validate_payload(payload)
         course, meetings, sessions, others = self._load(course_id)
-        return self._save_loaded(
-            course_id, payload, confirm, course, meetings, sessions, others
-        )
+        return self._save_loaded(course_id, payload, confirm, course, meetings, sessions, others)
 
-    def load_import_schedules(
-        self, courses: list[dict[str, Any]]
-    ) -> dict[str, dict[str, Any]]:
+    def load_import_schedules(self, courses: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         """Load every current meeting collection once for a bulk import."""
 
         schedules: dict[str, dict[str, Any]] = {}
@@ -97,24 +93,18 @@ class ScheduleRepository:
         course = _decode_course(self._firestore.get_user_document("courses", identifier))
         meetings = [
             _decode_meeting(document)
-            for document in self._firestore.list_user_documents(
-                "courses", identifier, "meetings"
-            )
+            for document in self._firestore.list_user_documents("courses", identifier, "meetings")
         ]
         sessions = [
             _decode_session(document)
-            for document in self._firestore.list_user_documents(
-                "courses", identifier, "sessions"
-            )
+            for document in self._firestore.list_user_documents("courses", identifier, "sessions")
         ]
         others = [
             _import_schedule_state(state)
             for other_id, state in schedules.items()
             if other_id != identifier
         ]
-        return self._save_loaded(
-            identifier, payload, confirm, course, meetings, sessions, others
-        )
+        return self._save_loaded(identifier, payload, confirm, course, meetings, sessions, others)
 
     def _save_loaded(
         self,

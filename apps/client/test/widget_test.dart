@@ -420,6 +420,13 @@ final class _FakeOverviewBackend
       throw UnimplementedError();
 
   @override
+  Future<PythonMoodleDateImportResult> importMoodleDates() =>
+      throw UnimplementedError();
+
+  @override
+  Future<List<PythonMoodleDate>> listMoodleDates() async => const [];
+
+  @override
   Future<PythonUFMGSyncResult> syncUFMG() => throw UnimplementedError();
 }
 
