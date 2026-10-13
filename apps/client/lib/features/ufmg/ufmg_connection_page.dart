@@ -33,6 +33,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   bool _showReconnectForm = false;
   String? _error;
   String? _importSummary;
+  List<PythonMoodleDate> _dates = const [];
 
   @override
   void initState() {
@@ -55,6 +56,13 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         action: widget.gateway.getUFMGSessionStatus,
       );
       if (mounted) setState(() => _status = status);
+      try {
+        final dates = await _listDates();
+        if (mounted) setState(() => _dates = dates);
+      } catch (_) {
+        // Imported dates are supplementary; their failure must not hide the
+        // UFMG connection controls or the attendance core.
+      }
     } catch (_) {
       if (mounted) {
         setState(
@@ -225,6 +233,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         operation: AuditedOperation.ufmgSync,
         action: widget.gateway.syncUFMG,
       );
+      final dates = await _listDates();
       final userId = widget.userId;
       final schedule = widget.syncSchedule;
       if (userId != null && schedule != null) {
@@ -232,12 +241,16 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       }
       if (mounted) {
         setState(() {
+          _dates = dates;
           _importSummary =
               '${result.courses.created} ${_plural(result.courses.created, 'disciplina importada', 'disciplinas importadas')}. '
               '${result.courses.existing} já ${result.courses.existing == 1 ? 'estava cadastrada' : 'estavam cadastradas'}. '
               '${result.schedules.updated} ${_plural(result.schedules.updated, 'grade atualizada', 'grades atualizadas')}. '
               '${result.schedules.unchanged} ${_plural(result.schedules.unchanged, 'grade sem alteração', 'grades sem alteração')}. '
-              '${result.schedules.conflicts} ${_plural(result.schedules.conflicts, 'conflito preservado', 'conflitos preservados')}.';
+              '${result.schedules.conflicts} ${_plural(result.schedules.conflicts, 'conflito preservado', 'conflitos preservados')}. '
+              '${result.dates.created} ${_plural(result.dates.created, 'data do Moodle importada', 'datas do Moodle importadas')}. '
+              '${result.dates.updated} ${_plural(result.dates.updated, 'data atualizada', 'datas atualizadas')}. '
+              '${result.dates.unmatched} ${_plural(result.dates.unmatched, 'data sem disciplina correspondente', 'datas sem disciplina correspondente')}.';
         });
       }
     } catch (error) {
@@ -258,6 +271,54 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  Future<void> _importDates() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+      _importSummary = null;
+    });
+    try {
+      final result = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleDateImport,
+        action: widget.gateway.importMoodleDates,
+      );
+      final dates = await _listDates();
+      if (mounted) {
+        setState(() {
+          _dates = dates;
+          _importSummary =
+              '${result.created} ${_plural(result.created, 'data do Moodle importada', 'datas do Moodle importadas')}. '
+              '${result.updated} ${_plural(result.updated, 'data atualizada', 'datas atualizadas')}. '
+              '${result.unchanged} sem alteração. '
+              '${result.unmatched} ${_plural(result.unmatched, 'data não pôde ser ligada a uma disciplina', 'datas não puderam ser ligadas a uma disciplina')}.';
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PythonBackendException &&
+          error.code == PythonBackendError.ufmgReauthenticationRequired) {
+        setState(() {
+          _status = const PythonUFMGSessionStatus(
+            connected: false,
+            reauthenticationRequired: true,
+          );
+          _error = 'Sua sessão expirou. Reconecte para importar.';
+        });
+      } else {
+        setState(() => _error = _dateImportMessageFor(error));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<List<PythonMoodleDate>> _listDates() => runAuditedOperation(
+    logger: widget.logger,
+    operation: AuditedOperation.moodleDateList,
+    action: widget.gateway.listMoodleDates,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -347,6 +408,24 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             ),
           ),
         ],
+        if (_dates.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          Text(
+            'Datas do Moodle',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          for (final date in _dates)
+            Card(
+              child: ListTile(
+                leading: Icon(_dateIcon(date.kind)),
+                title: Text(date.title),
+                subtitle: Text(
+                  '${date.courseCode} • ${_formattedDate(date.dueAt)}',
+                ),
+              ),
+            ),
+        ],
         const SizedBox(height: 24),
         if (!connected || _showReconnectForm) _connectionForm(),
         if (connected && !_showReconnectForm) ...[
@@ -379,6 +458,13 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             onPressed: _busy ? null : _importSchedules,
             icon: const Icon(Icons.calendar_month_outlined),
             label: const Text('Importar horários'),
+          ),
+          const SizedBox(height: 8),
+          FilledButton.icon(
+            key: const Key('moodle-import-dates'),
+            onPressed: _busy ? null : _importDates,
+            icon: const Icon(Icons.event_available_outlined),
+            label: const Text('Importar datas do Moodle'),
           ),
           const SizedBox(height: 8),
           FilledButton.icon(
@@ -478,6 +564,18 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(local))}';
   }
 
+  String _formattedDate(DateTime value) {
+    final local = value.toLocal();
+    return '${MaterialLocalizations.of(context).formatMediumDate(local)} às '
+        '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(local))}';
+  }
+
+  static IconData _dateIcon(String kind) => switch (kind) {
+    'assignment' => Icons.assignment_outlined,
+    'quiz' => Icons.quiz_outlined,
+    _ => Icons.event_outlined,
+  };
+
   static String _messageFor(Object error) {
     if (error is PythonBackendException) {
       return switch (error.code) {
@@ -523,6 +621,21 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       };
     }
     return 'Não foi possível importar os horários.';
+  }
+
+  static String _dateImportMessageFor(Object error) {
+    if (error is PythonBackendException) {
+      return switch (error.code) {
+        PythonBackendError.ufmgUnavailable ||
+        PythonBackendError.unavailable ||
+        PythonBackendError.timeout =>
+          'Não foi possível consultar as datas no Moodle agora.',
+        PythonBackendError.rateLimited =>
+          'Muitas tentativas seguidas. Aguarde um pouco e tente novamente.',
+        _ => 'Não foi possível importar as datas do Moodle.',
+      };
+    }
+    return 'Não foi possível importar as datas do Moodle.';
   }
 
   static String _syncMessageFor(Object error) {

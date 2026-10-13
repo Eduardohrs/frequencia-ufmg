@@ -113,9 +113,7 @@ def test_client_reads_only_enrollment_fields_and_never_exposes_the_token() -> No
             "workload": 30,
             "starts_on": "2026-07-01T00:00:00Z",
             "ends_on": "2026-12-31T00:00:00Z",
-            "meetings": [
-                {"weekday": 1, "start_minutes": 450, "lesson_count": 2}
-            ],
+            "meetings": [{"weekday": 1, "start_minutes": 450, "lesson_count": 2}],
         },
         {
             "code": "LA631",
@@ -124,9 +122,7 @@ def test_client_reads_only_enrollment_fields_and_never_exposes_the_token() -> No
             "workload": 60,
             "starts_on": "2026-07-01T00:00:00Z",
             "ends_on": "2026-12-31T00:00:00Z",
-            "meetings": [
-                {"weekday": 3, "start_minutes": 1140, "lesson_count": 4}
-            ],
+            "meetings": [{"weekday": 3, "start_minutes": 1140, "lesson_count": 4}],
         },
     ]
     request, timeout = calls[0]
@@ -144,9 +140,7 @@ def test_client_reads_only_enrollment_fields_and_never_exposes_the_token() -> No
             json.dumps(numeric_term, ensure_ascii=False).encode("iso-8859-1")
         )
     )
-    assert {course["term"] for course in numeric_client.fetch("private-token")} == {
-        "2026-2"
-    }
+    assert {course["term"] for course in numeric_client.fetch("private-token")} == {"2026-2"}
 
 
 @pytest.mark.parametrize(
@@ -193,9 +187,9 @@ def test_client_accepts_valid_bounded_json_from_the_legacy_plain_text_endpoint()
         content_type="text/plain;charset=ISO-8859-1",
     )
 
-    courses = UFMGEnrollmentClient(
-        open_response=lambda *_args, **_kwargs: response
-    ).fetch("private-token")
+    courses = UFMGEnrollmentClient(open_response=lambda *_args, **_kwargs: response).fetch(
+        "private-token"
+    )
 
     assert [course["code"] for course in courses] == ["ELE028", "LA631"]
 
@@ -248,9 +242,7 @@ def test_client_rejects_invalid_semester_dates(field: str, value: object) -> Non
 
     with pytest.raises(InvalidUFMGEnrollmentResponse):
         UFMGEnrollmentClient(
-            open_response=lambda *_args, **_kwargs: _Response(
-                json.dumps(payload).encode()
-            )
+            open_response=lambda *_args, **_kwargs: _Response(json.dumps(payload).encode())
         ).fetch("private-token")
 
 
@@ -272,9 +264,7 @@ def test_client_rejects_unsupported_or_ambiguous_schedules(
 
     with pytest.raises(InvalidUFMGEnrollmentResponse):
         UFMGEnrollmentClient(
-            open_response=lambda *_args, **_kwargs: _Response(
-                json.dumps(payload).encode()
-            )
+            open_response=lambda *_args, **_kwargs: _Response(json.dumps(payload).encode())
         ).fetch("private-token")
 
 
@@ -284,10 +274,7 @@ def test_client_rejects_duplicate_and_unbounded_schedules() -> None:
             {"diaDaSemana": "SEGUNDA", "horaInicial": "07:30", "horaFinal": "09:10"},
             {"diaDaSemana": "SEGUNDA", "horaInicial": "07:30", "horaFinal": "09:10"},
         ],
-        [
-            {"diaDaSemana": "SEGUNDA", "horaInicial": "07:30", "horaFinal": "09:10"}
-        ]
-        * 33,
+        [{"diaDaSemana": "SEGUNDA", "horaInicial": "07:30", "horaFinal": "09:10"}] * 33,
     ):
         payload = _payload()
         payload["listaObj"][0]["matriculas"][0]["turma"]["horarios"] = schedules  # type: ignore[index]
@@ -358,14 +345,17 @@ def test_enrollment_redirects_cannot_leak_the_session_to_another_host() -> None:
     handler = _HTTPSOnlyRedirectHandler()
     request = Request("https://sistemas.ufmg.br/siga-ws/seam/resource/rest/WsMatriculas")
 
-    assert handler.redirect_request(
-        request,
-        BytesIO(),
-        302,
-        "Found",
-        {},
-        "https://sistemas.ufmg.br/idp/login.jsp",
-    ) is not None
+    assert (
+        handler.redirect_request(
+            request,
+            BytesIO(),
+            302,
+            "Found",
+            {},
+            "https://sistemas.ufmg.br/idp/login.jsp",
+        )
+        is not None
+    )
     with pytest.raises(URLError):
         handler.redirect_request(
             request,

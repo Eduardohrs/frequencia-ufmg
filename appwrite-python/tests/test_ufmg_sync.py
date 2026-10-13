@@ -52,9 +52,7 @@ class _CourseImporter:
     def __init__(self) -> None:
         self.received: list[dict[str, object]] | None = None
 
-    def import_enrollments(
-        self, values: list[dict[str, object]]
-    ) -> dict[str, int]:
+    def import_enrollments(self, values: list[dict[str, object]]) -> dict[str, int]:
         self.received = values
         return {"created": 1, "existing": 0, "total": 1}
 
@@ -64,9 +62,7 @@ class _ScheduleImporter:
         self._courses = courses
         self.received: list[dict[str, object]] | None = None
 
-    def import_enrollments(
-        self, values: list[dict[str, object]]
-    ) -> dict[str, int]:
+    def import_enrollments(self, values: list[dict[str, object]]) -> dict[str, int]:
         assert self._courses.received is values
         self.received = values
         return {
@@ -79,40 +75,63 @@ class _ScheduleImporter:
         }
 
 
+class _DateImporter:
+    def __init__(self, schedules: _ScheduleImporter) -> None:
+        self._schedules = schedules
+        self.called = False
+
+    def import_dates(self, user_id: str, *, now: int) -> dict[str, int]:
+        assert self._schedules.received is not None
+        assert (user_id, now) == ("user", 10)
+        self.called = True
+        return {
+            "total": 2,
+            "matched": 1,
+            "unmatched": 1,
+            "created": 1,
+            "updated": 0,
+            "unchanged": 0,
+        }
+
+
 def _service(
     now: datetime,
     *,
     sessions: _Sessions | None = None,
     enrollments: _Enrollments | None = None,
-) -> tuple[UFMGSyncService, _Sessions, _Enrollments, _CourseImporter, _ScheduleImporter]:
+) -> tuple[
+    UFMGSyncService, _Sessions, _Enrollments, _CourseImporter, _ScheduleImporter, _DateImporter
+]:
     session_store = sessions or _Sessions(UFMGSession("private-token", 1, 99))
     client = enrollments or _Enrollments([_enrollment()])
     courses = _CourseImporter()
     schedules = _ScheduleImporter(courses)
+    dates = _DateImporter(schedules)
     return (
         UFMGSyncService(
             session_store,
             client,
             courses,
             schedules,
+            dates,
             clock=lambda: now,
         ),
         session_store,
         client,
         courses,
         schedules,
+        dates,
     )
 
 
 def test_sync_fetches_once_and_reuses_the_snapshot_for_every_stage() -> None:
-    service, _, client, courses, schedules = _service(
-        datetime(2026, 8, 10, 12, tzinfo=UTC)
-    )
+    service, _, client, courses, schedules, dates = _service(datetime(2026, 8, 10, 12, tzinfo=UTC))
 
     result = service.sync("user", now=10)
 
     assert client.calls == 1
     assert courses.received is schedules.received
+    assert dates.called
     assert result == {
         "courses": {"created": 1, "existing": 0, "total": 1},
         "schedules": {
@@ -122,6 +141,14 @@ def test_sync_fetches_once_and_reuses_the_snapshot_for_every_stage() -> None:
             "conflicts": 0,
             "missing_courses": 0,
             "meetings_imported": 1,
+        },
+        "dates": {
+            "total": 2,
+            "matched": 1,
+            "unmatched": 1,
+            "created": 1,
+            "updated": 0,
+            "unchanged": 0,
         },
         "checked_at": "2026-08-10T12:00:00Z",
         "next_automatic_sync_at": "2026-08-11T12:00:00Z",
@@ -152,9 +179,7 @@ def test_sync_backs_off_after_enrollment_window_and_between_terms(
 
 
 def test_sync_requires_a_live_session_and_deletes_a_rejected_one() -> None:
-    missing, *_ = _service(
-        datetime(2026, 8, 10, tzinfo=UTC), sessions=_Sessions(None)
-    )
+    missing, *_ = _service(datetime(2026, 8, 10, tzinfo=UTC), sessions=_Sessions(None))
     with pytest.raises(UFMGReauthenticationRequired):
         missing.sync("user", now=10)
 

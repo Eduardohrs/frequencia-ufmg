@@ -36,6 +36,7 @@ class FakeFirestore:
         self.children = {
             "meetings": [{"name": "root/meeting-1"}],
             "sessions": [{"name": "root/session-1"}],
+            "academicDates": [{"name": "root/date-1"}],
         }
 
     def list_user_documents(self, *segments: str) -> list[dict[str, Any]]:
@@ -96,6 +97,7 @@ def test_repository_cascades_children_before_course_delete() -> None:
         [
             ("courses", "course-1", "meetings", "meeting-1"),
             ("courses", "course-1", "sessions", "session-1"),
+            ("courses", "course-1", "academicDates", "date-1"),
             ("courses", "course-1"),
         ]
     ]

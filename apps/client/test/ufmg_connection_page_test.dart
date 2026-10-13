@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
@@ -86,6 +88,29 @@ void main() {
     expect(logger.events, contains('ufmg_course_import_succeeded'));
   });
 
+  testWidgets('keeps connection controls available when date listing fails', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    )..dateListError = StateError('dates unavailable');
+    final logger = _Logger();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('UFMG conectada'), findsOneWidget);
+    expect(find.byKey(const Key('moodle-import-dates')), findsOneWidget);
+    expect(logger.events, contains('moodle_date_list_failed'));
+  });
+
   testWidgets('imports schedules and exposes preserved conflicts', (
     tester,
   ) async {
@@ -114,6 +139,154 @@ void main() {
       findsOneWidget,
     );
     expect(logger.events, contains('ufmg_schedule_import_succeeded'));
+  });
+
+  testWidgets('imports structured Moodle dates and reports unmatched items', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final button = find.byKey(const Key('moodle-import-dates'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+
+    expect(gateway.dateImportCalls, 1);
+    expect(find.textContaining('2 datas do Moodle importadas'), findsOneWidget);
+    expect(find.textContaining('1 data atualizada'), findsOneWidget);
+    expect(
+      find.textContaining('1 data não pôde ser ligada a uma disciplina'),
+      findsOneWidget,
+    );
+    expect(logger.events, contains('moodle_date_import_succeeded'));
+    expect(find.text('Trabalho prático'), findsOneWidget);
+    expect(logger.events, contains('moodle_date_list_succeeded'));
+  });
+
+  testWidgets('shows every Moodle date kind and maps import failures', (
+    tester,
+  ) async {
+    final gateway =
+        _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..dates = [
+            PythonMoodleDate(
+              id: 'moodle-1',
+              courseId: 'dcc203',
+              courseCode: 'DCC203',
+              title: 'Questionário',
+              dueAt: DateTime.utc(2026, 10, 20),
+              kind: 'quiz',
+            ),
+            PythonMoodleDate(
+              id: 'moodle-2',
+              courseId: 'dcc203',
+              courseCode: 'DCC203',
+              title: 'Seminário',
+              dueAt: DateTime.utc(2026, 10, 21),
+              kind: 'event',
+            ),
+          ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.quiz_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.event_outlined), findsOneWidget);
+
+    final cases = <(Object, String)>[
+      (
+        const PythonBackendException(
+          PythonBackendError.ufmgReauthenticationRequired,
+        ),
+        'Sua sessão expirou. Reconecte para importar.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.unavailable),
+        'Não foi possível consultar as datas no Moodle agora.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.rateLimited),
+        'Muitas tentativas seguidas. Aguarde um pouco e tente novamente.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.invalidResponse),
+        'Não foi possível importar as datas do Moodle.',
+      ),
+      (
+        StateError('unexpected'),
+        'Não foi possível importar as datas do Moodle.',
+      ),
+    ];
+    for (final (error, message) in cases) {
+      gateway.dateImportError = error;
+      final button = find.byKey(const Key('moodle-import-dates'));
+      await tester.ensureVisible(button);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(find.text(message), findsOneWidget);
+      if (error is PythonBackendException &&
+          error.code == PythonBackendError.ufmgReauthenticationRequired) {
+        gateway.status = const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: UFMGConnectionPage(
+              key: UniqueKey(),
+              gateway: gateway,
+              logger: _Logger(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+    }
+  });
+
+  testWidgets('does not update a disposed page after a late Moodle failure', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    gateway.dateImportCompleter = Completer<PythonMoodleDateImportResult>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final button = find.byKey(const Key('moodle-import-dates'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox());
+    gateway.dateImportCompleter!.completeError(StateError('late'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('runs every ready import stage through one synchronization', (
@@ -148,6 +321,11 @@ void main() {
     expect(find.textContaining('2 disciplinas importadas'), findsOneWidget);
     expect(find.textContaining('2 grades atualizadas'), findsOneWidget);
     expect(find.textContaining('1 conflito preservado'), findsOneWidget);
+    expect(find.textContaining('2 datas do Moodle importadas'), findsOneWidget);
+    expect(
+      find.textContaining('1 data sem disciplina correspondente'),
+      findsOneWidget,
+    );
     expect(logger.events, contains('ufmg_sync_succeeded'));
     expect(await schedule.isDue('user-1'), isFalse);
   });
@@ -427,6 +605,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('ufmg-reconnect')));
       await tester.tap(find.byKey(const Key('ufmg-reconnect')));
       await tester.pumpAndSettle();
       expect(find.text('Renovar conexão'), findsOneWidget);
@@ -519,11 +698,16 @@ final class _Gateway implements BackendUFMGSessionGateway {
   Object? disconnectError;
   Object? importError;
   Object? scheduleImportError;
+  Object? dateImportError;
+  Object? dateListError;
+  Completer<PythonMoodleDateImportResult>? dateImportCompleter;
   Object? syncError;
   final credentials = <(String, String)>[];
   int disconnectCalls = 0;
   int importCalls = 0;
   int scheduleImportCalls = 0;
+  int dateImportCalls = 0;
+  List<PythonMoodleDate> dates = const [];
   int syncCalls = 0;
 
   @override
@@ -552,6 +736,37 @@ final class _Gateway implements BackendUFMGSessionGateway {
   }
 
   @override
+  Future<PythonMoodleDateImportResult> importMoodleDates() async {
+    dateImportCalls++;
+    if (dateImportCompleter case final completer?) return completer.future;
+    if (dateImportError case final error?) throw error;
+    dates = [
+      PythonMoodleDate(
+        id: 'moodle-910',
+        courseId: 'dcc203',
+        courseCode: 'DCC203',
+        title: 'Trabalho prático',
+        dueAt: DateTime.utc(2026, 10, 22, 23),
+        kind: 'assignment',
+      ),
+    ];
+    return const PythonMoodleDateImportResult(
+      total: 4,
+      matched: 3,
+      unmatched: 1,
+      created: 2,
+      updated: 1,
+      unchanged: 0,
+    );
+  }
+
+  @override
+  Future<List<PythonMoodleDate>> listMoodleDates() async {
+    if (dateListError case final error?) throw error;
+    return dates;
+  }
+
+  @override
   Future<PythonUFMGSyncResult> syncUFMG() async {
     syncCalls++;
     if (syncError case final error?) throw error;
@@ -568,6 +783,14 @@ final class _Gateway implements BackendUFMGSessionGateway {
         conflicts: 1,
         missingCourses: 0,
         meetingsImported: 3,
+      ),
+      dates: const PythonMoodleDateImportResult(
+        total: 4,
+        matched: 3,
+        unmatched: 1,
+        created: 2,
+        updated: 1,
+        unchanged: 0,
       ),
       checkedAt: DateTime.utc(2026, 10, 13, 12),
       nextAutomaticSyncAt: DateTime.utc(2026, 12, 6),

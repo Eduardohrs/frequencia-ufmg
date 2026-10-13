@@ -19,6 +19,10 @@ module_search_path.insert(0, str(Path(__file__).resolve().parent))
 development_domain = Path(__file__).resolve().parents[2] / "backend" / "src"
 module_search_path.insert(0, str(development_domain))
 
+from academic_date_repository import (  # noqa: E402
+    AcademicDateRepository,
+    InvalidAcademicDate,
+)
 from attendance_service import InvalidAttendanceRequest, evaluate_attendance  # noqa: E402
 from course_repository import (  # noqa: E402
     CourseRepository,
@@ -42,6 +46,12 @@ from firestore_rest import (  # noqa: E402
     FirestoreRequestRejected,
     FirestoreRestClient,
     FirestoreUnavailable,
+)
+from moodle_date_import import MoodleDateImportService  # noqa: E402
+from moodle_structured_dates import (  # noqa: E402
+    InvalidMoodleResponse,
+    MoodleStructuredDatesClient,
+    MoodleUnavailable,
 )
 from overview_repository import (  # noqa: E402
     AcademicOverviewRepository,
@@ -89,9 +99,7 @@ from ufmg_sync import UFMGSyncService  # noqa: E402
 MAX_REQUEST_BYTES = 16_384
 _REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="")
 _RESPONSE_STATUS: ContextVar[int] = ContextVar("response_status", default=200)
-_REQUEST_METRICS: ContextVar["_RequestMetrics | None"] = ContextVar(
-    "request_metrics", default=None
-)
+_REQUEST_METRICS: ContextVar["_RequestMetrics | None"] = ContextVar("request_metrics", default=None)
 _SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}")
 
 
@@ -209,12 +217,16 @@ def _dispatch(context: Any) -> Any:
         return _overview(context, allowed_origin)
     if method == "GET" and path == "/v1/courses":
         return _courses_list(context, allowed_origin)
+    if method == "GET" and path == "/v1/moodle/dates":
+        return _academic_dates(context, allowed_origin)
     if path == "/v1/ufmg/session" and method in {"GET", "POST", "DELETE"}:
         return _ufmg_session(context, allowed_origin, method)
     if path == "/v1/ufmg/import/courses" and method == "POST":
         return _ufmg_course_import(context, allowed_origin)
     if path == "/v1/ufmg/import/schedules" and method == "POST":
         return _ufmg_schedule_import(context, allowed_origin)
+    if path == "/v1/ufmg/import/dates" and method == "POST":
+        return _moodle_date_import(context, allowed_origin)
     if path == "/v1/ufmg/sync" and method == "POST":
         return _ufmg_sync(context, allowed_origin)
     session_mutation = _session_mutation_path(path)
@@ -293,9 +305,7 @@ def _identity(context: Any, origin: str | None) -> Any:
 
 
 def _ufmg_session(context: Any, origin: str | None, method: str) -> Any:
-    user_id, rejected = _authentication(
-        context, origin, f"/v1/ufmg/session/{method.lower()}"
-    )
+    user_id, rejected = _authentication(context, origin, f"/v1/ufmg/session/{method.lower()}")
     if rejected is not None:
         return rejected
     try:
@@ -328,45 +338,31 @@ def _ufmg_session(context: Any, origin: str | None, method: str) -> Any:
             event = "ufmg_session_disconnect_succeeded"
     except InvalidUFMGCredentials as error:
         _error(context, "ufmg_credentials_invalid", reason=error.reason)
-        return _respond(
-            context, {"error": "ufmg_credentials_invalid"}, 401, origin
-        )
+        return _respond(context, {"error": "ufmg_credentials_invalid"}, 401, origin)
     except UFMGAuthenticationUnavailable:
-        return _ufmg_session_error(
-            context, origin, "ufmg_authentication_unavailable", 503
-        )
+        return _ufmg_session_error(context, origin, "ufmg_authentication_unavailable", 503)
     except UFMGSessionStoreUnavailable:
-        return _ufmg_session_error(
-            context, origin, "ufmg_session_store_unavailable", 503
-        )
+        return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
     except InvalidUFMGSession:
         return _ufmg_session_error(context, origin, "ufmg_session_rejected", 400)
     except ValueError:
-        return _ufmg_session_error(
-            context, origin, "ufmg_session_configuration_invalid", 503
-        )
+        return _ufmg_session_error(context, origin, "ufmg_session_configuration_invalid", 503)
     _log(context, event)
     return _respond(context, result, origin=origin)
 
 
 def _ufmg_course_import(context: Any, origin: str | None) -> Any:
-    user_id, rejected = _authentication(
-        context, origin, "/v1/ufmg/import/courses/post"
-    )
+    user_id, rejected = _authentication(context, origin, "/v1/ufmg/import/courses/post")
     if rejected is not None:
         return rejected
     if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
-        return _ufmg_session_error(
-            context, origin, "ufmg_course_import_rejected", 400
-        )
+        return _ufmg_session_error(context, origin, "ufmg_course_import_rejected", 400)
     try:
         result = _ufmg_course_import_service(
             context.req.headers, cast(str, user_id)
         ).import_courses(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
-        return _ufmg_session_error(
-            context, origin, "ufmg_reauthentication_required", 401
-        )
+        return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
     except UFMGEnrollmentUnavailable as error:
         return _ufmg_session_error(
             context,
@@ -379,9 +375,7 @@ def _ufmg_course_import(context: Any, origin: str | None) -> Any:
     except InvalidUFMGEnrollmentResponse:
         return _ufmg_session_error(context, origin, "ufmg_enrollment_invalid", 502)
     except UFMGSessionStoreUnavailable:
-        return _ufmg_session_error(
-            context, origin, "ufmg_session_store_unavailable", 503
-        )
+        return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
     except FirestoreAccessDenied:
         return _course_error(context, origin, "course_access_denied", 403)
     except FirestoreUnavailable:
@@ -393,15 +387,11 @@ def _ufmg_course_import(context: Any, origin: str | None) -> Any:
 
 
 def _ufmg_schedule_import(context: Any, origin: str | None) -> Any:
-    user_id, rejected = _authentication(
-        context, origin, "/v1/ufmg/import/schedules/post"
-    )
+    user_id, rejected = _authentication(context, origin, "/v1/ufmg/import/schedules/post")
     if rejected is not None:
         return rejected
     if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
-        return _ufmg_session_error(
-            context, origin, "ufmg_schedule_import_rejected", 400
-        )
+        return _ufmg_session_error(context, origin, "ufmg_schedule_import_rejected", 400)
     if environ.get("ENABLE_SCHEDULE_WRITES", "").lower() != "true":
         return _schedule_error(context, origin, "schedule_writes_disabled", 503)
     try:
@@ -409,9 +399,7 @@ def _ufmg_schedule_import(context: Any, origin: str | None) -> Any:
             context.req.headers, cast(str, user_id)
         ).import_schedules(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
-        return _ufmg_session_error(
-            context, origin, "ufmg_reauthentication_required", 401
-        )
+        return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
     except UFMGEnrollmentUnavailable as error:
         return _ufmg_session_error(
             context,
@@ -424,9 +412,7 @@ def _ufmg_schedule_import(context: Any, origin: str | None) -> Any:
     except InvalidUFMGEnrollmentResponse:
         return _ufmg_session_error(context, origin, "ufmg_enrollment_invalid", 502)
     except UFMGSessionStoreUnavailable:
-        return _ufmg_session_error(
-            context, origin, "ufmg_session_store_unavailable", 503
-        )
+        return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
     except FirestoreAccessDenied:
         return _course_error(context, origin, "course_access_denied", 403)
     except FirestoreUnavailable:
@@ -462,9 +448,7 @@ def _ufmg_sync(context: Any, origin: str | None) -> Any:
             cast(str, user_id), now=int(time())
         )
     except UFMGReauthenticationRequired:
-        return _ufmg_session_error(
-            context, origin, "ufmg_reauthentication_required", 401
-        )
+        return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
     except UFMGEnrollmentUnavailable as error:
         return _ufmg_session_error(
             context,
@@ -476,10 +460,12 @@ def _ufmg_sync(context: Any, origin: str | None) -> Any:
         )
     except InvalidUFMGEnrollmentResponse:
         return _ufmg_session_error(context, origin, "ufmg_enrollment_invalid", 502)
+    except MoodleUnavailable:
+        return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
+    except InvalidMoodleResponse:
+        return _ufmg_session_error(context, origin, "moodle_response_invalid", 502)
     except UFMGSessionStoreUnavailable:
-        return _ufmg_session_error(
-            context, origin, "ufmg_session_store_unavailable", 503
-        )
+        return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
     except FirestoreAccessDenied:
         return _course_error(context, origin, "course_access_denied", 403)
     except FirestoreUnavailable:
@@ -487,6 +473,7 @@ def _ufmg_sync(context: Any, origin: str | None) -> Any:
     except (
         DuplicateCourseCode,
         InvalidCourse,
+        InvalidAcademicDate,
         InvalidSchedule,
         FirestoreRequestRejected,
         TypeError,
@@ -495,6 +482,7 @@ def _ufmg_sync(context: Any, origin: str | None) -> Any:
         return _ufmg_session_error(context, origin, "ufmg_sync_rejected", 502)
     courses = cast(Mapping[str, int], result["courses"])
     schedules = cast(Mapping[str, int], result["schedules"])
+    dates = cast(Mapping[str, int], result["dates"])
     _log(
         context,
         "ufmg_sync_succeeded",
@@ -503,7 +491,45 @@ def _ufmg_sync(context: Any, origin: str | None) -> Any:
         schedule_conflicts=schedules["conflicts"],
         schedule_total=schedules["total"],
         schedule_updated=schedules["updated"],
+        date_created=dates["created"],
+        date_matched=dates["matched"],
+        date_total=dates["total"],
+        date_unmatched=dates["unmatched"],
     )
+    return _respond(context, result, origin=origin)
+
+
+def _moodle_date_import(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/ufmg/import/dates/post")
+    if rejected is not None:
+        return rejected
+    if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
+        return _ufmg_session_error(context, origin, "moodle_date_import_rejected", 400)
+    try:
+        result = _moodle_date_import_service(context.req.headers, cast(str, user_id)).import_dates(
+            cast(str, user_id), now=int(time())
+        )
+    except UFMGReauthenticationRequired:
+        return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
+    except MoodleUnavailable:
+        return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
+    except InvalidMoodleResponse:
+        return _ufmg_session_error(context, origin, "moodle_response_invalid", 502)
+    except UFMGSessionStoreUnavailable:
+        return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
+    except FirestoreAccessDenied:
+        return _course_error(context, origin, "course_access_denied", 403)
+    except FirestoreUnavailable:
+        return _course_error(context, origin, "course_store_unavailable", 503)
+    except (
+        InvalidAcademicDate,
+        InvalidCourse,
+        FirestoreRequestRejected,
+        TypeError,
+        ValueError,
+    ):
+        return _ufmg_session_error(context, origin, "moodle_date_import_rejected", 502)
+    _log(context, "moodle_date_import_succeeded", **result)
     return _respond(context, result, origin=origin)
 
 
@@ -660,6 +686,31 @@ def _courses_list(context: Any, origin: str | None) -> Any:
     return _respond(context, {"courses": courses}, origin=origin)
 
 
+def _academic_dates(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/moodle/dates")
+    if rejected is not None:
+        return rejected
+    try:
+        courses = _course_repository(context.req.headers, cast(str, user_id)).list_courses()
+        repository = AcademicDateRepository(_firestore(context.req.headers, cast(str, user_id)))
+        values = [
+            {**item, "course_id": course["id"], "course_code": course["code"]}
+            for course in courses
+            for item in repository.list_dates(course["id"])
+        ]
+        if len(values) > 500:
+            raise InvalidAcademicDate("too many academic dates")
+        values.sort(key=lambda item: (item["due_at"], item["course_code"], item["id"]))
+    except (InvalidAcademicDate, InvalidCourse, FirestoreRequestRejected, TypeError, ValueError):
+        return _ufmg_session_error(context, origin, "academic_dates_invalid", 500)
+    except FirestoreAccessDenied:
+        return _course_error(context, origin, "course_access_denied", 403)
+    except FirestoreUnavailable:
+        return _course_error(context, origin, "course_store_unavailable", 503)
+    _log(context, "academic_date_list_succeeded", count=len(values), course_count=len(courses))
+    return _respond(context, {"dates": values}, origin=origin)
+
+
 def _course_mutation(context: Any, origin: str | None, method: str, course_id: str) -> Any:
     user_id, rejected = _authentication(context, origin, f"/v1/courses/{method.lower()}")
     if rejected is not None:
@@ -707,9 +758,7 @@ def _ufmg_session_service(headers: dict[str, str]) -> UFMGSessionService:
     return UFMGSessionService(UFMGAuthenticator(), _ufmg_session_store(headers))
 
 
-def _ufmg_course_import_service(
-    headers: dict[str, str], user_id: str
-) -> UFMGCourseImportService:
+def _ufmg_course_import_service(headers: dict[str, str], user_id: str) -> UFMGCourseImportService:
     return UFMGCourseImportService(
         _ufmg_session_store(headers),
         UFMGEnrollmentClient(),
@@ -733,11 +782,22 @@ def _ufmg_sync_service(headers: dict[str, str], user_id: str) -> UFMGSyncService
     enrollments = UFMGEnrollmentClient()
     courses = _course_repository(headers, user_id)
     schedules = _schedule_repository(headers, user_id)
+    dates = _moodle_date_import_service(headers, user_id)
     return UFMGSyncService(
         sessions,
         enrollments,
         UFMGCourseImportService(sessions, enrollments, courses),
         UFMGScheduleImportService(sessions, enrollments, courses, schedules),
+        dates,
+    )
+
+
+def _moodle_date_import_service(headers: dict[str, str], user_id: str) -> MoodleDateImportService:
+    return MoodleDateImportService(
+        _ufmg_session_store(headers),
+        MoodleStructuredDatesClient(),
+        _course_repository(headers, user_id),
+        AcademicDateRepository(_firestore(headers, user_id)),
     )
 
 
@@ -830,10 +890,12 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/identity",
         "/v1/attendance/evaluate",
         "/v1/courses",
+        "/v1/moodle/dates",
         "/v1/overview",
         "/v1/ufmg/session",
         "/v1/ufmg/import/courses",
         "/v1/ufmg/import/schedules",
+        "/v1/ufmg/import/dates",
         "/v1/ufmg/sync",
     } or path.startswith("/v1/courses/")
 
@@ -958,9 +1020,11 @@ def _route_name(path: str) -> str:
         "/v1/attendance/evaluate",
         "/v1/overview",
         "/v1/courses",
+        "/v1/moodle/dates",
         "/v1/ufmg/session",
         "/v1/ufmg/import/courses",
         "/v1/ufmg/import/schedules",
+        "/v1/ufmg/import/dates",
         "/v1/ufmg/sync",
     }:
         return path

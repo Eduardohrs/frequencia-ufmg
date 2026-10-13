@@ -74,6 +74,10 @@ abstract interface class BackendUFMGSessionGateway {
 
   Future<PythonUFMGScheduleImportResult> importUFMGSchedules();
 
+  Future<PythonMoodleDateImportResult> importMoodleDates();
+
+  Future<List<PythonMoodleDate>> listMoodleDates();
+
   Future<PythonUFMGSyncResult> syncUFMG();
 }
 
@@ -111,14 +115,101 @@ final class PythonUFMGSyncResult {
   const PythonUFMGSyncResult({
     required this.courses,
     required this.schedules,
+    required this.dates,
     required this.checkedAt,
     required this.nextAutomaticSyncAt,
   });
 
   final PythonUFMGCourseImportResult courses;
   final PythonUFMGScheduleImportResult schedules;
+  final PythonMoodleDateImportResult dates;
   final DateTime checkedAt;
   final DateTime nextAutomaticSyncAt;
+}
+
+final class PythonMoodleDateImportResult {
+  const PythonMoodleDateImportResult({
+    required this.total,
+    required this.matched,
+    required this.unmatched,
+    required this.created,
+    required this.updated,
+    required this.unchanged,
+  });
+
+  final int total;
+  final int matched;
+  final int unmatched;
+  final int created;
+  final int updated;
+  final int unchanged;
+}
+
+final class PythonMoodleDate {
+  const PythonMoodleDate({
+    required this.id,
+    required this.courseId,
+    required this.courseCode,
+    required this.title,
+    required this.dueAt,
+    required this.kind,
+  });
+
+  factory PythonMoodleDate.fromJson(Map<String, Object?> json) {
+    const keys = {
+      'id',
+      'course_id',
+      'course_code',
+      'title',
+      'due_at',
+      'kind',
+      'source',
+      'source_id',
+      'created_at',
+      'updated_at',
+    };
+    if (!_hasExactKeys(json, keys) || json['source'] != 'moodle') {
+      throw const FormatException();
+    }
+    final id = json['id'];
+    final courseId = json['course_id'];
+    final courseCode = json['course_code'];
+    final title = json['title'];
+    final kind = json['kind'];
+    final sourceId = json['source_id'];
+    final dueAt = _utcDate(json['due_at']);
+    _utcDate(json['created_at']);
+    _utcDate(json['updated_at']);
+    if (id is! String ||
+        courseId is! String ||
+        courseCode is! String ||
+        title is! String ||
+        sourceId is! String ||
+        kind is! String ||
+        id != 'moodle-$sourceId' ||
+        courseId.isEmpty ||
+        courseCode.isEmpty ||
+        title.isEmpty ||
+        title.length > 120 ||
+        !const {'assignment', 'quiz', 'event'}.contains(kind)) {
+      throw const FormatException();
+    }
+    return PythonMoodleDate(
+      id: id,
+      courseId: courseId,
+      courseCode: courseCode,
+      title: title,
+      dueAt: dueAt,
+      kind: kind,
+    );
+  }
+
+  final String id;
+  final String courseId;
+  final String courseCode;
+  final String title;
+  final DateTime dueAt;
+  final String kind;
 }
 
 final class PythonUFMGSessionStatus {
@@ -514,6 +605,37 @@ PythonUFMGScheduleImportResult _scheduleImportResult(Object? value) {
   );
 }
 
+PythonMoodleDateImportResult _moodleDateImportResult(Object? value) {
+  const keys = {
+    'total',
+    'matched',
+    'unmatched',
+    'created',
+    'updated',
+    'unchanged',
+  };
+  if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
+    throw const FormatException();
+  }
+  final counts = keys.map((key) => value[key]).toList();
+  if (counts.any((count) => count is! int || count < 0 || count > 500)) {
+    throw const FormatException();
+  }
+  final result = PythonMoodleDateImportResult(
+    total: value['total'] as int,
+    matched: value['matched'] as int,
+    unmatched: value['unmatched'] as int,
+    created: value['created'] as int,
+    updated: value['updated'] as int,
+    unchanged: value['unchanged'] as int,
+  );
+  if (result.total != result.matched + result.unmatched ||
+      result.matched != result.created + result.updated + result.unchanged) {
+    throw const FormatException();
+  }
+  return result;
+}
+
 DateTime _utcDate(Object? value) {
   if (value is! String || !value.endsWith('Z')) throw const FormatException();
   final parsed = DateTime.tryParse(value);
@@ -822,6 +944,45 @@ final class PythonBackendTransport
   }
 
   @override
+  Future<PythonMoodleDateImportResult> importMoodleDates() async {
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/import/dates',
+      method: _BackendMethod.post,
+      body: const {},
+    );
+    try {
+      return _moodleDateImportResult(jsonDecode(response.body));
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<List<PythonMoodleDate>> listMoodleDates() async {
+    final response = await _authenticatedRequest(path: '/v1/moodle/dates');
+    try {
+      final value = jsonDecode(response.body);
+      final dates = value is Map<String, dynamic> ? value['dates'] : null;
+      if (dates is! List || dates.length > 500) throw const FormatException();
+      final result = dates
+          .map(
+            (item) => PythonMoodleDate.fromJson(
+              Map<String, Object?>.from(item as Map),
+            ),
+          )
+          .toList(growable: false);
+      for (var index = 1; index < result.length; index++) {
+        if (result[index].dueAt.isBefore(result[index - 1].dueAt)) {
+          throw const FormatException();
+        }
+      }
+      return result;
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
   Future<PythonUFMGSyncResult> syncUFMG() async {
     final response = await _authenticatedRequest(
       path: '/v1/ufmg/sync',
@@ -833,6 +994,7 @@ final class PythonBackendTransport
       const keys = {
         'courses',
         'schedules',
+        'dates',
         'checked_at',
         'next_automatic_sync_at',
       };
@@ -841,6 +1003,7 @@ final class PythonBackendTransport
       }
       final courses = _courseImportResult(value['courses']);
       final schedules = _scheduleImportResult(value['schedules']);
+      final dates = _moodleDateImportResult(value['dates']);
       final checkedAt = _utcDate(value['checked_at']);
       final nextAutomaticSyncAt = _utcDate(value['next_automatic_sync_at']);
       if (!nextAutomaticSyncAt.isAfter(checkedAt)) {
@@ -849,6 +1012,7 @@ final class PythonBackendTransport
       return PythonUFMGSyncResult(
         courses: courses,
         schedules: schedules,
+        dates: dates,
         checkedAt: checkedAt,
         nextAutomaticSyncAt: nextAutomaticSyncAt,
       );

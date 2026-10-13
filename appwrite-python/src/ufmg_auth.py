@@ -61,9 +61,7 @@ class _HTTPSOnlyRedirectHandler(HTTPRedirectHandler):
         target = urlsplit(new_url)
         if target.scheme != "https" or target.hostname != _TRUSTED_HOST:
             raise URLError("untrusted UFMG authentication redirect")
-        return super().redirect_request(
-            request, file_pointer, code, message, headers, new_url
-        )
+        return super().redirect_request(request, file_pointer, code, message, headers, new_url)
 
 
 def _default_opener(jar: CookieJar) -> OpenerDirector:
@@ -131,9 +129,7 @@ class UFMGAuthenticator:
         except InvalidUFMGCredentials:
             raise
         except OSError:
-            raise UFMGAuthenticationUnavailable(
-                "UFMG authentication unavailable"
-            ) from None
+            raise UFMGAuthenticationUnavailable("UFMG authentication unavailable") from None
 
         token = _cookie_value(jar, "LtpaToken2")
         if (

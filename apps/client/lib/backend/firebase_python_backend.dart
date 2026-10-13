@@ -92,6 +92,18 @@ final class _FirebasePythonBackendVerifier
   }
 
   @override
+  Future<PythonMoodleDateImportResult> importMoodleDates() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.importMoodleDates();
+  }
+
+  @override
+  Future<List<PythonMoodleDate>> listMoodleDates() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.listMoodleDates();
+  }
+
+  @override
   Future<PythonUFMGSyncResult> syncUFMG() async {
     await (_activation ??= _activateAppCheck());
     return _transport.syncUFMG();

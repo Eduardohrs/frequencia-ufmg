@@ -92,9 +92,7 @@ class _Schedules:
         self.failure = failure
         self.saved: list[tuple[str, dict[str, object]]] = []
 
-    def load_import_schedules(
-        self, courses: list[dict[str, Any]]
-    ) -> dict[str, dict[str, Any]]:
+    def load_import_schedules(self, courses: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         assert {str(course["id"]) for course in courses} == set(self.states)
         return self.states
 
@@ -119,9 +117,7 @@ class _Schedules:
         }
 
 
-def _state(
-    course: dict[str, object], meetings: list[dict[str, object]]
-) -> dict[str, Any]:
+def _state(course: dict[str, object], meetings: list[dict[str, object]]) -> dict[str, Any]:
     return {"course": course, "meetings": meetings, "changes": {}}
 
 
@@ -140,9 +136,7 @@ def test_imports_new_schedule_with_remote_dates_and_one_call() -> None:
     course = _course()
     schedules = _Schedules({"ele028": _state(course, [])})
 
-    result = _service([_remote()], [course], schedules).import_schedules(
-        "user", now=10
-    )
+    result = _service([_remote()], [course], schedules).import_schedules("user", now=10)
 
     assert result == {
         "total": 1,
@@ -185,13 +179,9 @@ def test_preserves_equivalent_manual_schedule_and_custom_dates() -> None:
         "starts_on": "2026-09-01T00:00:00Z",
         "ends_on": "2026-11-30T00:00:00Z",
     }
-    schedules = _Schedules(
-        {"ele028": _state(course, [_saved_meeting("manual", call_count=2)])}
-    )
+    schedules = _Schedules({"ele028": _state(course, [_saved_meeting("manual", call_count=2)])})
 
-    result = _service([_remote()], [course], schedules).import_schedules(
-        "user", now=10
-    )
+    result = _service([_remote()], [course], schedules).import_schedules("user", now=10)
 
     assert result["unchanged"] == 1
     assert result["meetings_imported"] == 0
@@ -200,13 +190,9 @@ def test_preserves_equivalent_manual_schedule_and_custom_dates() -> None:
 
 def test_preserves_manual_schedule_when_remote_differs() -> None:
     course = _course()
-    schedules = _Schedules(
-        {"ele028": _state(course, [_saved_meeting("manual", start=500)])}
-    )
+    schedules = _Schedules({"ele028": _state(course, [_saved_meeting("manual", start=500)])})
 
-    result = _service([_remote()], [course], schedules).import_schedules(
-        "user", now=10
-    )
+    result = _service([_remote()], [course], schedules).import_schedules("user", now=10)
 
     assert result["conflicts"] == 1
     assert schedules.saved == []
@@ -223,9 +209,7 @@ def test_treats_a_manually_edited_imported_slot_as_user_owned() -> None:
         }
     )
 
-    result = _service([_remote()], [course], schedules).import_schedules(
-        "user", now=10
-    )
+    result = _service([_remote()], [course], schedules).import_schedules("user", now=10)
 
     assert result["conflicts"] == 1
     assert schedules.saved == []
@@ -249,9 +233,7 @@ def test_reconciles_only_managed_meetings_and_preserves_call_count() -> None:
         }
     )
 
-    result = _service([_remote()], [course], schedules).import_schedules(
-        "user", now=10
-    )
+    result = _service([_remote()], [course], schedules).import_schedules("user", now=10)
 
     assert result["updated"] == 1
     payload = schedules.saved[0][1]
@@ -267,16 +249,12 @@ def test_reconciles_only_managed_meetings_and_preserves_call_count() -> None:
     assert payload["starts_on"] == "2026-08-03T00:00:00Z"
 
 
-@pytest.mark.parametrize(
-    "failure", [DestructiveScheduleChange(1), ScheduleOverlap("overlap")]
-)
+@pytest.mark.parametrize("failure", [DestructiveScheduleChange(1), ScheduleOverlap("overlap")])
 def test_reports_safe_conflict_instead_of_overwriting(failure: Exception) -> None:
     course = _course()
     schedules = _Schedules({"ele028": _state(course, [])}, failure)
 
-    result = _service([_remote()], [course], schedules).import_schedules(
-        "user", now=10
-    )
+    result = _service([_remote()], [course], schedules).import_schedules("user", now=10)
 
     assert result["conflicts"] == 1
     assert result["updated"] == 0
@@ -285,9 +263,7 @@ def test_reports_safe_conflict_instead_of_overwriting(failure: Exception) -> Non
 def test_matches_code_and_term_and_reports_missing_course() -> None:
     old = _course(course_id="old", term="2026-1")
     current = _course(course_id="current")
-    schedules = _Schedules(
-        {"old": _state(old, []), "current": _state(current, [])}
-    )
+    schedules = _Schedules({"old": _state(old, []), "current": _state(current, [])})
 
     result = _service(
         [_remote(), _remote(code="MAT001")], [old, current], schedules
@@ -304,13 +280,9 @@ def test_is_idempotent_when_managed_schedule_already_matches() -> None:
         "starts_on": "2026-08-03T00:00:00Z",
         "ends_on": "2026-12-05T00:00:00Z",
     }
-    schedules = _Schedules(
-        {"ele028": _state(course, [_saved_meeting("ufmg-1-450-2")])}
-    )
+    schedules = _Schedules({"ele028": _state(course, [_saved_meeting("ufmg-1-450-2")])})
 
-    result = _service([_remote()], [course], schedules).import_schedules(
-        "user", now=10
-    )
+    result = _service([_remote()], [course], schedules).import_schedules("user", now=10)
 
     assert result["unchanged"] == 1
     assert schedules.saved == []
@@ -327,9 +299,7 @@ def test_requires_live_session_and_deletes_rejected_session() -> None:
             raise UFMGReauthenticationRequired
 
     sessions = _Sessions()
-    service = UFMGScheduleImportService(
-        sessions, _Expired([]), _Courses([]), _Schedules({})
-    )
+    service = UFMGScheduleImportService(sessions, _Expired([]), _Courses([]), _Schedules({}))
     with pytest.raises(UFMGReauthenticationRequired):
         service.import_schedules("user", now=10)
     assert sessions.deleted

@@ -18,9 +18,11 @@ class _EnrollmentClient(Protocol):
 
 
 class _Importer(Protocol):
-    def import_enrollments(
-        self, enrollments: list[dict[str, object]]
-    ) -> dict[str, int]: ...
+    def import_enrollments(self, enrollments: list[dict[str, object]]) -> dict[str, int]: ...
+
+
+class _DateImporter(Protocol):
+    def import_dates(self, user_id: str, *, now: int) -> dict[str, int]: ...
 
 
 class UFMGSyncService:
@@ -32,6 +34,7 @@ class UFMGSyncService:
         enrollments: _EnrollmentClient,
         courses: _Importer,
         schedules: _Importer,
+        dates: _DateImporter,
         *,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -39,6 +42,7 @@ class UFMGSyncService:
         self._enrollments = enrollments
         self._courses = courses
         self._schedules = schedules
+        self._dates = dates
         self._clock = clock or (lambda: datetime.now(UTC))
 
     def sync(self, user_id: str, *, now: int) -> dict[str, object]:
@@ -54,6 +58,7 @@ class UFMGSyncService:
         checked_at = self._clock().astimezone(UTC)
         course_result = self._courses.import_enrollments(enrollments)
         schedule_result = self._schedules.import_enrollments(enrollments)
+        date_result = self._dates.import_dates(user_id, now=now)
         schedule_fields = (
             "total",
             "updated",
@@ -65,16 +70,13 @@ class UFMGSyncService:
         return {
             "courses": course_result,
             "schedules": {field: schedule_result[field] for field in schedule_fields},
+            "dates": date_result,
             "checked_at": _timestamp(checked_at),
-            "next_automatic_sync_at": _timestamp(
-                _next_automatic_sync(checked_at, enrollments)
-            ),
+            "next_automatic_sync_at": _timestamp(_next_automatic_sync(checked_at, enrollments)),
         }
 
 
-def _next_automatic_sync(
-    checked_at: datetime, enrollments: list[dict[str, object]]
-) -> datetime:
+def _next_automatic_sync(checked_at: datetime, enrollments: list[dict[str, object]]) -> datetime:
     """Poll daily near enrollment, then sleep until the semester changes."""
 
     if not enrollments:
