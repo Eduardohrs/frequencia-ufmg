@@ -361,9 +361,14 @@ def _ufmg_course_import(context: Any, origin: str | None) -> Any:
         return _ufmg_session_error(
             context, origin, "ufmg_reauthentication_required", 401
         )
-    except UFMGEnrollmentUnavailable:
+    except UFMGEnrollmentUnavailable as error:
         return _ufmg_session_error(
-            context, origin, "ufmg_enrollment_unavailable", 503
+            context,
+            origin,
+            "ufmg_enrollment_unavailable",
+            503,
+            reason=error.reason,
+            upstream_status=error.upstream_status,
         )
     except InvalidUFMGEnrollmentResponse:
         return _ufmg_session_error(context, origin, "ufmg_enrollment_invalid", 502)
@@ -631,9 +636,13 @@ def _course_error(context: Any, origin: str | None, error: str, status: int) -> 
 
 
 def _ufmg_session_error(
-    context: Any, origin: str | None, error: str, status: int
+    context: Any,
+    origin: str | None,
+    error: str,
+    status: int,
+    **log_fields: Any,
 ) -> Any:
-    _error(context, error)
+    _error(context, error, **log_fields)
     return _respond(context, {"error": error}, status, origin)
 
 
