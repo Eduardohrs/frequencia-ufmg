@@ -356,7 +356,11 @@ def test_ufmg_course_import_service_uses_shared_secure_dependencies(
     ("failure", "status", "error"),
     [
         (UFMGReauthenticationRequired(), 401, "ufmg_reauthentication_required"),
-        (UFMGEnrollmentUnavailable(), 503, "ufmg_enrollment_unavailable"),
+        (
+            UFMGEnrollmentUnavailable("http_error", upstream_status=503),
+            503,
+            "ufmg_enrollment_unavailable",
+        ),
         (InvalidUFMGEnrollmentResponse(), 502, "ufmg_enrollment_invalid"),
         (UFMGSessionStoreUnavailable(), 503, "ufmg_session_store_unavailable"),
         (FirestoreAccessDenied(), 403, "course_access_denied"),
@@ -384,7 +388,10 @@ def test_ufmg_course_import_sanitizes_failures(
 
     assert result["status"] == status
     assert result["body"] == {"error": error}
-    assert json.loads(context.errors[0]) == {"event": error}
+    expected_log: dict[str, Any] = {"event": error}
+    if isinstance(failure, UFMGEnrollmentUnavailable):
+        expected_log.update(reason="http_error", upstream_status=503)
+    assert json.loads(context.errors[0]) == expected_log
 
 
 def test_course_routes_list_save_and_delete(monkeypatch: pytest.MonkeyPatch) -> None:

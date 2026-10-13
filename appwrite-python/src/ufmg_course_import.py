@@ -2,10 +2,11 @@
 
 import json
 import re
+import ssl
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Protocol
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -22,6 +23,11 @@ class InvalidUFMGEnrollmentResponse(Exception):
 
 class UFMGEnrollmentUnavailable(Exception):
     """SIGA could not be reached safely."""
+
+    def __init__(self, reason: str = "network", *, upstream_status: int | None = None) -> None:
+        super().__init__("UFMG enrollment unavailable")
+        self.reason = reason
+        self.upstream_status = upstream_status
 
 
 class _HTTPSOnlyRedirectHandler(HTTPRedirectHandler):
@@ -94,8 +100,12 @@ class UFMGEnrollmentClient:
                 raw = response.read(_MAX_RESPONSE_BYTES + 1)
         except UFMGReauthenticationRequired:
             raise
-        except OSError:
-            raise UFMGEnrollmentUnavailable("UFMG enrollment unavailable") from None
+        except HTTPError as error:
+            raise UFMGEnrollmentUnavailable(
+                "http_error", upstream_status=error.code
+            ) from None
+        except OSError as error:
+            raise UFMGEnrollmentUnavailable(_transport_reason(error)) from None
         if len(raw) > _MAX_RESPONSE_BYTES:
             raise InvalidUFMGEnrollmentResponse("invalid UFMG enrollment response")
         try:
@@ -172,6 +182,15 @@ def _is_enrollment_response(response: Any) -> bool:
         and parsed.path == "/siga-ws/seam/resource/rest/WsMatriculas"
         and "application/json" in content_type
     )
+
+
+def _transport_reason(error: OSError) -> str:
+    cause: object = error.reason if isinstance(error, URLError) else error
+    if isinstance(cause, TimeoutError):
+        return "timeout"
+    if isinstance(cause, ssl.SSLError):
+        return "tls"
+    return "network"
 
 
 def _parse_courses(payload: object) -> list[dict[str, object]]:

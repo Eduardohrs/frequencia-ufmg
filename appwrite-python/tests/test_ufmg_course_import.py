@@ -1,8 +1,9 @@
 import json
+import ssl
 from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
@@ -270,6 +271,42 @@ def test_client_sanitizes_network_failures() -> None:
     with pytest.raises(UFMGEnrollmentUnavailable) as caught:
         UFMGEnrollmentClient(open_response=fail).fetch("private-ltpa-token")
 
+    assert "private" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason", "upstream_status"),
+    [
+        (
+            HTTPError(
+                "https://sistemas.ufmg.br/redacted",
+                503,
+                "private upstream detail",
+                {},
+                None,
+            ),
+            "http_error",
+            503,
+        ),
+        (TimeoutError("private timeout detail"), "timeout", None),
+        (URLError(TimeoutError("private timeout detail")), "timeout", None),
+        (URLError(ssl.SSLError("private TLS detail")), "tls", None),
+        (URLError("private network detail"), "network", None),
+    ],
+)
+def test_client_classifies_transport_failures_without_leaking_details(
+    failure: OSError,
+    reason: str,
+    upstream_status: int | None,
+) -> None:
+    def fail(*_args: Any, **_kwargs: Any) -> BytesIO:
+        raise failure
+
+    with pytest.raises(UFMGEnrollmentUnavailable) as caught:
+        UFMGEnrollmentClient(open_response=fail).fetch("private-ltpa-token")
+
+    assert caught.value.reason == reason
+    assert caught.value.upstream_status == upstream_status
     assert "private" not in str(caught.value)
 
 
