@@ -345,6 +345,168 @@ def test_ufmg_schedule_import_route_is_authenticated_and_logs_only_counts(
     }
 
 
+def test_ufmg_sync_route_returns_the_bounded_combined_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    routes: list[str] = []
+
+    def authenticate(_context: Any, _origin: Any, route: str) -> tuple[str, None]:
+        routes.append(route)
+        return "firebase-user", None
+
+    result_payload = {
+        "courses": {"created": 1, "existing": 4, "total": 5},
+        "schedules": {
+            "total": 5,
+            "updated": 1,
+            "unchanged": 3,
+            "conflicts": 1,
+            "missing_courses": 0,
+            "meetings_imported": 2,
+        },
+        "checked_at": "2026-10-13T12:00:00Z",
+        "next_automatic_sync_at": "2026-12-06T00:00:00Z",
+    }
+
+    class Service:
+        def sync(self, user_id: str, *, now: int) -> dict[str, object]:
+            assert user_id == "firebase-user"
+            assert now > 0
+            return result_payload
+
+    monkeypatch.setattr(function, "_authentication", authenticate)
+    monkeypatch.setattr(function, "_ufmg_sync_service", lambda *_args: Service())
+    monkeypatch.setenv("ENABLE_SCHEDULE_WRITES", "true")
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/sync"))
+
+    response = function.main(context)
+
+    assert response["body"] == result_payload
+    assert routes == ["/v1/ufmg/sync/post"]
+    assert json.loads(context.logs[0]) == {
+        "course_created": 1,
+        "course_total": 5,
+        "event": "ufmg_sync_succeeded",
+        "schedule_conflicts": 1,
+        "schedule_total": 5,
+        "schedule_updated": 1,
+    }
+
+
+def test_ufmg_sync_rejects_nonempty_payload_and_disabled_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+    monkeypatch.setattr(
+        function,
+        "_ufmg_sync_service",
+        lambda *_args: pytest.fail("must reject before sync"),
+    )
+
+    invalid = function.main(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/sync", body_json={"force": True}))
+    )
+    disabled = function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/sync")))
+
+    assert invalid["status"] == 400
+    assert invalid["body"] == {"error": "ufmg_sync_rejected"}
+    assert disabled["status"] == 503
+    assert disabled["body"] == {"error": "schedule_writes_disabled"}
+
+
+def test_ufmg_sync_returns_authentication_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_args: (None, rejection))
+
+    assert function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/sync"))) is rejection
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "error"),
+    [
+        (UFMGReauthenticationRequired(), 401, "ufmg_reauthentication_required"),
+        (UFMGEnrollmentUnavailable(), 503, "ufmg_enrollment_unavailable"),
+        (InvalidUFMGEnrollmentResponse(), 502, "ufmg_enrollment_invalid"),
+        (UFMGSessionStoreUnavailable(), 503, "ufmg_session_store_unavailable"),
+        (FirestoreAccessDenied(), 403, "course_access_denied"),
+        (FirestoreUnavailable(), 503, "course_store_unavailable"),
+        (FirestoreRequestRejected(), 502, "ufmg_sync_rejected"),
+        (InvalidCourse(), 502, "ufmg_sync_rejected"),
+        (InvalidSchedule(), 502, "ufmg_sync_rejected"),
+        (DuplicateCourseCode(), 502, "ufmg_sync_rejected"),
+        (TypeError(), 502, "ufmg_sync_rejected"),
+        (ValueError(), 502, "ufmg_sync_rejected"),
+    ],
+)
+def test_ufmg_sync_sanitizes_failures(
+    failure: Exception,
+    status: int,
+    error: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENABLE_SCHEDULE_WRITES", "true")
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+
+    class Service:
+        def sync(self, *_args: Any, **_kwargs: Any) -> None:
+            raise failure
+
+    monkeypatch.setattr(function, "_ufmg_sync_service", lambda *_args: Service())
+
+    result = function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/sync")))
+
+    assert result["status"] == status
+    assert result["body"] == {"error": error}
+
+
+def test_ufmg_sync_service_reuses_secure_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = {
+        "sessions": object(),
+        "enrollments": object(),
+        "courses": object(),
+        "schedules": object(),
+    }
+    captured_importers: list[tuple[object, ...]] = []
+    captured_sync: tuple[object, ...] = ()
+    monkeypatch.setattr(function, "_ufmg_session_store", lambda _headers: values["sessions"])
+    monkeypatch.setattr(function, "UFMGEnrollmentClient", lambda: values["enrollments"])
+    monkeypatch.setattr(
+        function, "_course_repository", lambda _headers, _user: values["courses"]
+    )
+    monkeypatch.setattr(
+        function, "_schedule_repository", lambda _headers, _user: values["schedules"]
+    )
+
+    class Importer:
+        def __init__(self, *dependencies: object) -> None:
+            captured_importers.append(dependencies)
+
+    class Sync:
+        def __init__(self, *dependencies: object) -> None:
+            nonlocal captured_sync
+            captured_sync = dependencies
+
+    monkeypatch.setattr(function, "UFMGCourseImportService", Importer)
+    monkeypatch.setattr(function, "UFMGScheduleImportService", Importer)
+    monkeypatch.setattr(function, "UFMGSyncService", Sync)
+
+    assert function._ufmg_sync_service({}, "user").__class__ is Sync
+    assert captured_importers == [
+        (values["sessions"], values["enrollments"], values["courses"]),
+        (
+            values["sessions"],
+            values["enrollments"],
+            values["courses"],
+            values["schedules"],
+        ),
+    ]
+    assert captured_sync[:2] == (values["sessions"], values["enrollments"])
+
+
 def test_ufmg_schedule_import_returns_authentication_rejection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
