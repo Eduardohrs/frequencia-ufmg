@@ -15,6 +15,9 @@ from ufmg_course_import import (
     UFMGEnrollmentClient,
     UFMGEnrollmentUnavailable,
     _HTTPSOnlyRedirectHandler,
+    _meetings,
+    _parse_courses,
+    _semester_date,
 )
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
@@ -34,7 +37,13 @@ def _payload() -> dict[str, object]:
                                 "nomeReduzido": "Laboratório de Circuitos",
                                 "cargaHoraria": 30,
                             },
-                            "horarios": [{"diaDaSemana": "SEGUNDA"}],
+                            "horarios": [
+                                {
+                                    "diaDaSemana": "SEGUNDA",
+                                    "horaInicial": "07:30",
+                                    "horaFinal": "09:10",
+                                }
+                            ],
                         }
                     },
                     {
@@ -43,7 +52,14 @@ def _payload() -> dict[str, object]:
                                 "codigo": "LA631",
                                 "nome": "Língua Alemã I",
                                 "cargaHoraria": "60",
-                            }
+                            },
+                            "horarios": [
+                                {
+                                    "diaDaSemana": "QUARTA",
+                                    "horaInicial": "19:00",
+                                    "horaFinal": "22:20",
+                                }
+                            ],
                         }
                     },
                 ],
@@ -95,8 +111,23 @@ def test_client_reads_only_enrollment_fields_and_never_exposes_the_token() -> No
             "name": "Laboratório de Circuitos",
             "term": "2026-2",
             "workload": 30,
+            "starts_on": "2026-07-01T00:00:00Z",
+            "ends_on": "2026-12-31T00:00:00Z",
+            "meetings": [
+                {"weekday": 1, "start_minutes": 450, "lesson_count": 2}
+            ],
         },
-        {"code": "LA631", "name": "Língua Alemã I", "term": "2026-2", "workload": 60},
+        {
+            "code": "LA631",
+            "name": "Língua Alemã I",
+            "term": "2026-2",
+            "workload": 60,
+            "starts_on": "2026-07-01T00:00:00Z",
+            "ends_on": "2026-12-31T00:00:00Z",
+            "meetings": [
+                {"weekday": 3, "start_minutes": 1140, "lesson_count": 4}
+            ],
+        },
     ]
     request, timeout = calls[0]
     assert request.full_url.endswith("/WsMatriculas")
@@ -202,6 +233,120 @@ def test_client_rejects_each_malformed_enrollment_boundary(payload: object) -> N
         UFMGEnrollmentClient(open_response=lambda *_args, **_kwargs: response).fetch(
             "private-token"
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("dataInicialSemestre", "2026-07-01"),
+        ("dataFinalSemestre", "31/02/2026"),
+    ],
+)
+def test_client_rejects_invalid_semester_dates(field: str, value: object) -> None:
+    payload = _payload()
+    payload["listaObj"][0][field] = value  # type: ignore[index]
+
+    with pytest.raises(InvalidUFMGEnrollmentResponse):
+        UFMGEnrollmentClient(
+            open_response=lambda *_args, **_kwargs: _Response(
+                json.dumps(payload).encode()
+            )
+        ).fetch("private-token")
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        {"diaDaSemana": "DOMINGO", "horaInicial": "07:30", "horaFinal": "09:10"},
+        {"diaDaSemana": "SEGUNDA", "horaInicial": "7:30", "horaFinal": "09:10"},
+        {"diaDaSemana": "SEGUNDA", "horaInicial": "09:10", "horaFinal": "07:30"},
+        {"diaDaSemana": "SEGUNDA", "horaInicial": "07:30", "horaFinal": "08:40"},
+        {"diaDaSemana": "SEGUNDA", "horaInicial": "23:30", "horaFinal": "25:10"},
+    ],
+)
+def test_client_rejects_unsupported_or_ambiguous_schedules(
+    schedule: dict[str, object],
+) -> None:
+    payload = _payload()
+    payload["listaObj"][0]["matriculas"][0]["turma"]["horarios"] = [schedule]  # type: ignore[index]
+
+    with pytest.raises(InvalidUFMGEnrollmentResponse):
+        UFMGEnrollmentClient(
+            open_response=lambda *_args, **_kwargs: _Response(
+                json.dumps(payload).encode()
+            )
+        ).fetch("private-token")
+
+
+def test_client_rejects_duplicate_and_unbounded_schedules() -> None:
+    for schedules in (
+        [
+            {"diaDaSemana": "SEGUNDA", "horaInicial": "07:30", "horaFinal": "09:10"},
+            {"diaDaSemana": "SEGUNDA", "horaInicial": "07:30", "horaFinal": "09:10"},
+        ],
+        [
+            {"diaDaSemana": "SEGUNDA", "horaInicial": "07:30", "horaFinal": "09:10"}
+        ]
+        * 33,
+    ):
+        payload = _payload()
+        payload["listaObj"][0]["matriculas"][0]["turma"]["horarios"] = schedules  # type: ignore[index]
+        with pytest.raises(InvalidUFMGEnrollmentResponse):
+            UFMGEnrollmentClient(
+                open_response=lambda *_args, _payload=payload, **_kwargs: _Response(
+                    json.dumps(_payload).encode()
+                )
+            ).fetch("private-token")
+
+
+def test_parser_rejects_all_remaining_bounded_edges() -> None:
+    backwards = _payload()
+    backwards["listaObj"][0]["dataInicialSemestre"] = "31/12/2026"  # type: ignore[index]
+    backwards["listaObj"][0]["dataFinalSemestre"] = "01/07/2026"  # type: ignore[index]
+    with pytest.raises(ValueError):
+        _parse_courses(backwards)
+
+    unbounded = _payload()
+    unbounded["listaObj"][0]["matriculas"] = [  # type: ignore[index]
+        _payload()["listaObj"][0]["matriculas"][0]  # type: ignore[index]
+    ] * 101
+    with pytest.raises(ValueError):
+        _parse_courses(unbounded)
+
+    for invalid in (
+        None,
+        [None],
+        [{"diaDaSemana": "SEGUNDA", "horaInicial": "07:30", "horaFinal": "10:00"}],
+        [
+            {"diaDaSemana": "SEGUNDA", "horaInicial": "07:30", "horaFinal": "09:10"},
+            {"diaDaSemana": "SEGUNDA", "horaInicial": "08:20", "horaFinal": "10:00"},
+        ],
+    ):
+        with pytest.raises(ValueError):
+            _meetings(invalid)
+
+    for invalid_date in (None, "1/07/2026", "01/7/2026", "01/07/2025", "01/01/2026"):
+        with pytest.raises(ValueError):
+            _semester_date(invalid_date, "2026-2")
+
+
+@pytest.mark.parametrize(
+    "activity",
+    [
+        {"codigo": "ELE028", "nome": "Nome", "cargaHoraria": "6O"},
+        {"codigo": "BAD CODE", "nome": "Nome", "cargaHoraria": 60},
+        {"codigo": "ELE028", "nome": "", "cargaHoraria": 60},
+        {"codigo": "ELE028", "nome": "x" * 161, "cargaHoraria": 60},
+        {"codigo": "ELE028", "nome": "Nome", "cargaHoraria": 0},
+    ],
+)
+def test_parser_rejects_invalid_course_values(activity: dict[str, object]) -> None:
+    payload = _payload()
+    payload["listaObj"][0]["matriculas"][0]["turma"][  # type: ignore[index]
+        "atividadeAcademica"
+    ] = activity
+    with pytest.raises(ValueError):
+        _parse_courses(payload)
 
 
 def test_client_rejects_unbounded_timeout_configuration() -> None:

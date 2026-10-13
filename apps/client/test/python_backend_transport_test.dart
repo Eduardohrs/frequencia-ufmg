@@ -217,6 +217,85 @@ void main() {
     }
   });
 
+  test(
+    'imports UFMG schedules and accepts only bounded aggregate counts',
+    () async {
+      late http.Request captured;
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((request) async {
+          captured = request;
+          return http.Response(
+            jsonEncode({
+              'total': 5,
+              'updated': 2,
+              'unchanged': 1,
+              'conflicts': 1,
+              'missing_courses': 1,
+              'meetings_imported': 3,
+            }),
+            200,
+          );
+        }),
+      );
+
+      final result = await transport.importUFMGSchedules();
+
+      expect(result.updated, 2);
+      expect(result.conflicts, 1);
+      expect(result.meetingsImported, 3);
+      expect(captured.method, 'POST');
+      expect(captured.url.path, '/v1/ufmg/import/schedules');
+      expect(captured.body, '{}');
+    },
+  );
+
+  test('rejects malformed UFMG schedule import summaries', () async {
+    for (final body in [
+      {
+        'total': 4,
+        'updated': 2,
+        'unchanged': 1,
+        'conflicts': 1,
+        'missing_courses': 1,
+        'meetings_imported': 3,
+      },
+      {
+        'total': 1,
+        'updated': 1,
+        'unchanged': 0,
+        'conflicts': 0,
+        'missing_courses': 0,
+        'meetings_imported': 33,
+      },
+      {
+        'total': 0,
+        'updated': 0,
+        'unchanged': 0,
+        'conflicts': 0,
+        'missing_courses': 0,
+      },
+    ]) {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((_) async => http.Response(jsonEncode(body), 200)),
+      );
+
+      await expectLater(
+        transport.importUFMGSchedules(),
+        throwsA(
+          isA<PythonBackendException>().having(
+            (error) => error.code,
+            'code',
+            PythonBackendError.invalidResponse,
+          ),
+        ),
+      );
+    }
+  });
+
   test('classifies invalid UFMG credentials separately from outages', () async {
     for (final entry in [
       (

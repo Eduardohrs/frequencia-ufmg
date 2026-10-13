@@ -86,6 +86,12 @@ final class _FirebasePythonBackendVerifier
   }
 
   @override
+  Future<PythonUFMGScheduleImportResult> importUFMGSchedules() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.importUFMGSchedules();
+  }
+
+  @override
   Future<PythonAttendanceDecision> evaluateAttendanceStatus({
     required int lessons,
     required int calls,

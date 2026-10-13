@@ -168,6 +168,46 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
+  Future<void> _importSchedules() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+      _importSummary = null;
+    });
+    try {
+      final result = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.ufmgScheduleImport,
+        action: widget.gateway.importUFMGSchedules,
+      );
+      if (mounted) {
+        setState(() {
+          _importSummary =
+              '${result.updated} ${_plural(result.updated, 'grade atualizada', 'grades atualizadas')}. '
+              '${result.unchanged} ${_plural(result.unchanged, 'grade sem alteração', 'grades sem alteração')}. '
+              '${result.conflicts} ${_plural(result.conflicts, 'conflito preservado', 'conflitos preservados')}. '
+              '${result.missingCourses} ${result.missingCourses == 1 ? 'disciplina ainda não cadastrada' : 'disciplinas ainda não cadastradas'}.';
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PythonBackendException &&
+          error.code == PythonBackendError.ufmgReauthenticationRequired) {
+        setState(() {
+          _status = const PythonUFMGSessionStatus(
+            connected: false,
+            reauthenticationRequired: true,
+          );
+          _error = 'Sua sessão expirou. Reconecte para importar.';
+        });
+      } else {
+        setState(() => _error = _scheduleImportMessageFor(error));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -250,7 +290,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                 leading: const Icon(Icons.check_circle_outline),
                 title: Text(_importSummary!),
                 subtitle: const Text(
-                  'Dados já cadastrados foram preservados. Horários não foram importados nesta etapa.',
+                  'Dados já cadastrados, correções manuais e registros de frequência foram preservados.',
                 ),
               ),
             ),
@@ -269,6 +309,13 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                   )
                 : const Icon(Icons.download_outlined),
             label: const Text('Importar disciplinas'),
+          ),
+          const SizedBox(height: 8),
+          FilledButton.icon(
+            key: const Key('ufmg-import-schedules'),
+            onPressed: _busy ? null : _importSchedules,
+            icon: const Icon(Icons.calendar_month_outlined),
+            label: const Text('Importar horários'),
           ),
           const SizedBox(height: 8),
           FilledButton.icon(
@@ -398,6 +445,21 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       };
     }
     return 'Não foi possível importar as disciplinas.';
+  }
+
+  static String _scheduleImportMessageFor(Object error) {
+    if (error is PythonBackendException) {
+      return switch (error.code) {
+        PythonBackendError.ufmgUnavailable ||
+        PythonBackendError.unavailable ||
+        PythonBackendError.timeout =>
+          'Não foi possível consultar os horários na UFMG agora.',
+        PythonBackendError.rateLimited =>
+          'Muitas tentativas seguidas. Aguarde um pouco e tente novamente.',
+        _ => 'Não foi possível importar os horários.',
+      };
+    }
+    return 'Não foi possível importar os horários.';
   }
 
   static String _plural(int count, String singular, String plural) =>

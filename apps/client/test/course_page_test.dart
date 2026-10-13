@@ -1430,6 +1430,10 @@ final class _RecordingAppLogger implements AppLogger {
 
 final class _UFMGGateway implements BackendUFMGSessionGateway {
   @override
+  Future<PythonUFMGScheduleImportResult> importUFMGSchedules() =>
+      throw UnimplementedError();
+
+  @override
   Future<PythonUFMGCourseImportResult> importUFMGCourses() async =>
       const PythonUFMGCourseImportResult(created: 0, existing: 0, total: 0);
 

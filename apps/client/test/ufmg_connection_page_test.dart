@@ -78,6 +78,90 @@ void main() {
     expect(logger.events, contains('ufmg_course_import_succeeded'));
   });
 
+  testWidgets('imports schedules and exposes preserved conflicts', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('ufmg-import-schedules')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.scheduleImportCalls, 1);
+    expect(find.textContaining('2 grades atualizadas'), findsOneWidget);
+    expect(find.textContaining('1 conflito preservado'), findsOneWidget);
+    expect(
+      find.textContaining('1 disciplina ainda não cadastrada'),
+      findsOneWidget,
+    );
+    expect(logger.events, contains('ufmg_schedule_import_succeeded'));
+  });
+
+  testWidgets('handles expired and failed schedule imports safely', (
+    tester,
+  ) async {
+    final failures = <(Object, String)>[
+      (
+        const PythonBackendException(
+          PythonBackendError.ufmgReauthenticationRequired,
+        ),
+        'Sua sessão expirou. Reconecte para importar.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.ufmgUnavailable),
+        'Não foi possível consultar os horários na UFMG agora.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.unavailable),
+        'Não foi possível consultar os horários na UFMG agora.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.timeout),
+        'Não foi possível consultar os horários na UFMG agora.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.rateLimited),
+        'Muitas tentativas seguidas. Aguarde um pouco e tente novamente.',
+      ),
+      (
+        const PythonBackendException(PythonBackendError.invalidResponse),
+        'Não foi possível importar os horários.',
+      ),
+      (StateError('unexpected'), 'Não foi possível importar os horários.'),
+    ];
+    for (var index = 0; index < failures.length; index++) {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      )..scheduleImportError = failures[index].$1;
+      await tester.pumpWidget(
+        MaterialApp(
+          key: ValueKey('schedule-failure-$index'),
+          home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('ufmg-import-schedules')));
+      await tester.pumpAndSettle();
+
+      expect(find.text(failures[index].$2), findsOneWidget);
+    }
+  });
+
   testWidgets('asks for reconnection when the saved UFMG session expired', (
     tester,
   ) async {
@@ -340,9 +424,11 @@ final class _Gateway implements BackendUFMGSessionGateway {
   Object? statusError;
   Object? disconnectError;
   Object? importError;
+  Object? scheduleImportError;
   final credentials = <(String, String)>[];
   int disconnectCalls = 0;
   int importCalls = 0;
+  int scheduleImportCalls = 0;
 
   @override
   Future<PythonUFMGCourseImportResult> importUFMGCourses() async {
@@ -352,6 +438,20 @@ final class _Gateway implements BackendUFMGSessionGateway {
       created: 2,
       existing: 3,
       total: 5,
+    );
+  }
+
+  @override
+  Future<PythonUFMGScheduleImportResult> importUFMGSchedules() async {
+    scheduleImportCalls++;
+    if (scheduleImportError case final error?) throw error;
+    return const PythonUFMGScheduleImportResult(
+      total: 5,
+      updated: 2,
+      unchanged: 1,
+      conflicts: 1,
+      missingCourses: 1,
+      meetingsImported: 3,
     );
   }
 

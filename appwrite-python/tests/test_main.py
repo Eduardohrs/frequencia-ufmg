@@ -290,6 +290,152 @@ def test_ufmg_course_import_route_is_authenticated_and_logs_only_counts(
     }
 
 
+def test_ufmg_schedule_import_route_is_authenticated_and_logs_only_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    routes: list[str] = []
+
+    def authenticate(_context: Any, _origin: Any, route: str) -> tuple[str, None]:
+        routes.append(route)
+        return "firebase-user", None
+
+    summary = {
+        "total": 5,
+        "updated": 2,
+        "unchanged": 1,
+        "conflicts": 1,
+        "missing_courses": 1,
+        "meetings_imported": 3,
+    }
+
+    class Service:
+        def import_schedules(self, user_id: str, *, now: int) -> dict[str, int]:
+            assert user_id == "firebase-user"
+            assert now > 0
+            return summary
+
+    monkeypatch.setattr(function, "_authentication", authenticate)
+    monkeypatch.setattr(function, "_ufmg_schedule_import_service", lambda *_args: Service())
+    monkeypatch.setenv("ENABLE_SCHEDULE_WRITES", "true")
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/import/schedules"))
+
+    result = function.main(context)
+
+    assert result["body"] == summary
+    assert routes == ["/v1/ufmg/import/schedules/post"]
+    assert json.loads(context.logs[0]) == {
+        "event": "ufmg_schedule_import_succeeded",
+        **summary,
+    }
+
+
+def test_ufmg_schedule_import_returns_authentication_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_args: (None, rejection))
+
+    assert function.main(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/import/schedules"))
+    ) is rejection
+
+
+def test_ufmg_schedule_import_service_uses_shared_secure_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = {
+        "sessions": object(),
+        "courses": object(),
+        "schedules": object(),
+    }
+    captured: tuple[object, ...] = ()
+    monkeypatch.setattr(function, "_ufmg_session_store", lambda _headers: values["sessions"])
+    monkeypatch.setattr(
+        function, "_course_repository", lambda _headers, _user: values["courses"]
+    )
+    monkeypatch.setattr(
+        function, "_schedule_repository", lambda _headers, _user: values["schedules"]
+    )
+    monkeypatch.setattr(function, "UFMGEnrollmentClient", lambda: "enrollments")
+
+    class Service:
+        def __init__(self, *dependencies: object) -> None:
+            nonlocal captured
+            captured = dependencies
+
+    monkeypatch.setattr(function, "UFMGScheduleImportService", Service)
+
+    assert function._ufmg_schedule_import_service({}, "user").__class__ is Service
+    assert captured == (
+        values["sessions"],
+        "enrollments",
+        values["courses"],
+        values["schedules"],
+    )
+
+
+def test_ufmg_schedule_import_rejects_body_and_disabled_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+    monkeypatch.setattr(
+        function,
+        "_ufmg_schedule_import_service",
+        lambda *_args: pytest.fail("must reject before import"),
+    )
+
+    invalid = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST", "/v1/ufmg/import/schedules", body_json={"unexpected": True}
+            )
+        )
+    )
+    disabled = function.main(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/import/schedules"))
+    )
+
+    assert invalid["status"] == 400
+    assert invalid["body"] == {"error": "ufmg_schedule_import_rejected"}
+    assert disabled["status"] == 503
+    assert disabled["body"] == {"error": "schedule_writes_disabled"}
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "error"),
+    [
+        (UFMGReauthenticationRequired(), 401, "ufmg_reauthentication_required"),
+        (UFMGEnrollmentUnavailable(), 503, "ufmg_enrollment_unavailable"),
+        (InvalidUFMGEnrollmentResponse(), 502, "ufmg_enrollment_invalid"),
+        (UFMGSessionStoreUnavailable(), 503, "ufmg_session_store_unavailable"),
+        (FirestoreAccessDenied(), 403, "course_access_denied"),
+        (FirestoreUnavailable(), 503, "course_store_unavailable"),
+        (FirestoreRequestRejected(), 502, "schedule_import_rejected"),
+        (InvalidSchedule(), 502, "schedule_import_rejected"),
+    ],
+)
+def test_ufmg_schedule_import_sanitizes_failures(
+    failure: Exception,
+    status: int,
+    error: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENABLE_SCHEDULE_WRITES", "true")
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+
+    class Service:
+        def import_schedules(self, *_args: Any, **_kwargs: Any) -> None:
+            raise failure
+
+    monkeypatch.setattr(function, "_ufmg_schedule_import_service", lambda *_args: Service())
+    result = function.main(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/import/schedules"))
+    )
+
+    assert result["status"] == status
+    assert result["body"] == {"error": error}
+
+
 def test_ufmg_course_import_returns_authentication_rejection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
