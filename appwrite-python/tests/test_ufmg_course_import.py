@@ -15,6 +15,9 @@ from ufmg_course_import import (
     UFMGEnrollmentClient,
     UFMGEnrollmentUnavailable,
     _HTTPSOnlyRedirectHandler,
+    _meetings,
+    _parse_courses,
+    _semester_date,
 )
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
@@ -294,6 +297,56 @@ def test_client_rejects_duplicate_and_unbounded_schedules() -> None:
                     json.dumps(_payload).encode()
                 )
             ).fetch("private-token")
+
+
+def test_parser_rejects_all_remaining_bounded_edges() -> None:
+    backwards = _payload()
+    backwards["listaObj"][0]["dataInicialSemestre"] = "31/12/2026"  # type: ignore[index]
+    backwards["listaObj"][0]["dataFinalSemestre"] = "01/07/2026"  # type: ignore[index]
+    with pytest.raises(ValueError):
+        _parse_courses(backwards)
+
+    unbounded = _payload()
+    unbounded["listaObj"][0]["matriculas"] = [  # type: ignore[index]
+        _payload()["listaObj"][0]["matriculas"][0]  # type: ignore[index]
+    ] * 101
+    with pytest.raises(ValueError):
+        _parse_courses(unbounded)
+
+    for invalid in (
+        None,
+        [None],
+        [{"diaDaSemana": "SEGUNDA", "horaInicial": "07:30", "horaFinal": "10:00"}],
+        [
+            {"diaDaSemana": "SEGUNDA", "horaInicial": "07:30", "horaFinal": "09:10"},
+            {"diaDaSemana": "SEGUNDA", "horaInicial": "08:20", "horaFinal": "10:00"},
+        ],
+    ):
+        with pytest.raises(ValueError):
+            _meetings(invalid)
+
+    for invalid_date in (None, "01/07/2025", "01/01/2026"):
+        with pytest.raises(ValueError):
+            _semester_date(invalid_date, "2026-2")
+
+
+@pytest.mark.parametrize(
+    "activity",
+    [
+        {"codigo": "ELE028", "nome": "Nome", "cargaHoraria": "6O"},
+        {"codigo": "BAD CODE", "nome": "Nome", "cargaHoraria": 60},
+        {"codigo": "ELE028", "nome": "", "cargaHoraria": 60},
+        {"codigo": "ELE028", "nome": "x" * 161, "cargaHoraria": 60},
+        {"codigo": "ELE028", "nome": "Nome", "cargaHoraria": 0},
+    ],
+)
+def test_parser_rejects_invalid_course_values(activity: dict[str, object]) -> None:
+    payload = _payload()
+    payload["listaObj"][0]["matriculas"][0]["turma"][  # type: ignore[index]
+        "atividadeAcademica"
+    ] = activity
+    with pytest.raises(ValueError):
+        _parse_courses(payload)
 
 
 def test_client_rejects_unbounded_timeout_configuration() -> None:

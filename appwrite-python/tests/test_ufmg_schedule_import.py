@@ -4,7 +4,7 @@ import pytest
 
 from schedule_repository import DestructiveScheduleChange
 from schedule_service import ScheduleOverlap
-from ufmg_schedule_import import UFMGScheduleImportService
+from ufmg_schedule_import import UFMGScheduleImportService, _default_dates, _is_imported
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
 
@@ -291,3 +291,23 @@ def test_requires_live_session_and_deletes_rejected_session() -> None:
     with pytest.raises(UFMGReauthenticationRequired):
         service.import_schedules("user", now=10)
     assert sessions.deleted
+
+
+def test_rejects_invalid_repository_or_remote_shape() -> None:
+    course = _course()
+    for state, remote in (
+        ({"course": None, "meetings": [], "changes": {}}, _remote()),
+        (_state(course, []), {**_remote(), "meetings": None}),
+        (_state(course, []), {**_remote(), "meetings": [None]}),
+    ):
+        service = _service([remote], [course], _Schedules({"ele028": state}))
+        with pytest.raises(ValueError):
+            service.import_schedules("user", now=10)
+
+
+def test_small_helpers_cover_manual_and_first_semester_contracts() -> None:
+    assert not _is_imported(None)
+    assert _default_dates("2026-1") == (
+        "2026-01-01T00:00:00Z",
+        "2026-06-30T00:00:00Z",
+    )
