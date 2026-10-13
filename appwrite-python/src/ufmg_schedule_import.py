@@ -125,9 +125,12 @@ class UFMGScheduleImportService:
 
 
 def _is_imported(meeting: object) -> bool:
-    return isinstance(meeting, Mapping) and str(meeting.get("id", "")).startswith(
-        _IMPORTED_PREFIX
-    )
+    if not isinstance(meeting, Mapping):
+        return False
+    try:
+        return meeting.get("id") == _meeting_id(meeting)
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def _structure(meeting: Mapping[str, object]) -> tuple[int, int, int]:

@@ -268,7 +268,7 @@ def _term(value: object) -> str:
 
 
 def _semester_date(value: object, term: str) -> str:
-    if not isinstance(value, str):
+    if not isinstance(value, str) or re.fullmatch(r"[0-9]{2}/[0-9]{2}/[0-9]{4}", value) is None:
         raise ValueError
     parsed = datetime.strptime(value, "%d/%m/%Y").replace(tzinfo=UTC)
     year, semester = (int(part) for part in term.split("-"))

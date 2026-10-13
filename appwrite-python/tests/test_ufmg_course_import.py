@@ -325,7 +325,7 @@ def test_parser_rejects_all_remaining_bounded_edges() -> None:
         with pytest.raises(ValueError):
             _meetings(invalid)
 
-    for invalid_date in (None, "01/07/2025", "01/01/2026"):
+    for invalid_date in (None, "1/07/2026", "01/7/2026", "01/07/2025", "01/01/2026"):
         with pytest.raises(ValueError):
             _semester_date(invalid_date, "2026-2")
 

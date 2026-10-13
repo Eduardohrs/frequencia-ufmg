@@ -36,11 +36,11 @@ def _course(*, course_id: str = "ele028", term: str = "2026-2") -> dict[str, obj
 
 
 def _saved_meeting(
-    meeting_id: str, *, start: int = 450, call_count: int = 1
+    meeting_id: str, *, weekday: int = 1, start: int = 450, call_count: int = 1
 ) -> dict[str, object]:
     return {
         "id": meeting_id,
-        "weekday": 1,
+        "weekday": weekday,
         "start_minutes": start,
         "end_minutes": start + 100,
         "lesson_count": 2,
@@ -191,6 +191,25 @@ def test_preserves_manual_schedule_when_remote_differs() -> None:
     assert schedules.saved == []
 
 
+def test_treats_a_manually_edited_imported_slot_as_user_owned() -> None:
+    course = _course()
+    schedules = _Schedules(
+        {
+            "ele028": _state(
+                course,
+                [_saved_meeting("ufmg-1-450-2", start=500)],
+            )
+        }
+    )
+
+    result = _service([_remote()], [course], schedules).import_schedules(
+        "user", now=10
+    )
+
+    assert result["conflicts"] == 1
+    assert schedules.saved == []
+
+
 def test_reconciles_only_managed_meetings_and_preserves_call_count() -> None:
     course = {
         **_course(),
@@ -203,7 +222,7 @@ def test_reconciles_only_managed_meetings_and_preserves_call_count() -> None:
                 course,
                 [
                     _saved_meeting("ufmg-1-450-2", call_count=2),
-                    _saved_meeting("ufmg-3-600-2", start=600),
+                    _saved_meeting("ufmg-3-600-2", weekday=3, start=600),
                 ],
             )
         }
@@ -307,6 +326,7 @@ def test_rejects_invalid_repository_or_remote_shape() -> None:
 
 def test_small_helpers_cover_manual_and_first_semester_contracts() -> None:
     assert not _is_imported(None)
+    assert not _is_imported({"id": "ufmg-incomplete"})
     assert _default_dates("2026-1") == (
         "2026-01-01T00:00:00Z",
         "2026-06-30T00:00:00Z",
