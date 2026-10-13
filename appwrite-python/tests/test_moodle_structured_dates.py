@@ -408,6 +408,23 @@ def test_calendar_parser_deduplicates_identical_events_and_rejects_conflicts() -
         _parse_calendar(json.dumps([response]).encode(), 1)
 
 
+def test_calendar_parser_ignores_events_without_a_course() -> None:
+    response = json.loads(_calendar_response())[0]
+    response["data"]["weeks"][0]["days"][0]["events"].insert(
+        0,
+        {
+            "id": 909,
+            "name": "Evento geral da universidade",
+            "timestart": 1792105200,
+            "eventtype": "site",
+        },
+    )
+
+    events = _parse_calendar(json.dumps([response]).encode(), 1)
+
+    assert [event["source_id"] for event in events] == ["910", "911"]
+
+
 def test_calendar_parser_rejects_more_than_the_global_event_limit() -> None:
     template = json.loads(_calendar_response())[0]["data"]["weeks"][0]["days"][0]["events"][0]
     events = [{**template, "id": index + 1} for index in range(501)]

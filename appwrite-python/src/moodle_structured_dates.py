@@ -206,6 +206,11 @@ def _parse_calendar(payload: bytes, expected_calls: int) -> list[dict[str, str]]
             if not isinstance(data, dict):
                 raise ValueError
             for raw in _calendar_events(data):
+                # Moodle legitimately omits `course` for site-wide and personal
+                # calendar events. They cannot be matched to a local discipline
+                # without guessing, so keep parsing the scoped course events.
+                if raw.get("course") is None:
+                    continue
                 event = _event(raw)
                 previous = events.get(event["source_id"])
                 if previous is not None and previous != event:
