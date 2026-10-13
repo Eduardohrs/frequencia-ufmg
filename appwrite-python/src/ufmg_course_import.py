@@ -15,6 +15,17 @@ from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 _ENROLLMENTS_URL = "https://sistemas.ufmg.br/siga-ws/seam/resource/rest/WsMatriculas"
 _MAX_RESPONSE_BYTES = 262_144
 _CODE = re.compile(r"[A-Z0-9][A-Z0-9._-]{0,31}")
+_CLOCK = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
+_WEEKDAYS = {
+    "SEGUNDA": 1,
+    "TERÇA": 2,
+    "QUARTA": 3,
+    "QUINTA": 4,
+    "SEXTA": 5,
+    "SÁBADO": 6,
+}
+_LESSON_COUNTS = {1, 2, 4}
+_MAX_MEETINGS = 32
 
 
 class InvalidUFMGEnrollmentResponse(Exception):
@@ -197,13 +208,18 @@ def _parse_courses(payload: object) -> list[dict[str, object]]:
     if not isinstance(period, Mapping):
         raise ValueError
     term = _term(period.get("semestreLetivo"))
+    starts_on = _semester_date(period.get("dataInicialSemestre"), term)
+    ends_on = _semester_date(period.get("dataFinalSemestre"), term)
+    if starts_on > ends_on:
+        raise ValueError
     enrollments = period.get("matriculas")
     if not isinstance(enrollments, list) or len(enrollments) > 100:
         raise ValueError
     courses: list[dict[str, object]] = []
     for enrollment in enrollments:
         try:
-            activity = enrollment["turma"]["atividadeAcademica"]
+            classroom = enrollment["turma"]
+            activity = classroom["atividadeAcademica"]
             raw_code = activity["codigo"]
             name_value = activity.get("nome") or activity.get("nomeReduzido")
             raw_workload = activity["cargaHoraria"]
@@ -218,6 +234,7 @@ def _parse_courses(payload: object) -> list[dict[str, object]]:
             code = raw_code.strip().upper()
             name = name_value.strip()
             workload = int(raw_workload)
+            meetings = _meetings(classroom.get("horarios", []))
         except (AttributeError, KeyError, TypeError, ValueError):
             raise ValueError from None
         if (
@@ -228,7 +245,15 @@ def _parse_courses(payload: object) -> list[dict[str, object]]:
         ):
             raise ValueError
         courses.append(
-            {"code": code, "name": name, "term": term, "workload": workload}
+            {
+                "code": code,
+                "name": name,
+                "term": term,
+                "workload": workload,
+                "starts_on": starts_on,
+                "ends_on": ends_on,
+                "meetings": meetings,
+            }
         )
     return courses
 
@@ -240,3 +265,64 @@ def _term(value: object) -> str:
     if re.fullmatch(r"[0-9]{4}-[12]", normalized) is None:
         raise ValueError
     return normalized
+
+
+def _semester_date(value: object, term: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError
+    parsed = datetime.strptime(value, "%d/%m/%Y").replace(tzinfo=UTC)
+    year, semester = (int(part) for part in term.split("-"))
+    if parsed.year != year or (semester == 1) != (parsed.month <= 6):
+        raise ValueError
+    return parsed.isoformat().replace("+00:00", "Z")
+
+
+def _meetings(value: object) -> list[dict[str, int]]:
+    if not isinstance(value, list) or len(value) > _MAX_MEETINGS:
+        raise ValueError
+    result: list[dict[str, int]] = []
+    seen: set[tuple[int, int, int]] = set()
+    for raw in value:
+        if not isinstance(raw, Mapping):
+            raise ValueError
+        day = raw.get("diaDaSemana")
+        start = raw.get("horaInicial")
+        end = raw.get("horaFinal")
+        if (
+            not isinstance(day, str)
+            or day not in _WEEKDAYS
+            or not isinstance(start, str)
+            or _CLOCK.fullmatch(start) is None
+            or not isinstance(end, str)
+            or _CLOCK.fullmatch(end) is None
+        ):
+            raise ValueError
+        start_minutes = _clock_minutes(start)
+        duration = _clock_minutes(end) - start_minutes
+        if duration <= 0 or duration % 50 != 0:
+            raise ValueError
+        lesson_count = duration // 50
+        if lesson_count not in _LESSON_COUNTS:
+            raise ValueError
+        meeting = (_WEEKDAYS[day], start_minutes, lesson_count)
+        if meeting in seen or any(
+            saved[0] == meeting[0]
+            and start_minutes < saved[1] + saved[2] * 50
+            and saved[1] < start_minutes + lesson_count * 50
+            for saved in seen
+        ):
+            raise ValueError
+        seen.add(meeting)
+        result.append(
+            {
+                "weekday": meeting[0],
+                "start_minutes": meeting[1],
+                "lesson_count": meeting[2],
+            }
+        )
+    return sorted(result, key=lambda item: (item["weekday"], item["start_minutes"]))
+
+
+def _clock_minutes(value: str) -> int:
+    hours, minutes = (int(part) for part in value.split(":"))
+    return hours * 60 + minutes
