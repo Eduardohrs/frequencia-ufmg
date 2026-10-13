@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Appwrite Python Function for the Frequência UFMG API"
 requires-python = ">=3.12,<3.15"
 dependencies = [
-  "appwrite==24.0.0",
+  "appwrite==24.2.0",
   "cryptography>=46,<51",
   "google-auth==2.59.1",
   "PyJWT[crypto]>=2.10,<3",
