@@ -306,6 +306,12 @@ def test_ufmg_schedule_import_route_is_authenticated_and_logs_only_counts(
         "conflicts": 1,
         "missing_courses": 1,
         "meetings_imported": 3,
+        "date_mismatches": 2,
+        "meeting_mismatches": 1,
+        "meeting_upserts": 2,
+        "meeting_deletes": 0,
+        "session_upserts": 18,
+        "session_deletes": 0,
     }
 
     class Service:
@@ -321,7 +327,17 @@ def test_ufmg_schedule_import_route_is_authenticated_and_logs_only_counts(
 
     result = function.main(context)
 
-    assert result["body"] == summary
+    assert result["body"] == {
+        key: summary[key]
+        for key in (
+            "total",
+            "updated",
+            "unchanged",
+            "conflicts",
+            "missing_courses",
+            "meetings_imported",
+        )
+    }
     assert routes == ["/v1/ufmg/import/schedules/post"]
     assert json.loads(context.logs[0]) == {
         "event": "ufmg_schedule_import_succeeded",

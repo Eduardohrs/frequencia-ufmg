@@ -108,7 +108,15 @@ class _Schedules:
         if self.failure is not None:
             raise self.failure
         self.saved.append((course_id, payload))
-        return self.states[course_id]
+        return {
+            **self.states[course_id],
+            "changes": {
+                "meeting_upserts": len(payload["meetings"]),
+                "meeting_deletes": 0,
+                "session_upserts": 0,
+                "session_deletes": 0,
+            },
+        }
 
 
 def _state(
@@ -143,6 +151,12 @@ def test_imports_new_schedule_with_remote_dates_and_one_call() -> None:
         "conflicts": 0,
         "missing_courses": 0,
         "meetings_imported": 1,
+        "date_mismatches": 1,
+        "meeting_mismatches": 1,
+        "meeting_upserts": 1,
+        "meeting_deletes": 0,
+        "session_upserts": 0,
+        "session_deletes": 0,
     }
     assert schedules.saved == [
         (
