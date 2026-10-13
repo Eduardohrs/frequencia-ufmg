@@ -25,10 +25,15 @@ class _CourseRepository(Protocol):
 
 
 class _ScheduleRepository(Protocol):
-    def get_schedule(self, course_id: str) -> dict[str, Any]: ...
+    def load_import_schedules(
+        self, courses: list[dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]: ...
 
-    def save_schedule(
-        self, course_id: str, payload: Mapping[str, Any]
+    def save_import_schedule(
+        self,
+        course_id: str,
+        payload: Mapping[str, Any],
+        schedules: Mapping[str, Mapping[str, Any]],
     ) -> dict[str, Any]: ...
 
 
@@ -57,10 +62,12 @@ class UFMGScheduleImportService:
             self._sessions.delete(user_id)
             raise
 
+        courses = self._courses.list_courses()
         local = {
             (str(course["code"]), str(course["term"])): course
-            for course in self._courses.list_courses()
+            for course in courses
         }
+        schedules = self._schedules.load_import_schedules(courses)
         summary = {
             "total": 0,
             "updated": 0,
@@ -78,16 +85,19 @@ class UFMGScheduleImportService:
             if course is None:
                 summary["missing_courses"] += 1
                 continue
-            outcome, count = self._reconcile(course, enrollment)
+            outcome, count = self._reconcile(course, enrollment, schedules)
             summary[outcome] += 1
             summary["meetings_imported"] += count
         return summary
 
     def _reconcile(
-        self, course: Mapping[str, Any], enrollment: Mapping[str, object]
+        self,
+        course: Mapping[str, Any],
+        enrollment: Mapping[str, object],
+        schedules: dict[str, dict[str, Any]],
     ) -> tuple[str, int]:
         course_id = str(course["id"])
-        state = self._schedules.get_schedule(course_id)
+        state = schedules[course_id]
         saved_course = state["course"]
         saved_meetings = state["meetings"]
         remote_meetings = enrollment["meetings"]
@@ -110,7 +120,7 @@ class UFMGScheduleImportService:
         ):
             return "unchanged", 0
         try:
-            self._schedules.save_schedule(
+            saved = self._schedules.save_import_schedule(
                 course_id,
                 {
                     "starts_on": starts_on,
@@ -118,9 +128,11 @@ class UFMGScheduleImportService:
                     "meetings": requested,
                     "confirm_destructive": False,
                 },
+                schedules,
             )
         except (DestructiveScheduleChange, ScheduleOverlap):
             return "conflicts", 0
+        schedules[course_id] = saved
         return "updated", len(requested)
 
 

@@ -115,11 +115,14 @@ class FakeFirestore:
             ]
         }
         self.commits: list[tuple[list[Any], list[Any]]] = []
+        self.reads: list[tuple[str, ...]] = []
 
     def get_user_document(self, *segments: str) -> dict[str, Any]:
+        self.reads.append(segments)
         return next(item for item in self.courses if item["name"].endswith(segments[-1]))
 
     def list_user_documents(self, *segments: str) -> list[dict[str, Any]]:
+        self.reads.append(segments)
         if segments == ("courses",):
             return self.courses
         values = self.meetings if segments[-1] == "meetings" else self.sessions
@@ -148,6 +151,72 @@ def test_get_schedule_is_a_read_only_noop_preview() -> None:
         "destructive_deletes": 0,
     }
     assert store.commits == []
+
+
+def test_import_snapshot_reuses_other_schedules_without_n_plus_one_reads() -> None:
+    store = FakeFirestore(overlap=True)
+    repository = _repository(store)
+    courses = [_course(), _course("other", "MAT001")]
+
+    schedules = repository.load_import_schedules(courses)
+    repository.save_import_schedule(
+        "poo",
+        {
+            "starts_on": "2026-08-04T00:00:00Z",
+            "ends_on": "2026-08-18T00:00:00Z",
+            "meetings": [
+                {
+                    "id": "tuesday-15",
+                    "weekday": 2,
+                    "start_minutes": 900,
+                    "lesson_count": 2,
+                    "call_count": 1,
+                }
+            ],
+            "confirm_destructive": False,
+        },
+        schedules,
+    )
+
+    assert store.reads == [
+        ("courses", "poo", "meetings"),
+        ("courses", "other", "meetings"),
+        ("courses", "poo"),
+        ("courses", "poo", "meetings"),
+        ("courses", "poo", "sessions"),
+    ]
+
+
+def test_import_snapshot_rejects_duplicate_course_ids() -> None:
+    repository = _repository(FakeFirestore())
+
+    with pytest.raises(InvalidSchedule):
+        repository.load_import_schedules([_course(), _course()])
+
+
+@pytest.mark.parametrize(
+    "invalid_state",
+    [
+        {"course": None, "meetings": []},
+        {"course": _course("other", "MAT001"), "meetings": [None]},
+    ],
+)
+def test_import_save_rejects_invalid_shared_schedule_state(
+    invalid_state: dict[str, Any],
+) -> None:
+    repository = _repository(FakeFirestore())
+
+    with pytest.raises(InvalidSchedule):
+        repository.save_import_schedule(
+            "poo",
+            {
+                "starts_on": "2026-08-04T00:00:00Z",
+                "ends_on": "2026-08-18T00:00:00Z",
+                "meetings": [],
+                "confirm_destructive": False,
+            },
+            {"poo": {"course": _course(), "meetings": []}, "other": invalid_state},
+        )
 
 
 def test_save_noop_does_not_issue_an_empty_commit() -> None:

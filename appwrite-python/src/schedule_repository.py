@@ -59,12 +59,73 @@ class ScheduleRepository:
     ) -> dict[str, Any]:
         """Validate and atomically persist a complete schedule replacement."""
 
-        if set(payload) != {"starts_on", "ends_on", "meetings", "confirm_destructive"}:
-            raise InvalidSchedule("invalid schedule")
-        confirm = payload["confirm_destructive"]
-        if type(confirm) is not bool:
-            raise InvalidSchedule("invalid schedule")
+        confirm = _validate_payload(payload)
         course, meetings, sessions, others = self._load(course_id)
+        return self._save_loaded(
+            course_id, payload, confirm, course, meetings, sessions, others
+        )
+
+    def load_import_schedules(
+        self, courses: list[dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """Load every current meeting collection once for a bulk import."""
+
+        schedules: dict[str, dict[str, Any]] = {}
+        for course in courses:
+            identifier = validate_course_id(course.get("id"))
+            if identifier in schedules:
+                raise InvalidSchedule("invalid schedule")
+            meetings = [
+                _decode_meeting(document)
+                for document in self._firestore.list_user_documents(
+                    "courses", identifier, "meetings"
+                )
+            ]
+            schedules[identifier] = {"course": course, "meetings": meetings}
+        return schedules
+
+    def save_import_schedule(
+        self,
+        course_id: str,
+        payload: Mapping[str, Any],
+        schedules: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Save one import using a shared overlap snapshot and fresh own state."""
+
+        identifier = validate_course_id(course_id)
+        confirm = _validate_payload(payload)
+        course = _decode_course(self._firestore.get_user_document("courses", identifier))
+        meetings = [
+            _decode_meeting(document)
+            for document in self._firestore.list_user_documents(
+                "courses", identifier, "meetings"
+            )
+        ]
+        sessions = [
+            _decode_session(document)
+            for document in self._firestore.list_user_documents(
+                "courses", identifier, "sessions"
+            )
+        ]
+        others = [
+            _import_schedule_state(state)
+            for other_id, state in schedules.items()
+            if other_id != identifier
+        ]
+        return self._save_loaded(
+            identifier, payload, confirm, course, meetings, sessions, others
+        )
+
+    def _save_loaded(
+        self,
+        course_id: str,
+        payload: Mapping[str, Any],
+        confirm: bool,
+        course: dict[str, Any],
+        meetings: list[dict[str, Any]],
+        sessions: list[dict[str, Any]],
+        others: list[tuple[dict[str, Any], list[dict[str, Any]]]],
+    ) -> dict[str, Any]:
         plan = build_schedule_plan(
             course=course,
             requested_starts_on=payload["starts_on"],
@@ -115,6 +176,27 @@ class ScheduleRepository:
             ]
             others.append((other, other_meetings))
         return course, meetings, sessions, others
+
+
+def _validate_payload(payload: Mapping[str, Any]) -> bool:
+    if set(payload) != {"starts_on", "ends_on", "meetings", "confirm_destructive"}:
+        raise InvalidSchedule("invalid schedule")
+    confirm = payload["confirm_destructive"]
+    if type(confirm) is not bool:
+        raise InvalidSchedule("invalid schedule")
+    return confirm
+
+
+def _import_schedule_state(
+    state: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    course = state.get("course")
+    meetings = state.get("meetings")
+    if not isinstance(course, dict) or not isinstance(meetings, list):
+        raise InvalidSchedule("invalid schedule")
+    if any(not isinstance(meeting, dict) for meeting in meetings):
+        raise InvalidSchedule("invalid schedule")
+    return course, meetings
 
 
 def _writes(
