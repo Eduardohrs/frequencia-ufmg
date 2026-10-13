@@ -62,6 +62,13 @@ class UFMGScheduleImportService:
             self._sessions.delete(user_id)
             raise
 
+        return self.import_enrollments(remote)
+
+    def import_enrollments(
+        self, remote: list[dict[str, object]]
+    ) -> dict[str, int]:
+        """Reconcile one already validated enrollment snapshot."""
+
         courses = self._courses.list_courses()
         local = {
             (str(course["code"]), str(course["term"])): course

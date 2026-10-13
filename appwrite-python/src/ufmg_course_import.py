@@ -149,6 +149,13 @@ class UFMGCourseImportService:
         except UFMGReauthenticationRequired:
             self._sessions.delete(user_id)
             raise
+        return self.import_enrollments(imported)
+
+    def import_enrollments(
+        self, imported: list[dict[str, object]]
+    ) -> dict[str, int]:
+        """Reconcile one already validated enrollment snapshot."""
+
         unique = {str(course["code"]): course for course in imported}
         existing_codes = {
             str(course["code"]) for course in self._courses.list_courses()

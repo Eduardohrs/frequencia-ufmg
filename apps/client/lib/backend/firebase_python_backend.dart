@@ -92,6 +92,12 @@ final class _FirebasePythonBackendVerifier
   }
 
   @override
+  Future<PythonUFMGSyncResult> syncUFMG() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.syncUFMG();
+  }
+
+  @override
   Future<PythonAttendanceDecision> evaluateAttendanceStatus({
     required int lessons,
     required int calls,

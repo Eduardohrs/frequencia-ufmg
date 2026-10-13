@@ -73,6 +73,8 @@ abstract interface class BackendUFMGSessionGateway {
   Future<PythonUFMGCourseImportResult> importUFMGCourses();
 
   Future<PythonUFMGScheduleImportResult> importUFMGSchedules();
+
+  Future<PythonUFMGSyncResult> syncUFMG();
 }
 
 final class PythonUFMGCourseImportResult {
@@ -103,6 +105,20 @@ final class PythonUFMGScheduleImportResult {
   final int conflicts;
   final int missingCourses;
   final int meetingsImported;
+}
+
+final class PythonUFMGSyncResult {
+  const PythonUFMGSyncResult({
+    required this.courses,
+    required this.schedules,
+    required this.checkedAt,
+    required this.nextAutomaticSyncAt,
+  });
+
+  final PythonUFMGCourseImportResult courses;
+  final PythonUFMGScheduleImportResult schedules;
+  final DateTime checkedAt;
+  final DateTime nextAutomaticSyncAt;
 }
 
 final class PythonUFMGSessionStatus {
@@ -439,6 +455,72 @@ bool _hasExactKeys(Map<String, Object?> json, Set<String> keys) =>
     json.keys.toSet().difference(keys).isEmpty &&
     keys.difference(json.keys.toSet()).isEmpty;
 
+PythonUFMGCourseImportResult _courseImportResult(Object? value) {
+  if (value is! Map<String, dynamic> ||
+      !_hasExactKeys(value, const {'created', 'existing', 'total'})) {
+    throw const FormatException();
+  }
+  final created = value['created'];
+  final existing = value['existing'];
+  final total = value['total'];
+  if (created is! int ||
+      existing is! int ||
+      total is! int ||
+      created < 0 ||
+      existing < 0 ||
+      total != created + existing) {
+    throw const FormatException();
+  }
+  return PythonUFMGCourseImportResult(
+    created: created,
+    existing: existing,
+    total: total,
+  );
+}
+
+PythonUFMGScheduleImportResult _scheduleImportResult(Object? value) {
+  const keys = {
+    'total',
+    'updated',
+    'unchanged',
+    'conflicts',
+    'missing_courses',
+    'meetings_imported',
+  };
+  if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
+    throw const FormatException();
+  }
+  final counts = keys.map((key) => value[key]).toList();
+  if (counts.any((count) => count is! int || count < 0)) {
+    throw const FormatException();
+  }
+  final total = value['total'] as int;
+  final updated = value['updated'] as int;
+  final unchanged = value['unchanged'] as int;
+  final conflicts = value['conflicts'] as int;
+  final missingCourses = value['missing_courses'] as int;
+  final meetingsImported = value['meetings_imported'] as int;
+  if (total != updated + unchanged + conflicts + missingCourses ||
+      meetingsImported > updated * 32) {
+    throw const FormatException();
+  }
+  return PythonUFMGScheduleImportResult(
+    total: total,
+    updated: updated,
+    unchanged: unchanged,
+    conflicts: conflicts,
+    missingCourses: missingCourses,
+    meetingsImported: meetingsImported,
+  );
+}
+
+DateTime _utcDate(Object? value) {
+  if (value is! String || !value.endsWith('Z')) throw const FormatException();
+  final parsed = DateTime.tryParse(value);
+  if (parsed == null || !parsed.isUtc) throw const FormatException();
+  return parsed;
+}
+
 final class PythonAttendanceDecision {
   const PythonAttendanceDecision({
     required this.status,
@@ -733,38 +815,42 @@ final class PythonBackendTransport
     );
     try {
       final value = jsonDecode(response.body);
+      return _scheduleImportResult(value);
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<PythonUFMGSyncResult> syncUFMG() async {
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/sync',
+      method: _BackendMethod.post,
+      body: const {},
+    );
+    try {
+      final value = jsonDecode(response.body);
       const keys = {
-        'total',
-        'updated',
-        'unchanged',
-        'conflicts',
-        'missing_courses',
-        'meetings_imported',
+        'courses',
+        'schedules',
+        'checked_at',
+        'next_automatic_sync_at',
       };
       if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
         throw const FormatException();
       }
-      final counts = keys.map((key) => value[key]).toList();
-      if (counts.any((count) => count is! int || count < 0)) {
+      final courses = _courseImportResult(value['courses']);
+      final schedules = _scheduleImportResult(value['schedules']);
+      final checkedAt = _utcDate(value['checked_at']);
+      final nextAutomaticSyncAt = _utcDate(value['next_automatic_sync_at']);
+      if (!nextAutomaticSyncAt.isAfter(checkedAt)) {
         throw const FormatException();
       }
-      final total = value['total'] as int;
-      final updated = value['updated'] as int;
-      final unchanged = value['unchanged'] as int;
-      final conflicts = value['conflicts'] as int;
-      final missingCourses = value['missing_courses'] as int;
-      final meetingsImported = value['meetings_imported'] as int;
-      if (total != updated + unchanged + conflicts + missingCourses ||
-          meetingsImported > updated * 32) {
-        throw const FormatException();
-      }
-      return PythonUFMGScheduleImportResult(
-        total: total,
-        updated: updated,
-        unchanged: unchanged,
-        conflicts: conflicts,
-        missingCourses: missingCourses,
-        meetingsImported: meetingsImported,
+      return PythonUFMGSyncResult(
+        courses: courses,
+        schedules: schedules,
+        checkedAt: checkedAt,
+        nextAutomaticSyncAt: nextAutomaticSyncAt,
       );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);

@@ -11,6 +11,7 @@ import '../../data/academic_repositories.dart';
 import '../../data/academic_period.dart';
 import '../../data/calendar_status.dart';
 import '../../data/python_overview_repository.dart';
+import '../../data/ufmg_sync_schedule.dart';
 import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
@@ -40,6 +41,7 @@ class CoursePage extends StatefulWidget {
     this.scheduleGateway,
     this.sessionGateway,
     this.ufmgSessionGateway,
+    this.ufmgSyncSchedule,
     this.overviewRepository,
     this.scheduleReadsEnabled = true,
     this.scheduleWritesEnabled = false,
@@ -65,6 +67,7 @@ class CoursePage extends StatefulWidget {
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
   final BackendUFMGSessionGateway? ufmgSessionGateway;
+  final UFMGSyncScheduleGateway? ufmgSyncSchedule;
   final AcademicOverviewRepository? overviewRepository;
   final bool scheduleReadsEnabled;
   final bool scheduleWritesEnabled;
@@ -89,6 +92,8 @@ class _CoursePageState extends State<CoursePage> {
   Map<String, List<SessionRecord>> _sessionsByCourse = const {};
   bool _usingOverviewSnapshot = false;
   bool _usingLocalCopy = false;
+  bool _automaticUFMGSyncStarted = false;
+  String? _ufmgSyncNotice;
 
   @override
   void initState() {
@@ -169,6 +174,75 @@ class _CoursePageState extends State<CoursePage> {
       }
     } finally {
       if (mounted) setState(() => _loading = false);
+      _startAutomaticUFMGSync();
+    }
+  }
+
+  void _startAutomaticUFMGSync() {
+    if (_automaticUFMGSyncStarted ||
+        widget.ufmgSessionGateway == null ||
+        widget.ufmgSyncSchedule == null) {
+      return;
+    }
+    _automaticUFMGSyncStarted = true;
+    unawaited(_runAutomaticUFMGSync());
+  }
+
+  Future<void> _runAutomaticUFMGSync() async {
+    final gateway = widget.ufmgSessionGateway!;
+    final schedule = widget.ufmgSyncSchedule!;
+    try {
+      if (!await schedule.isDue(widget.user.id)) {
+        unawaited(
+          widget.logger.logEvent(
+            'ufmg_sync_skipped',
+            parameters: {'reason': 'not_due'},
+          ),
+        );
+        return;
+      }
+      final status = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.ufmgSessionStatus,
+        action: gateway.getUFMGSessionStatus,
+      );
+      if (!status.connected) {
+        unawaited(
+          widget.logger.logEvent(
+            'ufmg_sync_skipped',
+            parameters: {
+              'reason': status.reauthenticationRequired
+                  ? 'reauthentication_required'
+                  : 'not_connected',
+            },
+          ),
+        );
+        if (status.reauthenticationRequired && mounted) {
+          setState(
+            () => _ufmgSyncNotice =
+                'Reconecte à UFMG para atualizar disciplinas e horários.',
+          );
+        }
+        return;
+      }
+      final result = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.ufmgSync,
+        action: gateway.syncUFMG,
+      );
+      await schedule.record(widget.user.id, result.nextAutomaticSyncAt);
+      final changed = result.courses.created + result.schedules.updated;
+      if (changed > 0 && mounted) await _load();
+    } catch (error) {
+      if (!mounted) return;
+      final reauthenticationRequired =
+          error is PythonBackendException &&
+          error.code == PythonBackendError.ufmgReauthenticationRequired;
+      setState(
+        () => _ufmgSyncNotice = reauthenticationRequired
+            ? 'Reconecte à UFMG para atualizar disciplinas e horários.'
+            : 'Não foi possível sincronizar com a UFMG agora. Seus dados continuam disponíveis.',
+      );
     }
   }
 
@@ -366,8 +440,12 @@ class _CoursePageState extends State<CoursePage> {
     Navigator.of(context).pop();
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) =>
-            UFMGConnectionPage(gateway: gateway, logger: widget.logger),
+        builder: (_) => UFMGConnectionPage(
+          gateway: gateway,
+          logger: widget.logger,
+          userId: widget.user.id,
+          syncSchedule: widget.ufmgSyncSchedule,
+        ),
       ),
     );
     if (mounted) await _load();
@@ -621,6 +699,17 @@ class _CoursePageState extends State<CoursePage> {
                     ),
                   ),
                   const SizedBox(height: 28),
+                  if (_ufmgSyncNotice != null) ...[
+                    Card(
+                      key: const Key('ufmg-sync-notice'),
+                      color: Theme.of(context).colorScheme.tertiaryContainer,
+                      child: ListTile(
+                        leading: const Icon(Icons.sync_problem_outlined),
+                        title: Text(_ufmgSyncNotice!),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   if (_usingLocalCopy) ...[
                     Card(
                       key: const Key('offline-copy-banner'),

@@ -296,6 +296,92 @@ void main() {
     }
   });
 
+  test('synchronizes UFMG stages through one bounded contract', () async {
+    late http.Request captured;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'courses': {'created': 1, 'existing': 4, 'total': 5},
+            'schedules': {
+              'total': 5,
+              'updated': 1,
+              'unchanged': 3,
+              'conflicts': 1,
+              'missing_courses': 0,
+              'meetings_imported': 2,
+            },
+            'checked_at': '2026-10-13T12:00:00Z',
+            'next_automatic_sync_at': '2026-12-06T00:00:00Z',
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await transport.syncUFMG();
+
+    expect(result.courses.created, 1);
+    expect(result.schedules.updated, 1);
+    expect(result.schedules.conflicts, 1);
+    expect(result.checkedAt, DateTime.utc(2026, 10, 13, 12));
+    expect(result.nextAutomaticSyncAt, DateTime.utc(2026, 12, 6));
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/v1/ufmg/sync');
+    expect(captured.body, '{}');
+  });
+
+  test('rejects malformed intelligent synchronization contracts', () async {
+    for (final body in [
+      {
+        'courses': {'created': 1, 'existing': 4, 'total': 4},
+        'schedules': {
+          'total': 5,
+          'updated': 1,
+          'unchanged': 3,
+          'conflicts': 1,
+          'missing_courses': 0,
+          'meetings_imported': 2,
+        },
+        'checked_at': '2026-10-13T12:00:00Z',
+        'next_automatic_sync_at': '2026-12-06T00:00:00Z',
+      },
+      {
+        'courses': {'created': 1, 'existing': 4, 'total': 5},
+        'schedules': {
+          'total': 5,
+          'updated': 1,
+          'unchanged': 3,
+          'conflicts': 1,
+          'missing_courses': 0,
+          'meetings_imported': 2,
+        },
+        'checked_at': 'not-a-date',
+        'next_automatic_sync_at': '2026-12-06T00:00:00Z',
+      },
+    ]) {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((_) async => http.Response(jsonEncode(body), 200)),
+      );
+
+      await expectLater(
+        transport.syncUFMG(),
+        throwsA(
+          isA<PythonBackendException>().having(
+            (error) => error.code,
+            'code',
+            PythonBackendError.invalidResponse,
+          ),
+        ),
+      );
+    }
+  });
+
   test('classifies invalid UFMG credentials separately from outages', () async {
     for (final entry in [
       (

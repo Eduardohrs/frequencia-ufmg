@@ -37,7 +37,8 @@ enum AuditedOperation {
   ufmgSessionConnect('ufmg_session_connect'),
   ufmgSessionDisconnect('ufmg_session_disconnect'),
   ufmgCourseImport('ufmg_course_import'),
-  ufmgScheduleImport('ufmg_schedule_import');
+  ufmgScheduleImport('ufmg_schedule_import'),
+  ufmgSync('ufmg_sync');
 
   const AuditedOperation(this.eventPrefix);
 

@@ -84,6 +84,7 @@ from ufmg_session_store import (  # noqa: E402
     UFMGSessionSecrets,
     UFMGSessionStoreUnavailable,
 )
+from ufmg_sync import UFMGSyncService  # noqa: E402
 
 MAX_REQUEST_BYTES = 16_384
 _REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="")
@@ -214,6 +215,8 @@ def _dispatch(context: Any) -> Any:
         return _ufmg_course_import(context, allowed_origin)
     if path == "/v1/ufmg/import/schedules" and method == "POST":
         return _ufmg_schedule_import(context, allowed_origin)
+    if path == "/v1/ufmg/sync" and method == "POST":
+        return _ufmg_sync(context, allowed_origin)
     session_mutation = _session_mutation_path(path)
     if method == "PUT" and session_mutation is not None:
         course_id, session_id, mutation = session_mutation
@@ -446,6 +449,64 @@ def _ufmg_schedule_import(context: Any, origin: str | None) -> Any:
     )
 
 
+def _ufmg_sync(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/ufmg/sync/post")
+    if rejected is not None:
+        return rejected
+    if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
+        return _ufmg_session_error(context, origin, "ufmg_sync_rejected", 400)
+    if environ.get("ENABLE_SCHEDULE_WRITES", "").lower() != "true":
+        return _schedule_error(context, origin, "schedule_writes_disabled", 503)
+    try:
+        result = _ufmg_sync_service(context.req.headers, cast(str, user_id)).sync(
+            cast(str, user_id), now=int(time())
+        )
+    except UFMGReauthenticationRequired:
+        return _ufmg_session_error(
+            context, origin, "ufmg_reauthentication_required", 401
+        )
+    except UFMGEnrollmentUnavailable as error:
+        return _ufmg_session_error(
+            context,
+            origin,
+            "ufmg_enrollment_unavailable",
+            503,
+            reason=error.reason,
+            upstream_status=error.upstream_status,
+        )
+    except InvalidUFMGEnrollmentResponse:
+        return _ufmg_session_error(context, origin, "ufmg_enrollment_invalid", 502)
+    except UFMGSessionStoreUnavailable:
+        return _ufmg_session_error(
+            context, origin, "ufmg_session_store_unavailable", 503
+        )
+    except FirestoreAccessDenied:
+        return _course_error(context, origin, "course_access_denied", 403)
+    except FirestoreUnavailable:
+        return _course_error(context, origin, "course_store_unavailable", 503)
+    except (
+        DuplicateCourseCode,
+        InvalidCourse,
+        InvalidSchedule,
+        FirestoreRequestRejected,
+        TypeError,
+        ValueError,
+    ):
+        return _ufmg_session_error(context, origin, "ufmg_sync_rejected", 502)
+    courses = cast(Mapping[str, int], result["courses"])
+    schedules = cast(Mapping[str, int], result["schedules"])
+    _log(
+        context,
+        "ufmg_sync_succeeded",
+        course_created=courses["created"],
+        course_total=courses["total"],
+        schedule_conflicts=schedules["conflicts"],
+        schedule_total=schedules["total"],
+        schedule_updated=schedules["updated"],
+    )
+    return _respond(context, result, origin=origin)
+
+
 def _attendance(context: Any, origin: str | None) -> Any:
     _, rejected = _authentication(context, origin, "/v1/attendance/evaluate")
     if rejected is not None:
@@ -667,6 +728,19 @@ def _ufmg_schedule_import_service(
     )
 
 
+def _ufmg_sync_service(headers: dict[str, str], user_id: str) -> UFMGSyncService:
+    sessions = _ufmg_session_store(headers)
+    enrollments = UFMGEnrollmentClient()
+    courses = _course_repository(headers, user_id)
+    schedules = _schedule_repository(headers, user_id)
+    return UFMGSyncService(
+        sessions,
+        enrollments,
+        UFMGCourseImportService(sessions, enrollments, courses),
+        UFMGScheduleImportService(sessions, enrollments, courses, schedules),
+    )
+
+
 def _ufmg_session_store(headers: dict[str, str]) -> AppwriteUFMGSessionStore:
     endpoint = environ.get("APPWRITE_FUNCTION_API_ENDPOINT", "")
     project = environ.get("APPWRITE_FUNCTION_PROJECT_ID", "")
@@ -760,6 +834,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/ufmg/session",
         "/v1/ufmg/import/courses",
         "/v1/ufmg/import/schedules",
+        "/v1/ufmg/sync",
     } or path.startswith("/v1/courses/")
 
 
@@ -886,6 +961,7 @@ def _route_name(path: str) -> str:
         "/v1/ufmg/session",
         "/v1/ufmg/import/courses",
         "/v1/ufmg/import/schedules",
+        "/v1/ufmg/sync",
     }:
         return path
     if _session_mutation_path(path) is not None:

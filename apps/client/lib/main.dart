@@ -20,6 +20,7 @@ import 'data/python_overview_repository.dart';
 import 'data/repository_academic_overview.dart';
 import 'data/shared_preferences_academic_overview_cache.dart';
 import 'data/shared_preferences_schedule_cache.dart';
+import 'data/ufmg_sync_schedule.dart';
 import 'firebase_options.dart';
 import 'observability/app_logger.dart';
 import 'observability/error_reporting.dart';
@@ -133,6 +134,9 @@ Future<void> main() async {
       ufmgSessionGateway: backend is BackendUFMGSessionGateway
           ? backend as BackendUFMGSessionGateway
           : null,
+      ufmgSyncSchedule: backend is BackendUFMGSessionGateway
+          ? UFMGSyncSchedule()
+          : null,
       overviewRepository: overviewRepository,
       scheduleReadsEnabled: false,
       scheduleWritesEnabled: pythonScheduleWritesEnabled,
@@ -158,6 +162,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
     this.scheduleGateway,
     this.sessionGateway,
     this.ufmgSessionGateway,
+    this.ufmgSyncSchedule,
     this.overviewRepository,
     this.scheduleReadsEnabled = true,
     this.scheduleWritesEnabled = false,
@@ -179,6 +184,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
   final BackendUFMGSessionGateway? ufmgSessionGateway;
+  final UFMGSyncScheduleGateway? ufmgSyncSchedule;
   final AcademicOverviewRepository? overviewRepository;
   final bool scheduleReadsEnabled;
   final bool scheduleWritesEnabled;
@@ -221,6 +227,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
         scheduleGateway: scheduleGateway,
         sessionGateway: sessionGateway,
         ufmgSessionGateway: ufmgSessionGateway,
+        ufmgSyncSchedule: ufmgSyncSchedule,
         overviewRepository: overviewRepository,
         scheduleReadsEnabled: scheduleReadsEnabled,
         scheduleWritesEnabled: scheduleWritesEnabled,
