@@ -101,6 +101,8 @@ def test_client_reads_only_enrollment_fields_and_never_exposes_the_token() -> No
     request, timeout = calls[0]
     assert request.full_url.endswith("/WsMatriculas")
     assert request.get_header("Cookie") == "LtpaToken2=private-ltpa-token"
+    assert request.get_header("Accept") is None
+    assert request.get_header("User-agent") is None
     assert timeout == 7
     assert "private-ltpa-token" not in repr(courses)
 
@@ -145,14 +147,26 @@ def test_client_rejects_login_redirects_malformed_and_oversized_responses(
         _Response(b"{}", url="http://sistemas.ufmg.br/siga-ws/seam/resource/rest/WsMatriculas"),
         _Response(b"{}", url="https://attacker.example/siga-ws/seam/resource/rest/WsMatriculas"),
         _Response(b"{}", url="https://sistemas.ufmg.br/other"),
-        _Response(b"{}", content_type="text/plain"),
     ],
 )
-def test_client_requires_the_exact_trusted_json_endpoint(response: _Response) -> None:
+def test_client_requires_the_exact_trusted_endpoint(response: _Response) -> None:
     with pytest.raises(UFMGReauthenticationRequired):
         UFMGEnrollmentClient(open_response=lambda *_args, **_kwargs: response).fetch(
             "private-token"
         )
+
+
+def test_client_accepts_valid_bounded_json_from_the_legacy_plain_text_endpoint() -> None:
+    response = _Response(
+        json.dumps(_payload(), ensure_ascii=False).encode("iso-8859-1"),
+        content_type="text/plain;charset=ISO-8859-1",
+    )
+
+    courses = UFMGEnrollmentClient(
+        open_response=lambda *_args, **_kwargs: response
+    ).fetch("private-token")
+
+    assert [course["code"] for course in courses] == ["ELE028", "LA631"]
 
 
 @pytest.mark.parametrize(

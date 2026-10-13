@@ -85,11 +85,7 @@ class UFMGEnrollmentClient:
     def fetch(self, token: str) -> list[dict[str, object]]:
         request = Request(
             _ENROLLMENTS_URL,
-            headers={
-                "Accept": "application/json",
-                "Cookie": f"LtpaToken2={token}",
-                "User-Agent": "Frequencia-UFMG/1.0",
-            },
+            headers={"Cookie": f"LtpaToken2={token}"},
         )
         try:
             with self._open(request, timeout=self._timeout_seconds) as response:
@@ -175,12 +171,10 @@ class UFMGCourseImportService:
 
 def _is_enrollment_response(response: Any) -> bool:
     parsed = urlsplit(response.geturl())
-    content_type = response.headers.get("Content-Type", "").lower()
-    return (
+    return bool(
         parsed.scheme == "https"
         and parsed.hostname == "sistemas.ufmg.br"
         and parsed.path == "/siga-ws/seam/resource/rest/WsMatriculas"
-        and "application/json" in content_type
     )
 
 
