@@ -431,7 +431,19 @@ def _ufmg_schedule_import(context: Any, origin: str | None) -> Any:
     except (InvalidSchedule, FirestoreRequestRejected, TypeError, ValueError):
         return _schedule_error(context, origin, "schedule_import_rejected", 502)
     _log(context, "ufmg_schedule_import_succeeded", **result)
-    return _respond(context, result, origin=origin)
+    public_fields = (
+        "total",
+        "updated",
+        "unchanged",
+        "conflicts",
+        "missing_courses",
+        "meetings_imported",
+    )
+    return _respond(
+        context,
+        {field: result[field] for field in public_fields},
+        origin=origin,
+    )
 
 
 def _attendance(context: Any, origin: str | None) -> Any:

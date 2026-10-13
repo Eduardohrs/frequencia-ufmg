@@ -75,6 +75,12 @@ class UFMGScheduleImportService:
             "conflicts": 0,
             "missing_courses": 0,
             "meetings_imported": 0,
+            "date_mismatches": 0,
+            "meeting_mismatches": 0,
+            "meeting_upserts": 0,
+            "meeting_deletes": 0,
+            "session_upserts": 0,
+            "session_deletes": 0,
         }
         unique = {
             (str(course["code"]), str(course["term"])): course for course in remote
@@ -85,9 +91,13 @@ class UFMGScheduleImportService:
             if course is None:
                 summary["missing_courses"] += 1
                 continue
-            outcome, count = self._reconcile(course, enrollment, schedules)
+            outcome, count, diagnostics = self._reconcile(
+                course, enrollment, schedules
+            )
             summary[outcome] += 1
             summary["meetings_imported"] += count
+            for name, value in diagnostics.items():
+                summary[name] += value
         return summary
 
     def _reconcile(
@@ -95,7 +105,7 @@ class UFMGScheduleImportService:
         course: Mapping[str, Any],
         enrollment: Mapping[str, object],
         schedules: dict[str, dict[str, Any]],
-    ) -> tuple[str, int]:
+    ) -> tuple[str, int, dict[str, int]]:
         course_id = str(course["id"])
         state = schedules[course_id]
         saved_course = state["course"]
@@ -108,17 +118,22 @@ class UFMGScheduleImportService:
 
         if any(not _is_imported(item) for item in saved_meetings):
             if _structures(saved_meetings) == _structures(remote_meetings):
-                return "unchanged", 0
-            return "conflicts", 0
+                return "unchanged", 0, {}
+            return "conflicts", 0, {}
 
         requested = _imported_meetings(remote_meetings, saved_meetings)
         starts_on, ends_on = _dates(saved_course, enrollment)
-        if (
-            _requested_structures(saved_meetings) == requested
-            and saved_course.get("starts_on") == starts_on
-            and saved_course.get("ends_on") == ends_on
-        ):
-            return "unchanged", 0
+        meeting_mismatch = _requested_structures(saved_meetings) != requested
+        date_mismatch = (
+            saved_course.get("starts_on") != starts_on
+            or saved_course.get("ends_on") != ends_on
+        )
+        diagnostics = {
+            "date_mismatches": int(date_mismatch),
+            "meeting_mismatches": int(meeting_mismatch),
+        }
+        if not meeting_mismatch and not date_mismatch:
+            return "unchanged", 0, diagnostics
         try:
             saved = self._schedules.save_import_schedule(
                 course_id,
@@ -131,9 +146,21 @@ class UFMGScheduleImportService:
                 schedules,
             )
         except (DestructiveScheduleChange, ScheduleOverlap):
-            return "conflicts", 0
+            return "conflicts", 0, diagnostics
         schedules[course_id] = saved
-        return "updated", len(requested)
+        changes = saved["changes"]
+        diagnostics.update(
+            {
+                name: int(changes[name])
+                for name in (
+                    "meeting_upserts",
+                    "meeting_deletes",
+                    "session_upserts",
+                    "session_deletes",
+                )
+            }
+        )
+        return "updated", len(requested), diagnostics
 
 
 def _is_imported(meeting: object) -> bool:
