@@ -536,17 +536,18 @@ def _parse_course_states(
                 if kind is None:
                     continue
                 source_id = raw.get("id")
-                title = raw.get("name")
-                if type(source_id) is not int or source_id < 1 or not _valid_text(title, 240):
+                raw_title = raw.get("name")
+                title = raw_title.strip() if isinstance(raw_title, str) else ""
+                if type(source_id) is not int or source_id < 1 or not title or len(title) > 1_024:
                     raise ValueError("course_module_fields")
-                candidate = {
+                candidate: dict[str, object] = {
                     "source_id": str(source_id),
                     "kind": kind,
                     "title": title,
                     "url": None
                     if module == "label"
                     else _candidate_url(raw.get("url"), root, str(module), source_id),
-                    "relevance": _candidate_relevance(str(title)),
+                    "relevance": _candidate_relevance(title),
                 }
                 previous = candidates.get(str(source_id))
                 if previous is not None and previous != candidate:

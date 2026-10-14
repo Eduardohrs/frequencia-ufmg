@@ -110,7 +110,7 @@ final class PythonMoodleContentCandidate {
         title is! String ||
         title.isEmpty ||
         title.trim() != title ||
-        title.length > 240 ||
+        title.length > 1024 ||
         relevance is! String ||
         !const {'teaching_plan', 'schedule', 'other'}.contains(relevance) ||
         (kind == 'text') != (rawUrl == null) ||
