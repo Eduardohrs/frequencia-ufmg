@@ -510,3 +510,24 @@ def test_client_rejects_invalid_timeout_and_ajax_boundaries() -> None:
             "text/html",
             "/20262/lib/ajax/service.php",
         )
+
+
+def test_moodle_acs_accepts_the_default_root_level_shibboleth_handler() -> None:
+    _require_moodle_acs(
+        "https://virtual.ufmg.br/Shibboleth.sso/SAML2/POST",
+        "/20262",
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://virtual.ufmg.br/Shibboleth.sso/SAML2/POST",
+        "https://attacker.example/Shibboleth.sso/SAML2/POST",
+        "https://virtual.ufmg.br/Shibboleth.sso/SAML2/POST/extra",
+        "https://virtual.ufmg.br/other/Shibboleth.sso/SAML2/POST",
+    ],
+)
+def test_moodle_acs_rejects_every_other_origin_or_path(url: str) -> None:
+    with pytest.raises(InvalidMoodleResponse):
+        _require_moodle_acs(url, "/20262")
