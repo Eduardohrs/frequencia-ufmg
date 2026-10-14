@@ -583,6 +583,8 @@ def _parse_course_states(
 
 
 def _candidate_url(value: object, root: str, module: str, source_id: int) -> str:
+    if value is None:
+        return f"{MOODLE_ORIGIN}{root}/mod/{module}/view.php?id={source_id}"
     if not isinstance(value, str):
         raise ValueError("course_module_url_type")
     if len(value) > 2_048:

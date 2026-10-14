@@ -550,7 +550,7 @@ def test_course_state_parser_rejects_conflicting_ids_and_unsafe_urls() -> None:
 @pytest.mark.parametrize(
     "value",
     [
-        None,
+        7,
         "x" * 2049,
         "http://virtual.ufmg.br/20262/mod/page/view.php?id=1",
         "https://virtual.ufmg.br/20262/mod/page/view.php?id=2",
@@ -565,7 +565,7 @@ def test_candidate_url_rejects_every_unsafe_shape(value: object) -> None:
 @pytest.mark.parametrize(
     "value,reason",
     [
-        (None, "course_module_url_type"),
+        (7, "course_module_url_type"),
         ("x" * 2_049, "course_module_url_length"),
         ("http://virtual.ufmg.br/20262/mod/page/view.php?id=1", "course_module_url_scheme"),
         (
@@ -596,6 +596,15 @@ def test_candidate_url_reports_only_a_safe_rejection_reason(value: object, reaso
         _candidate_url(value, "/20262", "page", 1)
 
     assert str(caught.value) == reason
+
+
+@pytest.mark.parametrize("module", ["page", "book", "resource", "folder"])
+def test_candidate_url_builds_a_bounded_canonical_url_when_moodle_omits_it(
+    module: str,
+) -> None:
+    assert _candidate_url(None, "/20262", module, 123) == (
+        f"https://virtual.ufmg.br/20262/mod/{module}/view.php?id=123"
+    )
 
 
 def test_candidate_relevance_handles_accents_and_other_titles() -> None:
