@@ -341,12 +341,24 @@ def _require_moodle_acs(url: str, root: str) -> None:
         "/Shibboleth.sso/SAML2/POST",
         f"{root}/Shibboleth.sso/SAML2/POST",
     }
-    if (
-        parsed.scheme != "https"
-        or parsed.hostname != "virtual.ufmg.br"
-        or parsed.path not in allowed_paths
-    ):
-        raise InvalidMoodleResponse("sso_redirect")
+    if parsed.scheme == "https" and parsed.hostname == "virtual.ufmg.br":
+        if parsed.path in allowed_paths:
+            return
+        if parsed.path.rstrip("/") in allowed_paths:
+            raise InvalidMoodleResponse("sso_redirect_trailing_slash")
+        if re.fullmatch(r"/20[2-9][0-9][12]/Shibboleth[.]sso/SAML2/POST", parsed.path):
+            raise InvalidMoodleResponse("sso_redirect_term_mismatch")
+        raise InvalidMoodleResponse("sso_redirect_path")
+    if not parsed.scheme and not parsed.netloc:
+        reason = (
+            "sso_redirect_relative_known"
+            if parsed.path in allowed_paths
+            else "sso_redirect_relative_other"
+        )
+        raise InvalidMoodleResponse(reason)
+    if parsed.scheme != "https":
+        raise InvalidMoodleResponse("sso_redirect_scheme")
+    raise InvalidMoodleResponse("sso_redirect_host")
 
 
 def _require_moodle_page(url: str, root: str) -> None:
