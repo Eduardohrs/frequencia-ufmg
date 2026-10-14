@@ -253,6 +253,12 @@ def test_client_discovers_pages_files_text_and_empty_courses() -> None:
     assert course_call["methodname"] == (
         "core_course_get_enrolled_courses_by_timeline_classification"
     )
+    assert course_call["args"] == {
+        "classification": "all",
+        "limit": 100,
+        "offset": 0,
+        "sort": "fullname ASC",
+    }
     state_calls = json.loads(opener.requests[3][0].data)
     assert [call["args"] for call in state_calls] == [
         {"courseid": 3701},
