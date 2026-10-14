@@ -580,6 +580,7 @@ def _moodle_content_discovery(context: Any, origin: str | None) -> Any:
         empty=result["empty"],
         unmatched=result["unmatched"],
         ambiguous=result["ambiguous"],
+        metaturma_candidates=result["metaturma_candidate_total"],
     )
     return _respond(context, result, origin=origin)
 

@@ -94,6 +94,7 @@ def test_discovery_links_candidates_to_local_courses_and_returns_counts() -> Non
         ],
         "course_total": 2,
         "candidate_total": 1,
+        "metaturma_candidate_total": 0,
         "found": 1,
         "empty": 1,
         "unmatched": 0,

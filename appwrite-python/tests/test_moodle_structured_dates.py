@@ -14,6 +14,7 @@ from moodle_structured_dates import (
     _candidate_url,
     _course_matches,
     _event,
+    _is_metaturma,
     _parse_calendar,
     _parse_course_list,
     _parse_course_states,
@@ -228,6 +229,7 @@ def test_client_discovers_pages_files_text_and_empty_courses() -> None:
                     "title": "Plano de ensino",
                     "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=101",
                     "relevance": "teaching_plan",
+                    "origin": "canonical",
                 },
                 {
                     "source_id": "102",
@@ -235,6 +237,7 @@ def test_client_discovers_pages_files_text_and_empty_courses() -> None:
                     "title": "Cronograma da disciplina.pdf",
                     "url": "https://virtual.ufmg.br/20262/mod/resource/view.php?id=102",
                     "relevance": "schedule",
+                    "origin": "canonical",
                 },
                 {
                     "source_id": "103",
@@ -242,6 +245,7 @@ def test_client_discovers_pages_files_text_and_empty_courses() -> None:
                     "title": "Orientações gerais",
                     "url": None,
                     "relevance": "other",
+                    "origin": "canonical",
                 },
             ],
         },
@@ -388,6 +392,179 @@ def test_course_list_parser_deduplicates_and_matcher_uses_code_boundaries() -> N
     assert _parse_course_list(payload) == [course]
     assert _course_matches("DCC203", course)
     assert not _course_matches("DCC20", course)
+
+
+@pytest.mark.parametrize(
+    ("course", "expected"),
+    [
+        (
+            {"shortname": "MAT001   metaturma", "fullname": "Cálculo III"},
+            True,
+        ),
+        (
+            {"shortname": "MAT001", "fullname": "  Cálculo   METATURMA  "},
+            True,
+        ),
+        (
+            {"shortname": "MAT001", "fullname": "Laboratório de metaturmas"},
+            False,
+        ),
+        (
+            {"shortname": "MAT001", "fullname": "Curso comum"},
+            False,
+        ),
+    ],
+)
+def test_metaturma_requires_an_isolated_word_after_space_normalization(
+    course: dict[str, object], expected: bool
+) -> None:
+    assert _is_metaturma(course) is expected
+
+
+def test_discovery_uses_single_canonical_course_and_keeps_metaturma_materials() -> None:
+    courses = json.dumps(
+        [
+            {
+                "error": False,
+                "data": {
+                    "courses": [
+                        {
+                            "id": 10,
+                            "shortname": "MAT001",
+                            "fullname": "Cálculo III",
+                        },
+                        {
+                            "id": 11,
+                            "shortname": "MAT001 metaturma A",
+                            "fullname": "Cálculo III   METATURMA",
+                        },
+                        {
+                            "id": 12,
+                            "shortname": "MAT001 - METATURMA B",
+                            "fullname": "Cálculo III",
+                        },
+                    ],
+                    "nextoffset": 3,
+                },
+            }
+        ]
+    ).encode()
+    states = json.dumps(
+        [
+            {
+                "error": False,
+                "data": json.dumps(
+                    {
+                        "course": {},
+                        "section": [],
+                        "cm": [
+                            {
+                                "id": 100,
+                                "name": "Plano de ensino",
+                                "module": "page",
+                                "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=100",
+                                "uservisible": True,
+                            }
+                        ],
+                    }
+                ),
+            },
+            {
+                "error": False,
+                "data": json.dumps(
+                    {
+                        "course": {},
+                        "section": [],
+                        "cm": [
+                            {
+                                "id": 101,
+                                "name": "Lista da metaturma A",
+                                "module": "resource",
+                                "url": "https://virtual.ufmg.br/20262/mod/resource/view.php?id=101",
+                                "uservisible": True,
+                            }
+                        ],
+                    }
+                ),
+            },
+            {
+                "error": False,
+                "data": json.dumps(
+                    {"course": {}, "section": [], "cm": []}
+                ),
+            },
+        ]
+    ).encode()
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(
+                courses,
+                "https://virtual.ufmg.br/20262/lib/ajax/service.php",
+                content_type="application/json",
+            ),
+            _Response(
+                states,
+                "https://virtual.ufmg.br/20262/lib/ajax/service.php",
+                content_type="application/json",
+            ),
+        ]
+    )
+
+    result = MoodleStructuredDatesClient(opener=opener).discover(
+        "token", term="2026-2", course_codes=["MAT001"]
+    )
+
+    assert result[0]["status"] == "found"
+    assert [candidate["origin"] for candidate in result[0]["candidates"]] == [
+        "canonical",
+        "metaturma",
+    ]
+    state_calls = json.loads(opener.requests[3][0].data)
+    assert [call["args"]["courseid"] for call in state_calls] == [10, 11, 12]
+
+
+def test_discovery_keeps_multiple_non_metaturma_matches_ambiguous() -> None:
+    courses = json.dumps(
+        [
+            {
+                "error": False,
+                "data": {
+                    "courses": [
+                        {"id": 1, "shortname": "MAT001 A", "fullname": "Cálculo A"},
+                        {"id": 2, "shortname": "MAT001 B", "fullname": "Cálculo B"},
+                        {
+                            "id": 3,
+                            "shortname": "MAT001 METATURMA",
+                            "fullname": "Cálculo conjunto",
+                        },
+                    ],
+                    "nextoffset": 3,
+                },
+            }
+        ]
+    ).encode()
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(
+                courses,
+                "https://virtual.ufmg.br/20262/lib/ajax/service.php",
+                content_type="application/json",
+            ),
+        ]
+    )
+
+    result = MoodleStructuredDatesClient(opener=opener).discover(
+        "token", term="2026-2", course_codes=["MAT001"]
+    )
+
+    assert result == [
+        {"course_code": "MAT001", "status": "ambiguous", "candidates": []}
+    ]
+    assert len(opener.requests) == 3
 
 
 @pytest.mark.parametrize(

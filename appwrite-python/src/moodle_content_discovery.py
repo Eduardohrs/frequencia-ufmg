@@ -79,6 +79,7 @@ class MoodleContentDiscoveryService:
         courses = sorted(discovered, key=lambda item: str(item["course_code"]))
         counts = {status: 0 for status in ("found", "empty", "unmatched", "ambiguous")}
         candidate_total = 0
+        metaturma_candidate_total = 0
         for course in courses:
             status = course["status"]
             candidates = course["candidates"]
@@ -86,11 +87,16 @@ class MoodleContentDiscoveryService:
                 raise ValueError("invalid discovery result")
             counts[str(status)] += 1
             candidate_total += len(candidates)
+            metaturma_candidate_total += sum(
+                isinstance(candidate, dict) and candidate.get("origin") == "metaturma"
+                for candidate in candidates
+            )
         if len(courses) != len(local_courses) or candidate_total > 500:
             raise ValueError("invalid discovery result")
         return {
             "courses": courses,
             "course_total": len(courses),
             "candidate_total": candidate_total,
+            "metaturma_candidate_total": metaturma_candidate_total,
             **counts,
         }

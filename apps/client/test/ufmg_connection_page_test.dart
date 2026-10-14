@@ -763,7 +763,7 @@ void main() {
     expect(find.text('Plano de ensino'), findsOneWidget);
     expect(find.text('Possível plano de ensino'), findsOneWidget);
     expect(find.text('Possível cronograma'), findsOneWidget);
-    expect(find.text('Material da disciplina'), findsOneWidget);
+    expect(find.text('Material da disciplina • Metaturma'), findsOneWidget);
     expect(find.text('Disciplina não localizada no Moodle'), findsOneWidget);
     expect(
       find.text('Mais de uma disciplina correspondente no Moodle'),
@@ -866,6 +866,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
     if (contentDiscoveryError case final error?) throw error;
     return const PythonMoodleContentDiscovery(
       candidateTotal: 3,
+      metaturmaCandidateTotal: 1,
       courses: [
         PythonMoodleCourseContent(
           courseId: 'dcc203',
@@ -878,6 +879,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
               title: 'Plano de ensino',
               url: null,
               relevance: 'teaching_plan',
+              origin: PythonMoodleContentOrigin.canonical,
             ),
             PythonMoodleContentCandidate(
               sourceId: '102',
@@ -885,6 +887,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
               title: 'Cronograma',
               url: null,
               relevance: 'schedule',
+              origin: PythonMoodleContentOrigin.canonical,
             ),
             PythonMoodleContentCandidate(
               sourceId: '103',
@@ -892,6 +895,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
               title: 'Avisos',
               url: null,
               relevance: 'other',
+              origin: PythonMoodleContentOrigin.metaturma,
             ),
           ],
         ),
