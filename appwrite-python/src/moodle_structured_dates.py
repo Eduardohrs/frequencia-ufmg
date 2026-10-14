@@ -22,6 +22,10 @@ _SESSKEY = re.compile(rb'"sesskey"\s*:\s*"([A-Za-z0-9_-]{8,128})"')
 class InvalidMoodleResponse(Exception):
     """Moodle or the identity provider returned an unsafe/unexpected shape."""
 
+    def __init__(self, reason: str = "unknown") -> None:
+        self.reason = reason if re.fullmatch(r"[a-z_]{1,64}", reason) else "unknown"
+        super().__init__("invalid Moodle response")
+
 
 class MoodleUnavailable(Exception):
     """The structured Moodle source could not be reached."""
@@ -86,7 +90,7 @@ class MoodleStructuredDatesClient:
         try:
             form.feed(saml_page.decode("utf-8"))
         except UnicodeDecodeError:
-            raise InvalidMoodleResponse("invalid Moodle SSO response") from None
+            raise InvalidMoodleResponse("sso_encoding") from None
         action, relay_state, assertion = form.result()
         _require_moodle_acs(action, root)
 
@@ -149,7 +153,7 @@ class MoodleStructuredDatesClient:
         except OSError:
             raise MoodleUnavailable("Moodle is unavailable") from None
         if len(body) > MAX_RESPONSE_BYTES:
-            raise InvalidMoodleResponse("invalid Moodle response")
+            raise InvalidMoodleResponse("response_oversized")
         return body, url, content_type
 
 
@@ -187,24 +191,29 @@ class _SAMLFormParser(HTMLParser):
             or not assertion
             or len(assertion) > 512_000
         ):
-            raise InvalidMoodleResponse("invalid Moodle SSO response")
+            raise InvalidMoodleResponse("sso_form")
         return action, relay_state, assertion
 
 
 def _parse_calendar(payload: bytes, expected_calls: int) -> list[dict[str, str]]:
     try:
         decoded = json.loads(payload)
-        if (
-            not isinstance(decoded, list)
-            or len(decoded) != expected_calls
-            or any(not isinstance(item, dict) or item.get("error") is not False for item in decoded)
-        ):
-            raise ValueError
-        events: dict[str, dict[str, str]] = {}
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise InvalidMoodleResponse("calendar_json") from None
+    if not isinstance(decoded, list):
+        raise InvalidMoodleResponse("calendar_batch_type")
+    if len(decoded) != expected_calls:
+        raise InvalidMoodleResponse("calendar_call_count")
+    events: dict[str, dict[str, str]] = {}
+    try:
         for item in decoded:
+            if not isinstance(item, dict):
+                raise ValueError("calendar_call_shape")
+            if item.get("error") is not False:
+                raise ValueError("calendar_upstream_error")
             data = item.get("data")
             if not isinstance(data, dict):
-                raise ValueError
+                raise ValueError("calendar_call_data")
             for raw in _calendar_events(data):
                 # Moodle legitimately omits `course` for site-wide and personal
                 # calendar events. They cannot be matched to a local discipline
@@ -214,34 +223,35 @@ def _parse_calendar(payload: bytes, expected_calls: int) -> list[dict[str, str]]
                 event = _event(raw)
                 previous = events.get(event["source_id"])
                 if previous is not None and previous != event:
-                    raise ValueError
+                    raise ValueError("calendar_event_conflict")
                 events[event["source_id"]] = event
                 if len(events) > MAX_EVENTS:
-                    raise ValueError
-        return sorted(events.values(), key=lambda item: (item["due_at"], item["source_id"]))
-    except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
-        raise InvalidMoodleResponse("invalid Moodle calendar response") from None
+                    raise ValueError("calendar_event_limit")
+    except (KeyError, TypeError, ValueError) as error:
+        reason = str(error) if error.args else "calendar_shape"
+        raise InvalidMoodleResponse(reason) from None
+    return sorted(events.values(), key=lambda item: (item["due_at"], item["source_id"]))
 
 
 def _calendar_events(data: dict[str, Any]) -> Iterable[dict[str, Any]]:
     weeks = data.get("weeks")
     if not isinstance(weeks, list) or len(weeks) > 6:
-        raise ValueError
+        raise ValueError("calendar_weeks")
     for week in weeks:
         if not isinstance(week, dict):
-            raise ValueError
+            raise ValueError("calendar_week")
         days = week.get("days")
         if not isinstance(days, list) or len(days) > 7:
-            raise ValueError
+            raise ValueError("calendar_days")
         for day in days:
             if not isinstance(day, dict):
-                raise ValueError
+                raise ValueError("calendar_day")
             events = day.get("events", [])
             if not isinstance(events, list) or len(events) > 100:
-                raise ValueError
+                raise ValueError("calendar_events")
             for event in events:
                 if not isinstance(event, dict):
-                    raise ValueError
+                    raise ValueError("calendar_event_shape")
                 yield event
 
 
@@ -263,7 +273,7 @@ def _event(raw: dict[str, Any]) -> dict[str, str]:
         or timestamp > 4_102_444_800
         or not isinstance(course, dict)
     ):
-        raise ValueError
+        raise ValueError("calendar_event_fields")
     course_id = course.get("id")
     shortname = course.get("shortname")
     fullname = course.get("fullname")
@@ -275,7 +285,7 @@ def _event(raw: dict[str, Any]) -> dict[str, str]:
         or not isinstance(fullname, str)
         or not _valid_text(fullname, 240)
     ):
-        raise ValueError
+        raise ValueError("calendar_course_fields")
     return {
         "source_id": str(event_id),
         "title": title,
@@ -332,7 +342,7 @@ def _require_moodle_acs(url: str, root: str) -> None:
         or parsed.hostname != "virtual.ufmg.br"
         or parsed.path != f"{root}/Shibboleth.sso/SAML2/POST"
     ):
-        raise InvalidMoodleResponse("invalid Moodle SSO response")
+        raise InvalidMoodleResponse("sso_redirect")
 
 
 def _require_moodle_page(url: str, root: str) -> None:
@@ -350,7 +360,7 @@ def _require_ajax(url: str, content_type: str, ajax_path: str) -> None:
     if parsed.scheme != "https" or parsed.hostname != "virtual.ufmg.br" or parsed.path != ajax_path:
         raise UFMGReauthenticationRequired("UFMG reauthentication required")
     if content_type != "application/json":
-        raise InvalidMoodleResponse("invalid Moodle calendar response")
+        raise InvalidMoodleResponse("ajax_content_type")
 
 
 def _moodle_root(term: str) -> str:

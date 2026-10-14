@@ -462,8 +462,10 @@ def _ufmg_sync(context: Any, origin: str | None) -> Any:
         return _ufmg_session_error(context, origin, "ufmg_enrollment_invalid", 502)
     except MoodleUnavailable:
         return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
-    except InvalidMoodleResponse:
-        return _ufmg_session_error(context, origin, "moodle_response_invalid", 502)
+    except InvalidMoodleResponse as error:
+        return _ufmg_session_error(
+            context, origin, "moodle_response_invalid", 502, reason=error.reason
+        )
     except UFMGSessionStoreUnavailable:
         return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
     except FirestoreAccessDenied:
@@ -513,8 +515,10 @@ def _moodle_date_import(context: Any, origin: str | None) -> Any:
         return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
     except MoodleUnavailable:
         return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
-    except InvalidMoodleResponse:
-        return _ufmg_session_error(context, origin, "moodle_response_invalid", 502)
+    except InvalidMoodleResponse as error:
+        return _ufmg_session_error(
+            context, origin, "moodle_response_invalid", 502, reason=error.reason
+        )
     except UFMGSessionStoreUnavailable:
         return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
     except FirestoreAccessDenied:
