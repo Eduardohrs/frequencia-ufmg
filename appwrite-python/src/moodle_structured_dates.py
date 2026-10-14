@@ -2,12 +2,13 @@
 
 import json
 import re
+import unicodedata
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from http.cookiejar import Cookie, CookieJar
 from typing import Any, Protocol
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 from ufmg_session_store import UFMGReauthenticationRequired
@@ -15,6 +16,8 @@ from ufmg_session_store import UFMGReauthenticationRequired
 MAX_RESPONSE_BYTES = 1_048_576
 MAX_EVENTS = 500
 MAX_MONTHS = 12
+MAX_COURSES = 50
+MAX_CANDIDATES = 500
 MOODLE_ORIGIN = "https://virtual.ufmg.br"
 _SESSKEY = re.compile(rb'"sesskey"\s*:\s*"([A-Za-z0-9_-]{8,128})"')
 
@@ -77,6 +80,94 @@ class MoodleStructuredDatesClient:
         months: list[tuple[int, int]],
     ) -> list[dict[str, str]]:
         _validate_inputs(token, months)
+        root, ajax_path, sesskey = self._connect(token, term)
+        calls = [
+            {
+                "index": index,
+                "methodname": "core_calendar_get_calendar_monthly_view",
+                "args": {
+                    "year": year,
+                    "month": month,
+                    "courseid": 1,
+                    "categoryid": 0,
+                    "includenavigation": False,
+                    "mini": False,
+                    "day": 1,
+                },
+            }
+            for index, (year, month) in enumerate(months)
+        ]
+        return _parse_calendar(
+            self._ajax(root, ajax_path, sesskey, calls),
+            len(calls),
+        )
+
+    def discover(
+        self,
+        token: str,
+        *,
+        term: str,
+        course_codes: list[str],
+    ) -> list[dict[str, object]]:
+        """Discover bounded visible course resources without downloading content."""
+
+        codes = _validate_course_codes(token, course_codes)
+        root, ajax_path, sesskey = self._connect(token, term)
+        course_call = [
+            {
+                "index": 0,
+                "methodname": "core_course_get_enrolled_courses_by_timeline_classification",
+                "args": {
+                    "classification": "all",
+                    "limit": 100,
+                    "offset": 0,
+                    "sort": "fullname ASC",
+                    "requiredfields": ["id", "shortname", "fullname"],
+                },
+            }
+        ]
+        courses = _parse_course_list(self._ajax(root, ajax_path, sesskey, course_call))
+        matched: list[tuple[str, dict[str, object]]] = []
+        results: dict[str, dict[str, object]] = {}
+        for code in codes:
+            matches = [course for course in courses if _course_matches(code, course)]
+            if len(matches) == 1:
+                matched.append((code, matches[0]))
+            else:
+                results[code] = {
+                    "course_code": code,
+                    "status": "ambiguous" if matches else "unmatched",
+                    "candidates": [],
+                }
+
+        if matched:
+            state_calls = [
+                {
+                    "index": index,
+                    "methodname": "core_courseformat_get_state",
+                    "args": {"courseid": course["id"]},
+                }
+                for index, (_, course) in enumerate(matched)
+            ]
+            states = _parse_course_states(
+                self._ajax(root, ajax_path, sesskey, state_calls),
+                root,
+                len(matched),
+            )
+            total = 0
+            for (code, _), candidates in zip(matched, states, strict=True):
+                total += len(candidates)
+                if total > MAX_CANDIDATES:
+                    raise InvalidMoodleResponse("candidate_limit")
+                results[code] = {
+                    "course_code": code,
+                    "status": "found" if candidates else "empty",
+                    "candidates": candidates,
+                }
+        return [results[code] for code in codes]
+
+    def _connect(self, token: str, term: str) -> tuple[str, str, str]:
+        _validate_token(token)
         root = _moodle_root(term)
         sso_url = f"{MOODLE_ORIGIN}{root}/auth/shibboleth/index.php"
         ajax_path = f"{root}/lib/ajax/service.php"
@@ -109,28 +200,19 @@ class MoodleStructuredDatesClient:
         match = _SESSKEY.search(dashboard)
         if match is None:
             raise UFMGReauthenticationRequired("UFMG reauthentication required")
-        sesskey = match.group(1).decode()
+        return root, ajax_path, match.group(1).decode()
 
-        calls = [
-            {
-                "index": index,
-                "methodname": "core_calendar_get_calendar_monthly_view",
-                "args": {
-                    "year": year,
-                    "month": month,
-                    "courseid": 1,
-                    "categoryid": 0,
-                    "includenavigation": False,
-                    "mini": False,
-                    "day": 1,
-                },
-            }
-            for index, (year, month) in enumerate(months)
-        ]
+    def _ajax(
+        self,
+        root: str,
+        ajax_path: str,
+        sesskey: str,
+        calls: list[dict[str, object]],
+    ) -> bytes:
         ajax_url = f"{MOODLE_ORIGIN}{ajax_path}?" + urlencode(
             {
                 "sesskey": sesskey,
-                "info": ",".join("core_calendar_get_calendar_monthly_view" for _ in calls),
+                "info": ",".join(str(call["methodname"]) for call in calls),
             }
         )
         payload, final_url, content_type = self._open(
@@ -142,7 +224,7 @@ class MoodleStructuredDatesClient:
             )
         )
         _require_ajax(final_url, content_type, ajax_path)
-        return _parse_calendar(payload, len(calls))
+        return payload
 
     def _open(self, request: Request) -> tuple[bytes, str, str]:
         try:
@@ -303,9 +385,13 @@ def _valid_text(value: object, limit: int) -> bool:
     return isinstance(value, str) and bool(value) and value.strip() == value and len(value) <= limit
 
 
-def _validate_inputs(token: str, months: list[tuple[int, int]]) -> None:
+def _validate_token(token: str) -> None:
     if not token or len(token) > 4_096 or any(character.isspace() for character in token):
         raise ValueError("invalid UFMG session")
+
+
+def _validate_inputs(token: str, months: list[tuple[int, int]]) -> None:
+    _validate_token(token)
     if (
         not months
         or len(months) > MAX_MONTHS
@@ -321,6 +407,194 @@ def _validate_inputs(token: str, months: list[tuple[int, int]]) -> None:
         )
     ):
         raise ValueError("invalid Moodle month range")
+
+
+def _validate_course_codes(token: str, course_codes: list[str]) -> list[str]:
+    _validate_token(token)
+    if (
+        not course_codes
+        or len(course_codes) > MAX_COURSES
+        or len(set(course_codes)) != len(course_codes)
+        or any(
+            not isinstance(code, str)
+            or not code
+            or code != code.strip().upper()
+            or len(code) > 32
+            or re.fullmatch(r"[A-Z0-9][A-Z0-9._-]*", code) is None
+            for code in course_codes
+        )
+    ):
+        raise ValueError("invalid Moodle course codes")
+    return sorted(course_codes)
+
+
+def _parse_course_list(payload: bytes) -> list[dict[str, object]]:
+    try:
+        decoded = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise InvalidMoodleResponse("course_list_json") from None
+    if not isinstance(decoded, list):
+        raise InvalidMoodleResponse("course_list_batch_type")
+    if len(decoded) != 1:
+        raise InvalidMoodleResponse("course_list_call_count")
+    try:
+        item = decoded[0]
+        if not isinstance(item, dict):
+            raise ValueError("course_list_call_shape")
+        if item.get("error") is not False:
+            raise ValueError("course_list_upstream_error")
+        data = item.get("data")
+        if not isinstance(data, dict):
+            raise ValueError("course_list_data")
+        raw_courses = data.get("courses")
+        next_offset = data.get("nextoffset")
+        if (
+            not isinstance(raw_courses, list)
+            or len(raw_courses) > 100
+            or type(next_offset) is not int
+            or next_offset < 0
+            or next_offset > 10_000
+        ):
+            raise ValueError("course_list_fields")
+        courses: dict[int, dict[str, object]] = {}
+        for raw in raw_courses:
+            if not isinstance(raw, dict):
+                raise ValueError("course_shape")
+            course_id = raw.get("id")
+            shortname = raw.get("shortname")
+            fullname = raw.get("fullname")
+            if (
+                type(course_id) is not int
+                or course_id < 1
+                or not _valid_text(shortname, 160)
+                or not _valid_text(fullname, 240)
+            ):
+                raise ValueError("course_fields")
+            course = {"id": course_id, "shortname": shortname, "fullname": fullname}
+            previous = courses.get(course_id)
+            if previous is not None and previous != course:
+                raise ValueError("course_conflict")
+            courses[course_id] = course
+    except (KeyError, TypeError, ValueError) as error:
+        reason = str(error) if error.args else "course_list_shape"
+        raise InvalidMoodleResponse(reason) from None
+    return [courses[course_id] for course_id in sorted(courses)]
+
+
+def _course_matches(code: str, course: dict[str, object]) -> bool:
+    pattern = re.compile(rf"(?<![A-Z0-9]){re.escape(code)}(?![A-Z0-9])", re.IGNORECASE)
+    return any(
+        pattern.search(str(course[field])) is not None for field in ("shortname", "fullname")
+    )
+
+
+def _parse_course_states(
+    payload: bytes,
+    root: str,
+    expected_calls: int,
+) -> list[list[dict[str, object]]]:
+    try:
+        decoded = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise InvalidMoodleResponse("course_state_json") from None
+    if not isinstance(decoded, list):
+        raise InvalidMoodleResponse("course_state_batch_type")
+    if len(decoded) != expected_calls:
+        raise InvalidMoodleResponse("course_state_call_count")
+    states: list[list[dict[str, object]]] = []
+    try:
+        for item in decoded:
+            if not isinstance(item, dict):
+                raise ValueError("course_state_call_shape")
+            if item.get("error") is not False:
+                raise ValueError("course_state_upstream_error")
+            raw_data = item.get("data")
+            if not isinstance(raw_data, str) or len(raw_data) > MAX_RESPONSE_BYTES:
+                raise ValueError("course_state_data")
+            try:
+                data = json.loads(raw_data)
+            except json.JSONDecodeError:
+                raise ValueError("course_state_inner_json") from None
+            if not isinstance(data, dict):
+                raise ValueError("course_state_inner_shape")
+            raw_modules = data.get("cm")
+            if not isinstance(raw_modules, list) or len(raw_modules) > 500:
+                raise ValueError("course_modules")
+            candidates: dict[str, dict[str, object]] = {}
+            for raw in raw_modules:
+                if not isinstance(raw, dict):
+                    raise ValueError("course_module_shape")
+                if raw.get("uservisible") is not True:
+                    continue
+                module = str(raw.get("module"))
+                kind = {
+                    "page": "page",
+                    "book": "page",
+                    "resource": "file",
+                    "folder": "file",
+                    "label": "text",
+                }.get(module)
+                if kind is None:
+                    continue
+                source_id = raw.get("id")
+                title = raw.get("name")
+                if type(source_id) is not int or source_id < 1 or not _valid_text(title, 240):
+                    raise ValueError("course_module_fields")
+                candidate = {
+                    "source_id": str(source_id),
+                    "kind": kind,
+                    "title": title,
+                    "url": None
+                    if module == "label"
+                    else _candidate_url(raw.get("url"), root, str(module), source_id),
+                    "relevance": _candidate_relevance(str(title)),
+                }
+                previous = candidates.get(str(source_id))
+                if previous is not None and previous != candidate:
+                    raise ValueError("course_module_conflict")
+                candidates[str(source_id)] = candidate
+            states.append(
+                sorted(
+                    candidates.values(),
+                    key=lambda candidate: (
+                        int(str(candidate["source_id"])),
+                        str(candidate["title"]),
+                    ),
+                )
+            )
+    except (KeyError, TypeError, ValueError) as error:
+        reason = str(error) if error.args else "course_state_shape"
+        raise InvalidMoodleResponse(reason) from None
+    return states
+
+
+def _candidate_url(value: object, root: str, module: str, source_id: int) -> str:
+    if not isinstance(value, str) or len(value) > 2_048:
+        raise ValueError("course_module_url")
+    parsed = urlsplit(value)
+    query = parse_qs(parsed.query, strict_parsing=True)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "virtual.ufmg.br"
+        or parsed.path != f"{root}/mod/{module}/view.php"
+        or parsed.fragment
+        or query != {"id": [str(source_id)]}
+    ):
+        raise ValueError("course_module_url")
+    return value
+
+
+def _candidate_relevance(title: str) -> str:
+    normalized = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", title).lower()
+        if not unicodedata.combining(character)
+    )
+    if "plano de ensino" in normalized or "ementa" in normalized:
+        return "teaching_plan"
+    if "cronograma" in normalized or "calendario" in normalized:
+        return "schedule"
+    return "other"
 
 
 def _require_identity_provider(url: str) -> None:
