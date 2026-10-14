@@ -537,9 +537,17 @@ def _parse_course_states(
                     continue
                 source_id = raw.get("id")
                 raw_title = raw.get("name")
-                title = raw_title.strip() if isinstance(raw_title, str) else ""
-                if type(source_id) is not int or source_id < 1 or not title or len(title) > 1_024:
-                    raise ValueError("course_module_fields")
+                if type(source_id) is not int:
+                    raise ValueError("course_module_id_type")
+                if source_id < 1:
+                    raise ValueError("course_module_id_range")
+                if not isinstance(raw_title, str):
+                    raise ValueError("course_module_title_type")
+                title = raw_title.strip()
+                if not title:
+                    raise ValueError("course_module_title_empty")
+                if len(title) > 1_024:
+                    raise ValueError("course_module_title_length")
                 candidate: dict[str, object] = {
                     "source_id": str(source_id),
                     "kind": kind,

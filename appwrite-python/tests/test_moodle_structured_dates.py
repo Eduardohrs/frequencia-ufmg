@@ -433,6 +433,35 @@ def test_course_state_parser_rejects_malformed_data(payload: bytes, expected_cal
         _parse_course_states(payload, "/20262", expected_calls)
 
 
+@pytest.mark.parametrize(
+    "overrides,reason",
+    [
+        ({"id": "1"}, "course_module_id_type"),
+        ({"id": 0}, "course_module_id_range"),
+        ({"name": None}, "course_module_title_type"),
+        ({"name": "   "}, "course_module_title_empty"),
+        ({"name": "x" * 1_025}, "course_module_title_length"),
+    ],
+)
+def test_course_state_parser_reports_safe_module_field_reason(
+    overrides: dict[str, object], reason: str
+) -> None:
+    module = {
+        "id": 1,
+        "name": "Plano",
+        "module": "page",
+        "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=1",
+        "uservisible": True,
+        **overrides,
+    }
+    payload = json.dumps([{"error": False, "data": json.dumps({"cm": [module]})}]).encode()
+
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_course_states(payload, "/20262", 1)
+
+    assert caught.value.reason == reason
+
+
 def test_course_state_parser_supports_all_candidate_modules_and_visibility() -> None:
     modules = [
         {
