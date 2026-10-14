@@ -470,6 +470,22 @@ def test_course_state_parser_supports_all_candidate_modules_and_visibility() -> 
     assert result[0]["relevance"] == "teaching_plan"
 
 
+def test_course_state_parser_normalizes_long_module_titles() -> None:
+    title = "X" * 255
+    module = {
+        "id": 1,
+        "name": f"  {title}  ",
+        "module": "page",
+        "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=1",
+        "uservisible": True,
+    }
+    payload = json.dumps([{"error": False, "data": json.dumps({"cm": [module]})}]).encode()
+
+    result = _parse_course_states(payload, "/20262", 1)[0]
+
+    assert result[0]["title"] == title
+
+
 def test_course_state_parser_rejects_conflicting_ids_and_unsafe_urls() -> None:
     first = {
         "id": 1,

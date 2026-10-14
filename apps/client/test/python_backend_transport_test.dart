@@ -437,6 +437,20 @@ void main() {
     expect(captured.body, '{}');
   });
 
+  test('accepts bounded long Moodle content titles', () {
+    final title = List.filled(1024, 'x').join();
+
+    final candidate = PythonMoodleContentCandidate.fromJson({
+      'source_id': '101',
+      'kind': 'page',
+      'title': title,
+      'url': 'https://virtual.ufmg.br/20262/mod/page/view.php?id=101',
+      'relevance': 'other',
+    });
+
+    expect(candidate.title, title);
+  });
+
   test('lists canonical Moodle dates in chronological order', () async {
     final transport = PythonBackendTransport(
       endpoint: Uri.parse('https://backend.example'),
