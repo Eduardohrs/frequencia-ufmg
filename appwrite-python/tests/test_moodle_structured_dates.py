@@ -562,6 +562,42 @@ def test_candidate_url_rejects_every_unsafe_shape(value: object) -> None:
         _candidate_url(value, "/20262", "page", 1)
 
 
+@pytest.mark.parametrize(
+    "value,reason",
+    [
+        (None, "course_module_url_type"),
+        ("x" * 2_049, "course_module_url_length"),
+        ("http://virtual.ufmg.br/20262/mod/page/view.php?id=1", "course_module_url_scheme"),
+        (
+            "https://user@virtual.ufmg.br/20262/mod/page/view.php?id=1",
+            "course_module_url_authority",
+        ),
+        ("https://virtual.ufmg.br/20262/mod/book/view.php?id=1", "course_module_url_path_page"),
+        (
+            "https://virtual.ufmg.br/20262/mod/page/view.php?id=1#x",
+            "course_module_url_fragment",
+        ),
+        (
+            "https://virtual.ufmg.br/20262/mod/page/view.php?id",
+            "course_module_url_query_format",
+        ),
+        (
+            "https://virtual.ufmg.br/20262/mod/page/view.php?id=1&extra=1",
+            "course_module_url_query_keys",
+        ),
+        (
+            "https://virtual.ufmg.br/20262/mod/page/view.php?id=2",
+            "course_module_url_query_id",
+        ),
+    ],
+)
+def test_candidate_url_reports_only_a_safe_rejection_reason(value: object, reason: str) -> None:
+    with pytest.raises(ValueError) as caught:
+        _candidate_url(value, "/20262", "page", 1)
+
+    assert str(caught.value) == reason
+
+
 def test_candidate_relevance_handles_accents_and_other_titles() -> None:
     assert _candidate_relevance("Calendário") == "schedule"
     assert _candidate_relevance("Avisos") == "other"
