@@ -34,6 +34,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   String? _error;
   String? _importSummary;
   List<PythonMoodleDate> _dates = const [];
+  PythonMoodleContentDiscovery? _contentDiscovery;
 
   @override
   void initState() {
@@ -320,6 +321,49 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     action: widget.gateway.listMoodleDates,
   );
 
+  Future<void> _discoverContent() async {
+    if (widget.gateway is! BackendMoodleContentGateway) return;
+    final gateway = widget.gateway as BackendMoodleContentGateway;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _importSummary = null;
+    });
+    try {
+      final result = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleContentDiscovery,
+        action: gateway.discoverMoodleContent,
+      );
+      if (mounted) {
+        setState(() {
+          _contentDiscovery = result;
+          _importSummary =
+              '${result.candidateTotal} ${_plural(result.candidateTotal, 'material candidato encontrado', 'materiais candidatos encontrados')}.';
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PythonBackendException &&
+          error.code == PythonBackendError.ufmgReauthenticationRequired) {
+        setState(() {
+          _status = const PythonUFMGSessionStatus(
+            connected: false,
+            reauthenticationRequired: true,
+          );
+          _error = 'Sua sessão expirou. Reconecte para descobrir materiais.';
+        });
+      } else {
+        setState(
+          () => _error =
+              'Não foi possível descobrir os materiais do Moodle agora.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -426,6 +470,30 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               ),
             ),
         ],
+        if (_contentDiscovery != null) ...[
+          const SizedBox(height: 24),
+          Text(
+            'Materiais do Moodle',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          for (final course in _contentDiscovery!.courses)
+            Card(
+              child: ExpansionTile(
+                key: Key('moodle-content-${course.courseId}'),
+                title: Text(course.courseCode),
+                subtitle: Text(_contentStatus(course)),
+                children: [
+                  for (final candidate in course.candidates)
+                    ListTile(
+                      leading: Icon(_contentIcon(candidate.kind)),
+                      title: Text(candidate.title),
+                      subtitle: Text(_relevanceLabel(candidate.relevance)),
+                    ),
+                ],
+              ),
+            ),
+        ],
         const SizedBox(height: 24),
         if (!connected || _showReconnectForm) _connectionForm(),
         if (connected && !_showReconnectForm) ...[
@@ -466,6 +534,15 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             icon: const Icon(Icons.event_available_outlined),
             label: const Text('Importar datas do Moodle'),
           ),
+          if (widget.gateway is BackendMoodleContentGateway) ...[
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              key: const Key('moodle-discover-content'),
+              onPressed: _busy ? null : _discoverContent,
+              icon: const Icon(Icons.find_in_page_outlined),
+              label: const Text('Descobrir materiais do Moodle'),
+            ),
+          ],
           const SizedBox(height: 8),
           FilledButton.icon(
             key: const Key('ufmg-reconnect'),
@@ -574,6 +651,31 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     'assignment' => Icons.assignment_outlined,
     'quiz' => Icons.quiz_outlined,
     _ => Icons.event_outlined,
+  };
+
+  static IconData _contentIcon(String kind) => switch (kind) {
+    'page' => Icons.article_outlined,
+    'file' => Icons.attach_file,
+    _ => Icons.notes_outlined,
+  };
+
+  static String _contentStatus(
+    PythonMoodleCourseContent course,
+  ) => switch (course.status) {
+    PythonMoodleContentStatus.found =>
+      '${course.candidates.length} ${_plural(course.candidates.length, 'material candidato', 'materiais candidatos')}',
+    PythonMoodleContentStatus.empty =>
+      'Nenhuma publicação candidata encontrada',
+    PythonMoodleContentStatus.unmatched =>
+      'Disciplina não localizada no Moodle',
+    PythonMoodleContentStatus.ambiguous =>
+      'Mais de uma disciplina correspondente no Moodle',
+  };
+
+  static String _relevanceLabel(String relevance) => switch (relevance) {
+    'teaching_plan' => 'Possível plano de ensino',
+    'schedule' => 'Possível cronograma',
+    _ => 'Material da disciplina',
   };
 
   static String _messageFor(Object error) {

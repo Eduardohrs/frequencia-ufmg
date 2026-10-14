@@ -40,6 +40,7 @@ enum AuditedOperation {
   ufmgScheduleImport('ufmg_schedule_import'),
   moodleDateImport('moodle_date_import'),
   moodleDateList('moodle_date_list'),
+  moodleContentDiscovery('moodle_content_discovery'),
   ufmgSync('ufmg_sync');
 
   const AuditedOperation(this.eventPrefix);

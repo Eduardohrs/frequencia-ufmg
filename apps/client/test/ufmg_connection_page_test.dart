@@ -687,9 +687,119 @@ void main() {
       expect(find.text(entry.$2), findsOneWidget);
     }
   });
+
+  testWidgets('discovers and explains Moodle content candidates', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final button = find.byKey(const Key('moodle-discover-content'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+
+    expect(gateway.contentDiscoveryCalls, 1);
+    expect(find.text('3 materiais candidatos encontrados.'), findsOneWidget);
+    expect(find.text('3 materiais candidatos'), findsOneWidget);
+    expect(
+      find.text('Nenhuma publicação candidata encontrada'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+    expect(find.text('Plano de ensino'), findsOneWidget);
+    expect(find.text('Possível plano de ensino'), findsOneWidget);
+    expect(find.text('Possível cronograma'), findsOneWidget);
+    expect(find.text('Material da disciplina'), findsOneWidget);
+    expect(find.text('Disciplina não localizada no Moodle'), findsOneWidget);
+    expect(
+      find.text('Mais de uma disciplina correspondente no Moodle'),
+      findsOneWidget,
+    );
+    expect(logger.events, contains('moodle_content_discovery_succeeded'));
+  });
+
+  testWidgets('handles content discovery failure and expired session', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    gateway.contentDiscoveryError = StateError('failed');
+    await tester.ensureVisible(
+      find.byKey(const Key('moodle-discover-content')),
+    );
+    await tester.tap(find.byKey(const Key('moodle-discover-content')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Não foi possível descobrir os materiais do Moodle agora.'),
+      findsOneWidget,
+    );
+
+    gateway.contentDiscoveryError = const PythonBackendException(
+      PythonBackendError.ufmgReauthenticationRequired,
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('moodle-discover-content')),
+    );
+    await tester.tap(find.byKey(const Key('moodle-discover-content')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Sua sessão expirou. Reconecte para descobrir materiais.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('ignores a late content discovery failure after disposal', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    )..contentDiscoveryCompleter = Completer<PythonMoodleContentDiscovery>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('moodle-discover-content')),
+    );
+    await tester.tap(find.byKey(const Key('moodle-discover-content')));
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox());
+    gateway.contentDiscoveryCompleter!.completeError(StateError('late'));
+    await tester.pumpAndSettle();
+    expect(find.byType(UFMGConnectionPage), findsNothing);
+  });
 }
 
-final class _Gateway implements BackendUFMGSessionGateway {
+final class _Gateway
+    implements BackendUFMGSessionGateway, BackendMoodleContentGateway {
   _Gateway({required this.status});
 
   PythonUFMGSessionStatus status;
@@ -702,6 +812,8 @@ final class _Gateway implements BackendUFMGSessionGateway {
   Object? dateListError;
   Completer<PythonMoodleDateImportResult>? dateImportCompleter;
   Object? syncError;
+  Object? contentDiscoveryError;
+  Completer<PythonMoodleContentDiscovery>? contentDiscoveryCompleter;
   final credentials = <(String, String)>[];
   int disconnectCalls = 0;
   int importCalls = 0;
@@ -709,6 +821,67 @@ final class _Gateway implements BackendUFMGSessionGateway {
   int dateImportCalls = 0;
   List<PythonMoodleDate> dates = const [];
   int syncCalls = 0;
+  int contentDiscoveryCalls = 0;
+
+  @override
+  Future<PythonMoodleContentDiscovery> discoverMoodleContent() async {
+    contentDiscoveryCalls++;
+    if (contentDiscoveryCompleter case final completer?) {
+      return completer.future;
+    }
+    if (contentDiscoveryError case final error?) throw error;
+    return const PythonMoodleContentDiscovery(
+      candidateTotal: 3,
+      courses: [
+        PythonMoodleCourseContent(
+          courseId: 'dcc203',
+          courseCode: 'DCC203',
+          status: PythonMoodleContentStatus.found,
+          candidates: [
+            PythonMoodleContentCandidate(
+              sourceId: '101',
+              kind: 'page',
+              title: 'Plano de ensino',
+              url: null,
+              relevance: 'teaching_plan',
+            ),
+            PythonMoodleContentCandidate(
+              sourceId: '102',
+              kind: 'file',
+              title: 'Cronograma',
+              url: null,
+              relevance: 'schedule',
+            ),
+            PythonMoodleContentCandidate(
+              sourceId: '103',
+              kind: 'text',
+              title: 'Avisos',
+              url: null,
+              relevance: 'other',
+            ),
+          ],
+        ),
+        PythonMoodleCourseContent(
+          courseId: 'mat001',
+          courseCode: 'MAT001',
+          status: PythonMoodleContentStatus.empty,
+          candidates: [],
+        ),
+        PythonMoodleCourseContent(
+          courseId: 'ele028',
+          courseCode: 'ELE028',
+          status: PythonMoodleContentStatus.unmatched,
+          candidates: [],
+        ),
+        PythonMoodleCourseContent(
+          courseId: 'amb001',
+          courseCode: 'AMB001',
+          status: PythonMoodleContentStatus.ambiguous,
+          candidates: [],
+        ),
+      ],
+    );
+  }
 
   @override
   Future<PythonUFMGCourseImportResult> importUFMGCourses() async {
