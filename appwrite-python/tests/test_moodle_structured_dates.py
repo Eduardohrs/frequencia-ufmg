@@ -520,14 +520,39 @@ def test_moodle_acs_accepts_the_default_root_level_shibboleth_handler() -> None:
 
 
 @pytest.mark.parametrize(
-    "url",
+    ("url", "reason"),
     [
-        "http://virtual.ufmg.br/Shibboleth.sso/SAML2/POST",
-        "https://attacker.example/Shibboleth.sso/SAML2/POST",
-        "https://virtual.ufmg.br/Shibboleth.sso/SAML2/POST/extra",
-        "https://virtual.ufmg.br/other/Shibboleth.sso/SAML2/POST",
+        (
+            "http://virtual.ufmg.br/Shibboleth.sso/SAML2/POST",
+            "sso_redirect_scheme",
+        ),
+        (
+            "https://attacker.example/Shibboleth.sso/SAML2/POST",
+            "sso_redirect_host",
+        ),
+        (
+            "https://virtual.ufmg.br/Shibboleth.sso/SAML2/POST/",
+            "sso_redirect_trailing_slash",
+        ),
+        (
+            "https://virtual.ufmg.br/20261/Shibboleth.sso/SAML2/POST",
+            "sso_redirect_term_mismatch",
+        ),
+        (
+            "/20262/Shibboleth.sso/SAML2/POST",
+            "sso_redirect_relative_known",
+        ),
+        (
+            "https://virtual.ufmg.br/Shibboleth.sso/SAML2/POST/extra",
+            "sso_redirect_path",
+        ),
+        (
+            "https://virtual.ufmg.br/other/Shibboleth.sso/SAML2/POST",
+            "sso_redirect_path",
+        ),
     ],
 )
-def test_moodle_acs_rejects_every_other_origin_or_path(url: str) -> None:
-    with pytest.raises(InvalidMoodleResponse):
+def test_moodle_acs_rejects_every_other_origin_or_path(url: str, reason: str) -> None:
+    with pytest.raises(InvalidMoodleResponse) as error:
         _require_moodle_acs(url, "/20262")
+    assert error.value.reason == reason
