@@ -337,10 +337,14 @@ def _require_identity_provider(url: str) -> None:
 
 def _require_moodle_acs(url: str, root: str) -> None:
     parsed = urlsplit(url)
+    allowed_paths = {
+        "/Shibboleth.sso/SAML2/POST",
+        f"{root}/Shibboleth.sso/SAML2/POST",
+    }
     if (
         parsed.scheme != "https"
         or parsed.hostname != "virtual.ufmg.br"
-        or parsed.path != f"{root}/Shibboleth.sso/SAML2/POST"
+        or parsed.path not in allowed_paths
     ):
         raise InvalidMoodleResponse("sso_redirect")
 
