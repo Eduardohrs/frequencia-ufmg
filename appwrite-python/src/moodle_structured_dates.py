@@ -122,7 +122,6 @@ class MoodleStructuredDatesClient:
                     "limit": 100,
                     "offset": 0,
                     "sort": "fullname ASC",
-                    "requiredfields": ["id", "shortname", "fullname"],
                 },
             }
         ]
