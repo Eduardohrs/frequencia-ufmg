@@ -610,6 +610,27 @@ def test_moodle_date_import_sanitizes_failures(
     assert result["body"] == {"error": error}
 
 
+def test_moodle_date_import_logs_only_a_bounded_failure_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user", None))
+
+    class Service:
+        def import_dates(self, *_args: Any, **_kwargs: Any) -> None:
+            raise InvalidMoodleResponse("calendar_upstream_error")
+
+    monkeypatch.setattr(function, "_moodle_date_import_service", lambda *_: Service())
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/import/dates"))
+
+    result = function.main(context)
+
+    assert result["status"] == 502
+    assert json.loads(context.errors[0]) == {
+        "event": "moodle_response_invalid",
+        "reason": "calendar_upstream_error",
+    }
+
+
 def test_moodle_date_import_rejects_auth_and_nonempty_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

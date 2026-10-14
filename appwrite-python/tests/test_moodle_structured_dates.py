@@ -264,12 +264,22 @@ def test_client_rejects_unbounded_month_ranges(months: list[tuple[int, int]]) ->
     "payload",
     [
         b"not-json",
+        b"{}",
         b"[]",
+        b"[null]",
         json.dumps([{"error": True, "exception": {"message": "private"}}]).encode(),
         json.dumps([{"error": False, "data": {"weeks": "bad"}}]).encode(),
         b"x" * 1_048_577,
     ],
-    ids=["invalid-json", "empty", "upstream-error", "invalid-weeks", "oversized"],
+    ids=[
+        "invalid-json",
+        "invalid-batch",
+        "empty",
+        "invalid-call",
+        "upstream-error",
+        "invalid-weeks",
+        "oversized",
+    ],
 )
 def test_client_rejects_malformed_calendar_without_exposing_upstream_details(
     payload: bytes,
@@ -295,6 +305,11 @@ def test_client_rejects_malformed_calendar_without_exposing_upstream_details(
         )
 
     assert "private" not in str(error.value)
+
+
+def test_invalid_moodle_reason_is_bounded_for_safe_logging() -> None:
+    assert InvalidMoodleResponse("calendar_json").reason == "calendar_json"
+    assert InvalidMoodleResponse("private upstream detail: secret").reason == "unknown"
 
 
 def test_default_cookie_jar_scopes_the_private_token_and_can_use_injected_io() -> None:
