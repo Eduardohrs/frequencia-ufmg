@@ -47,6 +47,7 @@ from firestore_rest import (  # noqa: E402
     FirestoreRestClient,
     FirestoreUnavailable,
 )
+from moodle_content_discovery import MoodleContentDiscoveryService  # noqa: E402
 from moodle_date_import import MoodleDateImportService  # noqa: E402
 from moodle_structured_dates import (  # noqa: E402
     InvalidMoodleResponse,
@@ -227,6 +228,8 @@ def _dispatch(context: Any) -> Any:
         return _ufmg_schedule_import(context, allowed_origin)
     if path == "/v1/ufmg/import/dates" and method == "POST":
         return _moodle_date_import(context, allowed_origin)
+    if path == "/v1/ufmg/discover/content" and method == "POST":
+        return _moodle_content_discovery(context, allowed_origin)
     if path == "/v1/ufmg/sync" and method == "POST":
         return _ufmg_sync(context, allowed_origin)
     session_mutation = _session_mutation_path(path)
@@ -537,6 +540,45 @@ def _moodle_date_import(context: Any, origin: str | None) -> Any:
     return _respond(context, result, origin=origin)
 
 
+def _moodle_content_discovery(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/ufmg/discover/content/post")
+    if rejected is not None:
+        return rejected
+    if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
+        return _ufmg_session_error(context, origin, "moodle_content_discovery_rejected", 400)
+    try:
+        result = _moodle_content_discovery_service(
+            context.req.headers, cast(str, user_id)
+        ).discover(cast(str, user_id), now=int(time()))
+    except UFMGReauthenticationRequired:
+        return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
+    except MoodleUnavailable:
+        return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
+    except InvalidMoodleResponse as error:
+        return _ufmg_session_error(
+            context, origin, "moodle_response_invalid", 502, reason=error.reason
+        )
+    except UFMGSessionStoreUnavailable:
+        return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
+    except FirestoreAccessDenied:
+        return _course_error(context, origin, "course_access_denied", 403)
+    except FirestoreUnavailable:
+        return _course_error(context, origin, "course_store_unavailable", 503)
+    except (InvalidCourse, FirestoreRequestRejected, TypeError, ValueError):
+        return _ufmg_session_error(context, origin, "moodle_content_discovery_rejected", 502)
+    _log(
+        context,
+        "moodle_content_discovery_succeeded",
+        course_total=result["course_total"],
+        candidate_total=result["candidate_total"],
+        found=result["found"],
+        empty=result["empty"],
+        unmatched=result["unmatched"],
+        ambiguous=result["ambiguous"],
+    )
+    return _respond(context, result, origin=origin)
+
+
 def _attendance(context: Any, origin: str | None) -> Any:
     _, rejected = _authentication(context, origin, "/v1/attendance/evaluate")
     if rejected is not None:
@@ -805,6 +847,16 @@ def _moodle_date_import_service(headers: dict[str, str], user_id: str) -> Moodle
     )
 
 
+def _moodle_content_discovery_service(
+    headers: dict[str, str], user_id: str
+) -> MoodleContentDiscoveryService:
+    return MoodleContentDiscoveryService(
+        _ufmg_session_store(headers),
+        MoodleStructuredDatesClient(),
+        _course_repository(headers, user_id),
+    )
+
+
 def _ufmg_session_store(headers: dict[str, str]) -> AppwriteUFMGSessionStore:
     endpoint = environ.get("APPWRITE_FUNCTION_API_ENDPOINT", "")
     project = environ.get("APPWRITE_FUNCTION_PROJECT_ID", "")
@@ -900,6 +952,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/ufmg/import/courses",
         "/v1/ufmg/import/schedules",
         "/v1/ufmg/import/dates",
+        "/v1/ufmg/discover/content",
         "/v1/ufmg/sync",
     } or path.startswith("/v1/courses/")
 
@@ -1029,6 +1082,7 @@ def _route_name(path: str) -> str:
         "/v1/ufmg/import/courses",
         "/v1/ufmg/import/schedules",
         "/v1/ufmg/import/dates",
+        "/v1/ufmg/discover/content",
         "/v1/ufmg/sync",
     }:
         return path

@@ -444,6 +444,123 @@ def test_moodle_date_import_route_is_authenticated_and_logs_only_counts(
     }
 
 
+def test_moodle_content_discovery_returns_candidates_but_logs_only_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user", None))
+    result = {
+        "courses": [
+            {
+                "course_id": "private-id",
+                "course_code": "DCC203",
+                "status": "found",
+                "candidates": [
+                    {
+                        "source_id": "101",
+                        "kind": "page",
+                        "title": "Plano de ensino",
+                        "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=101",
+                        "relevance": "teaching_plan",
+                    }
+                ],
+            }
+        ],
+        "course_total": 1,
+        "candidate_total": 1,
+        "found": 1,
+        "empty": 0,
+        "unmatched": 0,
+        "ambiguous": 0,
+    }
+
+    class Service:
+        def discover(self, user_id: str, *, now: int) -> dict[str, object]:
+            assert user_id == "user" and now > 0
+            return result
+
+    monkeypatch.setattr(function, "_moodle_content_discovery_service", lambda *_: Service())
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/discover/content"))
+
+    assert function.main(context)["body"] == result
+    assert json.loads(context.logs[0]) == {
+        "event": "moodle_content_discovery_succeeded",
+        "course_total": 1,
+        "candidate_total": 1,
+        "found": 1,
+        "empty": 0,
+        "unmatched": 0,
+        "ambiguous": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "error"),
+    [
+        (UFMGReauthenticationRequired(), 401, "ufmg_reauthentication_required"),
+        (MoodleUnavailable(), 503, "moodle_unavailable"),
+        (InvalidMoodleResponse(), 502, "moodle_response_invalid"),
+        (UFMGSessionStoreUnavailable(), 503, "ufmg_session_store_unavailable"),
+        (FirestoreAccessDenied(), 403, "course_access_denied"),
+        (FirestoreUnavailable(), 503, "course_store_unavailable"),
+        (InvalidCourse(), 502, "moodle_content_discovery_rejected"),
+        (FirestoreRequestRejected(), 502, "moodle_content_discovery_rejected"),
+        (TypeError(), 502, "moodle_content_discovery_rejected"),
+        (ValueError(), 502, "moodle_content_discovery_rejected"),
+    ],
+)
+def test_moodle_content_discovery_sanitizes_failures(
+    failure: Exception,
+    status: int,
+    error: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user", None))
+
+    class Service:
+        def discover(self, *_args: Any, **_kwargs: Any) -> None:
+            raise failure
+
+    monkeypatch.setattr(function, "_moodle_content_discovery_service", lambda *_: Service())
+    result = function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/discover/content")))
+    assert result["status"] == status
+    assert result["body"] == {"error": error}
+
+
+def test_moodle_content_discovery_rejects_auth_and_nonempty_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_: (None, rejection))
+    assert function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/discover/content"))) is rejection
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user", None))
+    result = function.main(
+        FakeContext(
+            FakeRequest("POST", "/v1/ufmg/discover/content", body_json={"unexpected": True})
+        )
+    )
+    assert result["status"] == 400
+    assert result["body"] == {"error": "moodle_content_discovery_rejected"}
+
+
+def test_moodle_content_discovery_factory_uses_server_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = {"sessions": object(), "client": object(), "courses": object()}
+    captured: tuple[object, ...] = ()
+    monkeypatch.setattr(function, "_ufmg_session_store", lambda _: values["sessions"])
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: values["client"])
+    monkeypatch.setattr(function, "_course_repository", lambda *_: values["courses"])
+
+    class Service:
+        def __init__(self, *dependencies: object) -> None:
+            nonlocal captured
+            captured = dependencies
+
+    monkeypatch.setattr(function, "MoodleContentDiscoveryService", Service)
+    assert function._moodle_content_discovery_service({}, "user").__class__ is Service
+    assert captured == (values["sessions"], values["client"], values["courses"])
+
+
 def test_academic_dates_route_returns_only_bounded_canonical_records(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -5,16 +5,23 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+import moodle_structured_dates as module
 from moodle_structured_dates import (
     InvalidMoodleResponse,
     MoodleStructuredDatesClient,
     MoodleUnavailable,
+    _candidate_relevance,
+    _candidate_url,
+    _course_matches,
     _event,
     _parse_calendar,
+    _parse_course_list,
+    _parse_course_states,
     _require_ajax,
     _require_moodle_acs,
     _require_moodle_page,
     _SAMLFormParser,
+    _validate_course_codes,
 )
 from ufmg_session_store import UFMGReauthenticationRequired
 
@@ -108,6 +115,388 @@ def _calendar_response() -> bytes:
         ]
     }
     return json.dumps([{"error": False, "data": data}]).encode()
+
+
+def _course_list_response() -> bytes:
+    return json.dumps(
+        [
+            {
+                "error": False,
+                "data": {
+                    "courses": [
+                        {
+                            "id": 3701,
+                            "shortname": "DCC203 - POO",
+                            "fullname": "Programação Orientada a Objetos",
+                        },
+                        {
+                            "id": 4953,
+                            "shortname": "MAT001",
+                            "fullname": "Cálculo",
+                        },
+                        {
+                            "id": 9999,
+                            "shortname": "OUTRA",
+                            "fullname": "Outra disciplina",
+                        },
+                    ],
+                    "nextoffset": 3,
+                },
+            }
+        ]
+    ).encode()
+
+
+def _course_state_response() -> bytes:
+    dcc203 = {
+        "course": {},
+        "section": [],
+        "cm": [
+            {
+                "id": 101,
+                "name": "Plano de ensino",
+                "module": "page",
+                "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=101",
+                "uservisible": True,
+            },
+            {
+                "id": 102,
+                "name": "Cronograma da disciplina.pdf",
+                "module": "resource",
+                "url": "https://virtual.ufmg.br/20262/mod/resource/view.php?id=102",
+                "uservisible": True,
+            },
+            {
+                "id": 103,
+                "name": "Orientações gerais",
+                "module": "label",
+                "uservisible": True,
+            },
+            {
+                "id": 104,
+                "name": "Trabalho 1",
+                "module": "assign",
+                "url": "https://virtual.ufmg.br/20262/mod/assign/view.php?id=104",
+                "uservisible": True,
+            },
+        ],
+    }
+    empty = {"course": {}, "section": [], "cm": []}
+    return json.dumps(
+        [
+            {"error": False, "data": json.dumps(dcc203)},
+            {"error": False, "data": json.dumps(empty)},
+        ]
+    ).encode()
+
+
+def test_client_discovers_pages_files_text_and_empty_courses() -> None:
+    opener = _Opener(
+        [
+            _Response(
+                _saml_page(),
+                "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO",
+            ),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(
+                _course_list_response(),
+                "https://virtual.ufmg.br/20262/lib/ajax/service.php",
+                content_type="application/json",
+            ),
+            _Response(
+                _course_state_response(),
+                "https://virtual.ufmg.br/20262/lib/ajax/service.php",
+                content_type="application/json",
+            ),
+        ]
+    )
+
+    result = MoodleStructuredDatesClient(opener=opener).discover(
+        "private-ltpa-token",
+        term="2026-2",
+        course_codes=["DCC203", "ELE028", "MAT001"],
+    )
+
+    assert result == [
+        {
+            "course_code": "DCC203",
+            "status": "found",
+            "candidates": [
+                {
+                    "source_id": "101",
+                    "kind": "page",
+                    "title": "Plano de ensino",
+                    "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=101",
+                    "relevance": "teaching_plan",
+                },
+                {
+                    "source_id": "102",
+                    "kind": "file",
+                    "title": "Cronograma da disciplina.pdf",
+                    "url": "https://virtual.ufmg.br/20262/mod/resource/view.php?id=102",
+                    "relevance": "schedule",
+                },
+                {
+                    "source_id": "103",
+                    "kind": "text",
+                    "title": "Orientações gerais",
+                    "url": None,
+                    "relevance": "other",
+                },
+            ],
+        },
+        {"course_code": "ELE028", "status": "unmatched", "candidates": []},
+        {"course_code": "MAT001", "status": "empty", "candidates": []},
+    ]
+    assert len(opener.requests) == 4
+    course_call = json.loads(opener.requests[2][0].data)[0]
+    assert course_call["methodname"] == (
+        "core_course_get_enrolled_courses_by_timeline_classification"
+    )
+    state_calls = json.loads(opener.requests[3][0].data)
+    assert [call["args"] for call in state_calls] == [
+        {"courseid": 3701},
+        {"courseid": 4953},
+    ]
+
+
+def test_discovery_skips_course_state_call_when_nothing_matches() -> None:
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(
+                _course_list_response(),
+                "https://virtual.ufmg.br/20262/lib/ajax/service.php",
+                content_type="application/json",
+            ),
+        ]
+    )
+    assert (
+        MoodleStructuredDatesClient(opener=opener).discover(
+            "token", term="2026-2", course_codes=["ELE028"]
+        )[0]["status"]
+        == "unmatched"
+    )
+    assert len(opener.requests) == 3
+
+
+def test_discovery_enforces_the_global_candidate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    courses = json.dumps(
+        [
+            {
+                "error": False,
+                "data": {
+                    "courses": [
+                        {"id": 1, "shortname": "AAA1", "fullname": "A"},
+                        {"id": 2, "shortname": "BBB2", "fullname": "B"},
+                    ],
+                    "nextoffset": 2,
+                },
+            }
+        ]
+    ).encode()
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(
+                courses,
+                "https://virtual.ufmg.br/20262/lib/ajax/service.php",
+                content_type="application/json",
+            ),
+            _Response(
+                b"[]",
+                "https://virtual.ufmg.br/20262/lib/ajax/service.php",
+                content_type="application/json",
+            ),
+        ]
+    )
+    candidate = {"source_id": "1", "kind": "text", "title": "X", "url": None, "relevance": "other"}
+    monkeypatch.setattr(module, "_parse_course_states", lambda *_: [[candidate] * 500, [candidate]])
+    with pytest.raises(InvalidMoodleResponse) as error:
+        MoodleStructuredDatesClient(opener=opener).discover(
+            "token", term="2026-2", course_codes=["AAA1", "BBB2"]
+        )
+    assert error.value.reason == "candidate_limit"
+
+
+@pytest.mark.parametrize(
+    "codes",
+    [[], ["A"] * 51, ["DCC203", "DCC203"], [""], [" dcc203"], ["x" * 33], ["A B"]],
+)
+def test_discovery_rejects_invalid_course_code_sets(codes: list[str]) -> None:
+    with pytest.raises(ValueError):
+        _validate_course_codes("token", codes)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"not-json",
+        json.dumps({}).encode(),
+        json.dumps([]).encode(),
+        json.dumps([None]).encode(),
+        json.dumps([{"error": True}]).encode(),
+        json.dumps([{"error": False, "data": None}]).encode(),
+        json.dumps([{"error": False, "data": {"courses": None, "nextoffset": 0}}]).encode(),
+        json.dumps([{"error": False, "data": {"courses": [], "nextoffset": -1}}]).encode(),
+        json.dumps([{"error": False, "data": {"courses": [None], "nextoffset": 1}}]).encode(),
+        json.dumps(
+            [
+                {
+                    "error": False,
+                    "data": {
+                        "courses": [{"id": 0, "shortname": "X", "fullname": "Y"}],
+                        "nextoffset": 1,
+                    },
+                }
+            ]
+        ).encode(),
+        json.dumps(
+            [
+                {
+                    "error": False,
+                    "data": {
+                        "courses": [
+                            {"id": 1, "shortname": "X", "fullname": "Y"},
+                            {"id": 1, "shortname": "Z", "fullname": "Y"},
+                        ],
+                        "nextoffset": 2,
+                    },
+                }
+            ]
+        ).encode(),
+    ],
+)
+def test_course_list_parser_rejects_malformed_or_conflicting_data(payload: bytes) -> None:
+    with pytest.raises(InvalidMoodleResponse):
+        _parse_course_list(payload)
+
+
+def test_course_list_parser_deduplicates_and_matcher_uses_code_boundaries() -> None:
+    course = {"id": 1, "shortname": "POO DCC203", "fullname": "Objetos"}
+    payload = json.dumps(
+        [{"error": False, "data": {"courses": [course, course], "nextoffset": 2}}]
+    ).encode()
+    assert _parse_course_list(payload) == [course]
+    assert _course_matches("DCC203", course)
+    assert not _course_matches("DCC20", course)
+
+
+@pytest.mark.parametrize(
+    "payload,expected_calls",
+    [
+        (b"bad", 1),
+        (json.dumps({}).encode(), 1),
+        (json.dumps([]).encode(), 1),
+        (json.dumps([None]).encode(), 1),
+        (json.dumps([{"error": True}]).encode(), 1),
+        (json.dumps([{"error": False, "data": None}]).encode(), 1),
+        (json.dumps([{"error": False, "data": "bad"}]).encode(), 1),
+        (json.dumps([{"error": False, "data": "[]"}]).encode(), 1),
+        (json.dumps([{"error": False, "data": json.dumps({"cm": None})}]).encode(), 1),
+        (json.dumps([{"error": False, "data": json.dumps({"cm": [None]})}]).encode(), 1),
+        (
+            json.dumps(
+                [
+                    {
+                        "error": False,
+                        "data": json.dumps(
+                            {
+                                "cm": [
+                                    {
+                                        "id": 0,
+                                        "name": "X",
+                                        "module": "page",
+                                        "url": "x",
+                                        "uservisible": True,
+                                    }
+                                ]
+                            }
+                        ),
+                    }
+                ]
+            ).encode(),
+            1,
+        ),
+    ],
+)
+def test_course_state_parser_rejects_malformed_data(payload: bytes, expected_calls: int) -> None:
+    with pytest.raises(InvalidMoodleResponse):
+        _parse_course_states(payload, "/20262", expected_calls)
+
+
+def test_course_state_parser_supports_all_candidate_modules_and_visibility() -> None:
+    modules = [
+        {
+            "id": 1,
+            "name": "Ementa",
+            "module": "book",
+            "url": "https://virtual.ufmg.br/20262/mod/book/view.php?id=1",
+            "uservisible": True,
+        },
+        {
+            "id": 2,
+            "name": "Arquivos",
+            "module": "folder",
+            "url": "https://virtual.ufmg.br/20262/mod/folder/view.php?id=2",
+            "uservisible": True,
+        },
+        {
+            "id": 3,
+            "name": "Oculto",
+            "module": "page",
+            "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=3",
+            "uservisible": False,
+        },
+        {
+            "id": 4,
+            "name": "Fórum",
+            "module": "forum",
+            "url": "https://virtual.ufmg.br/20262/mod/forum/view.php?id=4",
+            "uservisible": True,
+        },
+    ]
+    payload = json.dumps([{"error": False, "data": json.dumps({"cm": modules})}]).encode()
+    result = _parse_course_states(payload, "/20262", 1)[0]
+    assert [item["kind"] for item in result] == ["page", "file"]
+    assert result[0]["relevance"] == "teaching_plan"
+
+
+def test_course_state_parser_rejects_conflicting_ids_and_unsafe_urls() -> None:
+    first = {
+        "id": 1,
+        "name": "Plano",
+        "module": "page",
+        "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=1",
+        "uservisible": True,
+    }
+    conflict = {**first, "name": "Outro"}
+    for modules in ([first, conflict], [{**first, "url": "https://attacker.example/x?id=1"}]):
+        payload = json.dumps([{"error": False, "data": json.dumps({"cm": modules})}]).encode()
+        with pytest.raises(InvalidMoodleResponse):
+            _parse_course_states(payload, "/20262", 1)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "x" * 2049,
+        "http://virtual.ufmg.br/20262/mod/page/view.php?id=1",
+        "https://virtual.ufmg.br/20262/mod/page/view.php?id=2",
+        "https://virtual.ufmg.br/20262/mod/page/view.php?id=1#x",
+    ],
+)
+def test_candidate_url_rejects_every_unsafe_shape(value: object) -> None:
+    with pytest.raises(ValueError):
+        _candidate_url(value, "/20262", "page", 1)
+
+
+def test_candidate_relevance_handles_accents_and_other_titles() -> None:
+    assert _candidate_relevance("Calendário") == "schedule"
+    assert _candidate_relevance("Avisos") == "other"
 
 
 def test_client_completes_saml_and_returns_sanitized_structured_events() -> None:
