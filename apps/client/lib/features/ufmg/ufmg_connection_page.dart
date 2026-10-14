@@ -374,7 +374,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                     ListTile(
                       leading: Icon(_contentIcon(candidate.kind)),
                       title: Text(candidate.title),
-                      subtitle: Text(_relevanceLabel(candidate.relevance)),
+                      subtitle: Text(_candidateLabel(candidate)),
                     ),
                 ],
               ),
@@ -581,6 +581,13 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     'schedule' => 'Possível cronograma',
     _ => 'Material da disciplina',
   };
+
+  static String _candidateLabel(PythonMoodleContentCandidate candidate) {
+    final relevance = _relevanceLabel(candidate.relevance);
+    return candidate.origin == PythonMoodleContentOrigin.metaturma
+        ? '$relevance • Metaturma'
+        : relevance;
+  }
 
   static String _messageFor(Object error) {
     if (error is PythonBackendException) {

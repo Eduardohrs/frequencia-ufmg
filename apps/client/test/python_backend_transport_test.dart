@@ -386,6 +386,7 @@ void main() {
                     'url':
                         'https://virtual.ufmg.br/20262/mod/page/view.php?id=101',
                     'relevance': 'teaching_plan',
+                    'origin': 'canonical',
                   },
                   {
                     'source_id': '102',
@@ -393,6 +394,7 @@ void main() {
                     'title': 'Orientações',
                     'url': null,
                     'relevance': 'other',
+                    'origin': 'metaturma',
                   },
                 ],
               },
@@ -417,6 +419,7 @@ void main() {
             ],
             'course_total': 4,
             'candidate_total': 2,
+            'metaturma_candidate_total': 1,
             'found': 1,
             'empty': 1,
             'unmatched': 1,
@@ -430,7 +433,12 @@ void main() {
     final result = await transport.discoverMoodleContent();
 
     expect(result.candidateTotal, 2);
+    expect(result.metaturmaCandidateTotal, 1);
     expect(result.courses.first.candidates.first.title, 'Plano de ensino');
+    expect(
+      result.courses.first.candidates.last.origin,
+      PythonMoodleContentOrigin.metaturma,
+    );
     expect(result.courses[1].status, PythonMoodleContentStatus.empty);
     expect(captured.method, 'POST');
     expect(captured.url.path, '/v1/ufmg/discover/content');
@@ -446,9 +454,24 @@ void main() {
       'title': title,
       'url': 'https://virtual.ufmg.br/20262/mod/page/view.php?id=101',
       'relevance': 'other',
+      'origin': 'canonical',
     });
 
     expect(candidate.title, title);
+  });
+
+  test('rejects unknown Moodle content origins', () {
+    expect(
+      () => PythonMoodleContentCandidate.fromJson({
+        'source_id': '101',
+        'kind': 'page',
+        'title': 'Material',
+        'url': 'https://virtual.ufmg.br/20262/mod/page/view.php?id=101',
+        'relevance': 'other',
+        'origin': 'external',
+      }),
+      throwsFormatException,
+    );
   });
 
   test('lists canonical Moodle dates in chronological order', () async {

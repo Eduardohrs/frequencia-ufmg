@@ -508,12 +508,14 @@ def test_moodle_content_discovery_returns_candidates_but_logs_only_counts(
                         "title": "Plano de ensino",
                         "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=101",
                         "relevance": "teaching_plan",
+                        "origin": "metaturma",
                     }
                 ],
             }
         ],
         "course_total": 1,
         "candidate_total": 1,
+        "metaturma_candidate_total": 1,
         "found": 1,
         "empty": 0,
         "unmatched": 0,
@@ -537,6 +539,7 @@ def test_moodle_content_discovery_returns_candidates_but_logs_only_counts(
         "empty": 0,
         "unmatched": 0,
         "ambiguous": 0,
+        "metaturma_candidates": 1,
     }
 
 

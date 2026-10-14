@@ -85,6 +85,8 @@ abstract interface class BackendUFMGSessionGateway {
 
 enum PythonMoodleContentStatus { found, empty, unmatched, ambiguous }
 
+enum PythonMoodleContentOrigin { canonical, metaturma }
+
 final class PythonMoodleContentCandidate {
   const PythonMoodleContentCandidate({
     required this.sourceId,
@@ -92,16 +94,22 @@ final class PythonMoodleContentCandidate {
     required this.title,
     required this.url,
     required this.relevance,
+    required this.origin,
   });
 
   factory PythonMoodleContentCandidate.fromJson(Map<String, Object?> json) {
-    const keys = {'source_id', 'kind', 'title', 'url', 'relevance'};
+    const keys = {'source_id', 'kind', 'title', 'url', 'relevance', 'origin'};
     if (!_hasExactKeys(json, keys)) throw const FormatException();
     final sourceId = json['source_id'];
     final kind = json['kind'];
     final title = json['title'];
     final rawUrl = json['url'];
     final relevance = json['relevance'];
+    final origin = switch (json['origin']) {
+      'canonical' => PythonMoodleContentOrigin.canonical,
+      'metaturma' => PythonMoodleContentOrigin.metaturma,
+      _ => null,
+    };
     final uri = rawUrl is String ? Uri.tryParse(rawUrl) : null;
     if (sourceId is! String ||
         sourceId.isEmpty ||
@@ -113,6 +121,7 @@ final class PythonMoodleContentCandidate {
         title.length > 1024 ||
         relevance is! String ||
         !const {'teaching_plan', 'schedule', 'other'}.contains(relevance) ||
+        origin == null ||
         (kind == 'text') != (rawUrl == null) ||
         (rawUrl != null &&
             (uri == null ||
@@ -128,6 +137,7 @@ final class PythonMoodleContentCandidate {
       title: title,
       url: uri,
       relevance: relevance,
+      origin: origin,
     );
   }
 
@@ -136,6 +146,7 @@ final class PythonMoodleContentCandidate {
   final String title;
   final Uri? url;
   final String relevance;
+  final PythonMoodleContentOrigin origin;
 }
 
 final class PythonMoodleCourseContent {
@@ -156,10 +167,12 @@ final class PythonMoodleContentDiscovery {
   const PythonMoodleContentDiscovery({
     required this.courses,
     required this.candidateTotal,
+    required this.metaturmaCandidateTotal,
   });
 
   final List<PythonMoodleCourseContent> courses;
   final int candidateTotal;
+  final int metaturmaCandidateTotal;
 }
 
 final class PythonUFMGCourseImportResult {
@@ -1049,6 +1062,7 @@ final class PythonBackendTransport
         'courses',
         'course_total',
         'candidate_total',
+        'metaturma_candidate_total',
         'found',
         'empty',
         'unmatched',
@@ -1059,12 +1073,16 @@ final class PythonBackendTransport
       }
       final rawCourses = value['courses'];
       final candidateTotal = value['candidate_total'];
+      final metaturmaCandidateTotal = value['metaturma_candidate_total'];
       if (rawCourses is! List ||
           rawCourses.length > 50 ||
           value['course_total'] != rawCourses.length ||
           candidateTotal is! int ||
           candidateTotal < 0 ||
-          candidateTotal > 500) {
+          candidateTotal > 500 ||
+          metaturmaCandidateTotal is! int ||
+          metaturmaCandidateTotal < 0 ||
+          metaturmaCandidateTotal > candidateTotal) {
         throw const FormatException();
       }
       final counts = <PythonMoodleContentStatus, int>{};
@@ -1123,6 +1141,14 @@ final class PythonBackendTransport
           })
           .toList(growable: false);
       if (candidates != candidateTotal ||
+          courses
+                  .expand((course) => course.candidates)
+                  .where(
+                    (candidate) =>
+                        candidate.origin == PythonMoodleContentOrigin.metaturma,
+                  )
+                  .length !=
+              metaturmaCandidateTotal ||
           PythonMoodleContentStatus.values.any(
             (status) => value[status.name] != (counts[status] ?? 0),
           )) {
@@ -1131,6 +1157,7 @@ final class PythonBackendTransport
       return PythonMoodleContentDiscovery(
         courses: courses,
         candidateTotal: candidateTotal,
+        metaturmaCandidateTotal: metaturmaCandidateTotal,
       );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);

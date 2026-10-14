@@ -3,6 +3,7 @@
 import json
 import re
 import unicodedata
+from collections import defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from html.parser import HTMLParser
@@ -126,12 +127,18 @@ class MoodleStructuredDatesClient:
             }
         ]
         courses = _parse_course_list(self._ajax(root, ajax_path, sesskey, course_call))
-        matched: list[tuple[str, dict[str, object]]] = []
+        matched: list[tuple[str, dict[str, object], str]] = []
         results: dict[str, dict[str, object]] = {}
         for code in codes:
             matches = [course for course in courses if _course_matches(code, course)]
-            if len(matches) == 1:
-                matched.append((code, matches[0]))
+            canonical = [course for course in matches if not _is_metaturma(course)]
+            if len(canonical) == 1:
+                matched.append((code, canonical[0], "canonical"))
+                matched.extend(
+                    (code, course, "metaturma")
+                    for course in matches
+                    if _is_metaturma(course)
+                )
             else:
                 results[code] = {
                     "course_code": code,
@@ -146,7 +153,7 @@ class MoodleStructuredDatesClient:
                     "methodname": "core_courseformat_get_state",
                     "args": {"courseid": course["id"]},
                 }
-                for index, (_, course) in enumerate(matched)
+                for index, (_, course, _) in enumerate(matched)
             ]
             states = _parse_course_states(
                 self._ajax(root, ajax_path, sesskey, state_calls),
@@ -154,10 +161,13 @@ class MoodleStructuredDatesClient:
                 len(matched),
             )
             total = 0
-            for (code, _), candidates in zip(matched, states, strict=True):
+            grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
+            for (code, _, origin), candidates in zip(matched, states, strict=True):
                 total += len(candidates)
                 if total > MAX_CANDIDATES:
                     raise InvalidMoodleResponse("candidate_limit")
+                grouped[code].extend(candidate | {"origin": origin} for candidate in candidates)
+            for code, candidates in grouped.items():
                 results[code] = {
                     "course_code": code,
                     "status": "found" if candidates else "empty",
@@ -484,6 +494,14 @@ def _course_matches(code: str, course: dict[str, object]) -> bool:
     pattern = re.compile(rf"(?<![A-Z0-9]){re.escape(code)}(?![A-Z0-9])", re.IGNORECASE)
     return any(
         pattern.search(str(course[field])) is not None for field in ("shortname", "fullname")
+    )
+
+
+def _is_metaturma(course: dict[str, object]) -> bool:
+    pattern = re.compile(r"(?<![A-Z0-9])METATURMA(?![A-Z0-9])", re.IGNORECASE)
+    return any(
+        pattern.search(" ".join(str(course[field]).split())) is not None
+        for field in ("shortname", "fullname")
     )
 
 
