@@ -436,8 +436,10 @@ def test_course_state_parser_rejects_malformed_data(payload: bytes, expected_cal
 @pytest.mark.parametrize(
     "overrides,reason",
     [
-        ({"id": "1"}, "course_module_id_type"),
+        ({"id": None}, "course_module_id_type"),
+        ({"id": "01"}, "course_module_id_format"),
         ({"id": 0}, "course_module_id_range"),
+        ({"id": 2_147_483_648}, "course_module_id_range"),
         ({"name": None}, "course_module_title_type"),
         ({"name": "   "}, "course_module_title_empty"),
         ({"name": "x" * 1_025}, "course_module_title_length"),
@@ -460,6 +462,21 @@ def test_course_state_parser_reports_safe_module_field_reason(
         _parse_course_states(payload, "/20262", 1)
 
     assert caught.value.reason == reason
+
+
+def test_course_state_parser_canonicalizes_numeric_string_module_ids() -> None:
+    module = {
+        "id": "123",
+        "name": "Plano",
+        "module": "page",
+        "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=123",
+        "uservisible": True,
+    }
+    payload = json.dumps([{"error": False, "data": json.dumps({"cm": [module]})}]).encode()
+
+    result = _parse_course_states(payload, "/20262", 1)[0]
+
+    assert result[0]["source_id"] == "123"
 
 
 def test_course_state_parser_supports_all_candidate_modules_and_visibility() -> None:

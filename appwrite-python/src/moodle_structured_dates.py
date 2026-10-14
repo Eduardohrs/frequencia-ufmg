@@ -535,11 +535,17 @@ def _parse_course_states(
                 }.get(module)
                 if kind is None:
                     continue
-                source_id = raw.get("id")
+                raw_source_id = raw.get("id")
                 raw_title = raw.get("name")
-                if type(source_id) is not int:
+                if type(raw_source_id) is int:
+                    source_id = raw_source_id
+                elif isinstance(raw_source_id, str):
+                    if re.fullmatch(r"[1-9][0-9]{0,9}", raw_source_id) is None:
+                        raise ValueError("course_module_id_format")
+                    source_id = int(raw_source_id)
+                else:
                     raise ValueError("course_module_id_type")
-                if source_id < 1:
+                if source_id < 1 or source_id > 2_147_483_647:
                     raise ValueError("course_module_id_range")
                 if not isinstance(raw_title, str):
                     raise ValueError("course_module_title_type")
