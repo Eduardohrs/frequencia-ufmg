@@ -61,7 +61,7 @@ class _Opener:
 
 def _saml_page() -> bytes:
     return b"""
-      <form method="post" action="https://virtual.ufmg.br/20262/Shibboleth.sso/SAML2/POST">
+      <form method="post" action="https://virtual.ufmg.br/samlsso">
         <input type="hidden" name="RelayState" value="relay-safe">
         <input type="hidden" name="SAMLResponse" value="assertion-safe">
       </form>
@@ -517,6 +517,10 @@ def test_moodle_acs_accepts_the_default_root_level_shibboleth_handler() -> None:
         "https://virtual.ufmg.br/Shibboleth.sso/SAML2/POST",
         "/20262",
     )
+
+
+def test_moodle_acs_accepts_the_ufmg_saml_consumer() -> None:
+    _require_moodle_acs("https://virtual.ufmg.br/samlsso", "/20262")
 
 
 @pytest.mark.parametrize(
