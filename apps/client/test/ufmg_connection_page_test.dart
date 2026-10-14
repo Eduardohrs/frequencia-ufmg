@@ -58,7 +58,7 @@ void main() {
     );
   });
 
-  testWidgets('imports courses while connected and shows the safe summary', (
+  testWidgets('syncs SIGA while connected and shows the safe summary', (
     tester,
   ) async {
     final gateway = _Gateway(
@@ -77,15 +77,17 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('ufmg-import-courses')));
+    await tester.tap(find.byKey(const Key('ufmg-sync-siga')));
     await tester.pumpAndSettle();
 
-    expect(gateway.importCalls, 1);
+    expect(gateway.syncCalls, 1);
     expect(
-      find.text('2 disciplinas importadas. 3 já estavam cadastradas.'),
+      find.textContaining(
+        '2 disciplinas importadas. 3 já estavam cadastradas.',
+      ),
       findsOneWidget,
     );
-    expect(logger.events, contains('ufmg_course_import_succeeded'));
+    expect(logger.events, contains('ufmg_sync_succeeded'));
   });
 
   testWidgets('keeps connection controls available when date listing fails', (
@@ -107,11 +109,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('UFMG conectada'), findsOneWidget);
-    expect(find.byKey(const Key('moodle-import-dates')), findsOneWidget);
+    expect(find.byKey(const Key('ufmg-sync-moodle')), findsOneWidget);
     expect(logger.events, contains('moodle_date_list_failed'));
   });
 
-  testWidgets('imports schedules and exposes preserved conflicts', (
+  testWidgets('syncs courses and schedules and exposes preserved conflicts', (
     tester,
   ) async {
     final gateway = _Gateway(
@@ -128,17 +130,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('ufmg-import-schedules')));
+    await tester.tap(find.byKey(const Key('ufmg-sync-siga')));
     await tester.pumpAndSettle();
 
-    expect(gateway.scheduleImportCalls, 1);
+    expect(gateway.syncCalls, 1);
     expect(find.textContaining('2 grades atualizadas'), findsOneWidget);
     expect(find.textContaining('1 conflito preservado'), findsOneWidget);
-    expect(
-      find.textContaining('1 disciplina ainda não cadastrada'),
-      findsOneWidget,
-    );
-    expect(logger.events, contains('ufmg_schedule_import_succeeded'));
+    expect(find.textContaining('3 já estavam cadastradas'), findsOneWidget);
+    expect(logger.events, contains('ufmg_sync_succeeded'));
   });
 
   testWidgets('imports structured Moodle dates and reports unmatched items', (
@@ -158,12 +157,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final button = find.byKey(const Key('moodle-import-dates'));
+    final button = find.byKey(const Key('ufmg-sync-moodle'));
     await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pumpAndSettle();
 
     expect(gateway.dateImportCalls, 1);
+    expect(gateway.contentDiscoveryCalls, 1);
     expect(find.textContaining('2 datas do Moodle importadas'), findsOneWidget);
     expect(find.textContaining('1 data atualizada'), findsOneWidget);
     expect(
@@ -217,11 +217,11 @@ void main() {
         const PythonBackendException(
           PythonBackendError.ufmgReauthenticationRequired,
         ),
-        'Sua sessão expirou. Reconecte para importar.',
+        'Sua sessão expirou. Reconecte para sincronizar o Moodle.',
       ),
       (
         const PythonBackendException(PythonBackendError.unavailable),
-        'Não foi possível consultar as datas no Moodle agora.',
+        'Não foi possível sincronizar com o Moodle agora.',
       ),
       (
         const PythonBackendException(PythonBackendError.rateLimited),
@@ -229,16 +229,16 @@ void main() {
       ),
       (
         const PythonBackendException(PythonBackendError.invalidResponse),
-        'Não foi possível importar as datas do Moodle.',
+        'Não foi possível sincronizar os dados do Moodle.',
       ),
       (
         StateError('unexpected'),
-        'Não foi possível importar as datas do Moodle.',
+        'Não foi possível sincronizar os dados do Moodle.',
       ),
     ];
     for (final (error, message) in cases) {
       gateway.dateImportError = error;
-      final button = find.byKey(const Key('moodle-import-dates'));
+      final button = find.byKey(const Key('ufmg-sync-moodle'));
       await tester.ensureVisible(button);
       await tester.tap(button);
       await tester.pumpAndSettle();
@@ -279,7 +279,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final button = find.byKey(const Key('moodle-import-dates'));
+    final button = find.byKey(const Key('ufmg-sync-moodle'));
     await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pump();
@@ -289,7 +289,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('runs every ready import stage through one synchronization', (
+  testWidgets('runs every ready SIGA stage through one synchronization', (
     tester,
   ) async {
     final gateway = _Gateway(
@@ -314,20 +314,45 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('ufmg-sync')));
+    await tester.tap(find.byKey(const Key('ufmg-sync-siga')));
     await tester.pumpAndSettle();
 
     expect(gateway.syncCalls, 1);
     expect(find.textContaining('2 disciplinas importadas'), findsOneWidget);
     expect(find.textContaining('2 grades atualizadas'), findsOneWidget);
     expect(find.textContaining('1 conflito preservado'), findsOneWidget);
-    expect(find.textContaining('2 datas do Moodle importadas'), findsOneWidget);
-    expect(
-      find.textContaining('1 data sem disciplina correspondente'),
-      findsOneWidget,
-    );
     expect(logger.events, contains('ufmg_sync_succeeded'));
     expect(await schedule.isDue('user-1'), isFalse);
+  });
+
+  testWidgets('presents one focused action for SIGA and one for Moodle', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ufmg-sync-siga')), findsOneWidget);
+    expect(find.text('Disciplinas e horários'), findsOneWidget);
+    expect(find.byKey(const Key('ufmg-sync-moodle')), findsOneWidget);
+    expect(find.text('Datas, planos de ensino e cronogramas'), findsOneWidget);
+    expect(find.byKey(const Key('ufmg-sync')), findsNothing);
+    expect(find.byKey(const Key('ufmg-import-courses')), findsNothing);
+    expect(find.byKey(const Key('ufmg-import-schedules')), findsNothing);
+    expect(find.byKey(const Key('moodle-import-dates')), findsNothing);
+    expect(find.byKey(const Key('moodle-discover-content')), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('explains synchronization failures and expired sessions', (
@@ -369,7 +394,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('ufmg-sync')));
+      await tester.tap(find.byKey(const Key('ufmg-sync-siga')));
       await tester.pumpAndSettle();
 
       expect(find.textContaining(failure.$2), findsOneWidget);
@@ -377,7 +402,7 @@ void main() {
     }
   });
 
-  testWidgets('handles expired and failed schedule imports safely', (
+  testWidgets('handles expired and failed SIGA synchronization safely', (
     tester,
   ) async {
     final failures = <(Object, String)>[
@@ -385,19 +410,19 @@ void main() {
         const PythonBackendException(
           PythonBackendError.ufmgReauthenticationRequired,
         ),
-        'Sua sessão expirou. Reconecte para importar.',
+        'Sua sessão expirou. Reconecte para sincronizar.',
       ),
       (
         const PythonBackendException(PythonBackendError.ufmgUnavailable),
-        'Não foi possível consultar os horários na UFMG agora.',
+        'Não foi possível sincronizar com a UFMG agora.',
       ),
       (
         const PythonBackendException(PythonBackendError.unavailable),
-        'Não foi possível consultar os horários na UFMG agora.',
+        'Não foi possível sincronizar com a UFMG agora.',
       ),
       (
         const PythonBackendException(PythonBackendError.timeout),
-        'Não foi possível consultar os horários na UFMG agora.',
+        'Não foi possível sincronizar com a UFMG agora.',
       ),
       (
         const PythonBackendException(PythonBackendError.rateLimited),
@@ -405,9 +430,12 @@ void main() {
       ),
       (
         const PythonBackendException(PythonBackendError.invalidResponse),
-        'Não foi possível importar os horários.',
+        'Não foi possível sincronizar os dados da UFMG.',
       ),
-      (StateError('unexpected'), 'Não foi possível importar os horários.'),
+      (
+        StateError('unexpected'),
+        'Não foi possível sincronizar os dados da UFMG.',
+      ),
     ];
     for (var index = 0; index < failures.length; index++) {
       final gateway = _Gateway(
@@ -415,7 +443,7 @@ void main() {
           connected: true,
           reauthenticationRequired: false,
         ),
-      )..scheduleImportError = failures[index].$1;
+      )..syncError = failures[index].$1;
       await tester.pumpWidget(
         MaterialApp(
           key: ValueKey('schedule-failure-$index'),
@@ -424,7 +452,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('ufmg-import-schedules')));
+      await tester.tap(find.byKey(const Key('ufmg-sync-siga')));
       await tester.pumpAndSettle();
 
       expect(find.text(failures[index].$2), findsOneWidget);
@@ -443,7 +471,7 @@ void main() {
               expiresAt: DateTime.utc(2026, 10, 12, 21),
             ),
           )
-          ..importError = const PythonBackendException(
+          ..syncError = const PythonBackendException(
             PythonBackendError.ufmgReauthenticationRequired,
           );
     await tester.pumpWidget(
@@ -453,11 +481,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('ufmg-import-courses')));
+    await tester.tap(find.byKey(const Key('ufmg-sync-siga')));
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Sua sessão expirou. Reconecte para importar.'),
+      find.text('Sua sessão expirou. Reconecte para sincronizar.'),
       findsOneWidget,
     );
     expect(find.byKey(const Key('ufmg-username')), findsOneWidget);
@@ -469,11 +497,11 @@ void main() {
     final failures = <(Object, String)>[
       (
         const PythonBackendException(PythonBackendError.timeout),
-        'Não foi possível consultar as matrículas na UFMG agora.',
+        'Não foi possível sincronizar com a UFMG agora.',
       ),
       (
         const PythonBackendException(PythonBackendError.unavailable),
-        'Não foi possível consultar as matrículas na UFMG agora.',
+        'Não foi possível sincronizar com a UFMG agora.',
       ),
       (
         const PythonBackendException(PythonBackendError.rateLimited),
@@ -481,9 +509,12 @@ void main() {
       ),
       (
         const PythonBackendException(PythonBackendError.invalidResponse),
-        'Não foi possível importar as disciplinas.',
+        'Não foi possível sincronizar os dados da UFMG.',
       ),
-      (StateError('unexpected'), 'Não foi possível importar as disciplinas.'),
+      (
+        StateError('unexpected'),
+        'Não foi possível sincronizar os dados da UFMG.',
+      ),
     ];
     for (var index = 0; index < failures.length; index++) {
       final gateway = _Gateway(
@@ -493,7 +524,7 @@ void main() {
           createdAt: DateTime.utc(2026, 10, 12, 12),
           expiresAt: DateTime.utc(2026, 10, 12, 21),
         ),
-      )..importError = failures[index].$1;
+      )..syncError = failures[index].$1;
       await tester.pumpWidget(
         MaterialApp(
           key: ValueKey(index),
@@ -502,7 +533,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('ufmg-import-courses')));
+      await tester.tap(find.byKey(const Key('ufmg-sync-siga')));
       await tester.pumpAndSettle();
 
       expect(find.text(failures[index].$2), findsOneWidget);
@@ -529,6 +560,8 @@ void main() {
       await tester.enterText(find.byKey(const Key('ufmg-username')), 'student');
       await tester.enterText(find.byKey(const Key('ufmg-password')), 'secret');
       await tester.tap(find.byKey(const Key('ufmg-connect')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ufmg-manage-connection')));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const Key('ufmg-disconnect')));
       await tester.tap(find.byKey(const Key('ufmg-disconnect')));
@@ -605,6 +638,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ufmg-manage-connection')));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const Key('ufmg-reconnect')));
       await tester.tap(find.byKey(const Key('ufmg-reconnect')));
       await tester.pumpAndSettle();
@@ -621,6 +656,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('ufmg-username')), findsNothing);
 
+      await tester.tap(find.byKey(const Key('ufmg-manage-connection')));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const Key('ufmg-disconnect')));
       await tester.tap(find.byKey(const Key('ufmg-disconnect')));
       await tester.pumpAndSettle();
@@ -705,18 +742,22 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final button = find.byKey(const Key('moodle-discover-content'));
+    final button = find.byKey(const Key('ufmg-sync-moodle'));
     await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pumpAndSettle();
 
     expect(gateway.contentDiscoveryCalls, 1);
-    expect(find.text('3 materiais candidatos encontrados.'), findsOneWidget);
+    expect(
+      find.textContaining('3 materiais candidatos encontrados'),
+      findsOneWidget,
+    );
     expect(find.text('3 materiais candidatos'), findsOneWidget);
     expect(
       find.text('Nenhuma publicação candidata encontrada'),
       findsOneWidget,
     );
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
     await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
     await tester.pumpAndSettle();
     expect(find.text('Plano de ensino'), findsOneWidget);
@@ -747,26 +788,22 @@ void main() {
     );
     await tester.pumpAndSettle();
     gateway.contentDiscoveryError = StateError('failed');
-    await tester.ensureVisible(
-      find.byKey(const Key('moodle-discover-content')),
-    );
-    await tester.tap(find.byKey(const Key('moodle-discover-content')));
+    await tester.ensureVisible(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
     await tester.pumpAndSettle();
     expect(
-      find.text('Não foi possível descobrir os materiais do Moodle agora.'),
+      find.text('Não foi possível sincronizar os dados do Moodle.'),
       findsOneWidget,
     );
 
     gateway.contentDiscoveryError = const PythonBackendException(
       PythonBackendError.ufmgReauthenticationRequired,
     );
-    await tester.ensureVisible(
-      find.byKey(const Key('moodle-discover-content')),
-    );
-    await tester.tap(find.byKey(const Key('moodle-discover-content')));
+    await tester.ensureVisible(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
     await tester.pumpAndSettle();
     expect(
-      find.text('Sua sessão expirou. Reconecte para descobrir materiais.'),
+      find.text('Sua sessão expirou. Reconecte para sincronizar o Moodle.'),
       findsOneWidget,
     );
   });
@@ -786,10 +823,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(
-      find.byKey(const Key('moodle-discover-content')),
-    );
-    await tester.tap(find.byKey(const Key('moodle-discover-content')));
+    await tester.ensureVisible(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
     await tester.pump();
     await tester.pumpWidget(const SizedBox());
     gateway.contentDiscoveryCompleter!.completeError(StateError('late'));
@@ -798,8 +833,7 @@ void main() {
   });
 }
 
-final class _Gateway
-    implements BackendUFMGSessionGateway, BackendMoodleContentGateway {
+final class _Gateway implements BackendUFMGSessionGateway {
   _Gateway({required this.status});
 
   PythonUFMGSessionStatus status;
@@ -940,10 +974,10 @@ final class _Gateway
   }
 
   @override
-  Future<PythonUFMGSyncResult> syncUFMG() async {
+  Future<PythonUFMGSigaSyncResult> syncSiga() async {
     syncCalls++;
     if (syncError case final error?) throw error;
-    return PythonUFMGSyncResult(
+    return PythonUFMGSigaSyncResult(
       courses: const PythonUFMGCourseImportResult(
         created: 2,
         existing: 3,
@@ -956,14 +990,6 @@ final class _Gateway
         conflicts: 1,
         missingCourses: 0,
         meetingsImported: 3,
-      ),
-      dates: const PythonMoodleDateImportResult(
-        total: 4,
-        matched: 3,
-        unmatched: 1,
-        created: 2,
-        updated: 1,
-        unchanged: 0,
       ),
       checkedAt: DateTime.utc(2026, 10, 13, 12),
       nextAutomaticSyncAt: DateTime.utc(2026, 12, 6),

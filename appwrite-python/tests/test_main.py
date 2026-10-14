@@ -407,6 +407,53 @@ def test_ufmg_sync_route_returns_the_bounded_combined_contract(
     }
 
 
+def test_ufmg_siga_sync_route_preserves_the_legacy_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    routes: list[str] = []
+    result_payload = {
+        "courses": {"created": 1, "existing": 4, "total": 5},
+        "schedules": {
+            "total": 5,
+            "updated": 1,
+            "unchanged": 3,
+            "conflicts": 1,
+            "missing_courses": 0,
+            "meetings_imported": 2,
+        },
+        "checked_at": "2026-10-13T12:00:00Z",
+        "next_automatic_sync_at": "2026-12-06T00:00:00Z",
+    }
+
+    class Service:
+        def sync_siga(self, user_id: str, *, now: int) -> dict[str, object]:
+            assert user_id == "firebase-user"
+            assert now > 0
+            return result_payload
+
+    def authenticate(_context: Any, _origin: Any, route: str) -> tuple[str, None]:
+        routes.append(route)
+        return "firebase-user", None
+
+    monkeypatch.setattr(function, "_authentication", authenticate)
+    monkeypatch.setattr(function, "_ufmg_sync_service", lambda *_args: Service())
+    monkeypatch.setenv("ENABLE_SCHEDULE_WRITES", "true")
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/sync/siga"))
+
+    response = function.main(context)
+
+    assert response["body"] == result_payload
+    assert routes == ["/v1/ufmg/sync/siga/post"]
+    assert json.loads(context.logs[0]) == {
+        "course_created": 1,
+        "course_total": 5,
+        "event": "ufmg_siga_sync_succeeded",
+        "schedule_conflicts": 1,
+        "schedule_total": 5,
+        "schedule_updated": 1,
+    }
+
+
 def test_moodle_date_import_route_is_authenticated_and_logs_only_counts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -825,6 +872,8 @@ def test_ufmg_sync_sanitizes_failures(
     class Service:
         def sync(self, *_args: Any, **_kwargs: Any) -> None:
             raise failure
+
+        sync_siga = sync
 
     monkeypatch.setattr(function, "_ufmg_sync_service", lambda *_args: Service())
 

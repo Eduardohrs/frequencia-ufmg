@@ -46,6 +46,13 @@ class UFMGSyncService:
         self._clock = clock or (lambda: datetime.now(UTC))
 
     def sync(self, user_id: str, *, now: int) -> dict[str, object]:
+        result = self.sync_siga(user_id, now=now)
+        result["dates"] = self._dates.import_dates(user_id, now=now)
+        return result
+
+    def sync_siga(self, user_id: str, *, now: int) -> dict[str, object]:
+        """Synchronize disciplines and schedules from one SIGA snapshot."""
+
         session = self._sessions.load(user_id, now=now)
         if session is None:
             raise UFMGReauthenticationRequired("UFMG reauthentication required")
@@ -58,7 +65,6 @@ class UFMGSyncService:
         checked_at = self._clock().astimezone(UTC)
         course_result = self._courses.import_enrollments(enrollments)
         schedule_result = self._schedules.import_enrollments(enrollments)
-        date_result = self._dates.import_dates(user_id, now=now)
         schedule_fields = (
             "total",
             "updated",
@@ -70,7 +76,6 @@ class UFMGSyncService:
         return {
             "courses": course_result,
             "schedules": {field: schedule_result[field] for field in schedule_fields},
-            "dates": date_result,
             "checked_at": _timestamp(checked_at),
             "next_automatic_sync_at": _timestamp(_next_automatic_sync(checked_at, enrollments)),
         }

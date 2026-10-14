@@ -104,9 +104,15 @@ final class _FirebasePythonBackendVerifier
   }
 
   @override
-  Future<PythonUFMGSyncResult> syncUFMG() async {
+  Future<PythonMoodleContentDiscovery> discoverMoodleContent() async {
     await (_activation ??= _activateAppCheck());
-    return _transport.syncUFMG();
+    return _transport.discoverMoodleContent();
+  }
+
+  @override
+  Future<PythonUFMGSigaSyncResult> syncSiga() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.syncSiga();
   }
 
   @override

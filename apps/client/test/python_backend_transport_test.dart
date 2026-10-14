@@ -532,14 +532,6 @@ void main() {
               'missing_courses': 0,
               'meetings_imported': 2,
             },
-            'dates': {
-              'total': 4,
-              'matched': 3,
-              'unmatched': 1,
-              'created': 2,
-              'updated': 1,
-              'unchanged': 0,
-            },
             'checked_at': '2026-10-13T12:00:00Z',
             'next_automatic_sync_at': '2026-12-06T00:00:00Z',
           }),
@@ -548,16 +540,15 @@ void main() {
       }),
     );
 
-    final result = await transport.syncUFMG();
+    final result = await transport.syncSiga();
 
     expect(result.courses.created, 1);
     expect(result.schedules.updated, 1);
     expect(result.schedules.conflicts, 1);
-    expect(result.dates.created, 2);
     expect(result.checkedAt, DateTime.utc(2026, 10, 13, 12));
     expect(result.nextAutomaticSyncAt, DateTime.utc(2026, 12, 6));
     expect(captured.method, 'POST');
-    expect(captured.url.path, '/v1/ufmg/sync');
+    expect(captured.url.path, '/v1/ufmg/sync/siga');
     expect(captured.body, '{}');
   });
 
@@ -597,7 +588,7 @@ void main() {
       );
 
       await expectLater(
-        transport.syncUFMG(),
+        transport.syncSiga(),
         throwsA(
           isA<PythonBackendException>().having(
             (error) => error.code,

@@ -144,85 +144,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
-  Future<void> _importCourses() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-      _importSummary = null;
-    });
-    try {
-      final result = await runAuditedOperation(
-        logger: widget.logger,
-        operation: AuditedOperation.ufmgCourseImport,
-        action: widget.gateway.importUFMGCourses,
-      );
-      if (mounted) {
-        setState(() {
-          _importSummary =
-              '${result.created} ${_plural(result.created, 'disciplina importada', 'disciplinas importadas')}. '
-              '${result.existing} já ${result.existing == 1 ? 'estava cadastrada' : 'estavam cadastradas'}.';
-        });
-      }
-    } catch (error) {
-      if (!mounted) return;
-      if (error is PythonBackendException &&
-          error.code == PythonBackendError.ufmgReauthenticationRequired) {
-        setState(() {
-          _status = const PythonUFMGSessionStatus(
-            connected: false,
-            reauthenticationRequired: true,
-          );
-          _error = 'Sua sessão expirou. Reconecte para importar.';
-        });
-      } else {
-        setState(() => _error = _importMessageFor(error));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _importSchedules() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-      _importSummary = null;
-    });
-    try {
-      final result = await runAuditedOperation(
-        logger: widget.logger,
-        operation: AuditedOperation.ufmgScheduleImport,
-        action: widget.gateway.importUFMGSchedules,
-      );
-      if (mounted) {
-        setState(() {
-          _importSummary =
-              '${result.updated} ${_plural(result.updated, 'grade atualizada', 'grades atualizadas')}. '
-              '${result.unchanged} ${_plural(result.unchanged, 'grade sem alteração', 'grades sem alteração')}. '
-              '${result.conflicts} ${_plural(result.conflicts, 'conflito preservado', 'conflitos preservados')}. '
-              '${result.missingCourses} ${result.missingCourses == 1 ? 'disciplina ainda não cadastrada' : 'disciplinas ainda não cadastradas'}.';
-        });
-      }
-    } catch (error) {
-      if (!mounted) return;
-      if (error is PythonBackendException &&
-          error.code == PythonBackendError.ufmgReauthenticationRequired) {
-        setState(() {
-          _status = const PythonUFMGSessionStatus(
-            connected: false,
-            reauthenticationRequired: true,
-          );
-          _error = 'Sua sessão expirou. Reconecte para importar.';
-        });
-      } else {
-        setState(() => _error = _scheduleImportMessageFor(error));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _sync() async {
+  Future<void> _syncSiga() async {
     setState(() {
       _busy = true;
       _error = null;
@@ -232,9 +154,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       final result = await runAuditedOperation(
         logger: widget.logger,
         operation: AuditedOperation.ufmgSync,
-        action: widget.gateway.syncUFMG,
+        action: widget.gateway.syncSiga,
       );
-      final dates = await _listDates();
       final userId = widget.userId;
       final schedule = widget.syncSchedule;
       if (userId != null && schedule != null) {
@@ -242,16 +163,12 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       }
       if (mounted) {
         setState(() {
-          _dates = dates;
           _importSummary =
               '${result.courses.created} ${_plural(result.courses.created, 'disciplina importada', 'disciplinas importadas')}. '
               '${result.courses.existing} já ${result.courses.existing == 1 ? 'estava cadastrada' : 'estavam cadastradas'}. '
               '${result.schedules.updated} ${_plural(result.schedules.updated, 'grade atualizada', 'grades atualizadas')}. '
               '${result.schedules.unchanged} ${_plural(result.schedules.unchanged, 'grade sem alteração', 'grades sem alteração')}. '
-              '${result.schedules.conflicts} ${_plural(result.schedules.conflicts, 'conflito preservado', 'conflitos preservados')}. '
-              '${result.dates.created} ${_plural(result.dates.created, 'data do Moodle importada', 'datas do Moodle importadas')}. '
-              '${result.dates.updated} ${_plural(result.dates.updated, 'data atualizada', 'datas atualizadas')}. '
-              '${result.dates.unmatched} ${_plural(result.dates.unmatched, 'data sem disciplina correspondente', 'datas sem disciplina correspondente')}.';
+              '${result.schedules.conflicts} ${_plural(result.schedules.conflicts, 'conflito preservado', 'conflitos preservados')}.';
         });
       }
     } catch (error) {
@@ -273,7 +190,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
-  Future<void> _importDates() async {
+  Future<void> _syncMoodle() async {
     setState(() {
       _busy = true;
       _error = null;
@@ -285,15 +202,22 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         operation: AuditedOperation.moodleDateImport,
         action: widget.gateway.importMoodleDates,
       );
+      final discovery = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleContentDiscovery,
+        action: widget.gateway.discoverMoodleContent,
+      );
       final dates = await _listDates();
       if (mounted) {
         setState(() {
           _dates = dates;
+          _contentDiscovery = discovery;
           _importSummary =
               '${result.created} ${_plural(result.created, 'data do Moodle importada', 'datas do Moodle importadas')}. '
               '${result.updated} ${_plural(result.updated, 'data atualizada', 'datas atualizadas')}. '
               '${result.unchanged} sem alteração. '
-              '${result.unmatched} ${_plural(result.unmatched, 'data não pôde ser ligada a uma disciplina', 'datas não puderam ser ligadas a uma disciplina')}.';
+              '${result.unmatched} ${_plural(result.unmatched, 'data não pôde ser ligada a uma disciplina', 'datas não puderam ser ligadas a uma disciplina')}. '
+              '${discovery.candidateTotal} ${_plural(discovery.candidateTotal, 'material candidato encontrado', 'materiais candidatos encontrados')}.';
         });
       }
     } catch (error) {
@@ -305,10 +229,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             connected: false,
             reauthenticationRequired: true,
           );
-          _error = 'Sua sessão expirou. Reconecte para importar.';
+          _error = 'Sua sessão expirou. Reconecte para sincronizar o Moodle.';
         });
       } else {
-        setState(() => _error = _dateImportMessageFor(error));
+        setState(() => _error = _moodleSyncMessageFor(error));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -320,49 +244,6 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     operation: AuditedOperation.moodleDateList,
     action: widget.gateway.listMoodleDates,
   );
-
-  Future<void> _discoverContent() async {
-    if (widget.gateway is! BackendMoodleContentGateway) return;
-    final gateway = widget.gateway as BackendMoodleContentGateway;
-    setState(() {
-      _busy = true;
-      _error = null;
-      _importSummary = null;
-    });
-    try {
-      final result = await runAuditedOperation(
-        logger: widget.logger,
-        operation: AuditedOperation.moodleContentDiscovery,
-        action: gateway.discoverMoodleContent,
-      );
-      if (mounted) {
-        setState(() {
-          _contentDiscovery = result;
-          _importSummary =
-              '${result.candidateTotal} ${_plural(result.candidateTotal, 'material candidato encontrado', 'materiais candidatos encontrados')}.';
-        });
-      }
-    } catch (error) {
-      if (!mounted) return;
-      if (error is PythonBackendException &&
-          error.code == PythonBackendError.ufmgReauthenticationRequired) {
-        setState(() {
-          _status = const PythonUFMGSessionStatus(
-            connected: false,
-            reauthenticationRequired: true,
-          );
-          _error = 'Sua sessão expirou. Reconecte para descobrir materiais.';
-        });
-      } else {
-        setState(
-          () => _error =
-              'Não foi possível descobrir os materiais do Moodle agora.',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -437,6 +318,11 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             ),
           ),
         ],
+        const SizedBox(height: 24),
+        if (!connected || _showReconnectForm)
+          _connectionForm()
+        else
+          _syncActions(),
         if (_importSummary != null) ...[
           const SizedBox(height: 16),
           Semantics(
@@ -494,72 +380,90 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               ),
             ),
         ],
-        const SizedBox(height: 24),
-        if (!connected || _showReconnectForm) _connectionForm(),
-        if (connected && !_showReconnectForm) ...[
-          FilledButton.icon(
-            key: const Key('ufmg-sync'),
-            onPressed: _busy ? null : _sync,
-            icon: _busy
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.sync),
-            label: const Text('Sincronizar agora'),
-          ),
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            key: const Key('ufmg-import-courses'),
-            onPressed: _busy ? null : _importCourses,
-            icon: _busy
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.download_outlined),
-            label: const Text('Importar disciplinas'),
-          ),
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            key: const Key('ufmg-import-schedules'),
-            onPressed: _busy ? null : _importSchedules,
-            icon: const Icon(Icons.calendar_month_outlined),
-            label: const Text('Importar horários'),
-          ),
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            key: const Key('moodle-import-dates'),
-            onPressed: _busy ? null : _importDates,
-            icon: const Icon(Icons.event_available_outlined),
-            label: const Text('Importar datas do Moodle'),
-          ),
-          if (widget.gateway is BackendMoodleContentGateway) ...[
-            const SizedBox(height: 8),
-            FilledButton.icon(
-              key: const Key('moodle-discover-content'),
-              onPressed: _busy ? null : _discoverContent,
-              icon: const Icon(Icons.find_in_page_outlined),
-              label: const Text('Descobrir materiais do Moodle'),
+      ],
+    );
+  }
+
+  Widget _syncActions() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Sincronizar dados',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 12),
+        FilledButton.icon(
+          key: const Key('ufmg-sync-siga'),
+          onPressed: _busy ? null : _syncSiga,
+          icon: _busy
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.school_outlined),
+          label: const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              children: [
+                Text('Sincronizar SIGA'),
+                Text('Disciplinas e horários'),
+              ],
             ),
-          ],
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            key: const Key('ufmg-reconnect'),
-            onPressed: _busy
-                ? null
-                : () => setState(() => _showReconnectForm = true),
-            icon: const Icon(Icons.sync),
-            label: const Text('Reconectar'),
           ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            key: const Key('ufmg-disconnect'),
-            onPressed: _busy ? null : _confirmDisconnect,
-            icon: const Icon(Icons.link_off),
-            label: const Text('Desconectar'),
+        ),
+        const SizedBox(height: 12),
+        FilledButton.tonalIcon(
+          key: const Key('ufmg-sync-moodle'),
+          onPressed: _busy ? null : _syncMoodle,
+          icon: _busy
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.menu_book_outlined),
+          label: const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              children: [
+                Text('Sincronizar Moodle'),
+                Text('Datas, planos de ensino e cronogramas'),
+              ],
+            ),
           ),
-        ],
+        ),
+        const SizedBox(height: 12),
+        Card(
+          margin: EdgeInsets.zero,
+          child: ExpansionTile(
+            key: const Key('ufmg-manage-connection'),
+            leading: const Icon(Icons.settings_outlined),
+            title: const Text('Gerenciar conexão'),
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: TextButton.icon(
+                  key: const Key('ufmg-reconnect'),
+                  onPressed: _busy
+                      ? null
+                      : () => setState(() => _showReconnectForm = true),
+                  icon: const Icon(Icons.sync),
+                  label: const Text('Reconectar'),
+                ),
+              ),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton.icon(
+                  key: const Key('ufmg-disconnect'),
+                  onPressed: _busy ? null : _confirmDisconnect,
+                  icon: const Icon(Icons.link_off),
+                  label: const Text('Desconectar'),
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -695,49 +599,19 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     return 'Não foi possível atualizar a conexão com a UFMG.';
   }
 
-  static String _importMessageFor(Object error) {
+  static String _moodleSyncMessageFor(Object error) {
     if (error is PythonBackendException) {
       return switch (error.code) {
         PythonBackendError.ufmgUnavailable ||
         PythonBackendError.unavailable ||
         PythonBackendError.timeout =>
-          'Não foi possível consultar as matrículas na UFMG agora.',
+          'Não foi possível sincronizar com o Moodle agora.',
         PythonBackendError.rateLimited =>
           'Muitas tentativas seguidas. Aguarde um pouco e tente novamente.',
-        _ => 'Não foi possível importar as disciplinas.',
+        _ => 'Não foi possível sincronizar os dados do Moodle.',
       };
     }
-    return 'Não foi possível importar as disciplinas.';
-  }
-
-  static String _scheduleImportMessageFor(Object error) {
-    if (error is PythonBackendException) {
-      return switch (error.code) {
-        PythonBackendError.ufmgUnavailable ||
-        PythonBackendError.unavailable ||
-        PythonBackendError.timeout =>
-          'Não foi possível consultar os horários na UFMG agora.',
-        PythonBackendError.rateLimited =>
-          'Muitas tentativas seguidas. Aguarde um pouco e tente novamente.',
-        _ => 'Não foi possível importar os horários.',
-      };
-    }
-    return 'Não foi possível importar os horários.';
-  }
-
-  static String _dateImportMessageFor(Object error) {
-    if (error is PythonBackendException) {
-      return switch (error.code) {
-        PythonBackendError.ufmgUnavailable ||
-        PythonBackendError.unavailable ||
-        PythonBackendError.timeout =>
-          'Não foi possível consultar as datas no Moodle agora.',
-        PythonBackendError.rateLimited =>
-          'Muitas tentativas seguidas. Aguarde um pouco e tente novamente.',
-        _ => 'Não foi possível importar as datas do Moodle.',
-      };
-    }
-    return 'Não foi possível importar as datas do Moodle.';
+    return 'Não foi possível sincronizar os dados do Moodle.';
   }
 
   static String _syncMessageFor(Object error) {
