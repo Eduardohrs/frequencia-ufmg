@@ -427,7 +427,11 @@ final class _FakeOverviewBackend
   Future<List<PythonMoodleDate>> listMoodleDates() async => const [];
 
   @override
-  Future<PythonUFMGSyncResult> syncUFMG() => throw UnimplementedError();
+  Future<PythonMoodleContentDiscovery> discoverMoodleContent() =>
+      throw UnimplementedError();
+
+  @override
+  Future<PythonUFMGSigaSyncResult> syncSiga() => throw UnimplementedError();
 }
 
 final class _FailingFullBackend

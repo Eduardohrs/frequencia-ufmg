@@ -232,6 +232,8 @@ def _dispatch(context: Any) -> Any:
         return _moodle_content_discovery(context, allowed_origin)
     if path == "/v1/ufmg/sync" and method == "POST":
         return _ufmg_sync(context, allowed_origin)
+    if path == "/v1/ufmg/sync/siga" and method == "POST":
+        return _ufmg_sync(context, allowed_origin, siga_only=True)
     session_mutation = _session_mutation_path(path)
     if method == "PUT" and session_mutation is not None:
         course_id, session_id, mutation = session_mutation
@@ -438,8 +440,9 @@ def _ufmg_schedule_import(context: Any, origin: str | None) -> Any:
     )
 
 
-def _ufmg_sync(context: Any, origin: str | None) -> Any:
-    user_id, rejected = _authentication(context, origin, "/v1/ufmg/sync/post")
+def _ufmg_sync(context: Any, origin: str | None, *, siga_only: bool = False) -> Any:
+    route = "/v1/ufmg/sync/siga/post" if siga_only else "/v1/ufmg/sync/post"
+    user_id, rejected = _authentication(context, origin, route)
     if rejected is not None:
         return rejected
     if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
@@ -447,9 +450,9 @@ def _ufmg_sync(context: Any, origin: str | None) -> Any:
     if environ.get("ENABLE_SCHEDULE_WRITES", "").lower() != "true":
         return _schedule_error(context, origin, "schedule_writes_disabled", 503)
     try:
-        result = _ufmg_sync_service(context.req.headers, cast(str, user_id)).sync(
-            cast(str, user_id), now=int(time())
-        )
+        service = _ufmg_sync_service(context.req.headers, cast(str, user_id))
+        operation = service.sync_siga if siga_only else service.sync
+        result = operation(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
         return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
     except UFMGEnrollmentUnavailable as error:
@@ -477,8 +480,8 @@ def _ufmg_sync(context: Any, origin: str | None) -> Any:
         return _course_error(context, origin, "course_store_unavailable", 503)
     except (
         DuplicateCourseCode,
-        InvalidCourse,
         InvalidAcademicDate,
+        InvalidCourse,
         InvalidSchedule,
         FirestoreRequestRejected,
         TypeError,
@@ -487,20 +490,22 @@ def _ufmg_sync(context: Any, origin: str | None) -> Any:
         return _ufmg_session_error(context, origin, "ufmg_sync_rejected", 502)
     courses = cast(Mapping[str, int], result["courses"])
     schedules = cast(Mapping[str, int], result["schedules"])
-    dates = cast(Mapping[str, int], result["dates"])
-    _log(
-        context,
-        "ufmg_sync_succeeded",
-        course_created=courses["created"],
-        course_total=courses["total"],
-        schedule_conflicts=schedules["conflicts"],
-        schedule_total=schedules["total"],
-        schedule_updated=schedules["updated"],
-        date_created=dates["created"],
-        date_matched=dates["matched"],
-        date_total=dates["total"],
-        date_unmatched=dates["unmatched"],
-    )
+    fields = {
+        "course_created": courses["created"],
+        "course_total": courses["total"],
+        "schedule_conflicts": schedules["conflicts"],
+        "schedule_total": schedules["total"],
+        "schedule_updated": schedules["updated"],
+    }
+    if not siga_only:
+        dates = cast(Mapping[str, int], result["dates"])
+        fields.update(
+            date_created=dates["created"],
+            date_matched=dates["matched"],
+            date_total=dates["total"],
+            date_unmatched=dates["unmatched"],
+        )
+    _log(context, "ufmg_siga_sync_succeeded" if siga_only else "ufmg_sync_succeeded", **fields)
     return _respond(context, result, origin=origin)
 
 
@@ -954,6 +959,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/ufmg/import/dates",
         "/v1/ufmg/discover/content",
         "/v1/ufmg/sync",
+        "/v1/ufmg/sync/siga",
     } or path.startswith("/v1/courses/")
 
 
@@ -1084,6 +1090,7 @@ def _route_name(path: str) -> str:
         "/v1/ufmg/import/dates",
         "/v1/ufmg/discover/content",
         "/v1/ufmg/sync",
+        "/v1/ufmg/sync/siga",
     }:
         return path
     if _session_mutation_path(path) is not None:

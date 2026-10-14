@@ -155,6 +155,29 @@ def test_sync_fetches_once_and_reuses_the_snapshot_for_every_stage() -> None:
     }
 
 
+def test_siga_sync_fetches_once_without_contacting_moodle() -> None:
+    service, _, client, courses, schedules, dates = _service(datetime(2026, 8, 10, 12, tzinfo=UTC))
+
+    result = service.sync_siga("user", now=10)
+
+    assert client.calls == 1
+    assert courses.received is schedules.received
+    assert not dates.called
+    assert result == {
+        "courses": {"created": 1, "existing": 0, "total": 1},
+        "schedules": {
+            "total": 1,
+            "updated": 1,
+            "unchanged": 0,
+            "conflicts": 0,
+            "missing_courses": 0,
+            "meetings_imported": 1,
+        },
+        "checked_at": "2026-08-10T12:00:00Z",
+        "next_automatic_sync_at": "2026-08-11T12:00:00Z",
+    }
+
+
 @pytest.mark.parametrize(
     ("now", "expected"),
     [

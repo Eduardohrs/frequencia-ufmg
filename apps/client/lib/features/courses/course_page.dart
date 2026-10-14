@@ -228,7 +228,7 @@ class _CoursePageState extends State<CoursePage> {
       final result = await runAuditedOperation(
         logger: widget.logger,
         operation: AuditedOperation.ufmgSync,
-        action: gateway.syncUFMG,
+        action: gateway.syncSiga,
       );
       await schedule.record(widget.user.id, result.nextAutomaticSyncAt);
       final changed = result.courses.created + result.schedules.updated;

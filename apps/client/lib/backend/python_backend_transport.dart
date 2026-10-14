@@ -78,11 +78,9 @@ abstract interface class BackendUFMGSessionGateway {
 
   Future<List<PythonMoodleDate>> listMoodleDates();
 
-  Future<PythonUFMGSyncResult> syncUFMG();
-}
-
-abstract interface class BackendMoodleContentGateway {
   Future<PythonMoodleContentDiscovery> discoverMoodleContent();
+
+  Future<PythonUFMGSigaSyncResult> syncSiga();
 }
 
 enum PythonMoodleContentStatus { found, empty, unmatched, ambiguous }
@@ -194,18 +192,16 @@ final class PythonUFMGScheduleImportResult {
   final int meetingsImported;
 }
 
-final class PythonUFMGSyncResult {
-  const PythonUFMGSyncResult({
+final class PythonUFMGSigaSyncResult {
+  const PythonUFMGSigaSyncResult({
     required this.courses,
     required this.schedules,
-    required this.dates,
     required this.checkedAt,
     required this.nextAutomaticSyncAt,
   });
 
   final PythonUFMGCourseImportResult courses;
   final PythonUFMGScheduleImportResult schedules;
-  final PythonMoodleDateImportResult dates;
   final DateTime checkedAt;
   final DateTime nextAutomaticSyncAt;
 }
@@ -927,7 +923,6 @@ final class PythonBackendTransport
         BackendScheduleGateway,
         BackendSessionGateway,
         BackendUFMGSessionGateway,
-        BackendMoodleContentGateway,
         BackendOverviewGateway {
   PythonBackendTransport({
     required Uri endpoint,
@@ -1168,9 +1163,9 @@ final class PythonBackendTransport
   }
 
   @override
-  Future<PythonUFMGSyncResult> syncUFMG() async {
+  Future<PythonUFMGSigaSyncResult> syncSiga() async {
     final response = await _authenticatedRequest(
-      path: '/v1/ufmg/sync',
+      path: '/v1/ufmg/sync/siga',
       method: _BackendMethod.post,
       body: const {},
     );
@@ -1179,7 +1174,6 @@ final class PythonBackendTransport
       const keys = {
         'courses',
         'schedules',
-        'dates',
         'checked_at',
         'next_automatic_sync_at',
       };
@@ -1188,16 +1182,14 @@ final class PythonBackendTransport
       }
       final courses = _courseImportResult(value['courses']);
       final schedules = _scheduleImportResult(value['schedules']);
-      final dates = _moodleDateImportResult(value['dates']);
       final checkedAt = _utcDate(value['checked_at']);
       final nextAutomaticSyncAt = _utcDate(value['next_automatic_sync_at']);
       if (!nextAutomaticSyncAt.isAfter(checkedAt)) {
         throw const FormatException();
       }
-      return PythonUFMGSyncResult(
+      return PythonUFMGSigaSyncResult(
         courses: courses,
         schedules: schedules,
-        dates: dates,
         checkedAt: checkedAt,
         nextAutomaticSyncAt: nextAutomaticSyncAt,
       );
