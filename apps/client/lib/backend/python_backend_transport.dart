@@ -81,6 +81,89 @@ abstract interface class BackendUFMGSessionGateway {
   Future<PythonUFMGSyncResult> syncUFMG();
 }
 
+abstract interface class BackendMoodleContentGateway {
+  Future<PythonMoodleContentDiscovery> discoverMoodleContent();
+}
+
+enum PythonMoodleContentStatus { found, empty, unmatched, ambiguous }
+
+final class PythonMoodleContentCandidate {
+  const PythonMoodleContentCandidate({
+    required this.sourceId,
+    required this.kind,
+    required this.title,
+    required this.url,
+    required this.relevance,
+  });
+
+  factory PythonMoodleContentCandidate.fromJson(Map<String, Object?> json) {
+    const keys = {'source_id', 'kind', 'title', 'url', 'relevance'};
+    if (!_hasExactKeys(json, keys)) throw const FormatException();
+    final sourceId = json['source_id'];
+    final kind = json['kind'];
+    final title = json['title'];
+    final rawUrl = json['url'];
+    final relevance = json['relevance'];
+    final uri = rawUrl is String ? Uri.tryParse(rawUrl) : null;
+    if (sourceId is! String ||
+        sourceId.isEmpty ||
+        kind is! String ||
+        !const {'page', 'file', 'text'}.contains(kind) ||
+        title is! String ||
+        title.isEmpty ||
+        title.trim() != title ||
+        title.length > 240 ||
+        relevance is! String ||
+        !const {'teaching_plan', 'schedule', 'other'}.contains(relevance) ||
+        (kind == 'text') != (rawUrl == null) ||
+        (rawUrl != null &&
+            (uri == null ||
+                uri.scheme != 'https' ||
+                uri.host != 'virtual.ufmg.br' ||
+                uri.userInfo.isNotEmpty ||
+                uri.hasFragment))) {
+      throw const FormatException();
+    }
+    return PythonMoodleContentCandidate(
+      sourceId: sourceId,
+      kind: kind,
+      title: title,
+      url: uri,
+      relevance: relevance,
+    );
+  }
+
+  final String sourceId;
+  final String kind;
+  final String title;
+  final Uri? url;
+  final String relevance;
+}
+
+final class PythonMoodleCourseContent {
+  const PythonMoodleCourseContent({
+    required this.courseId,
+    required this.courseCode,
+    required this.status,
+    required this.candidates,
+  });
+
+  final String courseId;
+  final String courseCode;
+  final PythonMoodleContentStatus status;
+  final List<PythonMoodleContentCandidate> candidates;
+}
+
+final class PythonMoodleContentDiscovery {
+  const PythonMoodleContentDiscovery({
+    required this.courses,
+    required this.candidateTotal,
+  });
+
+  final List<PythonMoodleCourseContent> courses;
+  final int candidateTotal;
+}
+
 final class PythonUFMGCourseImportResult {
   const PythonUFMGCourseImportResult({
     required this.created,
@@ -844,6 +927,7 @@ final class PythonBackendTransport
         BackendScheduleGateway,
         BackendSessionGateway,
         BackendUFMGSessionGateway,
+        BackendMoodleContentGateway,
         BackendOverviewGateway {
   PythonBackendTransport({
     required Uri endpoint,
@@ -952,6 +1036,107 @@ final class PythonBackendTransport
     );
     try {
       return _moodleDateImportResult(jsonDecode(response.body));
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<PythonMoodleContentDiscovery> discoverMoodleContent() async {
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/discover/content',
+      method: _BackendMethod.post,
+      body: const {},
+    );
+    try {
+      final value = jsonDecode(response.body);
+      const keys = {
+        'courses',
+        'course_total',
+        'candidate_total',
+        'found',
+        'empty',
+        'unmatched',
+        'ambiguous',
+      };
+      if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
+        throw const FormatException();
+      }
+      final rawCourses = value['courses'];
+      final candidateTotal = value['candidate_total'];
+      if (rawCourses is! List ||
+          rawCourses.length > 50 ||
+          value['course_total'] != rawCourses.length ||
+          candidateTotal is! int ||
+          candidateTotal < 0 ||
+          candidateTotal > 500) {
+        throw const FormatException();
+      }
+      final counts = <PythonMoodleContentStatus, int>{};
+      var candidates = 0;
+      final courses = rawCourses
+          .map((raw) {
+            final json = Map<String, Object?>.from(raw as Map);
+            if (!_hasExactKeys(json, const {
+              'course_id',
+              'course_code',
+              'status',
+              'candidates',
+            })) {
+              throw const FormatException();
+            }
+            final courseId = json['course_id'];
+            final courseCode = json['course_code'];
+            final rawStatus = json['status'];
+            final rawCandidates = json['candidates'];
+            final status = switch (rawStatus) {
+              'found' => PythonMoodleContentStatus.found,
+              'empty' => PythonMoodleContentStatus.empty,
+              'unmatched' => PythonMoodleContentStatus.unmatched,
+              'ambiguous' => PythonMoodleContentStatus.ambiguous,
+              _ => null,
+            };
+            if (courseId is! String ||
+                courseId.isEmpty ||
+                courseCode is! String ||
+                courseCode.isEmpty ||
+                courseCode != courseCode.toUpperCase() ||
+                status == null ||
+                rawCandidates is! List ||
+                rawCandidates.length > 500) {
+              throw const FormatException();
+            }
+            final parsedCandidates = rawCandidates
+                .map(
+                  (item) => PythonMoodleContentCandidate.fromJson(
+                    Map<String, Object?>.from(item as Map),
+                  ),
+                )
+                .toList(growable: false);
+            if ((status == PythonMoodleContentStatus.found) !=
+                parsedCandidates.isNotEmpty) {
+              throw const FormatException();
+            }
+            candidates += parsedCandidates.length;
+            counts[status] = (counts[status] ?? 0) + 1;
+            return PythonMoodleCourseContent(
+              courseId: courseId,
+              courseCode: courseCode,
+              status: status,
+              candidates: parsedCandidates,
+            );
+          })
+          .toList(growable: false);
+      if (candidates != candidateTotal ||
+          PythonMoodleContentStatus.values.any(
+            (status) => value[status.name] != (counts[status] ?? 0),
+          )) {
+        throw const FormatException();
+      }
+      return PythonMoodleContentDiscovery(
+        courses: courses,
+        candidateTotal: candidateTotal,
+      );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
     }

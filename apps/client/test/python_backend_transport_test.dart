@@ -364,6 +364,79 @@ void main() {
     }
   });
 
+  test('discovers bounded Moodle content candidates', () async {
+    late http.Request captured;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'courses': [
+              {
+                'course_id': 'dcc203',
+                'course_code': 'DCC203',
+                'status': 'found',
+                'candidates': [
+                  {
+                    'source_id': '101',
+                    'kind': 'page',
+                    'title': 'Plano de ensino',
+                    'url':
+                        'https://virtual.ufmg.br/20262/mod/page/view.php?id=101',
+                    'relevance': 'teaching_plan',
+                  },
+                  {
+                    'source_id': '102',
+                    'kind': 'text',
+                    'title': 'Orientações',
+                    'url': null,
+                    'relevance': 'other',
+                  },
+                ],
+              },
+              {
+                'course_id': 'mat001',
+                'course_code': 'MAT001',
+                'status': 'empty',
+                'candidates': <Object?>[],
+              },
+              {
+                'course_id': 'ele028',
+                'course_code': 'ELE028',
+                'status': 'unmatched',
+                'candidates': <Object?>[],
+              },
+              {
+                'course_id': 'amb001',
+                'course_code': 'AMB001',
+                'status': 'ambiguous',
+                'candidates': <Object?>[],
+              },
+            ],
+            'course_total': 4,
+            'candidate_total': 2,
+            'found': 1,
+            'empty': 1,
+            'unmatched': 1,
+            'ambiguous': 1,
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await transport.discoverMoodleContent();
+
+    expect(result.candidateTotal, 2);
+    expect(result.courses.first.candidates.first.title, 'Plano de ensino');
+    expect(result.courses[1].status, PythonMoodleContentStatus.empty);
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/v1/ufmg/discover/content');
+    expect(captured.body, '{}');
+  });
+
   test('lists canonical Moodle dates in chronological order', () async {
     final transport = PythonBackendTransport(
       endpoint: Uri.parse('https://backend.example'),
