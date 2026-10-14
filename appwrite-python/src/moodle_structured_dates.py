@@ -583,18 +583,27 @@ def _parse_course_states(
 
 
 def _candidate_url(value: object, root: str, module: str, source_id: int) -> str:
-    if not isinstance(value, str) or len(value) > 2_048:
-        raise ValueError("course_module_url")
+    if not isinstance(value, str):
+        raise ValueError("course_module_url_type")
+    if len(value) > 2_048:
+        raise ValueError("course_module_url_length")
     parsed = urlsplit(value)
-    query = parse_qs(parsed.query, strict_parsing=True)
-    if (
-        parsed.scheme != "https"
-        or parsed.hostname != "virtual.ufmg.br"
-        or parsed.path != f"{root}/mod/{module}/view.php"
-        or parsed.fragment
-        or query != {"id": [str(source_id)]}
-    ):
-        raise ValueError("course_module_url")
+    if parsed.scheme != "https":
+        raise ValueError("course_module_url_scheme")
+    if parsed.netloc != "virtual.ufmg.br":
+        raise ValueError("course_module_url_authority")
+    if parsed.path != f"{root}/mod/{module}/view.php":
+        raise ValueError(f"course_module_url_path_{module}")
+    if parsed.fragment:
+        raise ValueError("course_module_url_fragment")
+    try:
+        query = parse_qs(parsed.query, strict_parsing=True)
+    except ValueError:
+        raise ValueError("course_module_url_query_format") from None
+    if set(query) != {"id"}:
+        raise ValueError("course_module_url_query_keys")
+    if query["id"] != [str(source_id)]:
+        raise ValueError("course_module_url_query_id")
     return value
 
 
