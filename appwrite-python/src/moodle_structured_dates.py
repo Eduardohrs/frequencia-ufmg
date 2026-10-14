@@ -338,6 +338,7 @@ def _require_identity_provider(url: str) -> None:
 def _require_moodle_acs(url: str, root: str) -> None:
     parsed = urlsplit(url)
     allowed_paths = {
+        "/samlsso",
         "/Shibboleth.sso/SAML2/POST",
         f"{root}/Shibboleth.sso/SAML2/POST",
     }
