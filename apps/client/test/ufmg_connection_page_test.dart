@@ -824,6 +824,192 @@ void main() {
     },
   );
 
+  testWidgets('downloads Moodle file materials without a browser login', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    final openedUris = <Uri>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: gateway,
+          logger: _Logger(),
+          openExternalUri: (uri) async {
+            openedUris.add(uri);
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('moodle-material-open-102')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.materialFileRequests, [('2026-2', '3701', '102')]);
+    expect(openedUris.single.pathSegments[1], 'tokenpluginfile.php');
+  });
+
+  testWidgets('lets the student choose among multiple Moodle files', (
+    tester,
+  ) async {
+    final gateway =
+        _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..materialFiles = [
+            _materialFile('Resumo.txt', 500),
+            _materialFile('Plano.pdf', 2048),
+            _materialFile('Apostila.pdf', 2 * 1024 * 1024),
+          ];
+    final openedUris = <Uri>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: gateway,
+          logger: _Logger(),
+          openExternalUri: (uri) async {
+            openedUris.add(uri);
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('moodle-material-open-102')));
+    await tester.pumpAndSettle();
+    expect(find.text('Escolha um arquivo'), findsOneWidget);
+    expect(find.text('500 B'), findsOneWidget);
+    expect(find.text('2.0 KB'), findsOneWidget);
+    expect(find.text('2.0 MB'), findsOneWidget);
+    await tester.tap(find.text('Plano.pdf'));
+    await tester.pumpAndSettle();
+
+    expect(openedUris.single.path, contains('plano.pdf'));
+  });
+
+  testWidgets('explains missing and expired Moodle download authorization', (
+    tester,
+  ) async {
+    final gateway =
+        _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..materialFilesError = const PythonBackendException(
+            PythonBackendError.moodleAuthorizationRequired,
+          );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('moodle-material-open-102')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Sincronize o Moodle novamente para baixar este material.'),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 5));
+
+    gateway
+      ..materialFilesError = null
+      ..materialFiles = [];
+    await tester.tap(find.byKey(const Key('moodle-material-open-102')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Não foi possível abrir este material no Moodle.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('does not launch a late Moodle file response after disposal', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    )..materialFilesCompleter = Completer<List<PythonMoodleMaterialFile>>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('moodle-material-open-102')));
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox());
+    gateway.materialFilesCompleter!.complete([
+      _materialFile('Primeiro.pdf', 1),
+      _materialFile('Segundo.pdf', 2),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.byType(UFMGConnectionPage), findsNothing);
+  });
+
+  testWidgets('rejects a file candidate without a Moodle course identity', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    )..foundMoodleCourseId = null;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('moodle-material-open-102')));
+    await tester.pumpAndSettle();
+    expect(gateway.materialFileRequests, isEmpty);
+    expect(
+      find.text('Não foi possível abrir este material no Moodle.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('explains when Moodle refuses to open a material', (
     tester,
   ) async {
@@ -957,6 +1143,18 @@ void main() {
   });
 }
 
+PythonMoodleMaterialFile _materialFile(String name, int size) =>
+    PythonMoodleMaterialFile(
+      name: name,
+      url: Uri.parse(
+        'https://virtual.ufmg.br/20262/tokenpluginfile.php/'
+        'aaaaaaaaaaaaaaaa/700/mod_resource/content/1/${name.toLowerCase()}'
+        '?forcedownload=1',
+      ),
+      size: size,
+      mimeType: 'application/pdf',
+    );
+
 final class _Gateway implements BackendUFMGSessionGateway {
   _Gateway({required this.status});
 
@@ -972,6 +1170,10 @@ final class _Gateway implements BackendUFMGSessionGateway {
   Object? syncError;
   Object? contentDiscoveryError;
   Object? capabilityError;
+  Object? materialFilesError;
+  List<PythonMoodleMaterialFile>? materialFiles;
+  Completer<List<PythonMoodleMaterialFile>>? materialFilesCompleter;
+  String? foundMoodleCourseId = '3701';
   Completer<PythonMoodleContentDiscovery>? contentDiscoveryCompleter;
   final credentials = <(String, String)>[];
   int disconnectCalls = 0;
@@ -981,6 +1183,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
   List<PythonMoodleDate> dates = const [];
   int syncCalls = 0;
   int contentDiscoveryCalls = 0;
+  final materialFileRequests = <(String, String, String)>[];
 
   @override
   Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities() async {
@@ -992,6 +1195,30 @@ final class _Gateway implements BackendUFMGSessionGateway {
       privateFileAccess: true,
       webserviceTokenIssued: true,
     );
+  }
+
+  @override
+  Future<List<PythonMoodleMaterialFile>> listMoodleMaterialFiles({
+    required String term,
+    required String courseId,
+    required String sourceId,
+  }) async {
+    materialFileRequests.add((term, courseId, sourceId));
+    if (materialFilesCompleter case final completer?) return completer.future;
+    if (materialFilesError case final error?) throw error;
+    return materialFiles ??
+        [
+          PythonMoodleMaterialFile(
+            name: 'Cronograma.pdf',
+            url: Uri.parse(
+              'https://virtual.ufmg.br/20262/tokenpluginfile.php/'
+              'aaaaaaaaaaaaaaaa/700/mod_resource/content/1/cronograma.pdf'
+              '?forcedownload=1',
+            ),
+            size: 123,
+            mimeType: 'application/pdf',
+          ),
+        ];
   }
 
   @override
@@ -1008,6 +1235,8 @@ final class _Gateway implements BackendUFMGSessionGateway {
         PythonMoodleCourseContent(
           courseId: 'dcc203',
           courseCode: 'DCC203',
+          term: '2026-2',
+          moodleCourseId: foundMoodleCourseId,
           status: PythonMoodleContentStatus.found,
           candidates: [
             PythonMoodleContentCandidate(
@@ -1043,18 +1272,24 @@ final class _Gateway implements BackendUFMGSessionGateway {
         PythonMoodleCourseContent(
           courseId: 'mat001',
           courseCode: 'MAT001',
+          term: '2026-2',
+          moodleCourseId: '4953',
           status: PythonMoodleContentStatus.empty,
           candidates: [],
         ),
         PythonMoodleCourseContent(
           courseId: 'ele028',
           courseCode: 'ELE028',
+          term: '2026-2',
+          moodleCourseId: null,
           status: PythonMoodleContentStatus.unmatched,
           candidates: [],
         ),
         PythonMoodleCourseContent(
           courseId: 'amb001',
           courseCode: 'AMB001',
+          term: '2026-2',
+          moodleCourseId: null,
           status: PythonMoodleContentStatus.ambiguous,
           candidates: [],
         ),

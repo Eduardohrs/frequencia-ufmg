@@ -11,6 +11,7 @@ import pytest
 import moodle_structured_dates as module
 from moodle_structured_dates import (
     InvalidMoodleResponse,
+    MoodleMobileAuthorization,
     MoodleStructuredDatesClient,
     MoodleUnavailable,
     _candidate_relevance,
@@ -22,6 +23,7 @@ from moodle_structured_dates import (
     _parse_calendar,
     _parse_course_list,
     _parse_course_states,
+    _parse_module_files,
     _require_ajax,
     _require_json_endpoint,
     _require_moodle_acs,
@@ -123,9 +125,9 @@ def _calendar_response() -> bytes:
     return json.dumps([{"error": False, "data": data}]).encode()
 
 
-def _mobile_callback(root: str, passport: str, *, private_token: str = "private1234567890") -> str:
+def _mobile_callback(root: str, passport: str, *, private_token: str = "aaaaaaaaaaaaaaaa") -> str:
     site_id = md5(f"https://virtual.ufmg.br{root}{passport}".encode()).hexdigest()
-    payload = f"{site_id}:::webservice1234567890:::{private_token}".encode()
+    payload = f"{site_id}:::bbbbbbbbbbbbbbbb:::{private_token}".encode()
     return f"moodlemobile://token={b64encode(payload).decode()}"
 
 
@@ -143,7 +145,7 @@ def test_mobile_capability_probe_returns_only_non_secret_capabilities(
                 json.dumps(
                     {
                         "downloadfiles": 1,
-                        "userprivateaccesskey": "access1234567890",
+                        "userprivateaccesskey": "cccccccccccccccc",
                     }
                 ).encode(),
                 "https://virtual.ufmg.br/20262/webservice/rest/server.php",
@@ -153,18 +155,25 @@ def test_mobile_capability_probe_returns_only_non_secret_capabilities(
     )
     monkeypatch.setattr(module, "token_hex", lambda _length: passport)
 
-    result = MoodleStructuredDatesClient(opener=opener).probe_mobile_download(
+    authorization = MoodleStructuredDatesClient(opener=opener).authorize_mobile_download(
         "token-safe",
         term="2026-2",
     )
 
-    assert result == {
+    assert authorization == MoodleMobileAuthorization(
+        webservice_token="bbbbbbbbbbbbbbbb",
+        private_token="aaaaaaaaaaaaaaaa",
+        direct_download_supported=True,
+        download_files=True,
+        private_file_access=True,
+    )
+    assert authorization.safe_capabilities() == {
         "direct_download_supported": True,
         "download_files": True,
         "private_file_access": True,
         "webservice_token_issued": True,
     }
-    assert "webservice1234567890" not in repr(result)
+    assert "bbbbbbbbbbbbbbbb" not in repr(authorization.safe_capabilities())
     launch_request = opener.requests[2][0]
     assert launch_request.full_url.startswith(
         "https://virtual.ufmg.br/20262/admin/tool/mobile/launch.php?"
@@ -183,7 +192,7 @@ def test_mobile_capability_probe_returns_only_non_secret_capabilities(
         ("https://attacker.example/token=value", "mobile_callback_origin"),
         ("moodlemobile://token=not-base64!", "mobile_callback_encoding"),
         (
-            "moodlemobile://token=" + b64encode(b"wrong:::webservice1234567890").decode(),
+            "moodlemobile://token=" + b64encode(b"wrong:::bbbbbbbbbbbbbbbb").decode(),
             "mobile_callback_site",
         ),
     ],
@@ -203,7 +212,7 @@ def test_mobile_capability_probe_rejects_untrusted_callbacks(
     )
 
     with pytest.raises(InvalidMoodleResponse) as captured:
-        MoodleStructuredDatesClient(opener=opener).probe_mobile_download(
+        MoodleStructuredDatesClient(opener=opener).authorize_mobile_download(
             "token-safe",
             term="2026-2",
         )
@@ -236,14 +245,14 @@ def test_mobile_capability_probe_accepts_redirect_and_reports_missing_private_ac
     )
     monkeypatch.setattr(module, "token_hex", lambda _length: passport)
 
-    result = MoodleStructuredDatesClient(opener=opener).probe_mobile_download(
+    result = MoodleStructuredDatesClient(opener=opener).authorize_mobile_download(
         "token-safe",
         term="2026-2",
     )
 
-    assert result["direct_download_supported"] is False
-    assert result["download_files"] is False
-    assert result["private_file_access"] is False
+    assert result.direct_download_supported is False
+    assert result.download_files is False
+    assert result.private_file_access is False
 
 
 @pytest.mark.parametrize(
@@ -296,7 +305,7 @@ def test_mobile_capability_probe_maps_launch_and_site_info_failures(
 
     expected = MoodleUnavailable if reason is None else InvalidMoodleResponse
     with pytest.raises(expected) as captured:
-        MoodleStructuredDatesClient(opener=_Opener(responses)).probe_mobile_download(
+        MoodleStructuredDatesClient(opener=_Opener(responses)).authorize_mobile_download(
             "token-safe",
             term="2026-2",
         )
@@ -333,11 +342,311 @@ def test_mobile_token_payload_rejects_invalid_tokens() -> None:
     with pytest.raises(InvalidMoodleResponse) as private_error:
         _mobile_tokens(
             "moodlemobile://token="
-            + b64encode(f"{site_id}:::webservice1234567890:::short".encode()).decode(),
+            + b64encode(f"{site_id}:::bbbbbbbbbbbbbbbb:::short".encode()).decode(),
             "/20262",
             passport,
         )
     assert private_error.value.reason == "mobile_private_token"
+
+
+def test_lists_module_files_with_private_file_urls_without_exposing_ws_token() -> None:
+    response = [
+        {
+            "id": 44,
+            "modules": [
+                {
+                    "id": 701,
+                    "modname": "resource",
+                    "contents": [
+                        {
+                            "type": "file",
+                            "filename": "Plano de ensino.pdf",
+                            "fileurl": (
+                                "https://virtual.ufmg.br/20262/webservice/pluginfile.php/"
+                                "700/mod_resource/content/1/plano.pdf?forcedownload=1&token=unsafe"
+                            ),
+                            "filesize": 12345,
+                            "mimetype": "application/pdf",
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+    opener = _Opener(
+        [
+            _Response(
+                json.dumps(response).encode(),
+                "https://virtual.ufmg.br/20262/webservice/rest/server.php",
+                content_type="application/json",
+            )
+        ]
+    )
+
+    files = MoodleStructuredDatesClient(opener=opener).list_module_files(
+        webservice_token="bbbbbbbbbbbbbbbb",
+        private_token="aaaaaaaaaaaaaaaa",
+        term="2026-2",
+        course_id=3701,
+        source_id=701,
+    )
+
+    assert files == [
+        {
+            "name": "Plano de ensino.pdf",
+            "url": (
+                "https://virtual.ufmg.br/20262/tokenpluginfile.php/"
+                "aaaaaaaaaaaaaaaa/700/mod_resource/content/1/plano.pdf?forcedownload=1"
+            ),
+            "size": 12345,
+            "mime_type": "application/pdf",
+        }
+    ]
+    request = opener.requests[0][0]
+    assert request.full_url == "https://virtual.ufmg.br/20262/webservice/rest/server.php"
+    assert b"core_course_get_contents" in request.data
+    assert b"courseid=3701" in request.data
+    assert b"options%5B0%5D%5Bname%5D=cmid" in request.data
+    assert b"options%5B0%5D%5Bvalue%5D=701" in request.data
+    assert b"bbbbbbbbbbbbbbbb" in request.data
+    assert "bbbbbbbbbbbbbbbb" not in repr(files)
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        ({"exception": "invalidtoken"}, "module_files_rejected"),
+        ([], "module_not_found"),
+        (
+            [{"modules": [{"id": 701, "modname": "assign", "contents": []}]}],
+            "module_kind",
+        ),
+        (
+            [
+                {
+                    "modules": [
+                        {
+                            "id": 701,
+                            "modname": "resource",
+                            "contents": [
+                                {
+                                    "type": "file",
+                                    "filename": "unsafe.pdf",
+                                    "fileurl": "https://attacker.example/file.pdf",
+                                    "filesize": 1,
+                                    "mimetype": "application/pdf",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ],
+            "module_file_url",
+        ),
+    ],
+)
+def test_module_files_reject_untrusted_or_unsupported_responses(
+    payload: object,
+    reason: str,
+) -> None:
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_module_files(
+            json.dumps(payload).encode(),
+            root="/20262",
+            source_id=701,
+            private_token="aaaaaaaaaaaaaaaa",
+        )
+    assert caught.value.reason == reason
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (b"not-json", "module_files_json"),
+        (json.dumps({}).encode(), "module_files_shape"),
+        (json.dumps([None]).encode(), "module_section_shape"),
+        (json.dumps([{"modules": None}]).encode(), "module_list_shape"),
+        (
+            json.dumps(
+                [
+                    {
+                        "modules": [
+                            {"id": 701, "modname": "resource", "contents": []},
+                            {"id": 701, "modname": "resource", "contents": []},
+                        ]
+                    }
+                ]
+            ).encode(),
+            "module_conflict",
+        ),
+        (
+            json.dumps(
+                [{"modules": [{"id": 701, "modname": "resource", "contents": None}]}]
+            ).encode(),
+            "module_contents_shape",
+        ),
+        (
+            json.dumps(
+                [{"modules": [{"id": 701, "modname": "resource", "contents": [None]}]}]
+            ).encode(),
+            "module_file_shape",
+        ),
+        (
+            json.dumps(
+                [
+                    {
+                        "modules": [
+                            {
+                                "id": 701,
+                                "modname": "resource",
+                                "contents": [
+                                    {
+                                        "filename": " bad.pdf",
+                                        "fileurl": (
+                                            "https://virtual.ufmg.br/20262/pluginfile.php/"
+                                            "1/mod_resource/content/1/bad.pdf"
+                                        ),
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ]
+            ).encode(),
+            "module_file_fields",
+        ),
+        (
+            json.dumps(
+                [
+                    {
+                        "modules": [
+                            {
+                                "id": 701,
+                                "modname": "resource",
+                                "contents": [
+                                    {
+                                        "filename": "A.pdf",
+                                        "fileurl": (
+                                            "https://virtual.ufmg.br/20262/pluginfile.php/"
+                                            "1/mod_resource/content/1/same.pdf"
+                                        ),
+                                    },
+                                    {
+                                        "filename": "B.pdf",
+                                        "fileurl": (
+                                            "https://virtual.ufmg.br/20262/pluginfile.php/"
+                                            "1/mod_resource/content/1/same.pdf"
+                                        ),
+                                    },
+                                ],
+                            }
+                        ]
+                    }
+                ]
+            ).encode(),
+            "module_file_conflict",
+        ),
+    ],
+)
+def test_module_files_reject_malformed_shapes(payload: bytes, reason: str) -> None:
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_module_files(
+            payload,
+            root="/20262",
+            source_id=701,
+            private_token="aaaaaaaaaaaaaaaa",
+        )
+    assert caught.value.reason == reason
+
+
+def test_module_files_ignore_directories_and_accept_plain_pluginfile_urls() -> None:
+    payload = json.dumps(
+        [
+            {
+                "modules": [
+                    {
+                        "id": 701,
+                        "modname": "folder",
+                        "contents": [
+                            {"type": "directory"},
+                            {
+                                "type": "file",
+                                "filename": "Notas.txt",
+                                "fileurl": (
+                                    "https://virtual.ufmg.br/20262/pluginfile.php/"
+                                    "1/mod_folder/content/1/notas.txt"
+                                ),
+                            },
+                        ],
+                    }
+                ]
+            }
+        ]
+    ).encode()
+    files = _parse_module_files(
+        payload,
+        root="/20262",
+        source_id=701,
+        private_token="aaaaaaaaaaaaaaaa",
+    )
+    assert files[0]["size"] == 0
+    assert files[0]["mime_type"] == "application/octet-stream"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        None,
+        "https://virtual.ufmg.br/20262/pluginfile.php/a/b",
+        "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_resource/content/../bad.pdf",
+        "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_resource/content/1/bad\\name.pdf",
+    ],
+)
+def test_private_file_url_rejects_unsafe_paths(url: object) -> None:
+    payload = [
+        {
+            "modules": [
+                {
+                    "id": 701,
+                    "modname": "resource",
+                    "contents": [{"filename": "File.pdf", "fileurl": url}],
+                }
+            ]
+        }
+    ]
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_module_files(
+            json.dumps(payload).encode(),
+            root="/20262",
+            source_id=701,
+            private_token="aaaaaaaaaaaaaaaa",
+        )
+    assert caught.value.reason == "module_file_url"
+
+
+@pytest.mark.parametrize(
+    ("webservice_token", "private_token", "course_id", "source_id"),
+    [
+        ("short", "aaaaaaaaaaaaaaaa", 1, 1),
+        ("bbbbbbbbbbbbbbbb", "short", 1, 1),
+        ("bbbbbbbbbbbbbbbb", "aaaaaaaaaaaaaaaa", 0, 1),
+        ("bbbbbbbbbbbbbbbb", "aaaaaaaaaaaaaaaa", 1, 0),
+    ],
+)
+def test_module_file_request_rejects_invalid_identifiers(
+    webservice_token: str,
+    private_token: str,
+    course_id: int,
+    source_id: int,
+) -> None:
+    with pytest.raises(ValueError):
+        MoodleStructuredDatesClient(opener=_Opener([])).list_module_files(
+            webservice_token=webservice_token,
+            private_token=private_token,
+            term="2026-2",
+            course_id=course_id,
+            source_id=source_id,
+        )
 
 
 @pytest.mark.parametrize(
@@ -468,6 +777,7 @@ def test_client_discovers_pages_files_text_and_empty_courses() -> None:
     assert result == [
         {
             "course_code": "DCC203",
+            "moodle_course_id": "3701",
             "status": "found",
             "candidates": [
                 {
@@ -496,8 +806,18 @@ def test_client_discovers_pages_files_text_and_empty_courses() -> None:
                 },
             ],
         },
-        {"course_code": "ELE028", "status": "unmatched", "candidates": []},
-        {"course_code": "MAT001", "status": "empty", "candidates": []},
+        {
+            "course_code": "ELE028",
+            "moodle_course_id": None,
+            "status": "unmatched",
+            "candidates": [],
+        },
+        {
+            "course_code": "MAT001",
+            "moodle_course_id": "4953",
+            "status": "empty",
+            "candidates": [],
+        },
     ]
     assert len(opener.requests) == 4
     course_call = json.loads(opener.requests[2][0].data)[0]
@@ -809,7 +1129,12 @@ def test_discovery_keeps_multiple_non_metaturma_matches_ambiguous() -> None:
     )
 
     assert result == [
-        {"course_code": "MAT001", "status": "ambiguous", "candidates": []}
+        {
+            "course_code": "MAT001",
+            "moodle_course_id": None,
+            "status": "ambiguous",
+            "candidates": [],
+        }
     ]
     assert len(opener.requests) == 3
 

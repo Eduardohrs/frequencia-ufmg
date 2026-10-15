@@ -68,6 +68,8 @@ class MoodleContentDiscoveryService:
                         {
                             "course_id": matched_course["id"],
                             "course_code": code,
+                            "term": matched_course["term"],
+                            "moodle_course_id": result["moodle_course_id"],
                             "status": result["status"],
                             "candidates": result["candidates"],
                         }
@@ -83,7 +85,18 @@ class MoodleContentDiscoveryService:
         for course in courses:
             status = course["status"]
             candidates = course["candidates"]
-            if status not in counts or not isinstance(candidates, list):
+            moodle_course_id = course["moodle_course_id"]
+            has_moodle_course = (
+                isinstance(moodle_course_id, str)
+                and re.fullmatch(r"[1-9][0-9]{0,9}", moodle_course_id) is not None
+                and int(moodle_course_id) <= 2_147_483_647
+            )
+            if (
+                status not in counts
+                or not isinstance(candidates, list)
+                or (status in {"found", "empty"}) != has_moodle_course
+                or (status in {"unmatched", "ambiguous"} and moodle_course_id is not None)
+            ):
                 raise ValueError("invalid discovery result")
             counts[str(status)] += 1
             candidate_total += len(candidates)

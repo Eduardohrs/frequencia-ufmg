@@ -377,6 +377,8 @@ void main() {
               {
                 'course_id': 'dcc203',
                 'course_code': 'DCC203',
+                'term': '2026-2',
+                'moodle_course_id': '3701',
                 'status': 'found',
                 'candidates': [
                   {
@@ -401,18 +403,24 @@ void main() {
               {
                 'course_id': 'mat001',
                 'course_code': 'MAT001',
+                'term': '2026-2',
+                'moodle_course_id': '4953',
                 'status': 'empty',
                 'candidates': <Object?>[],
               },
               {
                 'course_id': 'ele028',
                 'course_code': 'ELE028',
+                'term': '2026-2',
+                'moodle_course_id': null,
                 'status': 'unmatched',
                 'candidates': <Object?>[],
               },
               {
                 'course_id': 'amb001',
                 'course_code': 'AMB001',
+                'term': '2026-2',
+                'moodle_course_id': null,
                 'status': 'ambiguous',
                 'candidates': <Object?>[],
               },
@@ -440,6 +448,8 @@ void main() {
       PythonMoodleContentOrigin.metaturma,
     );
     expect(result.courses[1].status, PythonMoodleContentStatus.empty);
+    expect(result.courses.first.moodleCourseId, '3701');
+    expect(result.courses.first.term, '2026-2');
     expect(captured.method, 'POST');
     expect(captured.url.path, '/v1/ufmg/discover/content');
     expect(captured.body, '{}');
@@ -503,6 +513,99 @@ void main() {
       ),
     );
   });
+
+  test('resolves bounded direct Moodle material files', () async {
+    late http.Request captured;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'files': [
+              {
+                'name': 'Plano.pdf',
+                'url':
+                    'https://virtual.ufmg.br/20262/tokenpluginfile.php/'
+                    'aaaaaaaaaaaaaaaa/700/mod_resource/content/1/plano.pdf'
+                    '?forcedownload=1',
+                'size': 123,
+                'mime_type': 'application/pdf',
+              },
+            ],
+            'count': 1,
+          }),
+          200,
+        );
+      }),
+    );
+
+    final files = await transport.listMoodleMaterialFiles(
+      term: '2026-2',
+      courseId: '3701',
+      sourceId: '701',
+    );
+
+    expect(files.single.name, 'Plano.pdf');
+    expect(files.single.size, 123);
+    expect(files.single.mimeType, 'application/pdf');
+    expect(captured.url.path, '/v1/ufmg/moodle/material-files');
+    expect(jsonDecode(captured.body), {
+      'term': '2026-2',
+      'course_id': 3701,
+      'source_id': 701,
+    });
+  });
+
+  test(
+    'rejects unsafe Moodle material file responses and identities',
+    () async {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'files': [
+                {
+                  'name': 'Unsafe.pdf',
+                  'url': 'https://attacker.example/file.pdf',
+                  'size': 1,
+                  'mime_type': 'application/pdf',
+                },
+              ],
+              'count': 1,
+            }),
+            200,
+          ),
+        ),
+      );
+
+      await expectLater(
+        transport.listMoodleMaterialFiles(
+          term: '2026-2',
+          courseId: '3701',
+          sourceId: '701',
+        ),
+        throwsA(
+          isA<PythonBackendException>().having(
+            (error) => error.code,
+            'code',
+            PythonBackendError.invalidResponse,
+          ),
+        ),
+      );
+      expect(
+        () => transport.listMoodleMaterialFiles(
+          term: 'invalid',
+          courseId: '3701',
+          sourceId: '701',
+        ),
+        throwsArgumentError,
+      );
+    },
+  );
 
   test('accepts bounded long Moodle content titles', () {
     final title = List.filled(1024, 'x').join();

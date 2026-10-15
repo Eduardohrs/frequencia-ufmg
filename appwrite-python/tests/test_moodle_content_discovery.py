@@ -49,6 +49,7 @@ class _Client:
         return [
             {
                 "course_code": "DCC203",
+                "moodle_course_id": "3701",
                 "status": "found",
                 "candidates": [
                     {
@@ -60,7 +61,12 @@ class _Client:
                     }
                 ],
             },
-            {"course_code": "MAT001", "status": "empty", "candidates": []},
+            {
+                "course_code": "MAT001",
+                "moodle_course_id": "4953",
+                "status": "empty",
+                "candidates": [],
+            },
         ]
 
 
@@ -74,6 +80,8 @@ def test_discovery_links_candidates_to_local_courses_and_returns_counts() -> Non
             {
                 "course_id": "course-a",
                 "course_code": "DCC203",
+                "term": "2026-2",
+                "moodle_course_id": "3701",
                 "status": "found",
                 "candidates": [
                     {
@@ -88,6 +96,8 @@ def test_discovery_links_candidates_to_local_courses_and_returns_counts() -> Non
             {
                 "course_id": "course-b",
                 "course_code": "MAT001",
+                "term": "2026-2",
+                "moodle_course_id": "4953",
                 "status": "empty",
                 "candidates": [],
             },
@@ -139,12 +149,36 @@ def test_discovery_rejects_invalid_local_course_sets(courses: list[dict[str, str
 @pytest.mark.parametrize(
     "result",
     [
-        [{"course_code": "OTHER", "status": "empty", "candidates": []}],
         [
-            {"course_code": "DCC203", "status": "bad", "candidates": []},
-            {"course_code": "MAT001", "status": "empty", "candidates": []},
+            {
+                "course_code": "OTHER",
+                "moodle_course_id": "1",
+                "status": "empty",
+                "candidates": [],
+            }
         ],
-        [{"course_code": "DCC203", "status": "empty", "candidates": []}],
+        [
+            {
+                "course_code": "DCC203",
+                "moodle_course_id": "3701",
+                "status": "bad",
+                "candidates": [],
+            },
+            {
+                "course_code": "MAT001",
+                "moodle_course_id": "4953",
+                "status": "empty",
+                "candidates": [],
+            },
+        ],
+        [
+            {
+                "course_code": "DCC203",
+                "moodle_course_id": "3701",
+                "status": "empty",
+                "candidates": [],
+            }
+        ],
     ],
 )
 def test_discovery_rejects_invalid_client_results(result: list[dict[str, object]]) -> None:
