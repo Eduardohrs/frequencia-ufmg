@@ -3,12 +3,16 @@
 import json
 import re
 import unicodedata
+from base64 import b64decode
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from hashlib import md5
 from html.parser import HTMLParser
 from http.cookiejar import Cookie, CookieJar
+from secrets import token_hex
 from typing import Any, Protocol
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
@@ -21,6 +25,8 @@ MAX_COURSES = 50
 MAX_CANDIDATES = 500
 MOODLE_ORIGIN = "https://virtual.ufmg.br"
 _SESSKEY = re.compile(rb'"sesskey"\s*:\s*"([A-Za-z0-9_-]{8,128})"')
+_MOBILE_TOKEN = re.compile(r"[A-Za-z0-9]{16,256}")
+_REDIRECT_CODES = {301, 302, 303, 307, 308}
 
 
 class InvalidMoodleResponse(Exception):
@@ -174,6 +180,81 @@ class MoodleStructuredDatesClient:
                     "candidates": candidates,
                 }
         return [results[code] for code in codes]
+
+    def probe_mobile_download(self, token: str, *, term: str) -> dict[str, bool]:
+        """Verify mobile file capabilities without returning or retaining credentials."""
+
+        root, _, _ = self._connect(token, term)
+        passport = token_hex(16)
+        callback = self._mobile_launch(root, passport)
+        webservice_token, callback_private_token = _mobile_tokens(callback, root, passport)
+        info = self._site_info(root, webservice_token)
+        download_files = info.get("downloadfiles") == 1
+        site_private_token = info.get("userprivateaccesskey")
+        private_file_access = bool(
+            callback_private_token
+            or (
+                isinstance(site_private_token, str)
+                and _MOBILE_TOKEN.fullmatch(site_private_token)
+            )
+        )
+        return {
+            "direct_download_supported": download_files and private_file_access,
+            "download_files": download_files,
+            "private_file_access": private_file_access,
+            "webservice_token_issued": True,
+        }
+
+    def _mobile_launch(self, root: str, passport: str) -> str:
+        launch_url = f"{MOODLE_ORIGIN}{root}/admin/tool/mobile/launch.php?" + urlencode(
+            {
+                "service": "moodle_mobile_app",
+                "passport": passport,
+                "urlscheme": "moodlemobile",
+            }
+        )
+        request = Request(launch_url, headers={"Accept": "text/html"})
+        try:
+            with self._opener.open(request, timeout=self._timeout) as response:
+                response.read(MAX_RESPONSE_BYTES + 1)
+                callback = response.geturl()
+        except HTTPError as error:
+            callback = error.headers.get("Location", "") if error.code in _REDIRECT_CODES else ""
+            if not callback:
+                raise MoodleUnavailable("Moodle is unavailable") from None
+        except OSError:
+            raise MoodleUnavailable("Moodle is unavailable") from None
+        return callback
+
+    def _site_info(self, root: str, webservice_token: str) -> dict[str, object]:
+        path = f"{root}/webservice/rest/server.php"
+        payload, final_url, content_type = self._open(
+            Request(
+                f"{MOODLE_ORIGIN}{path}",
+                data=urlencode(
+                    {
+                        "moodlewsrestformat": "json",
+                        "moodlewssettingfileurl": "1",
+                        "moodlewssettingfilter": "1",
+                        "wsfunction": "core_webservice_get_site_info",
+                        "wstoken": webservice_token,
+                    }
+                ).encode(),
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                method="POST",
+            )
+        )
+        _require_json_endpoint(final_url, content_type, path)
+        try:
+            info = json.loads(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise InvalidMoodleResponse("site_info_json") from None
+        if not isinstance(info, dict) or "exception" in info:
+            raise InvalidMoodleResponse("site_info_rejected")
+        return info
 
     def _connect(self, token: str, term: str) -> tuple[str, str, str]:
         _validate_token(token)
@@ -695,6 +776,36 @@ def _require_ajax(url: str, content_type: str, ajax_path: str) -> None:
         raise UFMGReauthenticationRequired("UFMG reauthentication required")
     if content_type != "application/json":
         raise InvalidMoodleResponse("ajax_content_type")
+
+
+def _mobile_tokens(callback: str, root: str, passport: str) -> tuple[str, str | None]:
+    prefix = "moodlemobile://token="
+    if not callback.startswith(prefix):
+        raise InvalidMoodleResponse("mobile_callback_origin")
+    try:
+        decoded = b64decode(callback.removeprefix(prefix), validate=True).decode("utf-8")
+    except (UnicodeDecodeError, ValueError):
+        raise InvalidMoodleResponse("mobile_callback_encoding") from None
+    parts = decoded.split(":::")
+    if len(parts) not in {2, 3}:
+        raise InvalidMoodleResponse("mobile_callback_shape")
+    expected_site = md5(f"{MOODLE_ORIGIN}{root}{passport}".encode()).hexdigest()
+    if parts[0] != expected_site:
+        raise InvalidMoodleResponse("mobile_callback_site")
+    if _MOBILE_TOKEN.fullmatch(parts[1]) is None:
+        raise InvalidMoodleResponse("mobile_webservice_token")
+    private_token = parts[2] if len(parts) == 3 else None
+    if private_token is not None and _MOBILE_TOKEN.fullmatch(private_token) is None:
+        raise InvalidMoodleResponse("mobile_private_token")
+    return parts[1], private_token
+
+
+def _require_json_endpoint(url: str, content_type: str, path: str) -> None:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname != "virtual.ufmg.br" or parsed.path != path:
+        raise InvalidMoodleResponse("site_info_redirect")
+    if content_type != "application/json":
+        raise InvalidMoodleResponse("site_info_content_type")
 
 
 def _moodle_root(term: str) -> str:

@@ -1,6 +1,9 @@
 import json
+from base64 import b64decode, b64encode
 from email.message import Message
+from hashlib import md5
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -15,10 +18,12 @@ from moodle_structured_dates import (
     _course_matches,
     _event,
     _is_metaturma,
+    _mobile_tokens,
     _parse_calendar,
     _parse_course_list,
     _parse_course_states,
     _require_ajax,
+    _require_json_endpoint,
     _require_moodle_acs,
     _require_moodle_page,
     _SAMLFormParser,
@@ -116,6 +121,248 @@ def _calendar_response() -> bytes:
         ]
     }
     return json.dumps([{"error": False, "data": data}]).encode()
+
+
+def _mobile_callback(root: str, passport: str, *, private_token: str = "private1234567890") -> str:
+    site_id = md5(f"https://virtual.ufmg.br{root}{passport}".encode()).hexdigest()
+    payload = f"{site_id}:::webservice1234567890:::{private_token}".encode()
+    return f"moodlemobile://token={b64encode(payload).decode()}"
+
+
+def test_mobile_capability_probe_returns_only_non_secret_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    passport = "a" * 32
+    callback = _mobile_callback("/20262", passport)
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(b"", callback),
+            _Response(
+                json.dumps(
+                    {
+                        "downloadfiles": 1,
+                        "userprivateaccesskey": "access1234567890",
+                    }
+                ).encode(),
+                "https://virtual.ufmg.br/20262/webservice/rest/server.php",
+                content_type="application/json",
+            ),
+        ]
+    )
+    monkeypatch.setattr(module, "token_hex", lambda _length: passport)
+
+    result = MoodleStructuredDatesClient(opener=opener).probe_mobile_download(
+        "token-safe",
+        term="2026-2",
+    )
+
+    assert result == {
+        "direct_download_supported": True,
+        "download_files": True,
+        "private_file_access": True,
+        "webservice_token_issued": True,
+    }
+    assert "webservice1234567890" not in repr(result)
+    launch_request = opener.requests[2][0]
+    assert launch_request.full_url.startswith(
+        "https://virtual.ufmg.br/20262/admin/tool/mobile/launch.php?"
+    )
+    site_info_request = opener.requests[3][0]
+    assert site_info_request.full_url == (
+        "https://virtual.ufmg.br/20262/webservice/rest/server.php"
+    )
+    assert b"core_webservice_get_site_info" in site_info_request.data
+    assert b"moodlewssettingfileurl=1" in site_info_request.data
+
+
+@pytest.mark.parametrize(
+    ("callback", "reason"),
+    [
+        ("https://attacker.example/token=value", "mobile_callback_origin"),
+        ("moodlemobile://token=not-base64!", "mobile_callback_encoding"),
+        (
+            "moodlemobile://token=" + b64encode(b"wrong:::webservice1234567890").decode(),
+            "mobile_callback_site",
+        ),
+    ],
+)
+def test_mobile_capability_probe_rejects_untrusted_callbacks(
+    monkeypatch: pytest.MonkeyPatch,
+    callback: str,
+    reason: str,
+) -> None:
+    monkeypatch.setattr(module, "token_hex", lambda _length: "a" * 32)
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(b"", callback),
+        ]
+    )
+
+    with pytest.raises(InvalidMoodleResponse) as captured:
+        MoodleStructuredDatesClient(opener=opener).probe_mobile_download(
+            "token-safe",
+            term="2026-2",
+        )
+
+    assert captured.value.reason == reason
+
+
+def test_mobile_capability_probe_accepts_redirect_and_reports_missing_private_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    passport = "b" * 32
+    callback = _mobile_callback("/20262", passport, private_token="")
+    callback = "moodlemobile://token=" + b64encode(
+        b64decode(callback.removeprefix("moodlemobile://token=")).rsplit(b":::", 1)[0]
+    ).decode()
+    headers = Message()
+    headers["Location"] = callback
+    redirect = HTTPError("https://virtual.ufmg.br/20262/launch", 303, "redirect", headers, None)
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            redirect,
+            _Response(
+                b'{"downloadfiles":0,"userprivateaccesskey":""}',
+                "https://virtual.ufmg.br/20262/webservice/rest/server.php",
+                content_type="application/json",
+            ),
+        ]
+    )
+    monkeypatch.setattr(module, "token_hex", lambda _length: passport)
+
+    result = MoodleStructuredDatesClient(opener=opener).probe_mobile_download(
+        "token-safe",
+        term="2026-2",
+    )
+
+    assert result["direct_download_supported"] is False
+    assert result["download_files"] is False
+    assert result["private_file_access"] is False
+
+
+@pytest.mark.parametrize(
+    ("response", "reason"),
+    [
+        (OSError("offline"), None),
+        (HTTPError("https://virtual.ufmg.br", 500, "failure", Message(), None), None),
+        (
+            _Response(
+                b"not json",
+                "https://virtual.ufmg.br/20262/webservice/rest/server.php",
+                content_type="application/json",
+            ),
+            "site_info_json",
+        ),
+        (
+            _Response(
+                b'{"exception":"denied"}',
+                "https://virtual.ufmg.br/20262/webservice/rest/server.php",
+                content_type="application/json",
+            ),
+            "site_info_rejected",
+        ),
+        (
+            _Response(
+                b"[]",
+                "https://virtual.ufmg.br/20262/webservice/rest/server.php",
+                content_type="application/json",
+            ),
+            "site_info_rejected",
+        ),
+    ],
+)
+def test_mobile_capability_probe_maps_launch_and_site_info_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    response: _Response | OSError,
+    reason: str | None,
+) -> None:
+    passport = "c" * 32
+    callback = _mobile_callback("/20262", passport)
+    responses: list[_Response | OSError] = [
+        _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+        _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+    ]
+    if isinstance(response, HTTPError) or reason is None:
+        responses.append(response)
+    else:
+        responses.extend([_Response(b"", callback), response])
+    monkeypatch.setattr(module, "token_hex", lambda _length: passport)
+
+    expected = MoodleUnavailable if reason is None else InvalidMoodleResponse
+    with pytest.raises(expected) as captured:
+        MoodleStructuredDatesClient(opener=_Opener(responses)).probe_mobile_download(
+            "token-safe",
+            term="2026-2",
+        )
+
+    if reason is not None:
+        assert captured.value.reason == reason
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (b"too:::many:::token1234567890:::parts", "mobile_callback_shape"),
+        (b"SITE:::short", "mobile_callback_site"),
+    ],
+)
+def test_mobile_token_payload_rejects_invalid_shape_or_site(payload: bytes, reason: str) -> None:
+    callback = "moodlemobile://token=" + b64encode(payload).decode()
+    with pytest.raises(InvalidMoodleResponse) as captured:
+        _mobile_tokens(callback, "/20262", "passport")
+    assert captured.value.reason == reason
+
+
+def test_mobile_token_payload_rejects_invalid_tokens() -> None:
+    passport = "passport"
+    site_id = md5(f"https://virtual.ufmg.br/20262{passport}".encode()).hexdigest()
+    with pytest.raises(InvalidMoodleResponse) as webservice_error:
+        _mobile_tokens(
+            "moodlemobile://token=" + b64encode(f"{site_id}:::short".encode()).decode(),
+            "/20262",
+            passport,
+        )
+    assert webservice_error.value.reason == "mobile_webservice_token"
+
+    with pytest.raises(InvalidMoodleResponse) as private_error:
+        _mobile_tokens(
+            "moodlemobile://token="
+            + b64encode(f"{site_id}:::webservice1234567890:::short".encode()).decode(),
+            "/20262",
+            passport,
+        )
+    assert private_error.value.reason == "mobile_private_token"
+
+
+@pytest.mark.parametrize(
+    ("url", "content_type", "reason"),
+    [
+        (
+            "https://attacker.example/20262/webservice/rest/server.php",
+            "application/json",
+            "site_info_redirect",
+        ),
+        (
+            "https://virtual.ufmg.br/20262/webservice/rest/server.php",
+            "text/html",
+            "site_info_content_type",
+        ),
+    ],
+)
+def test_site_info_endpoint_is_strictly_allowlisted(
+    url: str,
+    content_type: str,
+    reason: str,
+) -> None:
+    with pytest.raises(InvalidMoodleResponse) as captured:
+        _require_json_endpoint(url, content_type, "/20262/webservice/rest/server.php")
+    assert captured.value.reason == reason
 
 
 def _course_list_response() -> bytes:

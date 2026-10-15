@@ -592,6 +592,115 @@ def test_moodle_content_discovery_rejects_auth_and_nonempty_body(
     assert result["body"] == {"error": "moodle_content_discovery_rejected"}
 
 
+def test_moodle_mobile_capability_route_returns_and_logs_only_safe_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        function,
+        "_authentication",
+        lambda *_: ("user-1", None),
+    )
+
+    class Service:
+        def probe(self, user_id: str, *, now: int) -> dict[str, object]:
+            assert user_id == "user-1"
+            assert now > 0
+            return {
+                "term": "2026-2",
+                "direct_download_supported": True,
+                "download_files": True,
+                "private_file_access": True,
+                "webservice_token_issued": True,
+            }
+
+    monkeypatch.setattr(function, "_moodle_mobile_capability_service", lambda *_: Service())
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/moodle/capabilities"))
+
+    result = function.main(context)
+
+    assert result["status"] == 200
+    assert result["body"]["direct_download_supported"] is True
+    event = json.loads(context.logs[0])
+    assert event == {
+        "direct_download_supported": True,
+        "download_files": True,
+        "event": "moodle_mobile_capability_succeeded",
+        "private_file_access": True,
+        "term": "2026-2",
+        "webservice_token_issued": True,
+    }
+    assert "ltpa-secret" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (UFMGReauthenticationRequired(), 401, "ufmg_reauthentication_required"),
+        (MoodleUnavailable(), 503, "moodle_unavailable"),
+        (InvalidMoodleResponse("mobile_callback_site"), 502, "moodle_response_invalid"),
+        (UFMGSessionStoreUnavailable(), 503, "ufmg_session_store_unavailable"),
+        (ValueError(), 502, "moodle_mobile_capability_rejected"),
+    ],
+)
+def test_moodle_mobile_capability_route_sanitizes_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    status: int,
+    code: str,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    class Service:
+        def probe(self, _user_id: str, *, now: int) -> dict[str, object]:
+            assert now > 0
+            raise error
+
+    monkeypatch.setattr(function, "_moodle_mobile_capability_service", lambda *_: Service())
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/moodle/capabilities"))
+
+    result = function.main(context)
+
+    assert result["status"] == status
+    assert result["body"] == {"error": code}
+
+
+def test_moodle_mobile_capability_rejects_auth_and_nonempty_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_: (None, rejection))
+    assert (
+        function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/moodle/capabilities")))
+        is rejection
+    )
+
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/ufmg/moodle/capabilities",
+                body_json={"unexpected": True},
+            )
+        )
+    )
+    assert result["status"] == 400
+    assert result["body"] == {"error": "moodle_mobile_capability_rejected"}
+
+
+def test_moodle_mobile_capability_factory_uses_server_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = {"sessions": object(), "client": object()}
+    monkeypatch.setattr(function, "_ufmg_session_store", lambda _headers: values["sessions"])
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: values["client"])
+
+    service = function._moodle_mobile_capability_service({})
+
+    assert service._sessions is values["sessions"]
+    assert service._client is values["client"]
+
+
 def test_moodle_content_discovery_factory_uses_server_dependencies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -80,12 +80,30 @@ abstract interface class BackendUFMGSessionGateway {
 
   Future<PythonMoodleContentDiscovery> discoverMoodleContent();
 
+  Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities();
+
   Future<PythonUFMGSigaSyncResult> syncSiga();
 }
 
 enum PythonMoodleContentStatus { found, empty, unmatched, ambiguous }
 
 enum PythonMoodleContentOrigin { canonical, metaturma }
+
+final class PythonMoodleMobileCapabilities {
+  const PythonMoodleMobileCapabilities({
+    required this.term,
+    required this.directDownloadSupported,
+    required this.downloadFiles,
+    required this.privateFileAccess,
+    required this.webserviceTokenIssued,
+  });
+
+  final String term;
+  final bool directDownloadSupported;
+  final bool downloadFiles;
+  final bool privateFileAccess;
+  final bool webserviceTokenIssued;
+}
 
 final class PythonMoodleContentCandidate {
   const PythonMoodleContentCandidate({
@@ -1184,6 +1202,51 @@ final class PythonBackendTransport
         courses: courses,
         candidateTotal: candidateTotal,
         metaturmaCandidateTotal: metaturmaCandidateTotal,
+      );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities() async {
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/moodle/capabilities',
+      method: _BackendMethod.post,
+      body: const {},
+    );
+    try {
+      final value = jsonDecode(response.body);
+      const keys = {
+        'term',
+        'direct_download_supported',
+        'download_files',
+        'private_file_access',
+        'webservice_token_issued',
+      };
+      if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
+        throw const FormatException();
+      }
+      final term = value['term'];
+      final direct = value['direct_download_supported'];
+      final downloads = value['download_files'];
+      final privateAccess = value['private_file_access'];
+      final issued = value['webservice_token_issued'];
+      if (term is! String ||
+          !RegExp(r'^20[2-9][0-9]-[12]$').hasMatch(term) ||
+          direct is! bool ||
+          downloads is! bool ||
+          privateAccess is! bool ||
+          issued is! bool ||
+          direct != (downloads && privateAccess && issued)) {
+        throw const FormatException();
+      }
+      return PythonMoodleMobileCapabilities(
+        term: term,
+        directDownloadSupported: direct,
+        downloadFiles: downloads,
+        privateFileAccess: privateAccess,
+        webserviceTokenIssued: issued,
       );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
