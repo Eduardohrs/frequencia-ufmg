@@ -110,6 +110,12 @@ final class _FirebasePythonBackendVerifier
   }
 
   @override
+  Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.probeMoodleMobileCapabilities();
+  }
+
+  @override
   Future<PythonUFMGSigaSyncResult> syncSiga() async {
     await (_activation ??= _activateAppCheck());
     return _transport.syncSiga();

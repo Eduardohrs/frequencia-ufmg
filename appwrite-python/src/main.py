@@ -49,6 +49,7 @@ from firestore_rest import (  # noqa: E402
 )
 from moodle_content_discovery import MoodleContentDiscoveryService  # noqa: E402
 from moodle_date_import import MoodleDateImportService  # noqa: E402
+from moodle_mobile_capability import MoodleMobileCapabilityService  # noqa: E402
 from moodle_structured_dates import (  # noqa: E402
     InvalidMoodleResponse,
     MoodleStructuredDatesClient,
@@ -230,6 +231,8 @@ def _dispatch(context: Any) -> Any:
         return _moodle_date_import(context, allowed_origin)
     if path == "/v1/ufmg/discover/content" and method == "POST":
         return _moodle_content_discovery(context, allowed_origin)
+    if path == "/v1/ufmg/moodle/capabilities" and method == "POST":
+        return _moodle_mobile_capability(context, allowed_origin)
     if path == "/v1/ufmg/sync" and method == "POST":
         return _ufmg_sync(context, allowed_origin)
     if path == "/v1/ufmg/sync/siga" and method == "POST":
@@ -585,6 +588,41 @@ def _moodle_content_discovery(context: Any, origin: str | None) -> Any:
     return _respond(context, result, origin=origin)
 
 
+def _moodle_mobile_capability(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(
+        context,
+        origin,
+        "/v1/ufmg/moodle/capabilities/post",
+    )
+    if rejected is not None:
+        return rejected
+    if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
+        return _ufmg_session_error(context, origin, "moodle_mobile_capability_rejected", 400)
+    try:
+        result = _moodle_mobile_capability_service(context.req.headers).probe(
+            cast(str, user_id),
+            now=int(time()),
+        )
+    except UFMGReauthenticationRequired:
+        return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
+    except MoodleUnavailable:
+        return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
+    except InvalidMoodleResponse as error:
+        return _ufmg_session_error(
+            context,
+            origin,
+            "moodle_response_invalid",
+            502,
+            reason=error.reason,
+        )
+    except UFMGSessionStoreUnavailable:
+        return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
+    except (TypeError, ValueError):
+        return _ufmg_session_error(context, origin, "moodle_mobile_capability_rejected", 502)
+    _log(context, "moodle_mobile_capability_succeeded", **result)
+    return _respond(context, result, origin=origin)
+
+
 def _attendance(context: Any, origin: str | None) -> Any:
     _, rejected = _authentication(context, origin, "/v1/attendance/evaluate")
     if rejected is not None:
@@ -863,6 +901,15 @@ def _moodle_content_discovery_service(
     )
 
 
+def _moodle_mobile_capability_service(
+    headers: dict[str, str],
+) -> MoodleMobileCapabilityService:
+    return MoodleMobileCapabilityService(
+        _ufmg_session_store(headers),
+        MoodleStructuredDatesClient(),
+    )
+
+
 def _ufmg_session_store(headers: dict[str, str]) -> AppwriteUFMGSessionStore:
     endpoint = environ.get("APPWRITE_FUNCTION_API_ENDPOINT", "")
     project = environ.get("APPWRITE_FUNCTION_PROJECT_ID", "")
@@ -959,6 +1006,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/ufmg/import/schedules",
         "/v1/ufmg/import/dates",
         "/v1/ufmg/discover/content",
+        "/v1/ufmg/moodle/capabilities",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
     } or path.startswith("/v1/courses/")
@@ -1090,6 +1138,7 @@ def _route_name(path: str) -> str:
         "/v1/ufmg/import/schedules",
         "/v1/ufmg/import/dates",
         "/v1/ufmg/discover/content",
+        "/v1/ufmg/moodle/capabilities",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
     }:

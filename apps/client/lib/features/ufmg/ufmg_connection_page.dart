@@ -236,6 +236,26 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         operation: AuditedOperation.moodleContentDiscovery,
         action: widget.gateway.discoverMoodleContent,
       );
+      String capabilitySummary;
+      try {
+        final capabilities = await runAuditedOperation(
+          logger: widget.logger,
+          operation: AuditedOperation.moodleMobileCapability,
+          action: widget.gateway.probeMoodleMobileCapabilities,
+        );
+        capabilitySummary = capabilities.directDownloadSupported
+            ? ' Download direto disponível.'
+            : ' Download direto ainda não disponível.';
+      } on PythonBackendException catch (error) {
+        if (error.code == PythonBackendError.ufmgReauthenticationRequired) {
+          rethrow;
+        }
+        capabilitySummary =
+            ' Não foi possível validar o download direto agora.';
+      } catch (_) {
+        capabilitySummary =
+            ' Não foi possível validar o download direto agora.';
+      }
       final dates = await _listDates();
       if (mounted) {
         setState(() {
@@ -246,7 +266,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               '${result.updated} ${_plural(result.updated, 'data atualizada', 'datas atualizadas')}. '
               '${result.unchanged} sem alteração. '
               '${result.unmatched} ${_plural(result.unmatched, 'data não pôde ser ligada a uma disciplina', 'datas não puderam ser ligadas a uma disciplina')}. '
-              '${discovery.candidateTotal} ${_plural(discovery.candidateTotal, 'material candidato encontrado', 'materiais candidatos encontrados')}.';
+              '${discovery.candidateTotal} ${_plural(discovery.candidateTotal, 'material candidato encontrado', 'materiais candidatos encontrados')}.'
+              '$capabilitySummary';
         });
       }
     } catch (error) {

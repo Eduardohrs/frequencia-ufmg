@@ -445,6 +445,65 @@ void main() {
     expect(captured.body, '{}');
   });
 
+  test('validates bounded Moodle mobile download capabilities', () async {
+    late http.Request captured;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'term': '2026-2',
+            'direct_download_supported': true,
+            'download_files': true,
+            'private_file_access': true,
+            'webservice_token_issued': true,
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await transport.probeMoodleMobileCapabilities();
+
+    expect(result.term, '2026-2');
+    expect(result.directDownloadSupported, isTrue);
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/v1/ufmg/moodle/capabilities');
+    expect(captured.body, '{}');
+  });
+
+  test('rejects inconsistent Moodle mobile download capabilities', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'term': '2026-2',
+            'direct_download_supported': true,
+            'download_files': false,
+            'private_file_access': true,
+            'webservice_token_issued': true,
+          }),
+          200,
+        ),
+      ),
+    );
+
+    await expectLater(
+      transport.probeMoodleMobileCapabilities(),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'code',
+          PythonBackendError.invalidResponse,
+        ),
+      ),
+    );
+  });
+
   test('accepts bounded long Moodle content titles', () {
     final title = List.filled(1024, 'x').join();
 

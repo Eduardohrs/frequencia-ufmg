@@ -761,6 +761,7 @@ void main() {
       find.textContaining('3 materiais candidatos encontrados'),
       findsOneWidget,
     );
+    expect(find.textContaining('Download direto disponível'), findsOneWidget);
     expect(find.text('3 materiais candidatos'), findsOneWidget);
     expect(
       find.text('Nenhuma publicação candidata encontrada'),
@@ -786,7 +787,42 @@ void main() {
       findsOneWidget,
     );
     expect(logger.events, contains('moodle_content_discovery_succeeded'));
+    expect(logger.events, contains('moodle_mobile_capability_succeeded'));
   });
+
+  testWidgets(
+    'keeps Moodle sync useful when capability probing is unavailable',
+    (tester) async {
+      final gateway =
+          _Gateway(
+              status: const PythonUFMGSessionStatus(
+                connected: true,
+                reauthenticationRequired: false,
+              ),
+            )
+            ..capabilityError = const PythonBackendException(
+              PythonBackendError.unavailable,
+            );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Não foi possível validar o download direto agora'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('3 materiais candidatos encontrados'),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('explains when Moodle refuses to open a material', (
     tester,
@@ -935,6 +971,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
   Completer<PythonMoodleDateImportResult>? dateImportCompleter;
   Object? syncError;
   Object? contentDiscoveryError;
+  Object? capabilityError;
   Completer<PythonMoodleContentDiscovery>? contentDiscoveryCompleter;
   final credentials = <(String, String)>[];
   int disconnectCalls = 0;
@@ -944,6 +981,18 @@ final class _Gateway implements BackendUFMGSessionGateway {
   List<PythonMoodleDate> dates = const [];
   int syncCalls = 0;
   int contentDiscoveryCalls = 0;
+
+  @override
+  Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities() async {
+    if (capabilityError case final error?) throw error;
+    return const PythonMoodleMobileCapabilities(
+      term: '2026-2',
+      directDownloadSupported: true,
+      downloadFiles: true,
+      privateFileAccess: true,
+      webserviceTokenIssued: true,
+    );
+  }
 
   @override
   Future<PythonMoodleContentDiscovery> discoverMoodleContent() async {
