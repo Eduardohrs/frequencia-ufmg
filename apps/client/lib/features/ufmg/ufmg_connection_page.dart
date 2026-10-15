@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../backend/python_backend_transport.dart';
 import '../../data/ufmg_sync_schedule.dart';
@@ -11,6 +12,7 @@ class UFMGConnectionPage extends StatefulWidget {
     required this.logger,
     this.userId,
     this.syncSchedule,
+    this.openExternalUri,
     super.key,
   });
 
@@ -18,6 +20,7 @@ class UFMGConnectionPage extends StatefulWidget {
   final AppLogger logger;
   final String? userId;
   final UFMGSyncScheduleGateway? syncSchedule;
+  final Future<bool> Function(Uri uri)? openExternalUri;
 
   @override
   State<UFMGConnectionPage> createState() => _UFMGConnectionPageState();
@@ -72,6 +75,32 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       }
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _openMoodleMaterial(
+    PythonMoodleContentCandidate candidate,
+  ) async {
+    final uri = candidate.url;
+    if (uri == null || !candidate.canOpenDirectly) return;
+    try {
+      await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleMaterialOpen,
+        action: () async {
+          final launcher = widget.openExternalUri ?? _openExternalUri;
+          if (!await launcher(uri)) {
+            throw StateError('moodle_material_launch_rejected');
+          }
+        },
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível abrir este material no Moodle.'),
+        ),
+      );
     }
   }
 
@@ -363,6 +392,11 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 8),
+          const Text(
+            'Os materiais abrem diretamente na UFMG. O Moodle pode pedir login '
+            'se a sessão do navegador tiver expirado.',
+          ),
+          const SizedBox(height: 8),
           for (final course in _contentDiscovery!.courses)
             Card(
               child: ExpansionTile(
@@ -375,6 +409,16 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                       leading: Icon(_contentIcon(candidate.kind)),
                       title: Text(candidate.title),
                       subtitle: Text(_candidateLabel(candidate)),
+                      trailing: candidate.canOpenDirectly
+                          ? IconButton(
+                              key: Key(
+                                'moodle-material-open-${candidate.sourceId}',
+                              ),
+                              tooltip: 'Abrir no Moodle',
+                              onPressed: () => _openMoodleMaterial(candidate),
+                              icon: const Icon(Icons.open_in_new),
+                            )
+                          : null,
                     ),
                 ],
               ),
@@ -639,3 +683,6 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   static String _plural(int count, String singular, String plural) =>
       count == 1 ? singular : plural;
 }
+
+Future<bool> _openExternalUri(Uri uri) =>
+    launchUrl(uri, mode: LaunchMode.externalApplication);

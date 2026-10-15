@@ -41,6 +41,7 @@ enum AuditedOperation {
   moodleDateImport('moodle_date_import'),
   moodleDateList('moodle_date_list'),
   moodleContentDiscovery('moodle_content_discovery'),
+  moodleMaterialOpen('moodle_material_open'),
   ufmgSync('ufmg_sync');
 
   const AuditedOperation(this.eventPrefix);
