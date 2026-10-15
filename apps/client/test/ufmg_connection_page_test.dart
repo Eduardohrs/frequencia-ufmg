@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/ufmg_sync_schedule.dart';
@@ -735,9 +736,17 @@ void main() {
       ),
     );
     final logger = _Logger();
+    final openedUris = <Uri>[];
     await tester.pumpWidget(
       MaterialApp(
-        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+        home: UFMGConnectionPage(
+          gateway: gateway,
+          logger: logger,
+          openExternalUri: (uri) async {
+            openedUris.add(uri);
+            return true;
+          },
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -764,12 +773,91 @@ void main() {
     expect(find.text('Possível plano de ensino'), findsOneWidget);
     expect(find.text('Possível cronograma'), findsOneWidget);
     expect(find.text('Material da disciplina • Metaturma'), findsOneWidget);
+    expect(find.byKey(const Key('moodle-material-open-103')), findsNothing);
+    await tester.tap(find.byKey(const Key('moodle-material-open-101')));
+    await tester.pumpAndSettle();
+    expect(openedUris, [
+      Uri.parse('https://virtual.ufmg.br/20262/mod/page/view.php?id=101'),
+    ]);
+    expect(logger.events, contains('moodle_material_open_succeeded'));
     expect(find.text('Disciplina não localizada no Moodle'), findsOneWidget);
     expect(
       find.text('Mais de uma disciplina correspondente no Moodle'),
       findsOneWidget,
     );
     expect(logger.events, contains('moodle_content_discovery_succeeded'));
+  });
+
+  testWidgets('explains when Moodle refuses to open a material', (
+    tester,
+  ) async {
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          ),
+          logger: logger,
+          openExternalUri: (_) async => false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('moodle-material-open-101')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Não foi possível abrir este material no Moodle.'),
+      findsOneWidget,
+    );
+    expect(logger.events, contains('moodle_material_open_failed'));
+  });
+
+  testWidgets('uses the platform launcher for Moodle materials by default', (
+    tester,
+  ) async {
+    const launcherChannel = MethodChannel('plugins.flutter.io/url_launcher');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(launcherChannel, (_) async => true);
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(launcherChannel, null),
+    );
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          ),
+          logger: logger,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('moodle-material-open-101')));
+    await tester.pumpAndSettle();
+
+    expect(logger.events, contains('moodle_material_open_succeeded'));
   });
 
   testWidgets('handles content discovery failure and expired session', (
@@ -864,7 +952,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
       return completer.future;
     }
     if (contentDiscoveryError case final error?) throw error;
-    return const PythonMoodleContentDiscovery(
+    return PythonMoodleContentDiscovery(
       candidateTotal: 3,
       metaturmaCandidateTotal: 1,
       courses: [
@@ -877,7 +965,9 @@ final class _Gateway implements BackendUFMGSessionGateway {
               sourceId: '101',
               kind: 'page',
               title: 'Plano de ensino',
-              url: null,
+              url: Uri.parse(
+                'https://virtual.ufmg.br/20262/mod/page/view.php?id=101',
+              ),
               relevance: 'teaching_plan',
               origin: PythonMoodleContentOrigin.canonical,
             ),
@@ -885,7 +975,9 @@ final class _Gateway implements BackendUFMGSessionGateway {
               sourceId: '102',
               kind: 'file',
               title: 'Cronograma',
-              url: null,
+              url: Uri.parse(
+                'https://virtual.ufmg.br/20262/mod/resource/view.php?id=102',
+              ),
               relevance: 'schedule',
               origin: PythonMoodleContentOrigin.canonical,
             ),

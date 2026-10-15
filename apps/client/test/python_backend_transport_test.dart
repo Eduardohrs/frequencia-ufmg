@@ -474,6 +474,41 @@ void main() {
     );
   });
 
+  test('rejects Moodle material URLs outside the direct-download contract', () {
+    for (final entry in [
+      ('101', 'page', 'https://example.com/20262/mod/page/view.php?id=101'),
+      ('101', 'page', 'https://virtual.ufmg.br/login/index.php?id=101'),
+      ('101', 'page', 'https://virtual.ufmg.br/20262/mod/page/view.php?id=102'),
+      (
+        '101',
+        'page',
+        'https://virtual.ufmg.br/20262/mod/resource/view.php?id=101',
+      ),
+      (
+        'not-an-id',
+        'page',
+        'https://virtual.ufmg.br/20262/mod/page/view.php?id=101',
+      ),
+      (
+        '101',
+        'file',
+        'https://virtual.ufmg.br/20262/mod/folder/view.php?id=101&extra=1',
+      ),
+    ]) {
+      expect(
+        () => PythonMoodleContentCandidate.fromJson({
+          'source_id': entry.$1,
+          'kind': entry.$2,
+          'title': 'Material',
+          'url': entry.$3,
+          'relevance': 'other',
+          'origin': 'canonical',
+        }),
+        throwsFormatException,
+      );
+    }
+  });
+
   test('lists canonical Moodle dates in chronological order', () async {
     final transport = PythonBackendTransport(
       endpoint: Uri.parse('https://backend.example'),

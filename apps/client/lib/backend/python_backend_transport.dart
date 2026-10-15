@@ -112,7 +112,8 @@ final class PythonMoodleContentCandidate {
     };
     final uri = rawUrl is String ? Uri.tryParse(rawUrl) : null;
     if (sourceId is! String ||
-        sourceId.isEmpty ||
+        !_moodleSourceId.hasMatch(sourceId) ||
+        (int.tryParse(sourceId) ?? 0) > 2147483647 ||
         kind is! String ||
         !const {'page', 'file', 'text'}.contains(kind) ||
         title is! String ||
@@ -124,11 +125,7 @@ final class PythonMoodleContentCandidate {
         origin == null ||
         (kind == 'text') != (rawUrl == null) ||
         (rawUrl != null &&
-            (uri == null ||
-                uri.scheme != 'https' ||
-                uri.host != 'virtual.ufmg.br' ||
-                uri.userInfo.isNotEmpty ||
-                uri.hasFragment))) {
+            (uri == null || !_isSafeMoodleMaterialUri(uri, sourceId, kind)))) {
       throw const FormatException();
     }
     return PythonMoodleContentCandidate(
@@ -147,6 +144,35 @@ final class PythonMoodleContentCandidate {
   final Uri? url;
   final String relevance;
   final PythonMoodleContentOrigin origin;
+
+  bool get canOpenDirectly =>
+      url != null && _isSafeMoodleMaterialUri(url!, sourceId, kind);
+}
+
+final RegExp _moodleSourceId = RegExp(r'^[1-9][0-9]{0,9}$');
+final RegExp _moodlePeriod = RegExp(r'^[0-9]{5}$');
+
+bool _isSafeMoodleMaterialUri(Uri uri, String sourceId, String kind) {
+  final segments = uri.pathSegments;
+  if (uri.scheme != 'https' ||
+      uri.host != 'virtual.ufmg.br' ||
+      uri.hasPort ||
+      uri.userInfo.isNotEmpty ||
+      uri.hasFragment ||
+      segments.length != 4 ||
+      !_moodlePeriod.hasMatch(segments[0]) ||
+      segments[1] != 'mod' ||
+      segments[3] != 'view.php' ||
+      uri.queryParametersAll.length != 1 ||
+      uri.queryParametersAll['id']?.length != 1 ||
+      uri.queryParametersAll['id']?.single != sourceId) {
+    return false;
+  }
+  return switch (kind) {
+    'page' => const {'page', 'book'}.contains(segments[2]),
+    'file' => const {'resource', 'folder'}.contains(segments[2]),
+    _ => false,
+  };
 }
 
 final class PythonMoodleCourseContent {
