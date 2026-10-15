@@ -1597,6 +1597,13 @@ final class _UFMGGateway implements BackendUFMGSessionGateway {
       throw UnimplementedError();
 
   @override
+  Future<List<PythonMoodleMaterialFile>> listMoodleMaterialFiles({
+    required String term,
+    required String courseId,
+    required String sourceId,
+  }) => throw UnimplementedError();
+
+  @override
   Future<PythonUFMGSigaSyncResult> syncSiga() async {
     syncCalls++;
     if (syncError case final error?) throw error;

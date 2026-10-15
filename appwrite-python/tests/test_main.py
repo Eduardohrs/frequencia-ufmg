@@ -18,6 +18,7 @@ from firestore_rest import (
     FirestoreUnavailable,
 )
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
+from moodle_token_store import MoodleAuthorizationRequired, MoodleTokenStoreUnavailable
 from quota_guard import RateLimitExceeded, ReplayDetected, SecurityStoreUnavailable
 from schedule_repository import DestructiveScheduleChange
 from schedule_service import InvalidSchedule, ScheduleOverlap
@@ -110,6 +111,13 @@ def test_ufmg_session_routes_are_authenticated_and_sanitized(
 
     monkeypatch.setattr(function, "_authentication", authenticate)
     monkeypatch.setattr(function, "_ufmg_session_service", lambda *_args: Service())
+    deleted_moodle_tokens: list[str] = []
+
+    class MoodleTokens:
+        def delete(self, user_id: str) -> None:
+            deleted_moodle_tokens.append(user_id)
+
+    monkeypatch.setattr(function, "_moodle_token_store", lambda *_args: MoodleTokens())
     status = FakeContext(FakeRequest("GET", "/v1/ufmg/session"))
     connected = FakeContext(
         FakeRequest(
@@ -123,6 +131,7 @@ def test_ufmg_session_routes_are_authenticated_and_sanitized(
     assert function.main(status)["body"]["connected"] is False
     assert function.main(connected)["body"]["connected"] is True
     assert function.main(disconnected)["body"] == {"connected": False}
+    assert deleted_moodle_tokens == ["firebase-user"]
     assert routes == [
         "/v1/ufmg/session/get",
         "/v1/ufmg/session/post",
@@ -691,14 +700,180 @@ def test_moodle_mobile_capability_rejects_auth_and_nonempty_body(
 def test_moodle_mobile_capability_factory_uses_server_dependencies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    values = {"sessions": object(), "client": object()}
+    values = {"sessions": object(), "client": object(), "tokens": object()}
     monkeypatch.setattr(function, "_ufmg_session_store", lambda _headers: values["sessions"])
+    monkeypatch.setattr(function, "_moodle_token_store", lambda _headers: values["tokens"])
     monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: values["client"])
 
     service = function._moodle_mobile_capability_service({})
 
     assert service._sessions is values["sessions"]
     assert service._client is values["client"]
+    assert service._tokens is values["tokens"]
+
+
+def test_moodle_material_files_route_returns_only_direct_file_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    class Service:
+        def list_files(self, user_id: str, **kwargs: object) -> dict[str, object]:
+            assert user_id == "user-1"
+            assert kwargs["term"] == "2026-2"
+            assert kwargs["course_id"] == 3701
+            assert kwargs["source_id"] == 701
+            assert isinstance(kwargs["now"], int)
+            return {
+                "files": [
+                    {
+                        "name": "Plano.pdf",
+                        "url": (
+                            "https://virtual.ufmg.br/20262/tokenpluginfile.php/"
+                            "aaaaaaaaaaaaaaaa/path"
+                        ),
+                        "size": 123,
+                        "mime_type": "application/pdf",
+                    }
+                ],
+                "count": 1,
+            }
+
+    monkeypatch.setattr(function, "_moodle_material_service", lambda *_: Service())
+    context = FakeContext(
+        FakeRequest(
+            "POST",
+            "/v1/ufmg/moodle/material-files",
+            body_json={"term": "2026-2", "course_id": 3701, "source_id": 701},
+        )
+    )
+
+    result = function.main(context)
+
+    assert result["status"] == 200
+    assert result["body"]["count"] == 1
+    event = json.loads(context.logs[0])
+    assert event == {"event": "moodle_material_files_succeeded", "file_count": 1}
+    assert "aaaaaaaaaaaaaaaa" not in json.dumps(context.logs)
+
+
+def test_moodle_material_files_route_returns_authentication_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_: (None, rejection))
+    assert (
+        function.main(
+            FakeContext(FakeRequest("POST", "/v1/ufmg/moodle/material-files"))
+        )
+        is rejection
+    )
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (MoodleAuthorizationRequired(), 401, "moodle_authorization_required"),
+        (MoodleUnavailable(), 503, "moodle_unavailable"),
+        (InvalidMoodleResponse("module_file_url"), 502, "moodle_response_invalid"),
+        (MoodleTokenStoreUnavailable(), 503, "moodle_token_store_unavailable"),
+        (ValueError(), 400, "moodle_material_request_rejected"),
+    ],
+)
+def test_moodle_material_files_route_sanitizes_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    status: int,
+    code: str,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    class Service:
+        def list_files(self, *_args: object, **_kwargs: object) -> None:
+            raise error
+
+    monkeypatch.setattr(function, "_moodle_material_service", lambda *_: Service())
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/ufmg/moodle/material-files",
+                body_json={"term": "2026-2", "course_id": 3701, "source_id": 701},
+            )
+        )
+    )
+    assert result["status"] == status
+    assert result["body"] == {"error": code}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"term": "20262", "course_id": 3701, "source_id": 701},
+        {"term": "2026-2", "course_id": "3701", "source_id": 701},
+        {"term": "2026-2", "course_id": 3701, "source_id": 0},
+        {
+            "term": "2026-2",
+            "course_id": 3701,
+            "source_id": 701,
+            "unexpected": True,
+        },
+    ],
+)
+def test_moodle_material_files_route_rejects_invalid_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+    body: dict[str, object],
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+    result = function.main(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/moodle/material-files", body_json=body))
+    )
+    assert result["status"] == 400
+    assert result["body"] == {"error": "moodle_material_request_rejected"}
+
+
+def test_moodle_material_service_factory_uses_server_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = {"tokens": object(), "client": object()}
+    monkeypatch.setattr(function, "_moodle_token_store", lambda _headers: values["tokens"])
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: values["client"])
+
+    service = function._moodle_material_service({})
+
+    assert service._tokens is values["tokens"]
+    assert service._client is values["client"]
+
+
+def test_moodle_token_store_builds_only_with_complete_secure_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = (
+        "APPWRITE_FUNCTION_API_ENDPOINT",
+        "APPWRITE_FUNCTION_PROJECT_ID",
+        "SECURITY_DATABASE_ID",
+        "UFMG_SESSION_TABLE_ID",
+        "UFMG_SESSION_ACTIVE_KEY_VERSION",
+        "UFMG_SESSION_ENCRYPTION_KEY_V1",
+        "UFMG_SESSION_INDEX_KEY",
+    )
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(UFMGSessionStoreUnavailable):
+        function._moodle_token_store({})
+
+    monkeypatch.setenv("APPWRITE_FUNCTION_API_ENDPOINT", "https://appwrite.example/v1")
+    monkeypatch.setenv("APPWRITE_FUNCTION_PROJECT_ID", "project")
+    monkeypatch.setenv("SECURITY_DATABASE_ID", "database")
+    monkeypatch.setenv("UFMG_SESSION_TABLE_ID", "sessions")
+    monkeypatch.setenv("UFMG_SESSION_ACTIVE_KEY_VERSION", "1")
+    monkeypatch.setenv("UFMG_SESSION_ENCRYPTION_KEY_V1", b64encode(b"e" * 32).decode())
+    monkeypatch.setenv("UFMG_SESSION_INDEX_KEY", b64encode(b"i" * 32).decode())
+
+    store = function._moodle_token_store({"x-appwrite-key": "runtime-key"})
+
+    assert store.__class__.__name__ == "AppwriteMoodleTokenStore"
 
 
 def test_moodle_content_discovery_factory_uses_server_dependencies(

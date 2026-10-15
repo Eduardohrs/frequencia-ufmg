@@ -10,6 +10,7 @@ enum PythonBackendError {
   credentialsUnavailable,
   destructiveConflict,
   invalidResponse,
+  moodleAuthorizationRequired,
   rateLimited,
   replayed,
   scheduleConflict,
@@ -81,6 +82,12 @@ abstract interface class BackendUFMGSessionGateway {
   Future<PythonMoodleContentDiscovery> discoverMoodleContent();
 
   Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities();
+
+  Future<List<PythonMoodleMaterialFile>> listMoodleMaterialFiles({
+    required String term,
+    required String courseId,
+    required String sourceId,
+  });
 
   Future<PythonUFMGSigaSyncResult> syncSiga();
 }
@@ -167,6 +174,67 @@ final class PythonMoodleContentCandidate {
       url != null && _isSafeMoodleMaterialUri(url!, sourceId, kind);
 }
 
+final class PythonMoodleMaterialFile {
+  const PythonMoodleMaterialFile({
+    required this.name,
+    required this.url,
+    required this.size,
+    required this.mimeType,
+  });
+
+  factory PythonMoodleMaterialFile.fromJson(Map<String, Object?> json) {
+    if (!_hasExactKeys(json, const {'name', 'url', 'size', 'mime_type'})) {
+      throw const FormatException();
+    }
+    final name = json['name'];
+    final rawUrl = json['url'];
+    final size = json['size'];
+    final mimeType = json['mime_type'];
+    final url = rawUrl is String ? Uri.tryParse(rawUrl) : null;
+    if (name is! String ||
+        name.isEmpty ||
+        name.trim() != name ||
+        name.length > 255 ||
+        url == null ||
+        !_isSafeMoodleDownloadUri(url) ||
+        size is! int ||
+        size < 0 ||
+        size > 10000000000 ||
+        mimeType is! String ||
+        !RegExp(r'^[a-z0-9.+-]+/[a-z0-9.+-]+$').hasMatch(mimeType)) {
+      throw const FormatException();
+    }
+    return PythonMoodleMaterialFile(
+      name: name,
+      url: url,
+      size: size,
+      mimeType: mimeType,
+    );
+  }
+
+  final String name;
+  final Uri url;
+  final int size;
+  final String mimeType;
+}
+
+bool _isSafeMoodleDownloadUri(Uri uri) {
+  final segments = uri.pathSegments;
+  return uri.scheme == 'https' &&
+      uri.host == 'virtual.ufmg.br' &&
+      !uri.hasPort &&
+      uri.userInfo.isEmpty &&
+      !uri.hasFragment &&
+      segments.length >= 8 &&
+      _moodlePeriod.hasMatch(segments[0]) &&
+      segments[1] == 'tokenpluginfile.php' &&
+      RegExp(r'^[A-Za-z0-9]{16,256}$').hasMatch(segments[2]) &&
+      !segments.skip(3).any((segment) => segment.isEmpty || segment == '..') &&
+      uri.queryParametersAll.length == 1 &&
+      uri.queryParametersAll['forcedownload']?.length == 1 &&
+      uri.queryParametersAll['forcedownload']?.single == '1';
+}
+
 final RegExp _moodleSourceId = RegExp(r'^[1-9][0-9]{0,9}$');
 final RegExp _moodlePeriod = RegExp(r'^[0-9]{5}$');
 
@@ -197,12 +265,16 @@ final class PythonMoodleCourseContent {
   const PythonMoodleCourseContent({
     required this.courseId,
     required this.courseCode,
+    required this.term,
+    required this.moodleCourseId,
     required this.status,
     required this.candidates,
   });
 
   final String courseId;
   final String courseCode;
+  final String term;
+  final String? moodleCourseId;
   final PythonMoodleContentStatus status;
   final List<PythonMoodleContentCandidate> candidates;
 }
@@ -1137,6 +1209,8 @@ final class PythonBackendTransport
             if (!_hasExactKeys(json, const {
               'course_id',
               'course_code',
+              'term',
+              'moodle_course_id',
               'status',
               'candidates',
             })) {
@@ -1144,6 +1218,8 @@ final class PythonBackendTransport
             }
             final courseId = json['course_id'];
             final courseCode = json['course_code'];
+            final term = json['term'];
+            final moodleCourseId = json['moodle_course_id'];
             final rawStatus = json['status'];
             final rawCandidates = json['candidates'];
             final status = switch (rawStatus) {
@@ -1158,6 +1234,11 @@ final class PythonBackendTransport
                 courseCode is! String ||
                 courseCode.isEmpty ||
                 courseCode != courseCode.toUpperCase() ||
+                term is! String ||
+                !RegExp(r'^20[2-9][0-9]-[12]$').hasMatch(term) ||
+                (moodleCourseId != null &&
+                    (moodleCourseId is! String ||
+                        !_moodleSourceId.hasMatch(moodleCourseId))) ||
                 status == null ||
                 rawCandidates is! List ||
                 rawCandidates.length > 500) {
@@ -1174,11 +1255,19 @@ final class PythonBackendTransport
                 parsedCandidates.isNotEmpty) {
               throw const FormatException();
             }
+            final matched =
+                status == PythonMoodleContentStatus.found ||
+                status == PythonMoodleContentStatus.empty;
+            if (matched != (moodleCourseId is String)) {
+              throw const FormatException();
+            }
             candidates += parsedCandidates.length;
             counts[status] = (counts[status] ?? 0) + 1;
             return PythonMoodleCourseContent(
               courseId: courseId,
               courseCode: courseCode,
+              term: term,
+              moodleCourseId: moodleCourseId as String?,
               status: status,
               candidates: parsedCandidates,
             );
@@ -1248,6 +1337,56 @@ final class PythonBackendTransport
         privateFileAccess: privateAccess,
         webserviceTokenIssued: issued,
       );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<List<PythonMoodleMaterialFile>> listMoodleMaterialFiles({
+    required String term,
+    required String courseId,
+    required String sourceId,
+  }) async {
+    final numericCourseId = int.tryParse(courseId);
+    final numericSourceId = int.tryParse(sourceId);
+    if (!RegExp(r'^20[2-9][0-9]-[12]$').hasMatch(term) ||
+        numericCourseId == null ||
+        numericCourseId < 1 ||
+        numericCourseId > 2147483647 ||
+        numericSourceId == null ||
+        numericSourceId < 1 ||
+        numericSourceId > 2147483647) {
+      throw ArgumentError('invalid Moodle material identity');
+    }
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/moodle/material-files',
+      method: _BackendMethod.post,
+      body: {
+        'term': term,
+        'course_id': numericCourseId,
+        'source_id': numericSourceId,
+      },
+    );
+    try {
+      final value = jsonDecode(response.body);
+      if (value is! Map<String, dynamic> ||
+          !_hasExactKeys(value, const {'files', 'count'})) {
+        throw const FormatException();
+      }
+      final rawFiles = value['files'];
+      if (rawFiles is! List ||
+          rawFiles.length > 100 ||
+          value['count'] != rawFiles.length) {
+        throw const FormatException();
+      }
+      return rawFiles
+          .map(
+            (raw) => PythonMoodleMaterialFile.fromJson(
+              Map<String, Object?>.from(raw as Map),
+            ),
+          )
+          .toList(growable: false);
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
     }
@@ -1800,6 +1939,11 @@ final class PythonBackendTransport
     if (status == 401 && error == 'ufmg_reauthentication_required') {
       return const PythonBackendException(
         PythonBackendError.ufmgReauthenticationRequired,
+      );
+    }
+    if (status == 401 && error == 'moodle_authorization_required') {
+      return const PythonBackendException(
+        PythonBackendError.moodleAuthorizationRequired,
       );
     }
     if (status == 401) {

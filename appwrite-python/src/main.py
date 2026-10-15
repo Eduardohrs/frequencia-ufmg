@@ -49,11 +49,18 @@ from firestore_rest import (  # noqa: E402
 )
 from moodle_content_discovery import MoodleContentDiscoveryService  # noqa: E402
 from moodle_date_import import MoodleDateImportService  # noqa: E402
+from moodle_material import MoodleMaterialService  # noqa: E402
 from moodle_mobile_capability import MoodleMobileCapabilityService  # noqa: E402
 from moodle_structured_dates import (  # noqa: E402
     InvalidMoodleResponse,
     MoodleStructuredDatesClient,
     MoodleUnavailable,
+)
+from moodle_token_store import (  # noqa: E402
+    AppwriteMoodleTokenStore,
+    MoodleAuthorizationRequired,
+    MoodleTokenCipher,
+    MoodleTokenStoreUnavailable,
 )
 from overview_repository import (  # noqa: E402
     AcademicOverviewRepository,
@@ -233,6 +240,8 @@ def _dispatch(context: Any) -> Any:
         return _moodle_content_discovery(context, allowed_origin)
     if path == "/v1/ufmg/moodle/capabilities" and method == "POST":
         return _moodle_mobile_capability(context, allowed_origin)
+    if path == "/v1/ufmg/moodle/material-files" and method == "POST":
+        return _moodle_material_files(context, allowed_origin)
     if path == "/v1/ufmg/sync" and method == "POST":
         return _ufmg_sync(context, allowed_origin)
     if path == "/v1/ufmg/sync/siga" and method == "POST":
@@ -343,13 +352,14 @@ def _ufmg_session(context: Any, origin: str | None, method: str) -> Any:
             event = "ufmg_session_connect_succeeded"
         else:
             result = service.disconnect(cast(str, user_id))
+            _moodle_token_store(context.req.headers).delete(cast(str, user_id))
             event = "ufmg_session_disconnect_succeeded"
     except InvalidUFMGCredentials as error:
         _error(context, "ufmg_credentials_invalid", reason=error.reason)
         return _respond(context, {"error": "ufmg_credentials_invalid"}, 401, origin)
     except UFMGAuthenticationUnavailable:
         return _ufmg_session_error(context, origin, "ufmg_authentication_unavailable", 503)
-    except UFMGSessionStoreUnavailable:
+    except (UFMGSessionStoreUnavailable, MoodleTokenStoreUnavailable):
         return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
     except InvalidUFMGSession:
         return _ufmg_session_error(context, origin, "ufmg_session_rejected", 400)
@@ -615,11 +625,59 @@ def _moodle_mobile_capability(context: Any, origin: str | None) -> Any:
             502,
             reason=error.reason,
         )
-    except UFMGSessionStoreUnavailable:
+    except (UFMGSessionStoreUnavailable, MoodleTokenStoreUnavailable):
         return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
     except (TypeError, ValueError):
         return _ufmg_session_error(context, origin, "moodle_mobile_capability_rejected", 502)
     _log(context, "moodle_mobile_capability_succeeded", **result)
+    return _respond(context, result, origin=origin)
+
+
+def _moodle_material_files(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(
+        context,
+        origin,
+        "/v1/ufmg/moodle/material-files/post",
+    )
+    if rejected is not None:
+        return rejected
+    payload = context.req.body_json
+    if (
+        not isinstance(payload, Mapping)
+        or set(payload) != {"term", "course_id", "source_id"}
+        or not isinstance(payload["term"], str)
+        or re.fullmatch(r"20[2-9][0-9]-[12]", payload["term"]) is None
+        or type(payload["course_id"]) is not int
+        or not 1 <= payload["course_id"] <= 2_147_483_647
+        or type(payload["source_id"]) is not int
+        or not 1 <= payload["source_id"] <= 2_147_483_647
+    ):
+        return _ufmg_session_error(context, origin, "moodle_material_request_rejected", 400)
+    try:
+        result = _moodle_material_service(context.req.headers).list_files(
+            cast(str, user_id),
+            term=payload["term"],
+            course_id=payload["course_id"],
+            source_id=payload["source_id"],
+            now=int(time()),
+        )
+    except MoodleAuthorizationRequired:
+        return _ufmg_session_error(context, origin, "moodle_authorization_required", 401)
+    except MoodleUnavailable:
+        return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
+    except InvalidMoodleResponse as error:
+        return _ufmg_session_error(
+            context,
+            origin,
+            "moodle_response_invalid",
+            502,
+            reason=error.reason,
+        )
+    except (MoodleTokenStoreUnavailable, UFMGSessionStoreUnavailable):
+        return _ufmg_session_error(context, origin, "moodle_token_store_unavailable", 503)
+    except (TypeError, ValueError):
+        return _ufmg_session_error(context, origin, "moodle_material_request_rejected", 400)
+    _log(context, "moodle_material_files_succeeded", file_count=result["count"])
     return _respond(context, result, origin=origin)
 
 
@@ -907,6 +965,14 @@ def _moodle_mobile_capability_service(
     return MoodleMobileCapabilityService(
         _ufmg_session_store(headers),
         MoodleStructuredDatesClient(),
+        _moodle_token_store(headers),
+    )
+
+
+def _moodle_material_service(headers: dict[str, str]) -> MoodleMaterialService:
+    return MoodleMaterialService(
+        _moodle_token_store(headers),
+        MoodleStructuredDatesClient(),
     )
 
 
@@ -931,6 +997,28 @@ def _ufmg_session_store(headers: dict[str, str]) -> AppwriteUFMGSessionStore:
         index_key=secrets.index_key,
     )
     return store
+
+
+def _moodle_token_store(headers: dict[str, str]) -> AppwriteMoodleTokenStore:
+    endpoint = environ.get("APPWRITE_FUNCTION_API_ENDPOINT", "")
+    project = environ.get("APPWRITE_FUNCTION_PROJECT_ID", "")
+    database = environ.get("SECURITY_DATABASE_ID", "")
+    table = environ.get("UFMG_SESSION_TABLE_ID", "")
+    key = _header(headers, "x-appwrite-key")
+    if not all((endpoint, project, database, table, key)):
+        raise UFMGSessionStoreUnavailable("UFMG session store unavailable")
+    secrets = UFMGSessionSecrets.from_environment(environ)
+    client = Client().set_endpoint(endpoint).set_project(project).set_key(key)
+    return AppwriteMoodleTokenStore(
+        TablesDB(client),
+        database_id=database,
+        table_id=table,
+        cipher=MoodleTokenCipher(
+            secrets.encryption_keys,
+            active_version=secrets.active_version,
+        ),
+        index_key=secrets.index_key,
+    )
 
 
 def _firestore(headers: dict[str, str], user_id: str) -> FirestoreRestClient:
@@ -1007,6 +1095,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/ufmg/import/dates",
         "/v1/ufmg/discover/content",
         "/v1/ufmg/moodle/capabilities",
+        "/v1/ufmg/moodle/material-files",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
     } or path.startswith("/v1/courses/")
@@ -1139,6 +1228,7 @@ def _route_name(path: str) -> str:
         "/v1/ufmg/import/dates",
         "/v1/ufmg/discover/content",
         "/v1/ufmg/moodle/capabilities",
+        "/v1/ufmg/moodle/material-files",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
     }:

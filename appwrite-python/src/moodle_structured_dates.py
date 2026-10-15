@@ -6,6 +6,7 @@ import unicodedata
 from base64 import b64decode
 from collections import defaultdict
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import md5
 from html.parser import HTMLParser
@@ -39,6 +40,25 @@ class InvalidMoodleResponse(Exception):
 
 class MoodleUnavailable(Exception):
     """The structured Moodle source could not be reached."""
+
+
+@dataclass(frozen=True)
+class MoodleMobileAuthorization:
+    """Sensitive mobile credentials plus their non-secret capability summary."""
+
+    webservice_token: str
+    private_token: str | None
+    direct_download_supported: bool
+    download_files: bool
+    private_file_access: bool
+
+    def safe_capabilities(self) -> dict[str, bool]:
+        return {
+            "direct_download_supported": self.direct_download_supported,
+            "download_files": self.download_files,
+            "private_file_access": self.private_file_access,
+            "webservice_token_issued": True,
+        }
 
 
 class _Response(Protocol):
@@ -139,6 +159,12 @@ class MoodleStructuredDatesClient:
             matches = [course for course in courses if _course_matches(code, course)]
             canonical = [course for course in matches if not _is_metaturma(course)]
             if len(canonical) == 1:
+                results[code] = {
+                    "course_code": code,
+                    "moodle_course_id": str(canonical[0]["id"]),
+                    "status": "empty",
+                    "candidates": [],
+                }
                 matched.append((code, canonical[0], "canonical"))
                 matched.extend(
                     (code, course, "metaturma")
@@ -148,6 +174,7 @@ class MoodleStructuredDatesClient:
             else:
                 results[code] = {
                     "course_code": code,
+                    "moodle_course_id": None,
                     "status": "ambiguous" if matches else "unmatched",
                     "candidates": [],
                 }
@@ -176,13 +203,19 @@ class MoodleStructuredDatesClient:
             for code, candidates in grouped.items():
                 results[code] = {
                     "course_code": code,
+                    "moodle_course_id": results[code]["moodle_course_id"],
                     "status": "found" if candidates else "empty",
                     "candidates": candidates,
                 }
         return [results[code] for code in codes]
 
-    def probe_mobile_download(self, token: str, *, term: str) -> dict[str, bool]:
-        """Verify mobile file capabilities without returning or retaining credentials."""
+    def authorize_mobile_download(
+        self,
+        token: str,
+        *,
+        term: str,
+    ) -> MoodleMobileAuthorization:
+        """Obtain narrow file credentials for encrypted server-side persistence."""
 
         root, _, _ = self._connect(token, term)
         passport = token_hex(16)
@@ -191,19 +224,70 @@ class MoodleStructuredDatesClient:
         info = self._site_info(root, webservice_token)
         download_files = info.get("downloadfiles") == 1
         site_private_token = info.get("userprivateaccesskey")
-        private_file_access = bool(
-            callback_private_token
-            or (
-                isinstance(site_private_token, str)
-                and _MOBILE_TOKEN.fullmatch(site_private_token)
+        valid_site_private_token = (
+            site_private_token
+            if isinstance(site_private_token, str)
+            and _MOBILE_TOKEN.fullmatch(site_private_token)
+            else None
+        )
+        private_token = callback_private_token or valid_site_private_token
+        private_file_access = private_token is not None
+        return MoodleMobileAuthorization(
+            webservice_token=webservice_token,
+            private_token=private_token,
+            direct_download_supported=download_files and private_file_access,
+            download_files=download_files,
+            private_file_access=private_file_access,
+        )
+
+    def list_module_files(
+        self,
+        *,
+        webservice_token: str,
+        private_token: str,
+        term: str,
+        course_id: int,
+        source_id: int,
+    ) -> list[dict[str, object]]:
+        """Resolve one enrolled file module to private-token download URLs."""
+
+        _validate_mobile_file_request(
+            webservice_token,
+            private_token,
+            course_id,
+            source_id,
+        )
+        root = _moodle_root(term)
+        path = f"{root}/webservice/rest/server.php"
+        payload, final_url, content_type = self._open(
+            Request(
+                f"{MOODLE_ORIGIN}{path}",
+                data=urlencode(
+                    {
+                        "moodlewsrestformat": "json",
+                        "moodlewssettingfileurl": "1",
+                        "moodlewssettingfilter": "1",
+                        "wsfunction": "core_course_get_contents",
+                        "wstoken": webservice_token,
+                        "courseid": str(course_id),
+                        "options[0][name]": "cmid",
+                        "options[0][value]": str(source_id),
+                    }
+                ).encode(),
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                method="POST",
             )
         )
-        return {
-            "direct_download_supported": download_files and private_file_access,
-            "download_files": download_files,
-            "private_file_access": private_file_access,
-            "webservice_token_issued": True,
-        }
+        _require_json_endpoint(final_url, content_type, path)
+        return _parse_module_files(
+            payload,
+            root=root,
+            source_id=source_id,
+            private_token=private_token,
+        )
 
     def _mobile_launch(self, root: str, passport: str) -> str:
         launch_url = f"{MOODLE_ORIGIN}{root}/admin/tool/mobile/launch.php?" + urlencode(
@@ -679,6 +763,125 @@ def _parse_course_states(
         reason = str(error) if error.args else "course_state_shape"
         raise InvalidMoodleResponse(reason) from None
     return states
+
+
+def _parse_module_files(
+    payload: bytes,
+    *,
+    root: str,
+    source_id: int,
+    private_token: str,
+) -> list[dict[str, object]]:
+    try:
+        decoded = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise InvalidMoodleResponse("module_files_json") from None
+    if isinstance(decoded, dict) and "exception" in decoded:
+        raise InvalidMoodleResponse("module_files_rejected")
+    if not isinstance(decoded, list) or len(decoded) > 100:
+        raise InvalidMoodleResponse("module_files_shape")
+    matching: list[dict[str, object]] = []
+    try:
+        for section in decoded:
+            if not isinstance(section, dict):
+                raise ValueError("module_section_shape")
+            modules = section.get("modules", [])
+            if not isinstance(modules, list) or len(modules) > 500:
+                raise ValueError("module_list_shape")
+            matching.extend(
+                module
+                for module in modules
+                if isinstance(module, dict) and module.get("id") == source_id
+            )
+        if len(matching) != 1:
+            raise ValueError("module_not_found" if not matching else "module_conflict")
+        module = matching[0]
+        if module.get("modname") not in {"resource", "folder"}:
+            raise ValueError("module_kind")
+        contents = module.get("contents", [])
+        if not isinstance(contents, list) or len(contents) > 100:
+            raise ValueError("module_contents_shape")
+        files: dict[str, dict[str, object]] = {}
+        for raw in contents:
+            if not isinstance(raw, dict):
+                raise ValueError("module_file_shape")
+            if raw.get("type", "file") != "file":
+                continue
+            name = raw.get("filename")
+            size = raw.get("filesize", 0)
+            mime_type = raw.get("mimetype", "application/octet-stream")
+            if (
+                not isinstance(name, str)
+                or not name
+                or name.strip() != name
+                or len(name) > 255
+                or type(size) is not int
+                or size < 0
+                or size > 10_000_000_000
+                or not isinstance(mime_type, str)
+                or not re.fullmatch(r"[a-z0-9.+-]+/[a-z0-9.+-]+", mime_type)
+            ):
+                raise ValueError("module_file_fields")
+            url = _private_file_url(raw.get("fileurl"), root, private_token)
+            item = {"name": name, "url": url, "size": size, "mime_type": mime_type}
+            previous = files.get(url)
+            if previous is not None and previous != item:
+                raise ValueError("module_file_conflict")
+            files[url] = item
+        return sorted(files.values(), key=lambda item: (str(item["name"]), str(item["url"])))
+    except (TypeError, ValueError) as error:
+        reason = str(error) if error.args else "module_files_shape"
+        raise InvalidMoodleResponse(reason) from None
+
+
+def _private_file_url(value: object, root: str, private_token: str) -> str:
+    if not isinstance(value, str) or len(value) > 4_096:
+        raise ValueError("module_file_url")
+    parsed = urlsplit(value)
+    prefixes = (
+        f"{root}/webservice/pluginfile.php/",
+        f"{root}/pluginfile.php/",
+    )
+    prefix = next((candidate for candidate in prefixes if parsed.path.startswith(candidate)), None)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "virtual.ufmg.br"
+        or parsed.port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+        or prefix is None
+    ):
+        raise ValueError("module_file_url")
+    suffix = parsed.path.removeprefix(prefix)
+    segments = suffix.split("/")
+    if (
+        len(segments) < 5
+        or any(not segment or segment in {".", ".."} for segment in segments)
+        or any("\\" in segment for segment in segments)
+    ):
+        raise ValueError("module_file_url")
+    return (
+        f"{MOODLE_ORIGIN}{root}/tokenpluginfile.php/{private_token}/{suffix}"
+        "?forcedownload=1"
+    )
+
+
+def _validate_mobile_file_request(
+    webservice_token: str,
+    private_token: str,
+    course_id: int,
+    source_id: int,
+) -> None:
+    if (
+        _MOBILE_TOKEN.fullmatch(webservice_token) is None
+        or _MOBILE_TOKEN.fullmatch(private_token) is None
+        or type(course_id) is not int
+        or not 1 <= course_id <= 2_147_483_647
+        or type(source_id) is not int
+        or not 1 <= source_id <= 2_147_483_647
+    ):
+        raise ValueError("invalid Moodle file request")
 
 
 def _candidate_url(value: object, root: str, module: str, source_id: int) -> str:

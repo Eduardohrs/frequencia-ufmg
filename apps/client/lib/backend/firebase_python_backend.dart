@@ -116,6 +116,20 @@ final class _FirebasePythonBackendVerifier
   }
 
   @override
+  Future<List<PythonMoodleMaterialFile>> listMoodleMaterialFiles({
+    required String term,
+    required String courseId,
+    required String sourceId,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.listMoodleMaterialFiles(
+      term: term,
+      courseId: courseId,
+      sourceId: sourceId,
+    );
+  }
+
+  @override
   Future<PythonUFMGSigaSyncResult> syncSiga() async {
     await (_activation ??= _activateAppCheck());
     return _transport.syncSiga();

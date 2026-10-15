@@ -79,29 +79,74 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   }
 
   Future<void> _openMoodleMaterial(
+    PythonMoodleCourseContent course,
     PythonMoodleContentCandidate candidate,
   ) async {
-    final uri = candidate.url;
-    if (uri == null || !candidate.canOpenDirectly) return;
     try {
       await runAuditedOperation(
         logger: widget.logger,
         operation: AuditedOperation.moodleMaterialOpen,
         action: () async {
+          final uri = await _materialUri(course, candidate);
+          if (uri == null) return;
           final launcher = widget.openExternalUri ?? _openExternalUri;
           if (!await launcher(uri)) {
             throw StateError('moodle_material_launch_rejected');
           }
         },
       );
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Não foi possível abrir este material no Moodle.'),
-        ),
-      );
+      final message =
+          error is PythonBackendException &&
+              error.code == PythonBackendError.moodleAuthorizationRequired
+          ? 'Sincronize o Moodle novamente para baixar este material.'
+          : 'Não foi possível abrir este material no Moodle.';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
+  }
+
+  Future<Uri?> _materialUri(
+    PythonMoodleCourseContent course,
+    PythonMoodleContentCandidate candidate,
+  ) async {
+    if (candidate.kind != 'file') {
+      return candidate.canOpenDirectly ? candidate.url : null;
+    }
+    final moodleCourseId = course.moodleCourseId;
+    if (moodleCourseId == null) {
+      throw StateError('moodle_course_identity_missing');
+    }
+    final files = await widget.gateway.listMoodleMaterialFiles(
+      term: course.term,
+      courseId: moodleCourseId,
+      sourceId: candidate.sourceId,
+    );
+    if (files.isEmpty) throw StateError('moodle_material_has_no_files');
+    if (files.length == 1) return files.single.url;
+    if (!mounted) return null;
+    final selected = await showModalBottomSheet<PythonMoodleMaterialFile>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(title: Text('Escolha um arquivo')),
+            for (final file in files)
+              ListTile(
+                leading: const Icon(Icons.download_outlined),
+                title: Text(file.name),
+                subtitle: Text(_fileSize(file.size)),
+                onTap: () => Navigator.pop(context, file),
+              ),
+          ],
+        ),
+      ),
+    );
+    return selected?.url;
   }
 
   Future<void> _connect() async {
@@ -414,8 +459,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Os materiais abrem diretamente na UFMG. O Moodle pode pedir login '
-            'se a sessão do navegador tiver expirado.',
+            'Arquivos são baixados diretamente da UFMG sem ocupar espaço no '
+            'nosso servidor. Páginas interativas continuam abrindo no Moodle.',
           ),
           const SizedBox(height: 8),
           for (final course in _contentDiscovery!.courses)
@@ -435,9 +480,16 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                               key: Key(
                                 'moodle-material-open-${candidate.sourceId}',
                               ),
-                              tooltip: 'Abrir no Moodle',
-                              onPressed: () => _openMoodleMaterial(candidate),
-                              icon: const Icon(Icons.open_in_new),
+                              tooltip: candidate.kind == 'file'
+                                  ? 'Baixar'
+                                  : 'Abrir no Moodle',
+                              onPressed: () =>
+                                  _openMoodleMaterial(course, candidate),
+                              icon: Icon(
+                                candidate.kind == 'file'
+                                    ? Icons.download_outlined
+                                    : Icons.open_in_new,
+                              ),
                             )
                           : null,
                     ),
@@ -652,6 +704,12 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     return candidate.origin == PythonMoodleContentOrigin.metaturma
         ? '$relevance • Metaturma'
         : relevance;
+  }
+
+  static String _fileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
   static String _messageFor(Object error) {
