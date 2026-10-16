@@ -35,6 +35,25 @@ void main() {
 
     expect(find.text('Conectar à UFMG'), findsOneWidget);
     expect(find.textContaining('senha não é armazenada'), findsOneWidget);
+    final autofillGroup = tester.widget<AutofillGroup>(
+      find.byType(AutofillGroup),
+    );
+    expect(autofillGroup.onDisposeAction, AutofillContextAction.cancel);
+    final usernameField = tester.widget<TextField>(
+      find.descendant(
+        of: find.byKey(const Key('ufmg-username')),
+        matching: find.byType(TextField),
+      ),
+    );
+    final passwordField = tester.widget<TextField>(
+      find.descendant(
+        of: find.byKey(const Key('ufmg-password')),
+        matching: find.byType(TextField),
+      ),
+    );
+    expect(usernameField.autofillHints, const [AutofillHints.username]);
+    expect(passwordField.autofillHints, const [AutofillHints.password]);
+    expect(passwordField.textInputAction, TextInputAction.done);
     await tester.enterText(
       find.byKey(const Key('ufmg-username')),
       '2025019259',
@@ -43,6 +62,7 @@ void main() {
       find.byKey(const Key('ufmg-password')),
       'private-password',
     );
+    tester.testTextInput.log.clear();
     await tester.tap(find.byKey(const Key('ufmg-connect')));
     await tester.pumpAndSettle();
 
@@ -50,6 +70,18 @@ void main() {
     expect(find.text('UFMG conectada'), findsOneWidget);
     expect(find.text('private-password'), findsNothing);
     expect(find.byKey(const Key('ufmg-password')), findsNothing);
+    expect(
+      tester.testTextInput.log,
+      contains(
+        isA<MethodCall>()
+            .having(
+              (call) => call.method,
+              'method',
+              'TextInput.finishAutofillContext',
+            )
+            .having((call) => call.arguments, 'shouldSave', isTrue),
+      ),
+    );
     expect(
       logger.events,
       containsAll([
