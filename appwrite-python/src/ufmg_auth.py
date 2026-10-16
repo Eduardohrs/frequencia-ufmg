@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from http.cookiejar import CookieJar
 from posixpath import normpath
+from socket import gaierror
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlencode, urlsplit
@@ -32,6 +33,11 @@ _INVALID_CREDENTIAL_REASONS = frozenset(
         "session_cookie_missing",
     }
 )
+_UNAVAILABLE_REASONS = frozenset(
+    f"{stage}_{kind}"
+    for stage in ("portal_entry", "credential_submit")
+    for kind in ("timeout", "dns", "network_error")
+)
 
 
 class InvalidUFMGCredentials(Exception):
@@ -46,6 +52,12 @@ class InvalidUFMGCredentials(Exception):
 
 class UFMGAuthenticationUnavailable(Exception):
     """Raised when the UFMG authentication service cannot be reached safely."""
+
+    def __init__(self, reason: str) -> None:
+        if reason not in _UNAVAILABLE_REASONS:
+            raise ValueError("invalid UFMG transport failure reason")
+        self.reason = reason
+        super().__init__("UFMG authentication unavailable")
 
 
 class _HTTPSOnlyRedirectHandler(HTTPRedirectHandler):
@@ -86,6 +98,7 @@ class UFMGAuthenticator:
         _validate_credentials(username, password)
         jar = CookieJar()
         opener = self._opener_factory(jar)
+        stage = "portal_entry"
         try:
             with opener.open(
                 Request(_PORTAL_URL, headers=_request_headers()),
@@ -105,6 +118,7 @@ class UFMGAuthenticator:
                 },
                 encoding="iso-8859-1",
             ).encode("ascii")
+            stage = "credential_submit"
             with opener.open(
                 Request(
                     _LOGIN_URL,
@@ -128,8 +142,10 @@ class UFMGAuthenticator:
                     raise InvalidUFMGCredentials(reason)
         except InvalidUFMGCredentials:
             raise
-        except OSError:
-            raise UFMGAuthenticationUnavailable("UFMG authentication unavailable") from None
+        except OSError as error:
+            raise UFMGAuthenticationUnavailable(
+                _transport_failure_reason(error, stage)
+            ) from None
 
         token = _cookie_value(jar, "LtpaToken2")
         if (
@@ -151,6 +167,17 @@ def _validate_credentials(username: object, password: object) -> None:
         or any(ord(character) < 32 or ord(character) == 127 for character in password)
     ):
         raise InvalidUFMGCredentials("input_rejected")
+
+
+def _transport_failure_reason(error: OSError, stage: str) -> str:
+    cause = error.reason if isinstance(error, URLError) else error
+    if isinstance(cause, TimeoutError):
+        kind = "timeout"
+    elif isinstance(cause, gaierror):
+        kind = "dns"
+    else:
+        kind = "network_error"
+    return f"{stage}_{kind}"
 
 
 def _request_headers() -> dict[str, str]:

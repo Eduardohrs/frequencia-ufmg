@@ -357,8 +357,14 @@ def _ufmg_session(context: Any, origin: str | None, method: str) -> Any:
     except InvalidUFMGCredentials as error:
         _error(context, "ufmg_credentials_invalid", reason=error.reason)
         return _respond(context, {"error": "ufmg_credentials_invalid"}, 401, origin)
-    except UFMGAuthenticationUnavailable:
-        return _ufmg_session_error(context, origin, "ufmg_authentication_unavailable", 503)
+    except UFMGAuthenticationUnavailable as error:
+        return _ufmg_session_error(
+            context,
+            origin,
+            "ufmg_authentication_unavailable",
+            503,
+            reason=error.reason,
+        )
     except (UFMGSessionStoreUnavailable, MoodleTokenStoreUnavailable):
         return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
     except InvalidUFMGSession:

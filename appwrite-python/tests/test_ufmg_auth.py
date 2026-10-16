@@ -1,5 +1,6 @@
 from http.cookiejar import Cookie, CookieJar
 from io import BytesIO
+from socket import gaierror
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import parse_qs
@@ -69,6 +70,12 @@ class FakeOpener:
         self.requests.append((request, timeout))
         if self.outcome == "network-error":
             raise URLError("private network detail")
+        if self.outcome == "portal-timeout":
+            raise TimeoutError("private timeout detail")
+        if self.outcome == "portal-dns":
+            raise URLError(gaierror("private DNS detail"))
+        if self.outcome == "credential-timeout" and len(self.requests) == 2:
+            raise TimeoutError("private credential timeout detail")
         if len(self.requests) == 1:
             if self.outcome == "bad-initial":
                 return FakeResponse("http://sistemas.ufmg.br/idp/login.jsp")
@@ -164,6 +171,33 @@ def test_login_sanitizes_transport_failures() -> None:
 
     assert "private" not in str(caught.value)
     assert caught.value.__cause__ is None
+    assert caught.value.reason == "portal_entry_network_error"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "reason"),
+    [
+        ("portal-timeout", "portal_entry_timeout"),
+        ("portal-dns", "portal_entry_dns"),
+        ("credential-timeout", "credential_submit_timeout"),
+    ],
+)
+def test_login_exposes_only_bounded_transport_diagnostics(
+    outcome: str, reason: str
+) -> None:
+    def factory(jar: CookieJar) -> FakeOpener:
+        return FakeOpener(jar, outcome=outcome)
+
+    with pytest.raises(UFMGAuthenticationUnavailable) as caught:
+        UFMGAuthenticator(opener_factory=factory).login("student", "private-password")
+
+    assert caught.value.reason == reason
+    assert "private" not in str(caught.value)
+
+
+def test_unavailable_reason_is_bounded() -> None:
+    with pytest.raises(ValueError, match="invalid UFMG transport failure reason"):
+        UFMGAuthenticationUnavailable("private-unbounded-detail")
 
 
 def test_redirects_are_limited_to_https_on_the_institutional_host() -> None:
