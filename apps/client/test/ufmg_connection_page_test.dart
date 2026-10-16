@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/ufmg_sync_schedule.dart';
+import 'package:frequencia_ufmg/data/material_file_cache.dart';
 import 'package:frequencia_ufmg/features/ufmg/ufmg_connection_page.dart';
 import 'package:frequencia_ufmg/observability/app_logger.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
@@ -917,6 +918,288 @@ void main() {
     expect(openedUris.single.pathSegments[1], 'tokenpluginfile.php');
   });
 
+  testWidgets('saves and opens an Android private material copy', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    final cache = _MaterialCache();
+    final logger = _Logger();
+    final openedUris = <Uri>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: gateway,
+          logger: logger,
+          materialFileCache: cache,
+          openExternalUri: (uri) async {
+            openedUris.add(uri);
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('moodle-material-open-102')));
+    await tester.pumpAndSettle();
+    expect(find.text('O que deseja fazer?'), findsOneWidget);
+    expect(find.text('Abrir ou baixar agora'), findsOneWidget);
+    await tester.tap(find.text('Salvar para usar offline'));
+    await tester.pumpAndSettle();
+
+    expect(openedUris, isEmpty);
+    expect(cache.saved.single.name, 'Cronograma.pdf');
+    expect(find.text('Cronograma.pdf'), findsOneWidget);
+    expect(find.text('123 B no dispositivo'), findsOneWidget);
+    expect(logger.events, contains('moodle_material_cache_save_succeeded'));
+
+    final cachedOpen = find.widgetWithText(ListTile, 'Cronograma.pdf');
+    await tester.ensureVisible(cachedOpen);
+    await tester.tap(cachedOpen);
+    await tester.pumpAndSettle();
+    expect(cache.opened, [cache.files.single.id]);
+    expect(logger.events, contains('moodle_material_cache_open_succeeded'));
+    final cachedOpenButton = find.byKey(
+      Key('cached-material-open-${cache.files.single.id}'),
+    );
+    await tester.ensureVisible(cachedOpenButton);
+    await tester.tap(cachedOpenButton);
+    await tester.pumpAndSettle();
+    expect(cache.opened, [cache.files.single.id, cache.files.single.id]);
+  });
+
+  testWidgets('removes one or every private material copy', (tester) async {
+    final cache = _MaterialCache()
+      ..files.addAll(const [
+        CachedMaterialFile(
+          id: 'one',
+          name: 'Plano.pdf',
+          size: 2048,
+          mimeType: 'application/pdf',
+        ),
+        CachedMaterialFile(
+          id: 'two',
+          name: 'Notas.txt',
+          size: 512,
+          mimeType: 'text/plain',
+        ),
+      ]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: false,
+              reauthenticationRequired: true,
+            ),
+          ),
+          logger: _Logger(),
+          materialFileCache: cache,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('2.5 KB no dispositivo'), findsOneWidget);
+    await tester.ensureVisible(
+      find.byKey(const Key('cached-material-remove-one')),
+    );
+    await tester.tap(find.byKey(const Key('cached-material-remove-one')));
+    await tester.pumpAndSettle();
+    expect(cache.removed, ['one']);
+    expect(find.text('Plano.pdf'), findsNothing);
+
+    await tester.ensureVisible(find.byKey(const Key('cached-material-clear')));
+    await tester.tap(find.byKey(const Key('cached-material-clear')));
+    await tester.pumpAndSettle();
+    expect(find.text('Remover todas as cópias?'), findsOneWidget);
+    await tester.tap(find.text('Remover todas'));
+    await tester.pumpAndSettle();
+    expect(cache.clearCalls, 1);
+    expect(find.text('Arquivos neste dispositivo'), findsOneWidget);
+    expect(find.text('Nenhuma cópia offline'), findsOneWidget);
+  });
+
+  testWidgets('can choose direct download when local copies are available', (
+    tester,
+  ) async {
+    final openedUris = <Uri>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          ),
+          logger: _Logger(),
+          materialFileCache: _MaterialCache(),
+          openExternalUri: (uri) async {
+            openedUris.add(uri);
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('moodle-material-open-102')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Abrir ou baixar agora'));
+    await tester.pumpAndSettle();
+
+    expect(openedUris.single.pathSegments[1], 'tokenpluginfile.php');
+  });
+
+  testWidgets('keeps cache failures non-blocking and observable', (
+    tester,
+  ) async {
+    final cache = _MaterialCache()
+      ..files.add(
+        const CachedMaterialFile(
+          id: 'one',
+          name: 'Plano.pdf',
+          size: 10,
+          mimeType: 'application/pdf',
+        ),
+      )
+      ..openError = StateError('open')
+      ..removeError = StateError('remove')
+      ..clearError = StateError('clear');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: false,
+              reauthenticationRequired: true,
+            ),
+          ),
+          logger: _Logger(),
+          materialFileCache: cache,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final fileTile = find.widgetWithText(ListTile, 'Plano.pdf');
+    await tester.ensureVisible(fileTile);
+    await tester.tap(fileTile);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Não foi possível abrir a cópia offline.'),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 5));
+
+    final remove = find.byKey(const Key('cached-material-remove-one'));
+    await tester.ensureVisible(remove);
+    await tester.tap(remove);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Não foi possível remover a cópia offline.'),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 5));
+
+    await tester.ensureVisible(find.byKey(const Key('cached-material-clear')));
+    await tester.tap(find.byKey(const Key('cached-material-clear')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancelar'));
+    await tester.pumpAndSettle();
+    expect(cache.clearCalls, 0);
+
+    await tester.tap(find.byKey(const Key('cached-material-clear')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remover todas'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Não foi possível limpar as cópias offline.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('hides a failed private cache without blocking UFMG', (
+    tester,
+  ) async {
+    final cache = _MaterialCache()..listError = StateError('disk');
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: false,
+              reauthenticationRequired: false,
+            ),
+          ),
+          logger: logger,
+          materialFileCache: cache,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Conectar à UFMG'), findsOneWidget);
+    expect(logger.events, contains('moodle_material_cache_list_failed'));
+  });
+
+  testWidgets('keeps offline copies usable while the UFMG check is pending', (
+    tester,
+  ) async {
+    final statusCompleter = Completer<PythonUFMGSessionStatus>();
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: false,
+        reauthenticationRequired: false,
+      ),
+    )..statusCompleter = statusCompleter;
+    final cache = _MaterialCache()
+      ..files.add(
+        const CachedMaterialFile(
+          id: 'offline',
+          name: 'Offline.pdf',
+          size: 50,
+          mimeType: 'application/pdf',
+        ),
+      );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: gateway,
+          logger: _Logger(),
+          materialFileCache: cache,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Conferindo a conexão com a UFMG…'), findsOneWidget);
+    expect(find.text('Offline.pdf'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ListTile, 'Offline.pdf'));
+    await tester.pump();
+    expect(cache.opened, ['offline']);
+
+    statusCompleter.complete(gateway.status);
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('lets the student choose among multiple Moodle files', (
     tester,
   ) async {
@@ -1217,6 +1500,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
   PythonUFMGSessionStatus status;
   Object? connectError;
   Object? statusError;
+  Completer<PythonUFMGSessionStatus>? statusCompleter;
   Object? disconnectError;
   Object? importError;
   Object? scheduleImportError;
@@ -1452,6 +1736,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
 
   @override
   Future<PythonUFMGSessionStatus> getUFMGSessionStatus() async {
+    if (statusCompleter case final completer?) return completer.future;
     if (statusError case final error?) throw error;
     return status;
   }
@@ -1498,4 +1783,64 @@ final class _Logger implements AppLogger {
     bool fatal = false,
     Map<String, Object>? parameters,
   }) async {}
+}
+
+final class _MaterialCache implements MaterialFileCache {
+  final files = <CachedMaterialFile>[];
+  final saved = <MaterialDownload>[];
+  final opened = <String>[];
+  final removed = <String>[];
+  int clearCalls = 0;
+  bool disposed = false;
+  Object? listError;
+  Object? openError;
+  Object? removeError;
+  Object? clearError;
+
+  @override
+  bool get isAvailable => true;
+
+  @override
+  Future<List<CachedMaterialFile>> list() async {
+    if (listError case final error?) throw error;
+    return List.of(files);
+  }
+
+  @override
+  Future<CachedMaterialFile> save(MaterialDownload download) async {
+    saved.add(download);
+    final file = CachedMaterialFile(
+      id: download.id,
+      name: download.name,
+      size: download.expectedSize,
+      mimeType: download.mimeType,
+    );
+    files
+      ..removeWhere((existing) => existing.id == file.id)
+      ..add(file);
+    return file;
+  }
+
+  @override
+  Future<void> open(String id) async {
+    if (openError case final error?) throw error;
+    opened.add(id);
+  }
+
+  @override
+  Future<void> remove(String id) async {
+    if (removeError case final error?) throw error;
+    removed.add(id);
+    files.removeWhere((file) => file.id == id);
+  }
+
+  @override
+  Future<void> clear() async {
+    clearCalls++;
+    if (clearError case final error?) throw error;
+    files.clear();
+  }
+
+  @override
+  void dispose() => disposed = true;
 }

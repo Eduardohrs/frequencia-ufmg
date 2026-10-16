@@ -3,9 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../backend/python_backend_transport.dart';
+import '../../data/material_file_cache.dart';
+import '../../data/material_file_cache_factory.dart';
 import '../../data/ufmg_sync_schedule.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
+import 'material_cache_card.dart';
 
 class UFMGConnectionPage extends StatefulWidget {
   const UFMGConnectionPage({
@@ -14,6 +17,7 @@ class UFMGConnectionPage extends StatefulWidget {
     this.userId,
     this.syncSchedule,
     this.openExternalUri,
+    this.materialFileCache,
     super.key,
   });
 
@@ -22,6 +26,7 @@ class UFMGConnectionPage extends StatefulWidget {
   final String? userId;
   final UFMGSyncScheduleGateway? syncSchedule;
   final Future<bool> Function(Uri uri)? openExternalUri;
+  final MaterialFileCache? materialFileCache;
 
   @override
   State<UFMGConnectionPage> createState() => _UFMGConnectionPageState();
@@ -39,10 +44,16 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   String? _importSummary;
   List<PythonMoodleDate> _dates = const [];
   PythonMoodleContentDiscovery? _contentDiscovery;
+  late final MaterialFileCache _materialFileCache;
+  late final bool _ownsMaterialFileCache;
+  List<CachedMaterialFile> _cachedMaterials = const [];
 
   @override
   void initState() {
     super.initState();
+    _ownsMaterialFileCache = widget.materialFileCache == null;
+    _materialFileCache =
+        widget.materialFileCache ?? createMaterialFileCache(widget.userId);
     _load();
   }
 
@@ -50,6 +61,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   void dispose() {
     _username.dispose();
     _password.dispose();
+    if (_ownsMaterialFileCache) _materialFileCache.dispose();
     super.dispose();
   }
 
@@ -74,8 +86,23 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
-  Future<void> _loadSupplementaryData() =>
-      Future.wait([_loadDates(), _loadMaterialCatalog()]);
+  Future<void> _loadSupplementaryData() => Future.wait([
+    _loadDates(),
+    _loadMaterialCatalog(),
+    _loadCachedMaterials(),
+  ]);
+
+  Future<void> _loadCachedMaterials() async {
+    if (!_materialFileCache.isAvailable) return;
+    try {
+      final files = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleMaterialCacheList,
+        action: _materialFileCache.list,
+      );
+      if (mounted) setState(() => _cachedMaterials = files);
+    } catch (_) {}
+  }
 
   Future<void> _loadDates() async {
     try {
@@ -110,12 +137,23 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         logger: widget.logger,
         operation: AuditedOperation.moodleMaterialOpen,
         action: () async {
-          final uri = await _materialUri(course, candidate);
-          if (uri == null) return;
-          final launcher = widget.openExternalUri ?? _openExternalUri;
-          if (!await launcher(uri)) {
-            throw StateError('moodle_material_launch_rejected');
+          if (candidate.kind != 'file') {
+            final uri = candidate.canOpenDirectly ? candidate.url : null;
+            if (uri != null) await _launchMaterialUri(uri);
+            return;
           }
+          final file = await _selectMaterialFile(course, candidate);
+          if (file == null) return;
+          if (_materialFileCache.isAvailable && mounted) {
+            final action = await showMaterialFileActionSheet(context, file);
+            if (action == MaterialFileAction.saveOffline) {
+              await _saveMaterialOffline(course, candidate, file);
+            } else if (action == MaterialFileAction.openOnline) {
+              await _launchMaterialUri(file.url);
+            }
+            return;
+          }
+          await _launchMaterialUri(file.url);
         },
       );
     } catch (error) {
@@ -131,20 +169,24 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
-  Future<Uri?> _materialUri(
+  Future<void> _launchMaterialUri(Uri uri) async {
+    final launcher = widget.openExternalUri ?? _openExternalUri;
+    if (!await launcher(uri)) {
+      throw StateError('moodle_material_launch_rejected');
+    }
+  }
+
+  Future<PythonMoodleMaterialFile?> _selectMaterialFile(
     PythonMoodleCourseContent course,
     PythonMoodleContentCandidate candidate,
   ) async {
-    if (candidate.kind != 'file') {
-      return candidate.canOpenDirectly ? candidate.url : null;
-    }
     final files = await widget.gateway.listMoodleMaterialFiles(
       term: course.term,
       courseId: candidate.moodleCourseId,
       sourceId: candidate.sourceId,
     );
     if (files.isEmpty) throw StateError('moodle_material_has_no_files');
-    if (files.length == 1) return files.single.url;
+    if (files.length == 1) return files.single;
     if (!mounted) return null;
     final selected = await showModalBottomSheet<PythonMoodleMaterialFile>(
       context: context,
@@ -158,14 +200,118 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               ListTile(
                 leading: const Icon(Icons.download_outlined),
                 title: Text(file.name),
-                subtitle: Text(_fileSize(file.size)),
+                subtitle: Text(formatMaterialFileSize(file.size)),
                 onTap: () => Navigator.pop(context, file),
               ),
           ],
         ),
       ),
     );
-    return selected?.url;
+    return selected;
+  }
+
+  Future<void> _saveMaterialOffline(
+    PythonMoodleCourseContent course,
+    PythonMoodleContentCandidate candidate,
+    PythonMoodleMaterialFile file,
+  ) async {
+    await runAuditedOperation(
+      logger: widget.logger,
+      operation: AuditedOperation.moodleMaterialCacheSave,
+      action: () => _materialFileCache.save(
+        MaterialDownload(
+          id:
+              '${course.term}/${candidate.moodleCourseId}/'
+              '${candidate.sourceId}/${file.name}',
+          name: file.name,
+          source: file.url,
+          expectedSize: file.size,
+          mimeType: file.mimeType,
+        ),
+      ),
+    );
+    await _loadCachedMaterials();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Arquivo salvo para uso offline.')),
+      );
+    }
+  }
+
+  Future<void> _openCachedMaterial(CachedMaterialFile file) async {
+    try {
+      await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleMaterialCacheOpen,
+        action: () => _materialFileCache.open(file.id),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Não foi possível abrir a cópia offline.'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _removeCachedMaterial(CachedMaterialFile file) async {
+    try {
+      await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleMaterialCacheRemove,
+        action: () => _materialFileCache.remove(file.id),
+      );
+      await _loadCachedMaterials();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Não foi possível remover a cópia offline.'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _clearCachedMaterials() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remover todas as cópias?'),
+        content: const Text(
+          'Os arquivos deixarão de abrir offline. Os originais permanecem no Moodle.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remover todas'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleMaterialCacheClear,
+        action: _materialFileCache.clear,
+      );
+      await _loadCachedMaterials();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Não foi possível limpar as cópias offline.'),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _connect() async {
@@ -375,13 +521,35 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 560),
-              child: _loading ? const CircularProgressIndicator() : _content(),
+              child: _loading ? _loadingContent() : _content(),
             ),
           ),
         ),
       ),
     );
   }
+
+  Widget _loadingContent() => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Center(child: CircularProgressIndicator()),
+      const SizedBox(height: 12),
+      const Text(
+        'Conferindo a conexão com a UFMG…',
+        textAlign: TextAlign.center,
+      ),
+      if (_materialFileCache.isAvailable) ...[
+        const SizedBox(height: 20),
+        MaterialCacheCard(
+          files: _cachedMaterials,
+          onOpen: _openCachedMaterial,
+          onRemove: _removeCachedMaterial,
+          onClear: _clearCachedMaterials,
+        ),
+      ],
+    ],
+  );
 
   Widget _content() {
     final status = _status;
@@ -456,6 +624,15 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                 ),
               ),
             ),
+          ),
+        ],
+        if (_materialFileCache.isAvailable) ...[
+          const SizedBox(height: 16),
+          MaterialCacheCard(
+            files: _cachedMaterials,
+            onOpen: _openCachedMaterial,
+            onRemove: _removeCachedMaterial,
+            onClear: _clearCachedMaterials,
           ),
         ],
         if (_dates.isNotEmpty) ...[
@@ -733,12 +910,6 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     return candidate.origin == PythonMoodleContentOrigin.metaturma
         ? '$relevance • Metaturma'
         : relevance;
-  }
-
-  static String _fileSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
   static String _messageFor(Object error) {
