@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../backend/python_backend_transport.dart';
@@ -164,6 +165,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           password: _password.text,
         ),
       );
+      TextInput.finishAutofillContext(shouldSave: true);
       _username.clear();
       if (mounted) {
         setState(() {
@@ -586,69 +588,73 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   }
 
   Widget _connectionForm() {
-    return Form(
-      key: _formKey,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          TextFormField(
-            key: const Key('ufmg-username'),
-            controller: _username,
-            enabled: !_busy,
-            autofillHints: const [AutofillHints.username],
-            textInputAction: TextInputAction.next,
-            decoration: const InputDecoration(
-              labelText: 'Usuário MinhaUFMG',
-              prefixIcon: Icon(Icons.person_outline),
+    return AutofillGroup(
+      onDisposeAction: AutofillContextAction.cancel,
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextFormField(
+              key: const Key('ufmg-username'),
+              controller: _username,
+              enabled: !_busy,
+              autofillHints: const [AutofillHints.username],
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(
+                labelText: 'Usuário MinhaUFMG',
+                prefixIcon: Icon(Icons.person_outline),
+              ),
+              validator: (value) => value == null || value.trim().isEmpty
+                  ? 'Informe seu usuário da UFMG.'
+                  : null,
             ),
-            validator: (value) => value == null || value.trim().isEmpty
-                ? 'Informe seu usuário da UFMG.'
-                : null,
-          ),
-          const SizedBox(height: 16),
-          TextFormField(
-            key: const Key('ufmg-password'),
-            controller: _password,
-            enabled: !_busy,
-            obscureText: true,
-            enableSuggestions: false,
-            autocorrect: false,
-            autofillHints: const [AutofillHints.password],
-            onFieldSubmitted: (_) => _busy ? null : _connect(),
-            decoration: const InputDecoration(
-              labelText: 'Senha MinhaUFMG',
-              prefixIcon: Icon(Icons.lock_outline),
+            const SizedBox(height: 16),
+            TextFormField(
+              key: const Key('ufmg-password'),
+              controller: _password,
+              enabled: !_busy,
+              obscureText: true,
+              enableSuggestions: false,
+              autocorrect: false,
+              autofillHints: const [AutofillHints.password],
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _busy ? null : _connect(),
+              decoration: const InputDecoration(
+                labelText: 'Senha MinhaUFMG',
+                prefixIcon: Icon(Icons.lock_outline),
+              ),
+              validator: (value) => value == null || value.isEmpty
+                  ? 'Informe sua senha da UFMG.'
+                  : null,
             ),
-            validator: (value) => value == null || value.isEmpty
-                ? 'Informe sua senha da UFMG.'
-                : null,
-          ),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            key: const Key('ufmg-connect'),
-            onPressed: _busy ? null : _connect,
-            icon: _busy
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.link),
-            label: Text(connectedLabel),
-          ),
-          if (_showReconnectForm) ...[
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: _busy
-                  ? null
-                  : () => setState(() {
-                      _showReconnectForm = false;
-                      _username.clear();
-                      _password.clear();
-                    }),
-              child: const Text('Cancelar'),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              key: const Key('ufmg-connect'),
+              onPressed: _busy ? null : _connect,
+              icon: _busy
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.link),
+              label: Text(connectedLabel),
             ),
+            if (_showReconnectForm) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: _busy
+                    ? null
+                    : () => setState(() {
+                        _showReconnectForm = false;
+                        _username.clear();
+                        _password.clear();
+                      }),
+                child: const Text('Cancelar'),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
