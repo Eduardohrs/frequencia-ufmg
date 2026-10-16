@@ -199,7 +199,12 @@ def test_ufmg_session_service_builds_only_with_complete_secure_configuration(
             401,
             "ufmg_credentials_invalid",
         ),
-        (UFMGAuthenticationUnavailable(), "POST", 503, "ufmg_authentication_unavailable"),
+        (
+            UFMGAuthenticationUnavailable("portal_entry_timeout"),
+            "POST",
+            503,
+            "ufmg_authentication_unavailable",
+        ),
         (UFMGSessionStoreUnavailable(), "GET", 503, "ufmg_session_store_unavailable"),
         (InvalidUFMGSession(), "DELETE", 400, "ufmg_session_rejected"),
         (ValueError(), "POST", 503, "ufmg_session_configuration_invalid"),
@@ -241,6 +246,8 @@ def test_ufmg_session_routes_map_failures_without_leaking_input(
     expected_log = {"event": error}
     if isinstance(failure, InvalidUFMGCredentials):
         expected_log["reason"] = "login_response_rejected"
+    if isinstance(failure, UFMGAuthenticationUnavailable):
+        expected_log["reason"] = "portal_entry_timeout"
     assert json.loads(context.errors[0]) == expected_log
     assert "private" not in emitted
 
