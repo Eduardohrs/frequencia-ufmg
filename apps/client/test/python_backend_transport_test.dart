@@ -450,10 +450,44 @@ void main() {
     expect(result.courses[1].status, PythonMoodleContentStatus.empty);
     expect(result.courses.first.moodleCourseId, '3701');
     expect(result.courses.first.term, '2026-2');
+    expect(result.courses.first.candidates.last.moodleCourseId, '3701');
     expect(captured.method, 'POST');
     expect(captured.url.path, '/v1/ufmg/discover/content');
     expect(captured.body, '{}');
   });
+
+  test(
+    'loads the persisted Moodle material catalog without synchronizing',
+    () async {
+      late http.Request captured;
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((request) async {
+          captured = request;
+          return http.Response(
+            jsonEncode({
+              'courses': <Object?>[],
+              'course_total': 0,
+              'candidate_total': 0,
+              'metaturma_candidate_total': 0,
+              'found': 0,
+              'empty': 0,
+              'unmatched': 0,
+              'ambiguous': 0,
+            }),
+            200,
+          );
+        }),
+      );
+
+      final result = await transport.listMoodleMaterialCatalog();
+
+      expect(result.courses, isEmpty);
+      expect(captured.method, 'GET');
+      expect(captured.url.path, '/v1/moodle/materials');
+    },
+  );
 
   test('validates bounded Moodle mobile download capabilities', () async {
     late http.Request captured;
@@ -612,6 +646,7 @@ void main() {
 
     final candidate = PythonMoodleContentCandidate.fromJson({
       'source_id': '101',
+      'moodle_course_id': '3701',
       'kind': 'page',
       'title': title,
       'url': 'https://virtual.ufmg.br/20262/mod/page/view.php?id=101',
@@ -626,6 +661,7 @@ void main() {
     expect(
       () => PythonMoodleContentCandidate.fromJson({
         'source_id': '101',
+        'moodle_course_id': '3701',
         'kind': 'page',
         'title': 'Material',
         'url': 'https://virtual.ufmg.br/20262/mod/page/view.php?id=101',
@@ -660,6 +696,7 @@ void main() {
       expect(
         () => PythonMoodleContentCandidate.fromJson({
           'source_id': entry.$1,
+          'moodle_course_id': '3701',
           'kind': entry.$2,
           'title': 'Material',
           'url': entry.$3,

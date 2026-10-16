@@ -34,6 +34,15 @@ class _Courses:
         ]
 
 
+class _Catalog:
+    def __init__(self) -> None:
+        self.courses: list[dict[str, object]] | None = None
+
+    def reconcile(self, courses: list[dict[str, object]]) -> dict[str, int]:
+        self.courses = courses
+        return {"created": 1, "updated": 0, "unchanged": 0, "removed": 0, "writes": 1}
+
+
 class _Client:
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error
@@ -58,6 +67,8 @@ class _Client:
                         "title": "Plano de ensino",
                         "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=101",
                         "relevance": "teaching_plan",
+                        "origin": "canonical",
+                        "moodle_course_id": "3701",
                     }
                 ],
             },
@@ -71,7 +82,8 @@ class _Client:
 
 
 def test_discovery_links_candidates_to_local_courses_and_returns_counts() -> None:
-    result = MoodleContentDiscoveryService(_Sessions(), _Client(), _Courses()).discover(
+    catalog = _Catalog()
+    result = MoodleContentDiscoveryService(_Sessions(), _Client(), _Courses(), catalog).discover(
         "user", now=123
     )
 
@@ -90,6 +102,8 @@ def test_discovery_links_candidates_to_local_courses_and_returns_counts() -> Non
                         "title": "Plano de ensino",
                         "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=101",
                         "relevance": "teaching_plan",
+                        "origin": "canonical",
+                        "moodle_course_id": "3701",
                     }
                 ],
             },
@@ -109,18 +123,26 @@ def test_discovery_links_candidates_to_local_courses_and_returns_counts() -> Non
         "empty": 1,
         "unmatched": 0,
         "ambiguous": 0,
+        "catalog": {
+            "created": 1,
+            "updated": 0,
+            "unchanged": 0,
+            "removed": 0,
+            "writes": 1,
+        },
     }
+    assert catalog.courses == result["courses"]
 
 
 def test_discovery_requires_session_and_removes_rejected_session() -> None:
     with pytest.raises(UFMGReauthenticationRequired):
-        MoodleContentDiscoveryService(_Sessions(None), _Client(), _Courses()).discover(
+        MoodleContentDiscoveryService(_Sessions(None), _Client(), _Courses(), _Catalog()).discover(
             "user", now=123
         )
     sessions = _Sessions()
     with pytest.raises(UFMGReauthenticationRequired):
         MoodleContentDiscoveryService(
-            sessions, _Client(UFMGReauthenticationRequired()), _Courses()
+            sessions, _Client(UFMGReauthenticationRequired()), _Courses(), _Catalog()
         ).discover("user", now=123)
     assert sessions.deleted is True
 
@@ -143,7 +165,9 @@ def test_discovery_rejects_invalid_local_course_sets(courses: list[dict[str, str
             return courses
 
     with pytest.raises(ValueError):
-        MoodleContentDiscoveryService(_Sessions(), _Client(), Courses()).discover("user", now=123)
+        MoodleContentDiscoveryService(_Sessions(), _Client(), Courses(), _Catalog()).discover(
+            "user", now=123
+        )
 
 
 @pytest.mark.parametrize(
@@ -187,4 +211,6 @@ def test_discovery_rejects_invalid_client_results(result: list[dict[str, object]
             return result
 
     with pytest.raises(ValueError):
-        MoodleContentDiscoveryService(_Sessions(), Client(), _Courses()).discover("user", now=123)
+        MoodleContentDiscoveryService(_Sessions(), Client(), _Courses(), _Catalog()).discover(
+            "user", now=123
+        )

@@ -822,6 +822,31 @@ void main() {
     expect(logger.events, contains('moodle_mobile_capability_succeeded'));
   });
 
+  testWidgets('shows the persisted material catalog before a new Moodle sync', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    gateway.materialCatalog = await gateway.discoverMoodleContent();
+    gateway.contentDiscoveryCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(gateway.materialCatalogCalls, 1);
+    expect(gateway.contentDiscoveryCalls, 0);
+    expect(find.text('Materiais do Moodle'), findsOneWidget);
+    expect(find.byKey(const Key('moodle-content-dcc203')), findsOneWidget);
+  });
+
   testWidgets(
     'keeps Moodle sync useful when capability probing is unavailable',
     (tester) async {
@@ -1013,34 +1038,33 @@ void main() {
     expect(find.byType(UFMGConnectionPage), findsNothing);
   });
 
-  testWidgets('rejects a file candidate without a Moodle course identity', (
-    tester,
-  ) async {
-    final gateway = _Gateway(
-      status: const PythonUFMGSessionStatus(
-        connected: true,
-        reauthenticationRequired: false,
-      ),
-    )..foundMoodleCourseId = null;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
-    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('moodle-material-open-102')));
-    await tester.pumpAndSettle();
-    expect(gateway.materialFileRequests, isEmpty);
-    expect(
-      find.text('Não foi possível abrir este material no Moodle.'),
-      findsOneWidget,
-    );
-  });
+  testWidgets(
+    'uses the material course identity instead of the canonical one',
+    (tester) async {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      )..foundMoodleCourseId = null;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('moodle-content-dcc203')),
+      );
+      await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('moodle-material-open-102')));
+      await tester.pumpAndSettle();
+      expect(gateway.materialFileRequests, [('2026-2', '3701', '102')]);
+    },
+  );
 
   testWidgets('explains when Moodle refuses to open a material', (
     tester,
@@ -1215,7 +1239,20 @@ final class _Gateway implements BackendUFMGSessionGateway {
   List<PythonMoodleDate> dates = const [];
   int syncCalls = 0;
   int contentDiscoveryCalls = 0;
+  int materialCatalogCalls = 0;
   final materialFileRequests = <(String, String, String)>[];
+  PythonMoodleContentDiscovery materialCatalog =
+      const PythonMoodleContentDiscovery(
+        courses: [],
+        candidateTotal: 0,
+        metaturmaCandidateTotal: 0,
+      );
+
+  @override
+  Future<PythonMoodleContentDiscovery> listMoodleMaterialCatalog() async {
+    materialCatalogCalls++;
+    return materialCatalog;
+  }
 
   @override
   Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities() async {
@@ -1260,7 +1297,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
       return completer.future;
     }
     if (contentDiscoveryError case final error?) throw error;
-    return PythonMoodleContentDiscovery(
+    final discovery = PythonMoodleContentDiscovery(
       candidateTotal: 3,
       metaturmaCandidateTotal: 1,
       courses: [
@@ -1273,6 +1310,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
           candidates: [
             PythonMoodleContentCandidate(
               sourceId: '101',
+              moodleCourseId: '3701',
               kind: 'page',
               title: 'Plano de ensino',
               url: Uri.parse(
@@ -1283,6 +1321,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
             ),
             PythonMoodleContentCandidate(
               sourceId: '102',
+              moodleCourseId: '3701',
               kind: 'file',
               title: 'Cronograma',
               url: Uri.parse(
@@ -1293,6 +1332,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
             ),
             PythonMoodleContentCandidate(
               sourceId: '103',
+              moodleCourseId: '4999',
               kind: 'text',
               title: 'Avisos',
               url: null,
@@ -1327,6 +1367,8 @@ final class _Gateway implements BackendUFMGSessionGateway {
         ),
       ],
     );
+    materialCatalog = discovery;
+    return discovery;
   }
 
   @override

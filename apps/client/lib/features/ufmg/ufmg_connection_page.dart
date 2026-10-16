@@ -54,6 +54,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   }
 
   Future<void> _load() async {
+    final supplementary = _loadSupplementaryData();
     try {
       final status = await runAuditedOperation(
         logger: widget.logger,
@@ -61,13 +62,6 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         action: widget.gateway.getUFMGSessionStatus,
       );
       if (mounted) setState(() => _status = status);
-      try {
-        final dates = await _listDates();
-        if (mounted) setState(() => _dates = dates);
-      } catch (_) {
-        // Imported dates are supplementary; their failure must not hide the
-        // UFMG connection controls or the attendance core.
-      }
     } catch (_) {
       if (mounted) {
         setState(
@@ -75,7 +69,35 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         );
       }
     } finally {
+      await supplementary;
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadSupplementaryData() =>
+      Future.wait([_loadDates(), _loadMaterialCatalog()]);
+
+  Future<void> _loadDates() async {
+    try {
+      final dates = await _listDates();
+      if (mounted) setState(() => _dates = dates);
+    } catch (_) {
+      // Imported dates are supplementary and never hide the attendance core.
+    }
+  }
+
+  Future<void> _loadMaterialCatalog() async {
+    try {
+      final catalog = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleMaterialCatalogList,
+        action: widget.gateway.listMoodleMaterialCatalog,
+      );
+      if (mounted && catalog.courses.isNotEmpty) {
+        setState(() => _contentDiscovery = catalog);
+      }
+    } catch (_) {
+      // The persisted catalogue is supplementary and may be synced later.
     }
   }
 
@@ -116,13 +138,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     if (candidate.kind != 'file') {
       return candidate.canOpenDirectly ? candidate.url : null;
     }
-    final moodleCourseId = course.moodleCourseId;
-    if (moodleCourseId == null) {
-      throw StateError('moodle_course_identity_missing');
-    }
     final files = await widget.gateway.listMoodleMaterialFiles(
       term: course.term,
-      courseId: moodleCourseId,
+      courseId: candidate.moodleCourseId,
       sourceId: candidate.sourceId,
     );
     if (files.isEmpty) throw StateError('moodle_material_has_no_files');
@@ -278,10 +296,15 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         operation: AuditedOperation.moodleDateImport,
         action: widget.gateway.importMoodleDates,
       );
-      final discovery = await runAuditedOperation(
+      await runAuditedOperation(
         logger: widget.logger,
         operation: AuditedOperation.moodleContentDiscovery,
         action: widget.gateway.discoverMoodleContent,
+      );
+      final discovery = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleMaterialCatalogList,
+        action: widget.gateway.listMoodleMaterialCatalog,
       );
       String capabilitySummary;
       try {

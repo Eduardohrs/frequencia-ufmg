@@ -1593,6 +1593,10 @@ final class _UFMGGateway implements BackendUFMGSessionGateway {
       throw UnimplementedError();
 
   @override
+  Future<PythonMoodleContentDiscovery> listMoodleMaterialCatalog() =>
+      throw UnimplementedError();
+
+  @override
   Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities() =>
       throw UnimplementedError();
 

@@ -787,6 +787,7 @@ def test_client_discovers_pages_files_text_and_empty_courses() -> None:
                     "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=101",
                     "relevance": "teaching_plan",
                     "origin": "canonical",
+                        "moodle_course_id": "3701",
                 },
                 {
                     "source_id": "102",
@@ -795,6 +796,7 @@ def test_client_discovers_pages_files_text_and_empty_courses() -> None:
                     "url": "https://virtual.ufmg.br/20262/mod/resource/view.php?id=102",
                     "relevance": "schedule",
                     "origin": "canonical",
+                        "moodle_course_id": "3701",
                 },
                 {
                     "source_id": "103",
@@ -803,6 +805,7 @@ def test_client_discovers_pages_files_text_and_empty_courses() -> None:
                     "url": None,
                     "relevance": "other",
                     "origin": "canonical",
+                        "moodle_course_id": "3701",
                 },
             ],
         },
@@ -1087,6 +1090,10 @@ def test_discovery_uses_single_canonical_course_and_keeps_metaturma_materials() 
     assert [candidate["origin"] for candidate in result[0]["candidates"]] == [
         "canonical",
         "metaturma",
+    ]
+    assert [candidate["moodle_course_id"] for candidate in result[0]["candidates"]] == [
+        "10",
+        "11",
     ]
     state_calls = json.loads(opener.requests[3][0].data)
     assert [call["args"]["courseid"] for call in state_calls] == [10, 11, 12]

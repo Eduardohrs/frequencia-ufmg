@@ -195,11 +195,15 @@ class MoodleStructuredDatesClient:
             )
             total = 0
             grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
-            for (code, _, origin), candidates in zip(matched, states, strict=True):
+            for (code, course, origin), candidates in zip(matched, states, strict=True):
                 total += len(candidates)
                 if total > MAX_CANDIDATES:
                     raise InvalidMoodleResponse("candidate_limit")
-                grouped[code].extend(candidate | {"origin": origin} for candidate in candidates)
+                grouped[code].extend(
+                    candidate
+                    | {"origin": origin, "moodle_course_id": str(course["id"])}
+                    for candidate in candidates
+                )
             for code, candidates in grouped.items():
                 results[code] = {
                     "course_code": code,

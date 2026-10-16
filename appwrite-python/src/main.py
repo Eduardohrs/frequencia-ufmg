@@ -50,6 +50,11 @@ from firestore_rest import (  # noqa: E402
 from moodle_content_discovery import MoodleContentDiscoveryService  # noqa: E402
 from moodle_date_import import MoodleDateImportService  # noqa: E402
 from moodle_material import MoodleMaterialService  # noqa: E402
+from moodle_material_catalog import MoodleMaterialCatalogService  # noqa: E402
+from moodle_material_catalog_repository import (  # noqa: E402
+    InvalidMoodleMaterialCatalog,
+    MoodleMaterialCatalogRepository,
+)
 from moodle_mobile_capability import MoodleMobileCapabilityService  # noqa: E402
 from moodle_structured_dates import (  # noqa: E402
     InvalidMoodleResponse,
@@ -228,6 +233,8 @@ def _dispatch(context: Any) -> Any:
         return _courses_list(context, allowed_origin)
     if method == "GET" and path == "/v1/moodle/dates":
         return _academic_dates(context, allowed_origin)
+    if method == "GET" and path == "/v1/moodle/materials":
+        return _moodle_material_catalog(context, allowed_origin)
     if path == "/v1/ufmg/session" and method in {"GET", "POST", "DELETE"}:
         return _ufmg_session(context, allowed_origin, method)
     if path == "/v1/ufmg/import/courses" and method == "POST":
@@ -588,8 +595,15 @@ def _moodle_content_discovery(context: Any, origin: str | None) -> Any:
         return _course_error(context, origin, "course_access_denied", 403)
     except FirestoreUnavailable:
         return _course_error(context, origin, "course_store_unavailable", 503)
-    except (InvalidCourse, FirestoreRequestRejected, TypeError, ValueError):
+    except (
+        InvalidCourse,
+        InvalidMoodleMaterialCatalog,
+        FirestoreRequestRejected,
+        TypeError,
+        ValueError,
+    ):
         return _ufmg_session_error(context, origin, "moodle_content_discovery_rejected", 502)
+    catalog = cast(Mapping[str, int], result["catalog"])
     _log(
         context,
         "moodle_content_discovery_succeeded",
@@ -599,6 +613,62 @@ def _moodle_content_discovery(context: Any, origin: str | None) -> Any:
         empty=result["empty"],
         unmatched=result["unmatched"],
         ambiguous=result["ambiguous"],
+        metaturma_candidates=result["metaturma_candidate_total"],
+        catalog_created=catalog["created"],
+        catalog_updated=catalog["updated"],
+        catalog_unchanged=catalog["unchanged"],
+        catalog_removed=catalog["removed"],
+        catalog_writes=catalog["writes"],
+    )
+    return _respond(context, _legacy_moodle_content_payload(result), origin=origin)
+
+
+def _legacy_moodle_content_payload(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep the established discovery response stable for installed clients."""
+    courses = []
+    for raw_course in cast(list[Mapping[str, Any]], result["courses"]):
+        course = dict(raw_course)
+        course["candidates"] = [
+            {
+                key: value
+                for key, value in candidate.items()
+                if key != "moodle_course_id"
+            }
+            for candidate in cast(list[Mapping[str, Any]], course["candidates"])
+        ]
+        courses.append(course)
+    return {
+        key: courses if key == "courses" else value
+        for key, value in result.items()
+        if key != "catalog"
+    }
+
+
+def _moodle_material_catalog(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/moodle/materials")
+    if rejected is not None:
+        return rejected
+    try:
+        result = _moodle_material_catalog_service(
+            context.req.headers, cast(str, user_id)
+        ).list_catalog()
+    except FirestoreAccessDenied:
+        return _course_error(context, origin, "course_access_denied", 403)
+    except FirestoreUnavailable:
+        return _course_error(context, origin, "course_store_unavailable", 503)
+    except (
+        InvalidCourse,
+        InvalidMoodleMaterialCatalog,
+        FirestoreRequestRejected,
+        TypeError,
+        ValueError,
+    ):
+        return _ufmg_session_error(context, origin, "moodle_material_catalog_rejected", 502)
+    _log(
+        context,
+        "moodle_material_catalog_listed",
+        course_total=result["course_total"],
+        candidate_total=result["candidate_total"],
         metaturma_candidates=result["metaturma_candidate_total"],
     )
     return _respond(context, result, origin=origin)
@@ -962,7 +1032,23 @@ def _moodle_content_discovery_service(
         _ufmg_session_store(headers),
         MoodleStructuredDatesClient(),
         _course_repository(headers, user_id),
+        _moodle_material_catalog_repository(headers, user_id),
     )
+
+
+def _moodle_material_catalog_service(
+    headers: dict[str, str], user_id: str
+) -> MoodleMaterialCatalogService:
+    return MoodleMaterialCatalogService(
+        _course_repository(headers, user_id),
+        _moodle_material_catalog_repository(headers, user_id),
+    )
+
+
+def _moodle_material_catalog_repository(
+    headers: dict[str, str], user_id: str
+) -> MoodleMaterialCatalogRepository:
+    return MoodleMaterialCatalogRepository(_firestore(headers, user_id))
 
 
 def _moodle_mobile_capability_service(
@@ -1094,6 +1180,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/attendance/evaluate",
         "/v1/courses",
         "/v1/moodle/dates",
+        "/v1/moodle/materials",
         "/v1/overview",
         "/v1/ufmg/session",
         "/v1/ufmg/import/courses",
@@ -1228,6 +1315,7 @@ def _route_name(path: str) -> str:
         "/v1/overview",
         "/v1/courses",
         "/v1/moodle/dates",
+        "/v1/moodle/materials",
         "/v1/ufmg/session",
         "/v1/ufmg/import/courses",
         "/v1/ufmg/import/schedules",

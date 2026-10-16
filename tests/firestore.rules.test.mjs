@@ -45,6 +45,8 @@ const sessionPath = (userId, sessionId = "2026-08-03") =>
   `${coursePath(userId)}/sessions/${sessionId}`;
 const academicDatePath = (userId, dateId = "moodle-910") =>
   `${coursePath(userId)}/academicDates/${dateId}`;
+const materialCatalogPath = (userId, catalogId = "current") =>
+  `${coursePath(userId)}/materialCatalog/${catalogId}`;
 const logPath = (userId, logId = "log-1") =>
   `users/${userId}/logs/${logId}`;
 
@@ -100,6 +102,20 @@ const academicDate = (overrides = {}) => ({
   kind: "assignment",
   source: "moodle",
   sourceId: "910",
+  createdAt,
+  updatedAt,
+  ...overrides,
+});
+
+const materialCatalog = (overrides = {}) => ({
+  schemaVersion: 1,
+  term: "2026-2",
+  status: "found",
+  moodleCourseId: "3701",
+  candidateCount: 1,
+  metaturmaCandidateCount: 0,
+  materialsJson: '[{"source_id":"101"}]',
+  contentHash: "a".repeat(64),
   createdAt,
   updatedAt,
   ...overrides,
@@ -329,6 +345,59 @@ describe("academic date documents", () => {
     await seed(academicDatePath("alice"), academicDate());
     await assertFails(
       updateDoc(doc(db, academicDatePath("alice")), { createdAt: updatedAt }),
+    );
+  });
+});
+
+describe("Moodle material catalog documents", () => {
+  test("owner can persist and replace a bounded catalog", async () => {
+    await seed(coursePath("alice"), course());
+    const reference = doc(dbFor("alice"), materialCatalogPath("alice"));
+
+    await assertSucceeds(setDoc(reference, materialCatalog()));
+    await assertSucceeds(getDoc(reference));
+    await assertSucceeds(
+      updateDoc(reference, {
+        status: "empty",
+        moodleCourseId: "3701",
+        candidateCount: 0,
+        materialsJson: "[]",
+        contentHash: "b".repeat(64),
+      }),
+    );
+    await assertSucceeds(deleteDoc(reference));
+  });
+
+  test("requires the parent, current id, owner, and exact safe shape", async () => {
+    await assertFails(
+      setDoc(doc(dbFor("alice"), materialCatalogPath("alice")), materialCatalog()),
+    );
+    await seed(coursePath("alice"), course());
+    await seed(materialCatalogPath("alice"), materialCatalog());
+    await assertFails(getDoc(doc(dbFor("bob"), materialCatalogPath("alice"))));
+    await assertFails(
+      setDoc(doc(dbFor("alice"), materialCatalogPath("alice", "other")), materialCatalog()),
+    );
+
+    const invalid = [
+      materialCatalog({ schemaVersion: 2 }),
+      materialCatalog({ term: "20262" }),
+      materialCatalog({ status: "unknown" }),
+      materialCatalog({ moodleCourseId: "bad" }),
+      materialCatalog({ status: "unmatched" }),
+      materialCatalog({ candidateCount: 0 }),
+      materialCatalog({ metaturmaCandidateCount: 2 }),
+      materialCatalog({ contentHash: "secret" }),
+      materialCatalog({ privateToken: "never" }),
+      withoutField(materialCatalog(), "materialsJson"),
+    ];
+    for (const data of invalid) {
+      await assertFails(
+        setDoc(doc(dbFor("alice"), materialCatalogPath("alice")), data),
+      );
+    }
+    await assertFails(
+      updateDoc(doc(dbFor("alice"), materialCatalogPath("alice")), { createdAt: updatedAt }),
     );
   });
 });
