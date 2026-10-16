@@ -81,6 +81,8 @@ abstract interface class BackendUFMGSessionGateway {
 
   Future<PythonMoodleContentDiscovery> discoverMoodleContent();
 
+  Future<PythonMoodleContentDiscovery> listMoodleMaterialCatalog();
+
   Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities();
 
   Future<List<PythonMoodleMaterialFile>> listMoodleMaterialFiles({
@@ -115,6 +117,7 @@ final class PythonMoodleMobileCapabilities {
 final class PythonMoodleContentCandidate {
   const PythonMoodleContentCandidate({
     required this.sourceId,
+    required this.moodleCourseId,
     required this.kind,
     required this.title,
     required this.url,
@@ -123,9 +126,18 @@ final class PythonMoodleContentCandidate {
   });
 
   factory PythonMoodleContentCandidate.fromJson(Map<String, Object?> json) {
-    const keys = {'source_id', 'kind', 'title', 'url', 'relevance', 'origin'};
+    const keys = {
+      'source_id',
+      'moodle_course_id',
+      'kind',
+      'title',
+      'url',
+      'relevance',
+      'origin',
+    };
     if (!_hasExactKeys(json, keys)) throw const FormatException();
     final sourceId = json['source_id'];
+    final moodleCourseId = json['moodle_course_id'];
     final kind = json['kind'];
     final title = json['title'];
     final rawUrl = json['url'];
@@ -139,6 +151,9 @@ final class PythonMoodleContentCandidate {
     if (sourceId is! String ||
         !_moodleSourceId.hasMatch(sourceId) ||
         (int.tryParse(sourceId) ?? 0) > 2147483647 ||
+        moodleCourseId is! String ||
+        !_moodleSourceId.hasMatch(moodleCourseId) ||
+        (int.tryParse(moodleCourseId) ?? 0) > 2147483647 ||
         kind is! String ||
         !const {'page', 'file', 'text'}.contains(kind) ||
         title is! String ||
@@ -155,6 +170,7 @@ final class PythonMoodleContentCandidate {
     }
     return PythonMoodleContentCandidate(
       sourceId: sourceId,
+      moodleCourseId: moodleCourseId,
       kind: kind,
       title: title,
       url: uri,
@@ -164,6 +180,7 @@ final class PythonMoodleContentCandidate {
   }
 
   final String sourceId;
+  final String moodleCourseId;
   final String kind;
   final String title;
   final Uri? url;
@@ -1172,9 +1189,28 @@ final class PythonBackendTransport
       method: _BackendMethod.post,
       body: const {},
     );
+    return _moodleContentDiscovery(
+      response.body,
+      includesCandidateCourseIds: false,
+    );
+  }
+
+  @override
+  Future<PythonMoodleContentDiscovery> listMoodleMaterialCatalog() async {
+    final response = await _authenticatedRequest(path: '/v1/moodle/materials');
+    return _moodleContentDiscovery(
+      response.body,
+      includesCandidateCourseIds: true,
+    );
+  }
+
+  PythonMoodleContentDiscovery _moodleContentDiscovery(
+    String body, {
+    required bool includesCandidateCourseIds,
+  }) {
     try {
-      final value = jsonDecode(response.body);
-      const keys = {
+      final value = jsonDecode(body);
+      final keys = <String>{
         'courses',
         'course_total',
         'candidate_total',
@@ -1245,11 +1281,13 @@ final class PythonBackendTransport
               throw const FormatException();
             }
             final parsedCandidates = rawCandidates
-                .map(
-                  (item) => PythonMoodleContentCandidate.fromJson(
-                    Map<String, Object?>.from(item as Map),
-                  ),
-                )
+                .map((item) {
+                  final candidate = Map<String, Object?>.from(item as Map);
+                  if (!includesCandidateCourseIds) {
+                    candidate['moodle_course_id'] = moodleCourseId;
+                  }
+                  return PythonMoodleContentCandidate.fromJson(candidate);
+                })
                 .toList(growable: false);
             if ((status == PythonMoodleContentStatus.found) !=
                 parsedCandidates.isNotEmpty) {

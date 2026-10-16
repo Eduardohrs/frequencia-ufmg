@@ -225,6 +225,43 @@ service cloud.firestore {
         && hasValidAuditFields(data);
     }
 
+    function isValidMaterialCatalog(data) {
+      let fields = [
+        'schemaVersion',
+        'term',
+        'status',
+        'moodleCourseId',
+        'candidateCount',
+        'metaturmaCandidateCount',
+        'materialsJson',
+        'contentHash',
+        'createdAt',
+        'updatedAt'
+      ];
+      let matched = data.status in ['found', 'empty'];
+      return hasExactFields(data, fields)
+        && data.schemaVersion == 1
+        && data.term is string
+        && data.term.matches('^20[2-9][0-9]-[12]$')
+        && data.status in ['found', 'empty', 'unmatched', 'ambiguous']
+        && (data.moodleCourseId == null
+          || (data.moodleCourseId is string
+            && data.moodleCourseId.matches('^[1-9][0-9]{0,9}$')))
+        && matched == (data.moodleCourseId != null)
+        && data.candidateCount is int
+        && data.candidateCount >= 0
+        && data.candidateCount <= 500
+        && (data.status == 'found') == (data.candidateCount > 0)
+        && data.metaturmaCandidateCount is int
+        && data.metaturmaCandidateCount >= 0
+        && data.metaturmaCandidateCount <= data.candidateCount
+        && data.materialsJson is string
+        && data.materialsJson.size() <= 750000
+        && data.contentHash is string
+        && data.contentHash.matches('^[0-9a-f]{64}$')
+        && hasValidAuditFields(data);
+    }
+
     match /users/{userId}/courses/{courseId} {
       allow read, delete: if owns(userId);
       allow create: if owns(userId) && isValidCourse(request.resource.data);
@@ -259,6 +296,18 @@ service cloud.firestore {
           && isValidAcademicDate(request.resource.data);
         allow update: if owns(userId)
           && isValidAcademicDate(request.resource.data)
+          && preservesAuditFields();
+      }
+
+      match /materialCatalog/{catalogId} {
+        allow read, delete: if owns(userId);
+        allow create: if owns(userId)
+          && catalogId == 'current'
+          && exists(/databases/$(database)/documents/users/$(userId)/courses/$(courseId))
+          && isValidMaterialCatalog(request.resource.data);
+        allow update: if owns(userId)
+          && catalogId == 'current'
+          && isValidMaterialCatalog(request.resource.data)
           && preservesAuditFields();
       }
     }

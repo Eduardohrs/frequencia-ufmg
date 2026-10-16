@@ -431,6 +431,10 @@ final class _FakeOverviewBackend
       throw UnimplementedError();
 
   @override
+  Future<PythonMoodleContentDiscovery> listMoodleMaterialCatalog() =>
+      throw UnimplementedError();
+
+  @override
   Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities() =>
       throw UnimplementedError();
 

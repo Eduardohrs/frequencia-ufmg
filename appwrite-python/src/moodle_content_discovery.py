@@ -23,11 +23,22 @@ class _Courses(Protocol):
     def list_courses(self) -> list[dict[str, Any]]: ...
 
 
+class _Catalog(Protocol):
+    def reconcile(self, courses: list[dict[str, object]]) -> dict[str, int]: ...
+
+
 class MoodleContentDiscoveryService:
-    def __init__(self, sessions: _Sessions, client: _Client, courses: _Courses) -> None:
+    def __init__(
+        self,
+        sessions: _Sessions,
+        client: _Client,
+        courses: _Courses,
+        catalog: _Catalog,
+    ) -> None:
         self._sessions = sessions
         self._client = client
         self._courses = courses
+        self._catalog = catalog
 
     def discover(self, user_id: str, *, now: int) -> dict[str, object]:
         session = self._sessions.load(user_id, now=now)
@@ -112,4 +123,5 @@ class MoodleContentDiscoveryService:
             "candidate_total": candidate_total,
             "metaturma_candidate_total": metaturma_candidate_total,
             **counts,
+            "catalog": self._catalog.reconcile(courses),
         }

@@ -110,6 +110,12 @@ final class _FirebasePythonBackendVerifier
   }
 
   @override
+  Future<PythonMoodleContentDiscovery> listMoodleMaterialCatalog() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.listMoodleMaterialCatalog();
+  }
+
+  @override
   Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities() async {
     await (_activation ??= _activateAppCheck());
     return _transport.probeMoodleMobileCapabilities();

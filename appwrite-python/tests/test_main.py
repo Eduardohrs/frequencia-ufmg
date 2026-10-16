@@ -516,10 +516,13 @@ def test_moodle_content_discovery_returns_candidates_but_logs_only_counts(
             {
                 "course_id": "private-id",
                 "course_code": "DCC203",
+                "term": "2026-2",
+                "moodle_course_id": "3701",
                 "status": "found",
                 "candidates": [
                     {
                         "source_id": "101",
+                        "moodle_course_id": "4999",
                         "kind": "page",
                         "title": "Plano de ensino",
                         "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=101",
@@ -536,6 +539,13 @@ def test_moodle_content_discovery_returns_candidates_but_logs_only_counts(
         "empty": 0,
         "unmatched": 0,
         "ambiguous": 0,
+        "catalog": {
+            "created": 1,
+            "updated": 0,
+            "unchanged": 0,
+            "removed": 0,
+            "writes": 1,
+        },
     }
 
     class Service:
@@ -546,7 +556,12 @@ def test_moodle_content_discovery_returns_candidates_but_logs_only_counts(
     monkeypatch.setattr(function, "_moodle_content_discovery_service", lambda *_: Service())
     context = FakeContext(FakeRequest("POST", "/v1/ufmg/discover/content"))
 
-    assert function.main(context)["body"] == result
+    body = function.main(context)["body"]
+    expected = json.loads(json.dumps(result))
+    expected.pop("catalog")
+    expected["courses"][0]["candidates"][0].pop("moodle_course_id")
+    assert body == expected
+    assert "moodle_course_id" not in body["courses"][0]["candidates"][0]
     assert json.loads(context.logs[0]) == {
         "event": "moodle_content_discovery_succeeded",
         "course_total": 1,
@@ -556,7 +571,93 @@ def test_moodle_content_discovery_returns_candidates_but_logs_only_counts(
         "unmatched": 0,
         "ambiguous": 0,
         "metaturma_candidates": 1,
+        "catalog_created": 1,
+        "catalog_updated": 0,
+        "catalog_unchanged": 0,
+        "catalog_removed": 0,
+        "catalog_writes": 1,
     }
+
+
+def test_moodle_material_catalog_returns_persisted_metadata_and_logs_only_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user", None))
+    payload = {
+        "courses": [
+            {
+                "course_id": "private-id",
+                "course_code": "DCC203",
+                "term": "2026-2",
+                "moodle_course_id": "3701",
+                "status": "found",
+                "candidates": [
+                    {
+                        "source_id": "101",
+                        "moodle_course_id": "3701",
+                        "kind": "page",
+                        "title": "Plano de ensino",
+                        "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=101",
+                        "relevance": "teaching_plan",
+                        "origin": "canonical",
+                    }
+                ],
+            }
+        ],
+        "course_total": 1,
+        "candidate_total": 1,
+        "metaturma_candidate_total": 0,
+        "found": 1,
+        "empty": 0,
+        "unmatched": 0,
+        "ambiguous": 0,
+    }
+
+    class Service:
+        def list_catalog(self) -> dict[str, object]:
+            return payload
+
+    monkeypatch.setattr(function, "_moodle_material_catalog_service", lambda *_: Service())
+    context = FakeContext(FakeRequest("GET", "/v1/moodle/materials"))
+
+    assert function.main(context)["body"] == payload
+    assert json.loads(context.logs[0]) == {
+        "event": "moodle_material_catalog_listed",
+        "course_total": 1,
+        "candidate_total": 1,
+        "metaturma_candidates": 0,
+    }
+    assert "Plano de ensino" not in json.dumps(context.logs)
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "error"),
+    [
+        (ValueError(), 502, "moodle_material_catalog_rejected"),
+        (FirestoreAccessDenied(), 403, "course_access_denied"),
+        (FirestoreUnavailable(), 503, "course_store_unavailable"),
+    ],
+)
+def test_moodle_material_catalog_rejects_auth_and_sanitizes_failures(
+    failure: Exception,
+    status: int,
+    error: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_: (None, rejection))
+    assert function.main(FakeContext(FakeRequest("GET", "/v1/moodle/materials"))) is rejection
+
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user", None))
+
+    class Service:
+        def list_catalog(self) -> None:
+            raise failure
+
+    monkeypatch.setattr(function, "_moodle_material_catalog_service", lambda *_: Service())
+    response = function.main(FakeContext(FakeRequest("GET", "/v1/moodle/materials")))
+    assert response["status"] == status
+    assert response["body"] == {"error": error}
 
 
 @pytest.mark.parametrize(
@@ -886,11 +987,19 @@ def test_moodle_token_store_builds_only_with_complete_secure_configuration(
 def test_moodle_content_discovery_factory_uses_server_dependencies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    values = {"sessions": object(), "client": object(), "courses": object()}
+    values = {
+        "sessions": object(),
+        "client": object(),
+        "courses": object(),
+        "catalog": object(),
+    }
     captured: tuple[object, ...] = ()
     monkeypatch.setattr(function, "_ufmg_session_store", lambda _: values["sessions"])
     monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: values["client"])
     monkeypatch.setattr(function, "_course_repository", lambda *_: values["courses"])
+    monkeypatch.setattr(
+        function, "_moodle_material_catalog_repository", lambda *_: values["catalog"]
+    )
 
     class Service:
         def __init__(self, *dependencies: object) -> None:
@@ -899,7 +1008,30 @@ def test_moodle_content_discovery_factory_uses_server_dependencies(
 
     monkeypatch.setattr(function, "MoodleContentDiscoveryService", Service)
     assert function._moodle_content_discovery_service({}, "user").__class__ is Service
-    assert captured == (values["sessions"], values["client"], values["courses"])
+    assert captured == (
+        values["sessions"],
+        values["client"],
+        values["courses"],
+        values["catalog"],
+    )
+
+
+def test_moodle_material_catalog_factory_uses_server_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = {"courses": object(), "catalog": object(), "firestore": object()}
+    repository_factory = function._moodle_material_catalog_repository
+    monkeypatch.setattr(function, "_course_repository", lambda *_: values["courses"])
+    monkeypatch.setattr(
+        function, "_moodle_material_catalog_repository", lambda *_: values["catalog"]
+    )
+    service = function._moodle_material_catalog_service({}, "user")
+    assert service._courses is values["courses"]
+    assert service._catalog is values["catalog"]
+
+    monkeypatch.setattr(function, "_firestore", lambda *_: values["firestore"])
+    repository = repository_factory({}, "user")
+    assert repository._firestore is values["firestore"]
 
 
 def test_academic_dates_route_returns_only_bounded_canonical_records(
