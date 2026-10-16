@@ -169,6 +169,7 @@ void main() {
     await expectLater(cache.open('id'), throwsUnsupportedError);
     await cache.remove('id');
     await cache.clear();
+    cache.dispose();
   });
 
   test('cached file values have stable equality and hash codes', () {
