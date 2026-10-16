@@ -1457,6 +1457,45 @@ void main() {
     );
   });
 
+  testWidgets(
+    'retries discovery safely when its first response is interrupted',
+    (tester) async {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      );
+      gateway.materialCatalog = await gateway.discoverMoodleContent();
+      gateway.contentDiscoveryCalls = 0;
+      gateway.transientContentDiscoveryFailures = 1;
+      final logger = _Logger();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(gateway: gateway, logger: logger),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('ufmg-sync-moodle')));
+      await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+      await tester.pumpAndSettle();
+
+      expect(gateway.contentDiscoveryCalls, 2);
+      expect(gateway.materialCatalogCalls, 2);
+      expect(
+        find.textContaining('3 materiais candidatos encontrados'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Não foi possível sincronizar os dados do Moodle.'),
+        findsNothing,
+      );
+      expect(logger.events, contains('moodle_content_discovery_retrying'));
+      expect(logger.events, contains('moodle_content_discovery_recovered'));
+    },
+  );
+
   testWidgets('ignores a late content discovery failure after disposal', (
     tester,
   ) async {
@@ -1509,6 +1548,7 @@ final class _Gateway implements BackendUFMGSessionGateway {
   Completer<PythonMoodleDateImportResult>? dateImportCompleter;
   Object? syncError;
   Object? contentDiscoveryError;
+  int transientContentDiscoveryFailures = 0;
   Object? capabilityError;
   Object? materialFilesError;
   List<PythonMoodleMaterialFile>? materialFiles;
@@ -1579,6 +1619,10 @@ final class _Gateway implements BackendUFMGSessionGateway {
     contentDiscoveryCalls++;
     if (contentDiscoveryCompleter case final completer?) {
       return completer.future;
+    }
+    if (transientContentDiscoveryFailures > 0) {
+      transientContentDiscoveryFailures--;
+      throw const PythonBackendException(PythonBackendError.unavailable);
     }
     if (contentDiscoveryError case final error?) throw error;
     final discovery = PythonMoodleContentDiscovery(

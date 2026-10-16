@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../observability/audited_operation.dart';
+import '../observability/error_log_details.dart';
 
 enum PythonBackendError {
   appCheckInvalid,
@@ -26,23 +27,43 @@ enum PythonBackendCredential { firebaseIdentity, appCheck }
 
 enum _BackendMethod { get, post, put, delete }
 
-final class PythonBackendException implements Exception {
+final class PythonBackendException implements Exception, StructuredAppError {
   const PythonBackendException(
     this.code, {
     this.retryAfter,
     this.destructiveSessions,
     this.credential,
+    this.causeType,
   });
 
   final PythonBackendError code;
   final Duration? retryAfter;
   final int? destructiveSessions;
   final PythonBackendCredential? credential;
+  final String? causeType;
 
   @override
-  String toString() => credential == null
-      ? 'PythonBackendException(${code.name})'
-      : 'PythonBackendException(${code.name}, credential=${credential!.name})';
+  String get logCode => code.name;
+
+  @override
+  String get logMessage => 'Python backend request failed.';
+
+  @override
+  String? get logDetails {
+    final values = [
+      if (credential case final value?) 'credential=${value.name}',
+      if (causeType case final value?) 'cause=$value',
+    ];
+    return values.isEmpty ? null : values.join(', ');
+  }
+
+  @override
+  String toString() {
+    final details = logDetails;
+    return details == null
+        ? 'PythonBackendException(${code.name})'
+        : 'PythonBackendException(${code.name}, $details)';
+  }
 }
 
 bool isTransientPythonBackendFailure(Object error) =>
@@ -1705,7 +1726,7 @@ final class PythonBackendTransport
     var forceIdentityRefresh = false;
     final requestId = currentOperationId ?? newCorrelationId('request');
     for (var attempt = 0; attempt < 2; attempt += 1) {
-      final response = await _request(
+      final response = await _requestWithReadRetry(
         forceIdentityRefresh: forceIdentityRefresh,
         requestId: requestId,
         path: path,
@@ -1727,6 +1748,37 @@ final class PythonBackendTransport
       );
     }
     throw const PythonBackendException(PythonBackendError.invalidResponse);
+  }
+
+  Future<http.Response> _requestWithReadRetry({
+    required bool forceIdentityRefresh,
+    required String requestId,
+    required String path,
+    required _BackendMethod method,
+    required Map<String, Object?>? body,
+  }) async {
+    try {
+      return await _request(
+        forceIdentityRefresh: forceIdentityRefresh,
+        requestId: requestId,
+        path: path,
+        method: method,
+        body: body,
+      );
+    } on PythonBackendException catch (error) {
+      if (method != _BackendMethod.get ||
+          (error.code != PythonBackendError.timeout &&
+              error.code != PythonBackendError.unavailable)) {
+        rethrow;
+      }
+      return _request(
+        forceIdentityRefresh: forceIdentityRefresh,
+        requestId: requestId,
+        path: path,
+        method: method,
+        body: body,
+      );
+    }
   }
 
   Future<http.Response> _request({
@@ -1765,9 +1817,15 @@ final class PythonBackendTransport
     } on PythonBackendException {
       rethrow;
     } on TimeoutException {
-      throw const PythonBackendException(PythonBackendError.timeout);
-    } catch (_) {
-      throw const PythonBackendException(PythonBackendError.unavailable);
+      throw const PythonBackendException(
+        PythonBackendError.timeout,
+        causeType: 'TimeoutException',
+      );
+    } catch (error) {
+      throw PythonBackendException(
+        PythonBackendError.unavailable,
+        causeType: error.runtimeType.toString(),
+      );
     }
   }
 
@@ -1780,10 +1838,11 @@ final class PythonBackendTransport
       idToken = await _tokens.firebaseIdToken(
         forceRefresh: forceIdentityRefresh,
       );
-    } catch (_) {
-      throw const PythonBackendException(
+    } catch (error) {
+      throw PythonBackendException(
         PythonBackendError.credentialsUnavailable,
         credential: PythonBackendCredential.firebaseIdentity,
+        causeType: error.runtimeType.toString(),
       );
     }
     if (idToken.isEmpty) {
@@ -1797,10 +1856,11 @@ final class PythonBackendTransport
       appCheckToken = await _tokens.appCheckToken(
         limitedUse: limitedUseAppCheck,
       );
-    } catch (_) {
-      throw const PythonBackendException(
+    } catch (error) {
+      throw PythonBackendException(
         PythonBackendError.credentialsUnavailable,
         credential: PythonBackendCredential.appCheck,
+        causeType: error.runtimeType.toString(),
       );
     }
     if (appCheckToken.isEmpty) {

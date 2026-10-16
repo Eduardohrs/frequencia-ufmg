@@ -80,6 +80,79 @@ void main() {
     },
   );
 
+  test('retries one transient transport failure for a read request', () async {
+    var requests = 0;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((_) async {
+        requests++;
+        if (requests == 1) {
+          throw http.ClientException('connection closed');
+        }
+        return http.Response(jsonEncode({'authenticated': true}), 200);
+      }),
+    );
+
+    await transport.verifyIdentity();
+
+    expect(requests, 2);
+  });
+
+  test(
+    'retains a safe cause type when transport retries are exhausted',
+    () async {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((_) async {
+          throw http.ClientException('private transport message');
+        }),
+      );
+
+      await expectLater(
+        transport.verifyIdentity(),
+        throwsA(
+          isA<PythonBackendException>()
+              .having(
+                (error) => error.toString(),
+                'safe diagnostic',
+                contains('cause=ClientException'),
+              )
+              .having(
+                (error) => error.toString(),
+                'private message',
+                isNot(contains('private transport message')),
+              ),
+        ),
+      );
+    },
+  );
+
+  test('does not retry a transient failure for a mutation', () async {
+    var requests = 0;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((_) async {
+        requests++;
+        throw http.ClientException('connection closed');
+      }),
+    );
+
+    await expectLater(
+      transport.connectUFMG(username: 'student', password: 'private'),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'code',
+          PythonBackendError.unavailable,
+        ),
+      ),
+    );
+    expect(requests, 1);
+  });
+
   test(
     'reserves limited-use App Check tokens for state-changing requests',
     () async {
@@ -1687,9 +1760,10 @@ void main() {
     'classifies App Check acquisition failures before the network boundary',
     () async {
       final client = MockClient((_) async => fail('must not call backend'));
+      final tokens = _FailingAppCheckTokens();
       final transport = PythonBackendTransport(
         endpoint: Uri.parse('https://backend.example'),
-        tokens: _FailingAppCheckTokens(),
+        tokens: tokens,
         client: client,
       );
 
@@ -1711,8 +1785,39 @@ void main() {
                 (error) => error.toString(),
                 'sanitized diagnostic',
                 'PythonBackendException(credentialsUnavailable, '
-                    'credential=appCheck)',
+                    'credential=appCheck, cause=StateError)',
               ),
+        ),
+      );
+      expect(tokens.calls, 1);
+    },
+  );
+
+  test(
+    'classifies Firebase identity acquisition failures before the network boundary',
+    () async {
+      final client = MockClient((_) async => fail('must not call backend'));
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _FailingIdentityTokens(),
+        client: client,
+      );
+
+      await expectLater(
+        transport.verifyIdentity(),
+        throwsA(
+          isA<PythonBackendException>()
+              .having(
+                (error) => error.code,
+                'code',
+                PythonBackendError.credentialsUnavailable,
+              )
+              .having(
+                (error) => error.credential,
+                'credential',
+                PythonBackendCredential.firebaseIdentity,
+              )
+              .having((error) => error.causeType, 'safe cause', 'StateError'),
         ),
       );
     },
@@ -1803,11 +1908,24 @@ final class _Tokens implements PythonBackendTokens {
 }
 
 final class _FailingAppCheckTokens implements PythonBackendTokens {
+  int calls = 0;
+
   @override
   Future<String> firebaseIdToken({required bool forceRefresh}) async => 'id';
 
   @override
   Future<String> appCheckToken({required bool limitedUse}) async {
+    calls++;
     throw StateError('App Check attestation failed');
   }
+}
+
+final class _FailingIdentityTokens implements PythonBackendTokens {
+  @override
+  Future<String> firebaseIdToken({required bool forceRefresh}) async {
+    throw StateError('Firebase identity acquisition failed');
+  }
+
+  @override
+  Future<String> appCheckToken({required bool limitedUse}) async => 'app';
 }

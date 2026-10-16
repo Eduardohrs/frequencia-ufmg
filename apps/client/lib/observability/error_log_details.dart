@@ -4,6 +4,12 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 const _redacted = '[REDACTED]';
 
+abstract interface class StructuredAppError {
+  String get logCode;
+  String? get logMessage;
+  String? get logDetails;
+}
+
 final class ErrorLogDetails {
   const ErrorLogDetails({
     required this.type,
@@ -13,6 +19,14 @@ final class ErrorLogDetails {
   });
 
   factory ErrorLogDetails.from(Object error) {
+    if (error is StructuredAppError) {
+      return ErrorLogDetails(
+        type: error.runtimeType.toString(),
+        code: sanitizeLogText(error.logCode),
+        message: sanitizeLogText(error.logMessage),
+        details: sanitizeLogText(error.logDetails),
+      );
+    }
     if (error is GoogleSignInException) {
       return ErrorLogDetails(
         type: error.runtimeType.toString(),
