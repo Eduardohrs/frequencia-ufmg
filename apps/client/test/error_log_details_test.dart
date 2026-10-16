@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/observability/error_log_details.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
@@ -79,6 +80,20 @@ void main() {
     expect(parameters, isNot(contains('error_code')));
     expect(parameters, isNot(contains('error_details')));
     expect(SanitizedAppException(details).toString(), details.summary);
+  });
+
+  test('keeps structured backend codes and safe transport details', () {
+    const error = PythonBackendException(
+      PythonBackendError.unavailable,
+      causeType: 'ClientException',
+    );
+
+    final details = ErrorLogDetails.from(error);
+
+    expect(details.type, 'PythonBackendException');
+    expect(details.code, 'unavailable');
+    expect(details.message, 'Python backend request failed.');
+    expect(details.details, 'cause=ClientException');
   });
 
   test('includes all structured fields for a nonfatal error', () {

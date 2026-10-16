@@ -442,11 +442,34 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         operation: AuditedOperation.moodleDateImport,
         action: widget.gateway.importMoodleDates,
       );
-      await runAuditedOperation(
-        logger: widget.logger,
-        operation: AuditedOperation.moodleContentDiscovery,
-        action: widget.gateway.discoverMoodleContent,
-      );
+      try {
+        await runAuditedOperation(
+          logger: widget.logger,
+          operation: AuditedOperation.moodleContentDiscovery,
+          action: widget.gateway.discoverMoodleContent,
+        );
+      } catch (error) {
+        if (!isTransientPythonBackendFailure(error)) rethrow;
+        await widget.logger.logEvent(
+          'moodle_content_discovery_retrying',
+          parameters: const {
+            'operation': 'moodle_content_discovery',
+            'outcome': 'retrying',
+          },
+        );
+        await runAuditedOperation(
+          logger: widget.logger,
+          operation: AuditedOperation.moodleContentDiscovery,
+          action: widget.gateway.discoverMoodleContent,
+        );
+        await widget.logger.logEvent(
+          'moodle_content_discovery_recovered',
+          parameters: const {
+            'operation': 'moodle_content_discovery',
+            'outcome': 'recovered',
+          },
+        );
+      }
       final discovery = await runAuditedOperation(
         logger: widget.logger,
         operation: AuditedOperation.moodleMaterialCatalogList,
