@@ -869,6 +869,7 @@ def _authentication(
             route=route,
             expires_at=app.expires_at,
             now=now,
+            enforce_replay=context.req.method.upper() != "GET",
         )
     except ReplayDetected:
         _error(context, "app_check_replayed")

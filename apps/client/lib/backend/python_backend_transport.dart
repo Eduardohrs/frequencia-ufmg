@@ -54,7 +54,7 @@ bool isTransientPythonBackendFailure(Object error) =>
 abstract interface class PythonBackendTokens {
   Future<String> firebaseIdToken({required bool forceRefresh});
 
-  Future<String> limitedUseAppCheckToken();
+  Future<String> appCheckToken({required bool limitedUse});
 }
 
 abstract interface class BackendIdentityVerifier {
@@ -1739,6 +1739,7 @@ final class PythonBackendTransport
     try {
       final (idToken, appCheckToken) = await _credentials(
         forceIdentityRefresh: forceIdentityRefresh,
+        limitedUseAppCheck: method != _BackendMethod.get,
       );
       final headers = {
         'Authorization': 'Bearer $idToken',
@@ -1772,6 +1773,7 @@ final class PythonBackendTransport
 
   Future<(String, String)> _credentials({
     required bool forceIdentityRefresh,
+    required bool limitedUseAppCheck,
   }) async {
     late final String idToken;
     try {
@@ -1792,7 +1794,9 @@ final class PythonBackendTransport
     }
     late final String appCheckToken;
     try {
-      appCheckToken = await _tokens.limitedUseAppCheckToken();
+      appCheckToken = await _tokens.appCheckToken(
+        limitedUse: limitedUseAppCheck,
+      );
     } catch (_) {
       throw const PythonBackendException(
         PythonBackendError.credentialsUnavailable,

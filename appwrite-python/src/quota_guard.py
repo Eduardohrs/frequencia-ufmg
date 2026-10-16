@@ -24,7 +24,7 @@ class SecurityStoreUnavailable(Exception):
 
 
 class AppwriteSecurityStore:
-    """Consume single-use token digests and per-user request budgets."""
+    """Enforce optional replay protection and per-user request budgets."""
 
     def __init__(
         self,
@@ -55,24 +55,26 @@ class AppwriteSecurityStore:
         route: str,
         expires_at: int,
         now: int,
+        enforce_replay: bool = True,
     ) -> None:
         if re.fullmatch(r"[0-9a-f]{64}", token_digest) is None:
             raise ValueError("invalid token digest")
         if not user_id or not route.startswith("/") or expires_at <= now:
             raise ValueError("invalid security guard input")
 
-        try:
-            self._tables.create_row(
-                self._database_id,
-                self._table_id,
-                f"t_{token_digest[:32]}",
-                {"kind": "replay", "count": 1, "expires_at": expires_at},
-                permissions=[],
-            )
-        except AppwriteException as error:
-            if error.code == 409:
-                raise ReplayDetected("token already consumed") from None
-            raise SecurityStoreUnavailable("security store unavailable") from None
+        if enforce_replay:
+            try:
+                self._tables.create_row(
+                    self._database_id,
+                    self._table_id,
+                    f"t_{token_digest[:32]}",
+                    {"kind": "replay", "count": 1, "expires_at": expires_at},
+                    permissions=[],
+                )
+            except AppwriteException as error:
+                if error.code == 409:
+                    raise ReplayDetected("token already consumed") from None
+                raise SecurityStoreUnavailable("security store unavailable") from None
 
         window_start = now - now % self._window_seconds
         retry_after = self._window_seconds - (now - window_start)

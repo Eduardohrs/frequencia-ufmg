@@ -267,6 +267,8 @@ final class _FirebasePythonBackendTokens implements PythonBackendTokens {
   }
 
   @override
-  Future<String> limitedUseAppCheckToken() =>
-      FirebaseAppCheck.instance.getLimitedUseToken();
+  Future<String> appCheckToken({required bool limitedUse}) async {
+    if (limitedUse) return FirebaseAppCheck.instance.getLimitedUseToken();
+    return await FirebaseAppCheck.instance.getToken() ?? '';
+  }
 }
