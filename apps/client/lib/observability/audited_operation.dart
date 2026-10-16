@@ -44,6 +44,11 @@ enum AuditedOperation {
   moodleMaterialCatalogList('moodle_material_catalog_list'),
   moodleMobileCapability('moodle_mobile_capability'),
   moodleMaterialOpen('moodle_material_open'),
+  moodleMaterialCacheList('moodle_material_cache_list'),
+  moodleMaterialCacheSave('moodle_material_cache_save'),
+  moodleMaterialCacheOpen('moodle_material_cache_open'),
+  moodleMaterialCacheRemove('moodle_material_cache_remove'),
+  moodleMaterialCacheClear('moodle_material_cache_clear'),
   ufmgSync('ufmg_sync');
 
   const AuditedOperation(this.eventPrefix);
