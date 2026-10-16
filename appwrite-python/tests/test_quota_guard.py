@@ -85,6 +85,25 @@ def test_consume_rejects_replayed_token_before_incrementing_rate() -> None:
     assert len(tables.calls) == call_count + 1
 
 
+def test_consume_allows_reusable_token_when_replay_protection_is_disabled() -> None:
+    tables = FakeTables()
+    store = _store(tables)
+    request = {
+        "token_digest": "c" * 64,
+        "user_id": "user",
+        "route": "/v1/identity",
+        "expires_at": 1_900,
+        "now": 1_800,
+        "enforce_replay": False,
+    }
+
+    store.consume(**request)
+    store.consume(**request)
+
+    assert {row["kind"] for row in tables.rows.values()} == {"rate"}
+    assert next(iter(tables.rows.values()))["count"] == 2
+
+
 def test_consume_atomically_increments_shared_window_and_limits_burst() -> None:
     tables = FakeTables()
     store = _store(tables, limit=2)

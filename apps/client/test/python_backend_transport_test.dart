@@ -70,13 +70,51 @@ void main() {
       expect(captured.method, 'GET');
       expect(captured.url, Uri.parse('https://backend.example/v1/identity'));
       expect(captured.headers['Authorization'], 'Bearer id-1-cached');
-      expect(captured.headers['X-Firebase-AppCheck'], 'app-1');
+      expect(captured.headers['X-Firebase-AppCheck'], 'regular-app-1');
       expect(
         captured.headers['X-Request-ID'],
         matches(RegExp(r'^[a-z0-9-]+$')),
       );
       expect(tokens.idTokenRefreshes, [false]);
       expect(tokens.appCheckCalls, 1);
+    },
+  );
+
+  test(
+    'reserves limited-use App Check tokens for state-changing requests',
+    () async {
+      final tokens = _Tokens();
+      final requests = <http.Request>[];
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: tokens,
+        client: MockClient((request) async {
+          requests.add(request);
+          if (request.method == 'GET') {
+            return http.Response(jsonEncode({'authenticated': true}), 200);
+          }
+          return http.Response(
+            jsonEncode({
+              'connected': true,
+              'created_at': 1000,
+              'expires_at': 33400,
+            }),
+            200,
+          );
+        }),
+      );
+
+      await transport.verifyIdentity();
+      await transport.connectUFMG(
+        username: '2025019259',
+        password: 'private-password',
+      );
+
+      expect(requests[0].headers['X-Firebase-AppCheck'], 'regular-app-1');
+      expect(requests[1].headers['X-Firebase-AppCheck'], 'app-1');
+      expect(tokens.regularAppCheckCalls, 1);
+      expect(tokens.limitedAppCheckCalls, 1);
+      expect(tokens.appCheckCalls, 2);
     },
   );
 
@@ -1481,7 +1519,7 @@ void main() {
     expect(tokens.idTokenRefreshes, [false, true]);
     expect(tokens.appCheckCalls, 2);
     expect(requests[1].headers['Authorization'], 'Bearer id-2-fresh');
-    expect(requests[1].headers['X-Firebase-AppCheck'], 'app-2');
+    expect(requests[1].headers['X-Firebase-AppCheck'], 'regular-app-2');
   });
 
   test('retries replay once with a new limited-use token', () async {
@@ -1498,11 +1536,21 @@ void main() {
             409,
           );
         }
-        return http.Response(jsonEncode({'authenticated': true}), 200);
+        return http.Response(
+          jsonEncode({
+            'connected': true,
+            'created_at': 1000,
+            'expires_at': 33400,
+          }),
+          200,
+        );
       }),
     );
 
-    await transport.verifyIdentity();
+    await transport.connectUFMG(
+      username: '2025019259',
+      password: 'private-password',
+    );
 
     expect(tokens.idTokenRefreshes, [false, false]);
     expect(tokens.appCheckCalls, 2);
@@ -1613,7 +1661,7 @@ void main() {
     final client = MockClient((_) async => fail('must not call backend'));
     final transport = PythonBackendTransport(
       endpoint: Uri.parse('https://backend.example'),
-      tokens: _Tokens(idToken: '', appCheckToken: ''),
+      tokens: _Tokens(idToken: '', appCheckTokenValue: ''),
       client: client,
     );
 
@@ -1725,11 +1773,13 @@ const _sessionJson = <String, Object?>{
 };
 
 final class _Tokens implements PythonBackendTokens {
-  _Tokens({this.idToken = 'id', this.appCheckToken = 'app'});
+  _Tokens({this.idToken = 'id', this.appCheckTokenValue = 'app'});
 
   final String idToken;
-  final String appCheckToken;
+  final String appCheckTokenValue;
   final idTokenRefreshes = <bool>[];
+  int regularAppCheckCalls = 0;
+  int limitedAppCheckCalls = 0;
   int appCheckCalls = 0;
 
   @override
@@ -1740,10 +1790,15 @@ final class _Tokens implements PythonBackendTokens {
   }
 
   @override
-  Future<String> limitedUseAppCheckToken() async {
+  Future<String> appCheckToken({required bool limitedUse}) async {
     appCheckCalls += 1;
-    if (appCheckToken.isEmpty) return '';
-    return '$appCheckToken-$appCheckCalls';
+    if (appCheckTokenValue.isEmpty) return '';
+    if (limitedUse) {
+      limitedAppCheckCalls += 1;
+      return '$appCheckTokenValue-$limitedAppCheckCalls';
+    }
+    regularAppCheckCalls += 1;
+    return 'regular-$appCheckTokenValue-$regularAppCheckCalls';
   }
 }
 
@@ -1752,7 +1807,7 @@ final class _FailingAppCheckTokens implements PythonBackendTokens {
   Future<String> firebaseIdToken({required bool forceRefresh}) async => 'id';
 
   @override
-  Future<String> limitedUseAppCheckToken() async {
+  Future<String> appCheckToken({required bool limitedUse}) async {
     throw StateError('App Check attestation failed');
   }
 }

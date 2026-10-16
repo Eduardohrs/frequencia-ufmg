@@ -1844,6 +1844,7 @@ def test_identity_route_accepts_verified_firebase_user(
             "route": "/v1/identity",
             "token_digest": "a" * 64,
             "user_id": "firebase-user",
+            "enforce_replay": False,
         }
     ]
     assert "firebase-user" not in "".join(context.logs)
