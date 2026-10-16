@@ -41,9 +41,12 @@ dependencies:
   firebase_analytics: ^12.4.3
   firebase_crashlytics: ^5.2.4
   cloud_firestore: ^6.10.0
+  crypto: ^3.0.3
   google_sign_in: ^7.2.0
   geolocator: ^14.0.3
   http: ^1.6.0
+  open_filex: 4.7.0
+  path_provider: ^2.1.6
   shared_preferences: ^2.5.6
   timezone: ^0.11.1
   url_launcher: 6.3.3
