@@ -40,12 +40,12 @@ void main() {
     'cancels matching work before removal and all work before clear',
     () async {
       final delegate = _Cache();
-      final methods = <String>[];
+      final calls = <(String, Object?)>[];
       final cache = AndroidMaterialFileCache(
         delegate: delegate,
         namespace: '0123456789abcdef01234567',
         invokeMethod: <T>(method, [arguments]) async {
-          methods.add(method);
+          calls.add((method, arguments));
           return null;
         },
       );
@@ -53,7 +53,12 @@ void main() {
       await cache.remove('file-id');
       await cache.clear();
 
-      expect(methods, ['cancel', 'cancelAll']);
+      expect(calls.map((call) => call.$1), ['cancel', 'cancelAll']);
+      expect(calls[0].$2, {
+        'id': 'file-id',
+        'namespace': '0123456789abcdef01234567',
+      });
+      expect(calls[1].$2, {'namespace': '0123456789abcdef01234567'});
       expect(delegate.removed, ['file-id']);
       expect(delegate.clearCalls, 1);
     },

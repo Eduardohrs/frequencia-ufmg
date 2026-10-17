@@ -54,13 +54,18 @@ final class AndroidMaterialFileCache
 
   @override
   Future<void> remove(String id) async {
-    await _invokeMethod<void>('cancel', <String, Object>{'id': id});
+    await _invokeMethod<void>('cancel', <String, Object>{
+      'id': id,
+      'namespace': _namespace,
+    });
     await _delegate.remove(id);
   }
 
   @override
   Future<void> clear() async {
-    await _invokeMethod<void>('cancelAll');
+    await _invokeMethod<void>('cancelAll', <String, Object>{
+      'namespace': _namespace,
+    });
     await _delegate.clear();
   }
 
