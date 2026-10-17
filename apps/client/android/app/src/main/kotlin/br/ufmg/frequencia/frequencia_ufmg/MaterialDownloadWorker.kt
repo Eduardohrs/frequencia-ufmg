@@ -38,7 +38,12 @@ class MaterialDownloadWorker(
             return Result.failure()
         }
 
-        setForegroundAsync(foregroundInfo(0, spec.expectedSize)).get()
+        try {
+            setForegroundAsync(foregroundInfo(0, spec.expectedSize)).get()
+        } catch (_: Exception) {
+            log("foreground_failure")
+            return Result.failure()
+        }
         val directory = File(applicationContext.filesDir, "moodle_materials/${spec.namespace}")
         if (!directory.exists() && !directory.mkdirs()) {
             log("directory_failure")
@@ -67,6 +72,9 @@ class MaterialDownloadWorker(
                 return Result.failure()
             }
             var total = 0L
+            var lastReportedBytes = 0L
+            var lastReportedPercent = -1
+            val progressTotal = maxOf(declared, spec.expectedSize)
             connection.inputStream.use { input ->
                 temporary.outputStream().buffered().use { output ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -79,13 +87,20 @@ class MaterialDownloadWorker(
                             throw FileTooLarge()
                         }
                         output.write(buffer, 0, count)
-                        setProgressAsync(
-                            androidx.work.Data.Builder()
-                                .putLong("downloaded", total)
-                                .putLong("total", maxOf(declared, spec.expectedSize))
-                                .build(),
-                        )
-                        setForegroundAsync(foregroundInfo(total, maxOf(declared, spec.expectedSize)))
+                        val percent = if (progressTotal > 0) {
+                            ((total * 100) / progressTotal).coerceIn(0, 100).toInt()
+                        } else {
+                            -1
+                        }
+                        if (
+                            (percent != lastReportedPercent && percent >= 0) ||
+                            (progressTotal <= 0 &&
+                                total - lastReportedBytes >= PROGRESS_STEP_BYTES)
+                        ) {
+                            reportProgress(total, progressTotal)
+                            lastReportedBytes = total
+                            lastReportedPercent = percent
+                        }
                     }
                 }
             }
@@ -114,6 +129,16 @@ class MaterialDownloadWorker(
     private fun retryOrFail(code: String): Result {
         log(code)
         return if (runAttemptCount < 2) Result.retry() else Result.failure()
+    }
+
+    private fun reportProgress(downloaded: Long, total: Long) {
+        setProgressAsync(
+            androidx.work.Data.Builder()
+                .putLong("downloaded", downloaded)
+                .putLong("total", total)
+                .build(),
+        )
+        setForegroundAsync(foregroundInfo(downloaded, total))
     }
 
     private fun foregroundInfo(downloaded: Long, total: Long): ForegroundInfo {
@@ -162,5 +187,6 @@ class MaterialDownloadWorker(
     companion object {
         private const val TAG = "MaterialDownload"
         private const val CHANNEL_ID = "material_downloads"
+        private const val PROGRESS_STEP_BYTES = 256L * 1024L
     }
 }
