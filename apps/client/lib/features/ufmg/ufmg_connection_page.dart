@@ -215,20 +215,32 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     PythonMoodleContentCandidate candidate,
     PythonMoodleMaterialFile file,
   ) async {
+    final download = MaterialDownload(
+      id:
+          '${course.term}/${candidate.moodleCourseId}/'
+          '${candidate.sourceId}/${file.name}',
+      name: file.name,
+      source: file.url,
+      expectedSize: file.size,
+      mimeType: file.mimeType,
+    );
+    if (_materialFileCache case final BackgroundMaterialDownloadQueue queue) {
+      await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleMaterialDownloadEnqueue,
+        action: () => queue.enqueue(download),
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Download iniciado em segundo plano.')),
+        );
+      }
+      return;
+    }
     await runAuditedOperation(
       logger: widget.logger,
       operation: AuditedOperation.moodleMaterialCacheSave,
-      action: () => _materialFileCache.save(
-        MaterialDownload(
-          id:
-              '${course.term}/${candidate.moodleCourseId}/'
-              '${candidate.sourceId}/${file.name}',
-          name: file.name,
-          source: file.url,
-          expectedSize: file.size,
-          mimeType: file.mimeType,
-        ),
-      ),
+      action: () => _materialFileCache.save(download),
     );
     await _loadCachedMaterials();
     if (mounted) {

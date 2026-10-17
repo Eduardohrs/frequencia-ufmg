@@ -978,6 +978,47 @@ void main() {
     expect(cache.opened, [cache.files.single.id, cache.files.single.id]);
   });
 
+  testWidgets('queues Android material downloads without blocking the page', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    final cache = _BackgroundMaterialCache();
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: gateway,
+          logger: logger,
+          materialFileCache: cache,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('moodle-material-open-102')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Salvar para usar offline'));
+    await tester.pumpAndSettle();
+
+    expect(cache.queued.single.name, 'Cronograma.pdf');
+    expect(cache.saved, isEmpty);
+    expect(find.text('Download iniciado em segundo plano.'), findsOneWidget);
+    expect(
+      logger.events,
+      contains('moodle_material_download_enqueue_succeeded'),
+    );
+  });
+
   testWidgets('removes one or every private material copy', (tester) async {
     final cache = _MaterialCache()
       ..files.addAll(const [
@@ -1829,7 +1870,7 @@ final class _Logger implements AppLogger {
   }) async {}
 }
 
-final class _MaterialCache implements MaterialFileCache {
+class _MaterialCache implements MaterialFileCache {
   final files = <CachedMaterialFile>[];
   final saved = <MaterialDownload>[];
   final opened = <String>[];
@@ -1887,4 +1928,14 @@ final class _MaterialCache implements MaterialFileCache {
 
   @override
   void dispose() => disposed = true;
+}
+
+final class _BackgroundMaterialCache extends _MaterialCache
+    implements BackgroundMaterialDownloadQueue {
+  final queued = <MaterialDownload>[];
+
+  @override
+  Future<void> enqueue(MaterialDownload download) async {
+    queued.add(download);
+  }
 }

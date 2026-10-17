@@ -55,6 +55,10 @@ abstract interface class MaterialFileCache {
   void dispose();
 }
 
+abstract interface class BackgroundMaterialDownloadQueue {
+  Future<void> enqueue(MaterialDownload download);
+}
+
 final class DisabledMaterialFileCache implements MaterialFileCache {
   const DisabledMaterialFileCache();
 
