@@ -4,6 +4,20 @@ import 'package:frequencia_ufmg/data/material_file_cache.dart';
 
 void main() {
   test(
+    'uses the production platform channel when no test invoker is given',
+    () {
+      final delegate = _Cache();
+      final cache = AndroidMaterialFileCache(
+        delegate: delegate,
+        namespace: '0123456789abcdef01234567',
+      );
+
+      expect(cache.isAvailable, isTrue);
+      cache.dispose();
+    },
+  );
+
+  test(
     'enqueues only the fields required by the native Android worker',
     () async {
       final delegate = _Cache();
