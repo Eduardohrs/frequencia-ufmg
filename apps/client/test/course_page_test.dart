@@ -80,8 +80,7 @@ void main() {
     expect(find.text('Programação Orientada a Objetos'), findsOneWidget);
     expect(find.text('2026-2'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Editar DCC203'));
-    await tester.pumpAndSettle();
+    await _selectCourseAction(tester, 'DCC203', 'Editar');
     await tester.enterText(find.byKey(const Key('course-name')), 'POO');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
@@ -91,15 +90,13 @@ void main() {
     expect(repository.courses.single.updatedAt, now);
     expect(find.text('POO'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Excluir DCC203'));
-    await tester.pumpAndSettle();
+    await _selectCourseAction(tester, 'DCC203', 'Excluir');
     expect(find.text('Excluir disciplina?'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, 'Cancelar'));
     await tester.pumpAndSettle();
     expect(repository.courses, hasLength(1));
 
-    await tester.tap(find.byTooltip('Excluir DCC203'));
-    await tester.pumpAndSettle();
+    await _selectCourseAction(tester, 'DCC203', 'Excluir');
     await tester.tap(find.widgetWithText(FilledButton, 'Excluir'));
     await tester.pumpAndSettle();
 
@@ -207,8 +204,7 @@ void main() {
     await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Editar DCC203'));
-    await tester.pumpAndSettle();
+    await _selectCourseAction(tester, 'DCC203', 'Editar');
     expect(find.byKey(const Key('course-term')), findsOneWidget);
     await tester.enterText(find.byKey(const Key('course-term')), '2027-1');
     await tester.tap(find.text('Salvar'));
@@ -233,8 +229,7 @@ void main() {
 
     await tester.pumpWidget(_app(repository, user, now));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Editar DCC203'));
-    await tester.pumpAndSettle();
+    await _selectCourseAction(tester, 'DCC203', 'Editar');
     await tester.enterText(find.byKey(const Key('course-term')), '2026-1');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
@@ -264,8 +259,7 @@ void main() {
 
     await tester.pumpWidget(_app(repository, user, now));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Editar DCC203'));
-    await tester.pumpAndSettle();
+    await _selectCourseAction(tester, 'DCC203', 'Editar');
     await tester.enterText(find.byKey(const Key('course-name')), 'POO editada');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
@@ -292,8 +286,7 @@ void main() {
 
     await tester.pumpWidget(_app(repository, user, now));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Editar DCC203'));
-    await tester.pumpAndSettle();
+    await _selectCourseAction(tester, 'DCC203', 'Editar');
     await tester.enterText(find.byKey(const Key('course-term')), '2027-1');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
@@ -386,7 +379,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Horários DCC203'));
+    await tester.tap(find.byKey(const Key('course-card-course-1')));
     await tester.pumpAndSettle();
 
     expect(find.text('Grade • DCC203'), findsOneWidget);
@@ -396,7 +389,7 @@ void main() {
     expect(find.text('DCC203'), findsOneWidget);
   });
 
-  testWidgets('opens and closes the side navigation and general calendar', (
+  testWidgets('uses compact navigation for calendar and absence snapshot', (
     tester,
   ) async {
     final course = CourseRecord(
@@ -422,22 +415,14 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('nav-courses')));
-    await tester.pumpAndSettle();
-    expect(find.byType(Drawer), findsNothing);
-
-    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
-    await tester.pumpAndSettle();
+    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(find.byKey(const Key('nav-home')), findsOneWidget);
     await tester.tap(find.byKey(const Key('nav-absence-dashboard')));
     await tester.pumpAndSettle();
     expect(find.text('Faltas restantes'), findsOneWidget);
     await tester.pageBack();
     await tester.pumpAndSettle();
 
-    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('nav-general-calendar')));
     await tester.pumpAndSettle();
     expect(find.text('Calendário operacional'), findsOneWidget);
@@ -486,8 +471,6 @@ void main() {
     expect(courseRepository.listCalls, 0);
     expect(sessionRepository.listedCourseIds, isEmpty);
 
-    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('nav-absence-dashboard')));
     await tester.pumpAndSettle();
 
@@ -497,8 +480,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(overview.loadCalls, 2);
 
-    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('nav-general-calendar')));
     await tester.pumpAndSettle();
 
@@ -506,7 +487,7 @@ void main() {
     expect(sessionRepository.listedCourseIds, isEmpty);
     await tester.pageBack();
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Horários DCC203'));
+    await tester.tap(find.byKey(const Key('course-card-course-1')));
     await tester.pumpAndSettle();
     expect(find.text('Grade • DCC203'), findsOneWidget);
   });
@@ -719,8 +700,6 @@ void main() {
       expect(logger.events, contains('academic_overview_fallback_succeeded'));
       sessionRepository.listedCourseIds.clear();
 
-      tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
-      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('nav-general-calendar')));
       await tester.pumpAndSettle();
 
@@ -869,8 +848,7 @@ void main() {
 
     await tester.pumpWidget(_app(repository, user, now, logger: logger));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Editar DCC204'));
-    await tester.pumpAndSettle();
+    await _selectCourseAction(tester, 'DCC204', 'Editar');
     await tester.enterText(find.byKey(const Key('course-code')), 'dcc203');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
@@ -941,16 +919,14 @@ void main() {
 
     await tester.pumpWidget(_app(repository, user, now));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Editar DCC203'));
-    await tester.pumpAndSettle();
+    await _selectCourseAction(tester, 'DCC203', 'Editar');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Código: permission-denied'), findsOneWidget);
 
     await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Excluir DCC203'));
-    await tester.pumpAndSettle();
+    await _selectCourseAction(tester, 'DCC203', 'Excluir');
     await tester.tap(find.widgetWithText(FilledButton, 'Excluir'));
     await tester.pumpAndSettle();
     expect(find.text('Não foi possível excluir a disciplina.'), findsOneWidget);
@@ -979,7 +955,9 @@ void main() {
 
     expect(find.text('Olá, Eduardo'), findsOneWidget);
     expect(find.text('eduardo@ufmg.br'), findsOneWidget);
-    await tester.tap(find.byTooltip('Sair'));
+    await tester.tap(find.byTooltip('Perfil e configurações'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sair'));
     await tester.pumpAndSettle();
     expect(logoutCalls, 1);
   });
@@ -1134,7 +1112,7 @@ void main() {
     expect(find.textContaining('Código: permission-denied'), findsOneWidget);
   });
 
-  testWidgets('opens the UFMG connection from the navigation drawer', (
+  testWidgets('opens the academic UFMG account from the profile menu', (
     tester,
   ) async {
     final repository = _FakeCourseRepository();
@@ -1153,11 +1131,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.tap(find.byTooltip('Perfil e configurações'));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('nav-ufmg-connection')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('nav-ufmg-connection')));
+    expect(find.byKey(const Key('profile-ufmg-account')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('profile-ufmg-account')));
     await tester.pumpAndSettle();
 
     expect(find.text('Conexão UFMG'), findsOneWidget);
@@ -1165,6 +1143,34 @@ void main() {
     Navigator.of(tester.element(find.text('Conectar à UFMG'))).pop();
     await tester.pumpAndSettle();
     expect(repository.listCalls, 2);
+  });
+
+  testWidgets('uses a navigation rail when the available width is large', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(NavigationRail), findsOneWidget);
+    expect(find.byType(NavigationBar), findsNothing);
+    expect(find.byKey(const Key('nav-home')), findsOneWidget);
+    expect(find.byKey(const Key('nav-general-calendar')), findsOneWidget);
+    expect(find.byKey(const Key('nav-absence-dashboard')), findsOneWidget);
   });
 
   testWidgets('runs a due UFMG synchronization after the dashboard loads', (
@@ -1309,6 +1315,17 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     }
   });
+}
+
+Future<void> _selectCourseAction(
+  WidgetTester tester,
+  String courseCode,
+  String action,
+) async {
+  await tester.tap(find.byTooltip('Mais ações de $courseCode'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(action));
+  await tester.pumpAndSettle();
 }
 
 Future<void> _fillNewCourse(
