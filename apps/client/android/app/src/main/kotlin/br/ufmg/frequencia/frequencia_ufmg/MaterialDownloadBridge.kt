@@ -25,6 +25,10 @@ class MaterialDownloadBridge(private val context: Context) {
                     result.success(null)
                 }
                 "listQueue" -> listQueue(arguments, result)
+                "dismiss" -> {
+                    dismiss(arguments)
+                    result.success(null)
+                }
                 "cancel" -> {
                     cancel(arguments)
                     result.success(null)
@@ -45,6 +49,7 @@ class MaterialDownloadBridge(private val context: Context) {
 
     private fun listQueue(arguments: Map<*, *>, result: MethodChannel.Result) {
         val namespace = requireNamespace(arguments)
+        val dismissed = dismissedIds(namespace)
         val future = workManager.getWorkInfosByTag(namespaceTag(namespace))
         future.addListener(
             {
@@ -52,6 +57,8 @@ class MaterialDownloadBridge(private val context: Context) {
                     result.success(
                         future.get().map(::progressMap).filter {
                             (it["id"] as String).isNotEmpty()
+                        }.filterNot {
+                            dismissed.contains(it["id"] as String)
                         },
                     )
                 } catch (_: Exception) {
@@ -76,6 +83,7 @@ class MaterialDownloadBridge(private val context: Context) {
     }
 
     private fun enqueue(spec: MaterialDownloadSpec) {
+        setDismissed(spec.namespace, spec.id, dismissed = false)
         val request = OneTimeWorkRequestBuilder<MaterialDownloadWorker>()
             .setInputData(
                 Data.Builder()
@@ -106,9 +114,31 @@ class MaterialDownloadBridge(private val context: Context) {
     private fun cancel(arguments: Map<*, *>) {
         val id = requireString(arguments, "id", 512)
         val namespace = requireNamespace(arguments)
+        setDismissed(namespace, id, dismissed = true)
         val itemTag = MaterialDownloadSpec.uniqueWorkName(namespace, id)
         workManager.cancelAllWorkByTag(itemTag)
     }
+
+    private fun dismiss(arguments: Map<*, *>) {
+        val id = requireString(arguments, "id", 512)
+        val namespace = requireNamespace(arguments)
+        setDismissed(namespace, id, dismissed = true)
+    }
+
+    private fun dismissedIds(namespace: String): Set<String> =
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .getStringSet(dismissedKey(namespace), emptySet())
+            ?.toSet() ?: emptySet()
+
+    private fun setDismissed(namespace: String, id: String, dismissed: Boolean) {
+        val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        val ids = preferences.getStringSet(dismissedKey(namespace), emptySet())
+            ?.toMutableSet() ?: mutableSetOf()
+        if (dismissed) ids.add(id) else ids.remove(id)
+        preferences.edit().putStringSet(dismissedKey(namespace), ids).apply()
+    }
+
+    private fun dismissedKey(namespace: String) = "dismissed-$namespace"
 
     private fun cancelAll(arguments: Map<*, *>) {
         workManager.cancelAllWorkByTag(namespaceTag(requireNamespace(arguments)))
@@ -128,6 +158,7 @@ class MaterialDownloadBridge(private val context: Context) {
 
     companion object {
         const val CHANNEL = "br.ufmg.frequencia.frequencia_ufmg/material_downloads"
+        private const val PREFERENCES = "material_downloads"
         fun namespaceTag(namespace: String) = "moodle-materials-$namespace"
     }
 }

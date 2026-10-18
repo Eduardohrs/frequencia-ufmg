@@ -62,6 +62,12 @@ final class AndroidMaterialFileCache
   }
 
   @override
+  Future<void> dismissDownload(String id) => _invokeMethod<void>(
+    'dismiss',
+    <String, Object>{'id': id, 'namespace': _namespace},
+  );
+
+  @override
   Future<List<CachedMaterialFile>> list() => _delegate.list();
 
   @override

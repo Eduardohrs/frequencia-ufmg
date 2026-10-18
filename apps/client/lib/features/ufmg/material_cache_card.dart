@@ -9,6 +9,7 @@ final class MaterialCacheCard extends StatelessWidget {
     required this.onOpen,
     required this.onRemove,
     required this.onRetry,
+    required this.onDismiss,
     required this.onClear,
     super.key,
   });
@@ -18,6 +19,7 @@ final class MaterialCacheCard extends StatelessWidget {
   final ValueChanged<CachedMaterialFile> onOpen;
   final ValueChanged<CachedMaterialFile> onRemove;
   final ValueChanged<MaterialDownloadProgress> onRetry;
+  final ValueChanged<MaterialDownloadProgress> onDismiss;
   final VoidCallback onClear;
 
   @override
@@ -37,11 +39,11 @@ final class MaterialCacheCard extends StatelessWidget {
               ? '${visibleDownloads.where(_isActive).length} em andamento'
               : '${formatMaterialFileSize(totalBytes)} no dispositivo',
         ),
-        trailing: files.isEmpty
+        trailing: files.isEmpty && visibleDownloads.isEmpty
             ? null
             : IconButton(
                 key: const Key('cached-material-clear'),
-                tooltip: 'Remover todas as cópias',
+                tooltip: 'Limpar arquivos e falhas',
                 onPressed: onClear,
                 icon: const Icon(Icons.delete_sweep_outlined),
               ),
@@ -60,11 +62,22 @@ final class MaterialCacheCard extends StatelessWidget {
                 ],
               ),
               trailing: download.state == MaterialDownloadState.failed
-                  ? IconButton(
-                      key: Key('material-download-retry-${download.id}'),
-                      tooltip: 'Tentar novamente',
-                      onPressed: () => onRetry(download),
-                      icon: const Icon(Icons.refresh),
+                  ? Wrap(
+                      spacing: 4,
+                      children: [
+                        IconButton(
+                          key: Key('material-download-retry-${download.id}'),
+                          tooltip: 'Tentar novamente',
+                          onPressed: () => onRetry(download),
+                          icon: const Icon(Icons.refresh),
+                        ),
+                        IconButton(
+                          key: Key('material-download-dismiss-${download.id}'),
+                          tooltip: 'Remover falha da lista',
+                          onPressed: () => onDismiss(download),
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      ],
                     )
                   : null,
             ),

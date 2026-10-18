@@ -1066,6 +1066,64 @@ void main() {
       findsOneWidget,
     );
     expect(logger.events, contains('moodle_material_download_failed'));
+
+    final dismiss = find.byKey(
+      const Key('material-download-dismiss-queued-id'),
+    );
+    await tester.ensureVisible(dismiss);
+    await tester.tap(dismiss);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Plano offline.pdf'), findsNothing);
+    expect(cache.progress.map((download) => download.id), ['finished-id']);
+    final interaction = logger.events.lastIndexOf('ui_interaction');
+    expect(interaction, isNonNegative);
+    expect(
+      logger.parameters[interaction],
+      containsPair('action', 'moodle_material_download_failure_dismiss'),
+    );
+  });
+
+  testWidgets('keeps a failed download visible when dismissing it fails', (
+    tester,
+  ) async {
+    final cache = _BackgroundMaterialCache()
+      ..dismissError = StateError('native failure')
+      ..progress.add(
+        const MaterialDownloadProgress(
+          id: 'failed-id',
+          name: 'Falha.pdf',
+          state: MaterialDownloadState.failed,
+          downloaded: 0,
+          total: 100,
+          failureCode: 'io_failure',
+        ),
+      );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          ),
+          logger: _Logger(),
+          materialFileCache: cache,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final dismiss = find.byKey(
+      const Key('material-download-dismiss-failed-id'),
+    );
+    await tester.ensureVisible(dismiss);
+    await tester.tap(dismiss);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Falha.pdf'), findsOneWidget);
+    expect(find.text('Não foi possível remover a falha.'), findsOneWidget);
   });
 
   testWidgets('downloads every file material from one discipline as a batch', (
@@ -1609,7 +1667,7 @@ void main() {
   });
 
   testWidgets('removes one or every private material copy', (tester) async {
-    final cache = _MaterialCache()
+    final cache = _BackgroundMaterialCache()
       ..files.addAll(const [
         CachedMaterialFile(
           id: 'one',
@@ -1623,7 +1681,17 @@ void main() {
           size: 512,
           mimeType: 'text/plain',
         ),
-      ]);
+      ])
+      ..progress.add(
+        const MaterialDownloadProgress(
+          id: 'failed-id',
+          name: 'Falha antiga.pdf',
+          state: MaterialDownloadState.failed,
+          downloaded: 0,
+          total: 0,
+          failureCode: 'timeout',
+        ),
+      );
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
@@ -1656,6 +1724,7 @@ void main() {
     await tester.tap(find.text('Remover todas'));
     await tester.pumpAndSettle();
     expect(cache.clearCalls, 1);
+    expect(cache.progress, isEmpty);
     expect(find.text('Arquivos neste dispositivo'), findsOneWidget);
     expect(find.text('Nenhuma cópia offline'), findsOneWidget);
   });
@@ -2550,10 +2619,17 @@ final class _BackgroundMaterialCache extends _MaterialCache
   final queued = <MaterialDownload>[];
   final progress = <MaterialDownloadProgress>[];
   Object? enqueueError;
+  Object? dismissError;
   int enqueueAttempts = 0;
 
   @override
   Future<List<MaterialDownloadProgress>> listDownloads() async => progress;
+
+  @override
+  Future<void> dismissDownload(String id) async {
+    if (dismissError case final error?) throw error;
+    progress.removeWhere((download) => download.id == id);
+  }
 
   @override
   Future<void> enqueue(MaterialDownload download) async {
