@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -47,7 +49,18 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   late final MaterialFileCache _materialFileCache;
   late final bool _ownsMaterialFileCache;
   List<CachedMaterialFile> _cachedMaterials = const [];
+  List<MaterialDownloadProgress> _materialDownloadProgress = const [];
+  Timer? _materialProgressTimer;
   final Set<String> _materialDownloadsInFlight = {};
+  final Set<String> _materialDownloadsScheduled = {};
+  bool _materialBatchRunning = false;
+  int _materialBatchCompleted = 0;
+  int _materialBatchTotal = 0;
+  int _materialBatchFailed = 0;
+  List<
+    ({PythonMoodleCourseContent course, PythonMoodleContentCandidate candidate})
+  >
+  _materialBatchFailures = const [];
 
   @override
   void initState() {
@@ -62,6 +75,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   void dispose() {
     _username.dispose();
     _password.dispose();
+    _materialProgressTimer?.cancel();
     if (_ownsMaterialFileCache) _materialFileCache.dispose();
     super.dispose();
   }
@@ -91,7 +105,41 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     _loadDates(),
     _loadMaterialCatalog(),
     _loadCachedMaterials(),
+    _loadMaterialDownloadProgress(),
   ]);
+
+  Future<void> _loadMaterialDownloadProgress({bool pollAgain = false}) async {
+    if (_materialFileCache case final BackgroundMaterialDownloadQueue queue) {
+      try {
+        final progress = await queue.listDownloads();
+        if (!mounted) return;
+        setState(() {
+          _materialDownloadProgress = progress;
+          _materialDownloadsScheduled.addAll(
+            progress.map((download) => download.id),
+          );
+        });
+        final active = progress.any(
+          (download) =>
+              download.state == MaterialDownloadState.enqueued ||
+              download.state == MaterialDownloadState.running,
+        );
+        if (active || pollAgain) {
+          _materialProgressTimer?.cancel();
+          _materialProgressTimer = Timer(
+            const Duration(seconds: 1),
+            _loadMaterialDownloadProgress,
+          );
+        } else if (progress.any(
+          (download) => download.state == MaterialDownloadState.succeeded,
+        )) {
+          await _loadCachedMaterials();
+        }
+      } catch (_) {
+        // Native queue status is supplementary; notifications remain available.
+      }
+    }
+  }
 
   Future<void> _loadCachedMaterials() async {
     if (!_materialFileCache.isAvailable) return;
@@ -101,7 +149,12 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         operation: AuditedOperation.moodleMaterialCacheList,
         action: _materialFileCache.list,
       );
-      if (mounted) setState(() => _cachedMaterials = files);
+      if (mounted) {
+        setState(() {
+          _cachedMaterials = files;
+          _materialDownloadsScheduled.addAll(files.map((file) => file.id));
+        });
+      }
     } catch (_) {}
   }
 
@@ -226,8 +279,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   Future<void> _saveMaterialOffline(
     PythonMoodleCourseContent course,
     PythonMoodleContentCandidate candidate,
-    PythonMoodleMaterialFile file,
-  ) async {
+    PythonMoodleMaterialFile file, {
+    bool announce = true,
+  }) async {
     final download = MaterialDownload(
       id:
           '${course.term}/${candidate.moodleCourseId}/'
@@ -237,29 +291,157 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       expectedSize: file.size,
       mimeType: file.mimeType,
     );
+    if (!_materialDownloadsScheduled.add(download.id)) return;
     if (_materialFileCache case final BackgroundMaterialDownloadQueue queue) {
-      await runAuditedOperation(
-        logger: widget.logger,
-        operation: AuditedOperation.moodleMaterialDownloadEnqueue,
-        action: () => queue.enqueue(download),
-      );
-      if (mounted) {
+      try {
+        await runAuditedOperation(
+          logger: widget.logger,
+          operation: AuditedOperation.moodleMaterialDownloadEnqueue,
+          action: () => queue.enqueue(download),
+        );
+      } catch (_) {
+        _materialDownloadsScheduled.remove(download.id);
+        rethrow;
+      }
+      if (mounted && announce) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Download iniciado em segundo plano.')),
         );
       }
+      unawaited(_loadMaterialDownloadProgress(pollAgain: true));
       return;
     }
-    await runAuditedOperation(
-      logger: widget.logger,
-      operation: AuditedOperation.moodleMaterialCacheSave,
-      action: () => _materialFileCache.save(download),
-    );
+    try {
+      await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleMaterialCacheSave,
+        action: () => _materialFileCache.save(download),
+      );
+    } catch (_) {
+      _materialDownloadsScheduled.remove(download.id);
+      rethrow;
+    }
     await _loadCachedMaterials();
-    if (mounted) {
+    if (mounted && announce) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Arquivo salvo para uso offline.')),
       );
+    }
+  }
+
+  List<
+    ({PythonMoodleCourseContent course, PythonMoodleContentCandidate candidate})
+  >
+  _downloadableMaterials(Iterable<PythonMoodleCourseContent> courses) => [
+    for (final course in courses)
+      for (final candidate in course.candidates)
+        if (candidate.kind == 'file' && candidate.canOpenDirectly)
+          (course: course, candidate: candidate),
+  ];
+
+  Future<void> _confirmMaterialBatch(
+    String title,
+    List<
+      ({
+        PythonMoodleCourseContent course,
+        PythonMoodleContentCandidate candidate,
+      })
+    >
+    materials,
+  ) async {
+    if (_materialBatchRunning || materials.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(
+          '${materials.length} ${_plural(materials.length, 'material será preparado', 'materiais serão preparados')} para uso offline. '
+          'O download usa sua conexão e o armazenamento deste dispositivo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Baixar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) await _downloadMaterialBatch(materials);
+  }
+
+  Future<void> _downloadMaterialBatch(
+    List<
+      ({
+        PythonMoodleCourseContent course,
+        PythonMoodleContentCandidate candidate,
+      })
+    >
+    materials,
+  ) async {
+    setState(() {
+      _materialBatchRunning = true;
+      _materialBatchCompleted = 0;
+      _materialBatchTotal = materials.length;
+      _materialBatchFailed = 0;
+      _materialBatchFailures = const [];
+      _materialDownloadsInFlight.addAll(
+        materials.map(
+          (material) =>
+              _materialOperationId(material.course, material.candidate),
+        ),
+      );
+    });
+    var next = 0;
+    final failures =
+        <
+          ({
+            PythonMoodleCourseContent course,
+            PythonMoodleContentCandidate candidate,
+          })
+        >[];
+
+    Future<void> worker() async {
+      while (next < materials.length) {
+        final material = materials[next++];
+        try {
+          final files = await widget.gateway.listMoodleMaterialFiles(
+            term: material.course.term,
+            courseId: material.candidate.moodleCourseId,
+            sourceId: material.candidate.sourceId,
+          );
+          if (files.isEmpty) throw StateError('moodle_material_has_no_files');
+          for (final file in files) {
+            await _saveMaterialOffline(
+              material.course,
+              material.candidate,
+              file,
+              announce: false,
+            );
+          }
+        } catch (_) {
+          failures.add(material);
+          if (mounted) setState(() => _materialBatchFailed++);
+        } finally {
+          _materialDownloadsInFlight.remove(
+            _materialOperationId(material.course, material.candidate),
+          );
+          if (mounted) setState(() => _materialBatchCompleted++);
+        }
+      }
+    }
+
+    await Future.wait([worker(), if (materials.length > 1) worker()]);
+    if (!mounted) return;
+    setState(() {
+      _materialBatchRunning = false;
+      _materialBatchFailures = failures;
+    });
+    if (_materialFileCache is! BackgroundMaterialDownloadQueue) {
+      await _loadCachedMaterials();
     }
   }
 
@@ -281,6 +463,50 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
+  Future<void> _retryFailedMaterial(MaterialDownloadProgress progress) async {
+    final discovery = _contentDiscovery;
+    if (discovery == null) return;
+    PythonMoodleCourseContent? matchedCourse;
+    PythonMoodleContentCandidate? matchedCandidate;
+    for (final course in discovery.courses) {
+      for (final candidate in course.candidates) {
+        final prefix =
+            '${course.term}/${candidate.moodleCourseId}/${candidate.sourceId}/';
+        if (progress.id.startsWith(prefix)) {
+          matchedCourse = course;
+          matchedCandidate = candidate;
+          break;
+        }
+      }
+      if (matchedCandidate != null) break;
+    }
+    if (matchedCourse == null || matchedCandidate == null) return;
+    try {
+      _materialDownloadsScheduled.remove(progress.id);
+      final files = await widget.gateway.listMoodleMaterialFiles(
+        term: matchedCourse.term,
+        courseId: matchedCandidate.moodleCourseId,
+        sourceId: matchedCandidate.sourceId,
+      );
+      final fileName = progress.id.split('/').skip(3).join('/');
+      final file = files.where((item) => item.name == fileName).firstOrNull;
+      if (file == null) throw StateError('moodle_material_file_missing');
+      await _saveMaterialOffline(
+        matchedCourse,
+        matchedCandidate,
+        file,
+        announce: false,
+      );
+      unawaited(_loadMaterialDownloadProgress(pollAgain: true));
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível repetir o download.')),
+        );
+      }
+    }
+  }
+
   Future<void> _removeCachedMaterial(CachedMaterialFile file) async {
     try {
       await runAuditedOperation(
@@ -288,6 +514,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         operation: AuditedOperation.moodleMaterialCacheRemove,
         action: () => _materialFileCache.remove(file.id),
       );
+      _materialDownloadsScheduled.remove(file.id);
       await _loadCachedMaterials();
     } catch (_) {
       if (mounted) {
@@ -327,6 +554,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         operation: AuditedOperation.moodleMaterialCacheClear,
         action: _materialFileCache.clear,
       );
+      _materialDownloadsScheduled.clear();
       await _loadCachedMaterials();
     } catch (_) {
       if (mounted) {
@@ -591,8 +819,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         const SizedBox(height: 20),
         MaterialCacheCard(
           files: _cachedMaterials,
+          downloads: _materialDownloadProgress,
           onOpen: _openCachedMaterial,
           onRemove: _removeCachedMaterial,
+          onRetry: _retryFailedMaterial,
           onClear: _clearCachedMaterials,
         ),
       ],
@@ -678,8 +908,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           const SizedBox(height: 16),
           MaterialCacheCard(
             files: _cachedMaterials,
+            downloads: _materialDownloadProgress,
             onOpen: _openCachedMaterial,
             onRemove: _removeCachedMaterial,
+            onRetry: _retryFailedMaterial,
             onClear: _clearCachedMaterials,
           ),
         ],
@@ -713,6 +945,54 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             'nosso servidor. Páginas interativas continuam abrindo no Moodle.',
           ),
           const SizedBox(height: 8),
+          if (_materialFileCache.isAvailable &&
+              _downloadableMaterials(_contentDiscovery!.courses).isNotEmpty)
+            OutlinedButton.icon(
+              key: const Key('moodle-download-all'),
+              onPressed: _materialBatchRunning
+                  ? null
+                  : () => _confirmMaterialBatch(
+                      'Baixar todos os materiais?',
+                      _downloadableMaterials(_contentDiscovery!.courses),
+                    ),
+              icon: const Icon(Icons.download_for_offline_outlined),
+              label: const Text('Baixar tudo'),
+            ),
+          if (_materialBatchTotal > 0) ...[
+            const SizedBox(height: 8),
+            Semantics(
+              liveRegion: true,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  LinearProgressIndicator(
+                    value: _materialBatchTotal == 0
+                        ? null
+                        : _materialBatchCompleted / _materialBatchTotal,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _materialBatchRunning
+                        ? '$_materialBatchCompleted de $_materialBatchTotal materiais processados'
+                        : '${_materialBatchCompleted - _materialBatchFailed} de $_materialBatchTotal materiais preparados',
+                  ),
+                  if (!_materialBatchRunning &&
+                      _materialBatchFailures.isNotEmpty)
+                    TextButton.icon(
+                      key: const Key('moodle-download-retry-failed'),
+                      onPressed: () => _downloadMaterialBatch(
+                        List.of(_materialBatchFailures),
+                      ),
+                      icon: const Icon(Icons.refresh),
+                      label: Text(
+                        'Tentar novamente (${_materialBatchFailures.length})',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
           for (final course in _contentDiscovery!.courses)
             Card(
               child: ExpansionTile(
@@ -720,6 +1000,25 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                 title: Text(course.courseCode),
                 subtitle: Text(_contentStatus(course)),
                 children: [
+                  if (_materialFileCache.isAvailable &&
+                      _downloadableMaterials([course]).isNotEmpty)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+                        child: TextButton.icon(
+                          key: Key('moodle-download-all-${course.courseId}'),
+                          onPressed: _materialBatchRunning
+                              ? null
+                              : () => _confirmMaterialBatch(
+                                  'Baixar todos de ${course.courseCode}?',
+                                  _downloadableMaterials([course]),
+                                ),
+                          icon: const Icon(Icons.download_for_offline_outlined),
+                          label: const Text('Baixar tudo'),
+                        ),
+                      ),
+                    ),
                   for (final candidate in course.candidates)
                     ListTile(
                       leading: Icon(_contentIcon(candidate.kind)),

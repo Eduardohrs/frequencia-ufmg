@@ -5,15 +5,19 @@ import '../../data/material_file_cache.dart';
 final class MaterialCacheCard extends StatelessWidget {
   const MaterialCacheCard({
     required this.files,
+    required this.downloads,
     required this.onOpen,
     required this.onRemove,
+    required this.onRetry,
     required this.onClear,
     super.key,
   });
 
   final List<CachedMaterialFile> files;
+  final List<MaterialDownloadProgress> downloads;
   final ValueChanged<CachedMaterialFile> onOpen;
   final ValueChanged<CachedMaterialFile> onRemove;
+  final ValueChanged<MaterialDownloadProgress> onRetry;
   final VoidCallback onClear;
 
   @override
@@ -26,8 +30,10 @@ final class MaterialCacheCard extends StatelessWidget {
         leading: const Icon(Icons.offline_pin_outlined),
         title: const Text('Arquivos neste dispositivo'),
         subtitle: Text(
-          files.isEmpty
+          files.isEmpty && downloads.isEmpty
               ? 'Nenhuma cópia offline'
+              : downloads.any(_isActive)
+              ? '${downloads.where(_isActive).length} em andamento'
               : '${formatMaterialFileSize(totalBytes)} no dispositivo',
         ),
         trailing: files.isEmpty
@@ -39,6 +45,28 @@ final class MaterialCacheCard extends StatelessWidget {
                 icon: const Icon(Icons.delete_sweep_outlined),
               ),
         children: [
+          for (final download in downloads)
+            ListTile(
+              key: Key('material-download-progress-${download.id}'),
+              leading: Icon(_downloadIcon(download.state)),
+              title: Text(download.name),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_downloadLabel(download.state)),
+                  if (_isActive(download))
+                    LinearProgressIndicator(value: download.fraction),
+                ],
+              ),
+              trailing: download.state == MaterialDownloadState.failed
+                  ? IconButton(
+                      key: Key('material-download-retry-${download.id}'),
+                      tooltip: 'Tentar novamente',
+                      onPressed: () => onRetry(download),
+                      icon: const Icon(Icons.refresh),
+                    )
+                  : null,
+            ),
           for (final file in files)
             ListTile(
               leading: const Icon(Icons.insert_drive_file_outlined),
@@ -68,6 +96,26 @@ final class MaterialCacheCard extends StatelessWidget {
     );
   }
 }
+
+bool _isActive(MaterialDownloadProgress download) =>
+    download.state == MaterialDownloadState.enqueued ||
+    download.state == MaterialDownloadState.running;
+
+String _downloadLabel(MaterialDownloadState state) => switch (state) {
+  MaterialDownloadState.enqueued => 'Na fila',
+  MaterialDownloadState.running => 'Baixando',
+  MaterialDownloadState.succeeded => 'Concluído',
+  MaterialDownloadState.failed => 'Falhou',
+  MaterialDownloadState.cancelled => 'Cancelado',
+};
+
+IconData _downloadIcon(MaterialDownloadState state) => switch (state) {
+  MaterialDownloadState.enqueued => Icons.schedule_outlined,
+  MaterialDownloadState.running => Icons.downloading_outlined,
+  MaterialDownloadState.succeeded => Icons.check_circle_outline,
+  MaterialDownloadState.failed => Icons.error_outline,
+  MaterialDownloadState.cancelled => Icons.cancel_outlined,
+};
 
 String formatMaterialFileSize(int bytes) {
   if (bytes < 1024) return '$bytes B';

@@ -57,6 +57,32 @@ abstract interface class MaterialFileCache {
 
 abstract interface class BackgroundMaterialDownloadQueue {
   Future<void> enqueue(MaterialDownload download);
+
+  Future<List<MaterialDownloadProgress>> listDownloads();
+}
+
+enum MaterialDownloadState { enqueued, running, succeeded, failed, cancelled }
+
+final class MaterialDownloadProgress {
+  const MaterialDownloadProgress({
+    required this.id,
+    required this.name,
+    required this.state,
+    required this.downloaded,
+    required this.total,
+  });
+
+  final String id;
+  final String name;
+  final MaterialDownloadState state;
+  final int downloaded;
+  final int total;
+
+  double? get fraction => total > 0
+      ? (downloaded / total).clamp(0, 1).toDouble()
+      : state == MaterialDownloadState.succeeded
+      ? 1
+      : null;
 }
 
 final class DisabledMaterialFileCache implements MaterialFileCache {

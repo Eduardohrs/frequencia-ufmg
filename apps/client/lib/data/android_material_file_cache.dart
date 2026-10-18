@@ -43,6 +43,24 @@ final class AndroidMaterialFileCache
       });
 
   @override
+  Future<List<MaterialDownloadProgress>> listDownloads() async {
+    final raw = await _invokeMethod<List<Object?>>('listQueue', {
+      'namespace': _namespace,
+    });
+    return [
+      for (final item in raw ?? const [])
+        if (item is Map)
+          MaterialDownloadProgress(
+            id: item['id'] as String,
+            name: item['name'] as String,
+            state: _downloadState(item['state'] as String?),
+            downloaded: (item['downloaded'] as num?)?.toInt() ?? 0,
+            total: (item['total'] as num?)?.toInt() ?? 0,
+          ),
+    ];
+  }
+
+  @override
   Future<List<CachedMaterialFile>> list() => _delegate.list();
 
   @override
@@ -72,3 +90,11 @@ final class AndroidMaterialFileCache
   @override
   void dispose() => _delegate.dispose();
 }
+
+MaterialDownloadState _downloadState(String? value) => switch (value) {
+  'running' => MaterialDownloadState.running,
+  'succeeded' => MaterialDownloadState.succeeded,
+  'failed' => MaterialDownloadState.failed,
+  'cancelled' => MaterialDownloadState.cancelled,
+  _ => MaterialDownloadState.enqueued,
+};
