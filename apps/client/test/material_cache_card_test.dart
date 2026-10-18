@@ -4,7 +4,7 @@ import 'package:frequencia_ufmg/data/material_file_cache.dart';
 import 'package:frequencia_ufmg/features/ufmg/material_cache_card.dart';
 
 void main() {
-  testWidgets('shows every native download state and retries failures', (
+  testWidgets('shows actionable native states without stale history', (
     tester,
   ) async {
     MaterialDownloadProgress? retried;
@@ -45,12 +45,12 @@ void main() {
     expect(find.text('2 em andamento'), findsOneWidget);
     expect(find.text('Na fila'), findsOneWidget);
     expect(find.text('Baixando'), findsOneWidget);
-    expect(find.text('Concluído'), findsOneWidget);
+    expect(find.text('Concluído'), findsNothing);
     expect(
       find.text('Falhou: o Moodle demorou para responder'),
       findsOneWidget,
     );
-    expect(find.text('Cancelado'), findsOneWidget);
+    expect(find.text('Cancelado'), findsNothing);
     expect(find.text('Falhou: resposta HTTP 503'), findsOneWidget);
     await tester.tap(find.byKey(const Key('material-download-retry-failed')));
     expect(retried?.id, 'failed');
