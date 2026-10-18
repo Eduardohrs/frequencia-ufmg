@@ -78,6 +78,67 @@ void main() {
     },
   );
 
+  test('maps native queue progress without exposing download URLs', () async {
+    final cache = AndroidMaterialFileCache(
+      delegate: _Cache(),
+      namespace: '0123456789abcdef01234567',
+      invokeMethod: <T>(method, [arguments]) async {
+        expect(method, 'listQueue');
+        expect(arguments, {'namespace': '0123456789abcdef01234567'});
+        return <Map<String, Object>>[
+              {
+                'id': 'file-id',
+                'name': 'Plano.pdf',
+                'state': 'running',
+                'downloaded': 25,
+                'total': 100,
+              },
+              {
+                'id': 'done',
+                'name': 'Done.pdf',
+                'state': 'succeeded',
+                'downloaded': 0,
+                'total': 0,
+              },
+              {
+                'id': 'failed',
+                'name': 'Failed.pdf',
+                'state': 'failed',
+                'downloaded': 0,
+                'total': 0,
+              },
+              {
+                'id': 'cancelled',
+                'name': 'Cancelled.pdf',
+                'state': 'cancelled',
+                'downloaded': 0,
+                'total': 0,
+              },
+              {
+                'id': 'queued',
+                'name': 'Queued.pdf',
+                'state': 'unknown',
+                'downloaded': 0,
+                'total': 0,
+              },
+            ]
+            as T;
+      },
+    );
+
+    final progress = await cache.listDownloads();
+
+    expect(progress.first.id, 'file-id');
+    expect(progress.first.state, MaterialDownloadState.running);
+    expect(progress.first.fraction, 0.25);
+    expect(progress[1].state, MaterialDownloadState.succeeded);
+    expect(progress[1].fraction, 1);
+    expect(progress[2].state, MaterialDownloadState.failed);
+    expect(progress[3].state, MaterialDownloadState.cancelled);
+    expect(progress[4].state, MaterialDownloadState.enqueued);
+    expect(progress[4].fraction, isNull);
+  });
+
   test('delegates completed-cache operations and disposal', () async {
     final delegate = _Cache()
       ..files.add(

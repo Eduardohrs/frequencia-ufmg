@@ -39,15 +39,16 @@ class MaterialDownloadWorker(
         }
 
         try {
+            setProgressAsync(progressData(spec, 0, spec.expectedSize)).get()
             setForegroundAsync(foregroundInfo(0, spec.expectedSize)).get()
         } catch (_: Exception) {
             log("foreground_failure")
-            return Result.failure()
+            return Result.failure(progressData(spec, 0, spec.expectedSize))
         }
         val directory = File(applicationContext.filesDir, "moodle_materials/${spec.namespace}")
         if (!directory.exists() && !directory.mkdirs()) {
             log("directory_failure")
-            return Result.failure()
+            return Result.failure(progressData(spec, 0, spec.expectedSize))
         }
         val destination = File(directory, spec.storedName)
         val temporary = File(directory, "${spec.storedName}.part")
@@ -61,15 +62,15 @@ class MaterialDownloadWorker(
                 setRequestProperty("User-Agent", "FrequenciaUFMG-Android")
             }
             val status = connection.responseCode
-            if (status in 500..599) return retryOrFail("upstream_$status")
+            if (status in 500..599) return retryOrFail(spec, "upstream_$status")
             if (status != HttpURLConnection.HTTP_OK) {
                 log("upstream_$status")
-                return Result.failure()
+                return Result.failure(progressData(spec, 0, spec.expectedSize))
             }
             val declared = connection.contentLengthLong
             if (declared > MaterialDownloadSpec.MAX_FILE_BYTES) {
                 log("declared_too_large")
-                return Result.failure()
+                return Result.failure(progressData(spec, 0, declared))
             }
             var total = 0L
             var lastReportedBytes = 0L
@@ -97,7 +98,7 @@ class MaterialDownloadWorker(
                             (progressTotal <= 0 &&
                                 total - lastReportedBytes >= PROGRESS_STEP_BYTES)
                         ) {
-                            reportProgress(total, progressTotal)
+                            reportProgress(spec, total, progressTotal)
                             lastReportedBytes = total
                             lastReportedPercent = percent
                         }
@@ -109,37 +110,47 @@ class MaterialDownloadWorker(
             temporary.delete()
             MaterialCacheIndex.record(directory, spec, total)
             log("completed")
-            return Result.success()
+            return Result.success(progressData(spec, total, total))
         } catch (_: DownloadCancelled) {
             log("cancelled")
-            return Result.failure()
+            return Result.failure(progressData(spec, 0, spec.expectedSize))
         } catch (_: FileTooLarge) {
             log("body_too_large")
-            return Result.failure()
+            return Result.failure(progressData(spec, 0, spec.expectedSize))
         } catch (_: SocketTimeoutException) {
-            return retryOrFail("timeout")
+            return retryOrFail(spec, "timeout")
         } catch (_: IOException) {
-            return retryOrFail("io_failure")
+            return retryOrFail(spec, "io_failure")
         } finally {
             connection?.disconnect()
             temporary.delete()
         }
     }
 
-    private fun retryOrFail(code: String): Result {
+    private fun retryOrFail(spec: MaterialDownloadSpec, code: String): Result {
         log(code)
-        return if (runAttemptCount < 2) Result.retry() else Result.failure()
+        return if (runAttemptCount < 2) {
+            Result.retry()
+        } else {
+            Result.failure(progressData(spec, 0, spec.expectedSize))
+        }
     }
 
-    private fun reportProgress(downloaded: Long, total: Long) {
-        setProgressAsync(
-            androidx.work.Data.Builder()
-                .putLong("downloaded", downloaded)
-                .putLong("total", total)
-                .build(),
-        )
+    private fun reportProgress(spec: MaterialDownloadSpec, downloaded: Long, total: Long) {
+        setProgressAsync(progressData(spec, downloaded, total))
         setForegroundAsync(foregroundInfo(downloaded, total))
     }
+
+    private fun progressData(
+        spec: MaterialDownloadSpec,
+        downloaded: Long,
+        total: Long,
+    ) = androidx.work.Data.Builder()
+        .putString("id", spec.id)
+        .putString("name", spec.name)
+        .putLong("downloaded", downloaded)
+        .putLong("total", total)
+        .build()
 
     private fun foregroundInfo(downloaded: Long, total: Long): ForegroundInfo {
         val manager = applicationContext.getSystemService(NotificationManager::class.java)

@@ -7,29 +7,70 @@ import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import androidx.core.content.ContextCompat
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.TimeUnit
 
-class MaterialDownloadBridge(context: Context) {
+class MaterialDownloadBridge(private val context: Context) {
     private val workManager = WorkManager.getInstance(context)
 
     fun handle(method: String, rawArguments: Any?, result: MethodChannel.Result) {
         try {
             val arguments = rawArguments as? Map<*, *> ?: emptyMap<Any, Any>()
             when (method) {
-                "enqueue" -> enqueue(MaterialDownloadSpec.from(arguments))
-                "cancel" -> cancel(arguments)
-                "cancelAll" -> cancelAll(arguments)
+                "enqueue" -> {
+                    enqueue(MaterialDownloadSpec.from(arguments))
+                    result.success(null)
+                }
+                "listQueue" -> listQueue(arguments, result)
+                "cancel" -> {
+                    cancel(arguments)
+                    result.success(null)
+                }
+                "cancelAll" -> {
+                    cancelAll(arguments)
+                    result.success(null)
+                }
                 else -> {
                     result.notImplemented()
                     return
                 }
             }
-            result.success(null)
         } catch (_: IllegalArgumentException) {
             result.error("invalid_material_download", "Dados de download inválidos.", null)
         }
+    }
+
+    private fun listQueue(arguments: Map<*, *>, result: MethodChannel.Result) {
+        val namespace = requireNamespace(arguments)
+        val future = workManager.getWorkInfosByTag(namespaceTag(namespace))
+        future.addListener(
+            {
+                try {
+                    result.success(
+                        future.get().map(::progressMap).filter {
+                            (it["id"] as String).isNotEmpty()
+                        },
+                    )
+                } catch (_: Exception) {
+                    result.error("material_download_status", "Não foi possível consultar os downloads.", null)
+                }
+            },
+            ContextCompat.getMainExecutor(context),
+        )
+    }
+
+    private fun progressMap(info: WorkInfo): Map<String, Any> {
+        val progress = if (info.state.isFinished) info.outputData else info.progress
+        return mapOf(
+            "id" to (progress.getString("id") ?: ""),
+            "name" to (progress.getString("name") ?: "Material"),
+            "state" to info.state.name.lowercase(),
+            "downloaded" to progress.getLong("downloaded", 0),
+            "total" to progress.getLong("total", 0),
+        )
     }
 
     private fun enqueue(spec: MaterialDownloadSpec) {
