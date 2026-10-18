@@ -583,6 +583,30 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
+  Future<void> _dismissFailedMaterial(MaterialDownloadProgress progress) async {
+    _logInteraction('moodle_material_download_failure_dismiss');
+    if (_materialFileCache case final BackgroundMaterialDownloadQueue queue) {
+      try {
+        await queue.dismissDownload(progress.id);
+        _materialDownloadsScheduled.remove(progress.id);
+        _reportedMaterialDownloadFailures.remove(progress.id);
+        if (mounted) {
+          setState(
+            () => _materialDownloadProgress = _materialDownloadProgress
+                .where((download) => download.id != progress.id)
+                .toList(),
+          );
+        }
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Não foi possível remover a falha.')),
+          );
+        }
+      }
+    }
+  }
+
   Future<void> _removeCachedMaterial(CachedMaterialFile file) async {
     _logInteraction('moodle_material_remove');
     try {
@@ -611,7 +635,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       builder: (context) => AlertDialog(
         title: const Text('Remover todas as cópias?'),
         content: const Text(
-          'Os arquivos deixarão de abrir offline. Os originais permanecem no Moodle.',
+          'Os arquivos deixarão de abrir offline e as falhas serão removidas da lista. '
+          'Os originais permanecem no Moodle.',
         ),
         actions: [
           TextButton(
@@ -632,12 +657,22 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     );
     if (confirmed != true) return;
     try {
+      if (_materialFileCache case final BackgroundMaterialDownloadQueue queue) {
+        final failures = _materialDownloadProgress
+            .where((item) => item.state == MaterialDownloadState.failed)
+            .toList();
+        for (final download in failures) {
+          await queue.dismissDownload(download.id);
+        }
+      }
       await runAuditedOperation(
         logger: widget.logger,
         operation: AuditedOperation.moodleMaterialCacheClear,
         action: _materialFileCache.clear,
       );
       _materialDownloadsScheduled.clear();
+      _reportedMaterialDownloadFailures.clear();
+      if (mounted) setState(() => _materialDownloadProgress = const []);
       await _loadCachedMaterials();
     } catch (_) {
       if (mounted) {
@@ -913,6 +948,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           onOpen: _openCachedMaterial,
           onRemove: _removeCachedMaterial,
           onRetry: _retryFailedMaterial,
+          onDismiss: _dismissFailedMaterial,
           onClear: _clearCachedMaterials,
         ),
       ],
@@ -1002,6 +1038,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             onOpen: _openCachedMaterial,
             onRemove: _removeCachedMaterial,
             onRetry: _retryFailedMaterial,
+            onDismiss: _dismissFailedMaterial,
             onClear: _clearCachedMaterials,
           ),
         ],

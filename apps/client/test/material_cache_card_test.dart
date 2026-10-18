@@ -8,6 +8,7 @@ void main() {
     tester,
   ) async {
     MaterialDownloadProgress? retried;
+    MaterialDownloadProgress? dismissed;
     final downloads = [
       for (final state in MaterialDownloadState.values)
         MaterialDownloadProgress(
@@ -36,6 +37,7 @@ void main() {
             onOpen: (_) {},
             onRemove: (_) {},
             onRetry: (download) => retried = download,
+            onDismiss: (download) => dismissed = download,
             onClear: () {},
           ),
         ),
@@ -54,5 +56,7 @@ void main() {
     expect(find.text('Falhou: resposta HTTP 503'), findsOneWidget);
     await tester.tap(find.byKey(const Key('material-download-retry-failed')));
     expect(retried?.id, 'failed');
+    await tester.tap(find.byKey(const Key('material-download-dismiss-failed')));
+    expect(dismissed?.id, 'failed');
   });
 }

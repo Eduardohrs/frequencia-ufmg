@@ -59,6 +59,8 @@ abstract interface class BackgroundMaterialDownloadQueue {
   Future<void> enqueue(MaterialDownload download);
 
   Future<List<MaterialDownloadProgress>> listDownloads();
+
+  Future<void> dismissDownload(String id);
 }
 
 enum MaterialDownloadState { enqueued, running, succeeded, failed, cancelled }

@@ -51,7 +51,7 @@ void main() {
   );
 
   test(
-    'cancels matching work before removal and all work before clear',
+    'cancels or dismisses native work before changing the local cache',
     () async {
       final delegate = _Cache();
       final calls = <(String, Object?)>[];
@@ -65,14 +65,19 @@ void main() {
       );
 
       await cache.remove('file-id');
+      await cache.dismissDownload('failed-id');
       await cache.clear();
 
-      expect(calls.map((call) => call.$1), ['cancel', 'cancelAll']);
+      expect(calls.map((call) => call.$1), ['cancel', 'dismiss', 'cancelAll']);
       expect(calls[0].$2, {
         'id': 'file-id',
         'namespace': '0123456789abcdef01234567',
       });
-      expect(calls[1].$2, {'namespace': '0123456789abcdef01234567'});
+      expect(calls[1].$2, {
+        'id': 'failed-id',
+        'namespace': '0123456789abcdef01234567',
+      });
+      expect(calls[2].$2, {'namespace': '0123456789abcdef01234567'});
       expect(delegate.removed, ['file-id']);
       expect(delegate.clearCalls, 1);
     },
