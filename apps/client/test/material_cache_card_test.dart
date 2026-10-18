@@ -16,7 +16,16 @@ void main() {
           state: state,
           downloaded: state == MaterialDownloadState.running ? 25 : 0,
           total: state == MaterialDownloadState.running ? 100 : 0,
+          failureCode: state == MaterialDownloadState.failed ? 'timeout' : '',
         ),
+      const MaterialDownloadProgress(
+        id: 'upstream',
+        name: 'upstream.pdf',
+        state: MaterialDownloadState.failed,
+        downloaded: 0,
+        total: 10,
+        failureCode: 'upstream_503',
+      ),
     ];
     await tester.pumpWidget(
       MaterialApp(
@@ -37,8 +46,12 @@ void main() {
     expect(find.text('Na fila'), findsOneWidget);
     expect(find.text('Baixando'), findsOneWidget);
     expect(find.text('Concluído'), findsOneWidget);
-    expect(find.text('Falhou'), findsOneWidget);
+    expect(
+      find.text('Falhou: o Moodle demorou para responder'),
+      findsOneWidget,
+    );
     expect(find.text('Cancelado'), findsOneWidget);
+    expect(find.text('Falhou: resposta HTTP 503'), findsOneWidget);
     await tester.tap(find.byKey(const Key('material-download-retry-failed')));
     expect(retried?.id, 'failed');
   });

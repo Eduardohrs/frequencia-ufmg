@@ -106,6 +106,7 @@ void main() {
                 'state': 'failed',
                 'downloaded': 0,
                 'total': 0,
+                'failureCode': 'timeout',
               },
               {
                 'id': 'cancelled',
@@ -134,6 +135,7 @@ void main() {
     expect(progress[1].state, MaterialDownloadState.succeeded);
     expect(progress[1].fraction, 1);
     expect(progress[2].state, MaterialDownloadState.failed);
+    expect(progress[2].failureCode, 'timeout');
     expect(progress[3].state, MaterialDownloadState.cancelled);
     expect(progress[4].state, MaterialDownloadState.enqueued);
     expect(progress[4].fraction, isNull);

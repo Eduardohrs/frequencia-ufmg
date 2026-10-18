@@ -64,12 +64,14 @@ class MaterialDownloadBridge(private val context: Context) {
 
     private fun progressMap(info: WorkInfo): Map<String, Any> {
         val progress = if (info.state.isFinished) info.outputData else info.progress
+        val failureCode = progress.getString("failure_code") ?: ""
         return mapOf(
             "id" to (progress.getString("id") ?: ""),
             "name" to (progress.getString("name") ?: "Material"),
-            "state" to info.state.name.lowercase(),
+            "state" to if (failureCode.isEmpty()) info.state.name.lowercase() else "failed",
             "downloaded" to progress.getLong("downloaded", 0),
             "total" to progress.getLong("total", 0),
+            "failureCode" to failureCode,
         )
     }
 
@@ -92,10 +94,11 @@ class MaterialDownloadBridge(private val context: Context) {
             )
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
             .addTag(namespaceTag(spec.namespace))
+            .addTag(spec.itemTag)
             .build()
         workManager.beginUniqueWork(
-            spec.uniqueWorkName,
-            ExistingWorkPolicy.KEEP,
+            spec.queueWorkName,
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
             request,
         ).enqueue()
     }
@@ -103,8 +106,8 @@ class MaterialDownloadBridge(private val context: Context) {
     private fun cancel(arguments: Map<*, *>) {
         val id = requireString(arguments, "id", 512)
         val namespace = requireNamespace(arguments)
-        val workName = MaterialDownloadSpec.uniqueWorkName(namespace, id)
-        workManager.cancelUniqueWork(workName)
+        val itemTag = MaterialDownloadSpec.uniqueWorkName(namespace, id)
+        workManager.cancelAllWorkByTag(itemTag)
     }
 
     private fun cancelAll(arguments: Map<*, *>) {

@@ -53,6 +53,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   Timer? _materialProgressTimer;
   final Set<String> _materialDownloadsInFlight = {};
   final Set<String> _materialDownloadsScheduled = {};
+  final Set<String> _reportedMaterialDownloadFailures = {};
   bool _materialBatchRunning = false;
   int _materialBatchCompleted = 0;
   int _materialBatchTotal = 0;
@@ -61,6 +62,17 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     ({PythonMoodleCourseContent course, PythonMoodleContentCandidate candidate})
   >
   _materialBatchFailures = const [];
+
+  void _logInteraction(String action) {
+    unawaited(
+      widget.logger
+          .logEvent(
+            'ui_interaction',
+            parameters: {'screen': 'ufmg_connection', 'action': action},
+          )
+          .catchError((Object _) {}),
+    );
+  }
 
   @override
   void initState() {
@@ -119,6 +131,23 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             progress.map((download) => download.id),
           );
         });
+        for (final download in progress) {
+          if (download.state == MaterialDownloadState.failed &&
+              _reportedMaterialDownloadFailures.add(download.id)) {
+            unawaited(
+              widget.logger
+                  .logEvent(
+                    'moodle_material_download_failed',
+                    parameters: {
+                      'failure_code': download.failureCode.isEmpty
+                          ? 'unknown'
+                          : download.failureCode,
+                    },
+                  )
+                  .catchError((_) {}),
+            );
+          }
+        }
         final active = progress.any(
           (download) =>
               download.state == MaterialDownloadState.enqueued ||
@@ -186,6 +215,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     PythonMoodleCourseContent course,
     PythonMoodleContentCandidate candidate,
   ) async {
+    _logInteraction('moodle_material_open');
     final operationId = _materialOperationId(course, candidate);
     if (!_materialDownloadsInFlight.add(operationId)) return;
     setState(() {});
@@ -266,7 +296,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                   leading: const Icon(Icons.download_outlined),
                   title: Text(file.name),
                   subtitle: Text(formatMaterialFileSize(file.size)),
-                  onTap: () => Navigator.pop(context, file),
+                  onTap: () {
+                    _logInteraction('moodle_material_file_select');
+                    Navigator.pop(context, file);
+                  },
                 ),
             ],
           ),
@@ -332,12 +365,19 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   List<
     ({PythonMoodleCourseContent course, PythonMoodleContentCandidate candidate})
   >
-  _downloadableMaterials(Iterable<PythonMoodleCourseContent> courses) => [
-    for (final course in courses)
-      for (final candidate in course.candidates)
-        if (candidate.kind == 'file' && candidate.canOpenDirectly)
-          (course: course, candidate: candidate),
-  ];
+  _downloadableMaterials(Iterable<PythonMoodleCourseContent> courses) {
+    final seen = <String>{};
+    return [
+      for (final course in courses)
+        for (final candidate in course.candidates)
+          if (candidate.kind == 'file' &&
+              candidate.canOpenDirectly &&
+              seen.add(
+                '${course.term}/${candidate.moodleCourseId}/${candidate.sourceId}',
+              ))
+            (course: course, candidate: candidate),
+    ];
+  }
 
   Future<void> _confirmMaterialBatch(
     String title,
@@ -349,6 +389,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     >
     materials,
   ) async {
+    _logInteraction('moodle_material_batch_prompt');
     if (_materialBatchRunning || materials.isEmpty) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -369,6 +410,11 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           ),
         ],
       ),
+    );
+    _logInteraction(
+      confirmed == true
+          ? 'moodle_material_batch_confirm'
+          : 'moodle_material_batch_cancel',
     );
     if (confirmed == true && mounted) await _downloadMaterialBatch(materials);
   }
@@ -403,6 +449,14 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             PythonMoodleContentCandidate candidate,
           })
         >[];
+    final prepared =
+        <
+          ({
+            PythonMoodleCourseContent course,
+            PythonMoodleContentCandidate candidate,
+            PythonMoodleMaterialFile file,
+          })
+        >[];
 
     Future<void> worker() async {
       while (next < materials.length) {
@@ -415,12 +469,11 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           );
           if (files.isEmpty) throw StateError('moodle_material_has_no_files');
           for (final file in files) {
-            await _saveMaterialOffline(
-              material.course,
-              material.candidate,
-              file,
-              announce: false,
-            );
+            prepared.add((
+              course: material.course,
+              candidate: material.candidate,
+              file: file,
+            ));
           }
         } catch (_) {
           failures.add(material);
@@ -435,6 +488,28 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
 
     await Future.wait([worker(), if (materials.length > 1) worker()]);
+    for (final item in prepared) {
+      try {
+        await _saveMaterialOffline(
+          item.course,
+          item.candidate,
+          item.file,
+          announce: false,
+        );
+      } catch (_) {
+        final material = (course: item.course, candidate: item.candidate);
+        if (!failures.any(
+          (failure) =>
+              failure.course.term == material.course.term &&
+              failure.candidate.moodleCourseId ==
+                  material.candidate.moodleCourseId &&
+              failure.candidate.sourceId == material.candidate.sourceId,
+        )) {
+          failures.add(material);
+          if (mounted) setState(() => _materialBatchFailed++);
+        }
+      }
+    }
     if (!mounted) return;
     setState(() {
       _materialBatchRunning = false;
@@ -464,6 +539,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   }
 
   Future<void> _retryFailedMaterial(MaterialDownloadProgress progress) async {
+    _logInteraction('moodle_material_retry');
     final discovery = _contentDiscovery;
     if (discovery == null) return;
     PythonMoodleCourseContent? matchedCourse;
@@ -508,6 +584,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   }
 
   Future<void> _removeCachedMaterial(CachedMaterialFile file) async {
+    _logInteraction('moodle_material_remove');
     try {
       await runAuditedOperation(
         logger: widget.logger,
@@ -528,6 +605,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   }
 
   Future<void> _clearCachedMaterials() async {
+    _logInteraction('moodle_material_clear_prompt');
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -546,6 +624,11 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           ),
         ],
       ),
+    );
+    _logInteraction(
+      confirmed == true
+          ? 'moodle_material_clear_confirm'
+          : 'moodle_material_clear_cancel',
     );
     if (confirmed != true) return;
     try {
@@ -568,6 +651,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   }
 
   Future<void> _connect() async {
+    _logInteraction('ufmg_connect');
     if (!_formKey.currentState!.validate()) return;
     setState(() {
       _busy = true;
@@ -599,6 +683,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   }
 
   Future<void> _confirmDisconnect() async {
+    _logInteraction('ufmg_disconnect_prompt');
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -617,6 +702,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           ),
         ],
       ),
+    );
+    _logInteraction(
+      confirmed == true ? 'ufmg_disconnect_confirm' : 'ufmg_disconnect_cancel',
     );
     if (confirmed != true || !mounted) return;
     setState(() {
@@ -638,6 +726,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   }
 
   Future<void> _syncSiga() async {
+    _logInteraction('ufmg_sync_siga');
     setState(() {
       _busy = true;
       _error = null;
@@ -684,6 +773,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   }
 
   Future<void> _syncMoodle() async {
+    _logInteraction('ufmg_sync_moodle');
     setState(() {
       _busy = true;
       _error = null;
@@ -980,9 +1070,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                       _materialBatchFailures.isNotEmpty)
                     TextButton.icon(
                       key: const Key('moodle-download-retry-failed'),
-                      onPressed: () => _downloadMaterialBatch(
-                        List.of(_materialBatchFailures),
-                      ),
+                      onPressed: () {
+                        _logInteraction('moodle_material_batch_retry');
+                        _downloadMaterialBatch(List.of(_materialBatchFailures));
+                      },
                       icon: const Icon(Icons.refresh),
                       label: Text(
                         'Tentar novamente (${_materialBatchFailures.length})',
@@ -997,6 +1088,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             Card(
               child: ExpansionTile(
                 key: Key('moodle-content-${course.courseId}'),
+                onExpansionChanged: (expanded) => _logInteraction(
+                  expanded ? 'moodle_course_expand' : 'moodle_course_collapse',
+                ),
                 title: Text(course.courseCode),
                 subtitle: Text(_contentStatus(course)),
                 children: [
@@ -1112,6 +1206,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           margin: EdgeInsets.zero,
           child: ExpansionTile(
             key: const Key('ufmg-manage-connection'),
+            onExpansionChanged: (expanded) => _logInteraction(
+              expanded ? 'ufmg_manage_expand' : 'ufmg_manage_collapse',
+            ),
             leading: const Icon(Icons.settings_outlined),
             title: const Text('Gerenciar conexão'),
             childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -1122,7 +1219,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                   key: const Key('ufmg-reconnect'),
                   onPressed: _busy
                       ? null
-                      : () => setState(() => _showReconnectForm = true),
+                      : () {
+                          _logInteraction('ufmg_reconnect_show');
+                          setState(() => _showReconnectForm = true);
+                        },
                   icon: const Icon(Icons.sync),
                   label: const Text('Reconectar'),
                 ),
@@ -1201,11 +1301,14 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               TextButton(
                 onPressed: _busy
                     ? null
-                    : () => setState(() {
-                        _showReconnectForm = false;
-                        _username.clear();
-                        _password.clear();
-                      }),
+                    : () {
+                        _logInteraction('ufmg_reconnect_cancel');
+                        setState(() {
+                          _showReconnectForm = false;
+                          _username.clear();
+                          _password.clear();
+                        });
+                      },
                 child: const Text('Cancelar'),
               ),
             ],

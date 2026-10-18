@@ -56,6 +56,7 @@ final class AndroidMaterialFileCache
             state: _downloadState(item['state'] as String?),
             downloaded: (item['downloaded'] as num?)?.toInt() ?? 0,
             total: (item['total'] as num?)?.toInt() ?? 0,
+            failureCode: item['failureCode'] as String? ?? '',
           ),
     ];
   }

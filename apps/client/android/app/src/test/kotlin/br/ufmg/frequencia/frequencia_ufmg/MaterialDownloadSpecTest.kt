@@ -30,6 +30,21 @@ class MaterialDownloadSpecTest {
     }
 
     @Test
+    fun `serializes one user queue behind one notification`() {
+        val first = MaterialDownloadSpec.from(valid)
+        val second = MaterialDownloadSpec.from(
+            valid.toMutableMap().apply {
+                this["id"] = "2026-2/3701/103/Outro.pdf"
+                this["name"] = "Outro.pdf"
+            },
+        )
+
+        assertEquals(first.queueWorkName, second.queueWorkName)
+        assertEquals(first.notificationId, second.notificationId)
+        assertFalse(first.itemTag == second.itemTag)
+    }
+
+    @Test
     fun `rejects downloads outside the Moodle direct contract`() {
         val invalid = valid.toMutableMap().apply {
             this["source"] = "https://example.com/private.pdf"
