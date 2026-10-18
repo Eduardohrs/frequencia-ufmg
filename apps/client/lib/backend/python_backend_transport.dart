@@ -1104,6 +1104,7 @@ final class PythonBackendTransport
   final PythonBackendTokens _tokens;
   final http.Client _client;
   final Duration timeout;
+  Future<String>? _regularAppCheckTokenInFlight;
 
   @override
   Future<void> verifyIdentity() async {
@@ -1853,9 +1854,7 @@ final class PythonBackendTransport
     }
     late final String appCheckToken;
     try {
-      appCheckToken = await _tokens.appCheckToken(
-        limitedUse: limitedUseAppCheck,
-      );
+      appCheckToken = await _appCheckToken(limitedUse: limitedUseAppCheck);
     } catch (error) {
       throw PythonBackendException(
         PythonBackendError.credentialsUnavailable,
@@ -1870,6 +1869,21 @@ final class PythonBackendTransport
       );
     }
     return (idToken, appCheckToken);
+  }
+
+  Future<String> _appCheckToken({required bool limitedUse}) async {
+    if (limitedUse) return _tokens.appCheckToken(limitedUse: true);
+    final pending = _regularAppCheckTokenInFlight;
+    if (pending != null) return pending;
+    final request = _tokens.appCheckToken(limitedUse: false);
+    _regularAppCheckTokenInFlight = request;
+    try {
+      return await request;
+    } finally {
+      if (identical(_regularAppCheckTokenInFlight, request)) {
+        _regularAppCheckTokenInFlight = null;
+      }
+    }
   }
 
   static bool _isAuthenticated(String body) {

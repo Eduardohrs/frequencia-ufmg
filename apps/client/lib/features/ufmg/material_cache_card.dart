@@ -1,40 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../backend/python_backend_transport.dart';
 import '../../data/material_file_cache.dart';
-
-enum MaterialFileAction { openOnline, saveOffline }
-
-Future<MaterialFileAction?> showMaterialFileActionSheet(
-  BuildContext context,
-  PythonMoodleMaterialFile file,
-) => showModalBottomSheet<MaterialFileAction>(
-  context: context,
-  showDragHandle: true,
-  builder: (context) => SafeArea(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        ListTile(
-          title: const Text('O que deseja fazer?'),
-          subtitle: Text('${file.name} • ${formatMaterialFileSize(file.size)}'),
-        ),
-        ListTile(
-          leading: const Icon(Icons.open_in_new),
-          title: const Text('Abrir ou baixar agora'),
-          subtitle: const Text('Direto da UFMG, sem cópia no aplicativo'),
-          onTap: () => Navigator.pop(context, MaterialFileAction.openOnline),
-        ),
-        ListTile(
-          leading: const Icon(Icons.offline_pin_outlined),
-          title: const Text('Salvar para usar offline'),
-          subtitle: const Text('Cópia privada somente neste dispositivo'),
-          onTap: () => Navigator.pop(context, MaterialFileAction.saveOffline),
-        ),
-      ],
-    ),
-  ),
-);
 
 final class MaterialCacheCard extends StatelessWidget {
   const MaterialCacheCard({

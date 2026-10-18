@@ -47,6 +47,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   late final MaterialFileCache _materialFileCache;
   late final bool _ownsMaterialFileCache;
   List<CachedMaterialFile> _cachedMaterials = const [];
+  final Set<String> _materialDownloadsInFlight = {};
 
   @override
   void initState() {
@@ -132,6 +133,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     PythonMoodleCourseContent course,
     PythonMoodleContentCandidate candidate,
   ) async {
+    final operationId = _materialOperationId(course, candidate);
+    if (!_materialDownloadsInFlight.add(operationId)) return;
+    setState(() {});
     try {
       await runAuditedOperation(
         logger: widget.logger,
@@ -144,13 +148,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           }
           final file = await _selectMaterialFile(course, candidate);
           if (file == null) return;
-          if (_materialFileCache.isAvailable && mounted) {
-            final action = await showMaterialFileActionSheet(context, file);
-            if (action == MaterialFileAction.saveOffline) {
-              await _saveMaterialOffline(course, candidate, file);
-            } else if (action == MaterialFileAction.openOnline) {
-              await _launchMaterialUri(file.url);
-            }
+          if (_materialFileCache.isAvailable) {
+            await _saveMaterialOffline(course, candidate, file);
             return;
           }
           await _launchMaterialUri(file.url);
@@ -166,8 +165,16 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      _materialDownloadsInFlight.remove(operationId);
+      if (mounted) setState(() {});
     }
   }
+
+  String _materialOperationId(
+    PythonMoodleCourseContent course,
+    PythonMoodleContentCandidate candidate,
+  ) => '${course.term}/${candidate.moodleCourseId}/${candidate.sourceId}';
 
   Future<void> _launchMaterialUri(Uri uri) async {
     final launcher = widget.openExternalUri ?? _openExternalUri;
@@ -190,20 +197,26 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     if (!mounted) return null;
     final selected = await showModalBottomSheet<PythonMoodleMaterialFile>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
       builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            const ListTile(title: Text('Escolha um arquivo')),
-            for (final file in files)
-              ListTile(
-                leading: const Icon(Icons.download_outlined),
-                title: Text(file.name),
-                subtitle: Text(formatMaterialFileSize(file.size)),
-                onTap: () => Navigator.pop(context, file),
-              ),
-          ],
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.65,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              const ListTile(title: Text('Escolha um arquivo')),
+              for (final file in files)
+                ListTile(
+                  leading: const Icon(Icons.download_outlined),
+                  title: Text(file.name),
+                  subtitle: Text(formatMaterialFileSize(file.size)),
+                  onTap: () => Navigator.pop(context, file),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -713,21 +726,30 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                       title: Text(candidate.title),
                       subtitle: Text(_candidateLabel(candidate)),
                       trailing: candidate.canOpenDirectly
-                          ? IconButton(
-                              key: Key(
-                                'moodle-material-open-${candidate.sourceId}',
-                              ),
-                              tooltip: candidate.kind == 'file'
-                                  ? 'Baixar'
-                                  : 'Abrir no Moodle',
-                              onPressed: () =>
-                                  _openMoodleMaterial(course, candidate),
-                              icon: Icon(
-                                candidate.kind == 'file'
-                                    ? Icons.download_outlined
-                                    : Icons.open_in_new,
-                              ),
-                            )
+                          ? _materialDownloadsInFlight.contains(
+                                  _materialOperationId(course, candidate),
+                                )
+                                ? const SizedBox.square(
+                                    dimension: 24,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : IconButton(
+                                    key: Key(
+                                      'moodle-material-open-${candidate.sourceId}',
+                                    ),
+                                    tooltip: candidate.kind == 'file'
+                                        ? 'Baixar'
+                                        : 'Abrir no Moodle',
+                                    onPressed: () =>
+                                        _openMoodleMaterial(course, candidate),
+                                    icon: Icon(
+                                      candidate.kind == 'file'
+                                          ? Icons.download_outlined
+                                          : Icons.open_in_new,
+                                    ),
+                                  )
                           : null,
                     ),
                 ],
