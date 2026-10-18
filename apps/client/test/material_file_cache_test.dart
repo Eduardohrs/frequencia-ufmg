@@ -161,7 +161,7 @@ void main() {
   });
 
   test('disabled cache is explicit and performs no operations', () async {
-    const cache = DisabledMaterialFileCache();
+    final cache = DisabledMaterialFileCache();
 
     expect(cache.isAvailable, isFalse);
     expect(await cache.list(), isEmpty);

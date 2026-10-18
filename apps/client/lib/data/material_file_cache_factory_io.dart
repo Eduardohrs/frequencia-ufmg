@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'android_material_file_cache.dart';
 import 'io_material_file_cache.dart';
 import 'material_file_cache.dart';
 
@@ -18,7 +19,7 @@ MaterialFileCache createPlatformMaterialFileCache(String? userId) {
       .convert(utf8.encode(userId))
       .toString()
       .substring(0, 24);
-  return IoMaterialFileCache(
+  final delegate = IoMaterialFileCache(
     rootDirectory: () async {
       final support = await getApplicationSupportDirectory();
       return Directory(
@@ -32,4 +33,5 @@ MaterialFileCache createPlatformMaterialFileCache(String? userId) {
       return result.type == ResultType.done;
     },
   );
+  return AndroidMaterialFileCache(delegate: delegate, namespace: namespace);
 }

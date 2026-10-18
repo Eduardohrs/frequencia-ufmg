@@ -154,6 +154,8 @@ jobs:
       - run: flutter pub get --enforce-lockfile
       - run: dart format --output=none --set-exit-if-changed .
       - run: flutter analyze
+      - name: Test Android background downloads
+        run: ./android/gradlew -p android :app:testDebugUnitTest --no-daemon
       - name: Verify observability contract
         run: flutter test test/audited_operation_test.dart
       - run: flutter test --coverage

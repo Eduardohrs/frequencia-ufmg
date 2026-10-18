@@ -46,6 +46,7 @@ enum AuditedOperation {
   moodleMaterialOpen('moodle_material_open'),
   moodleMaterialCacheList('moodle_material_cache_list'),
   moodleMaterialCacheSave('moodle_material_cache_save'),
+  moodleMaterialDownloadEnqueue('moodle_material_download_enqueue'),
   moodleMaterialCacheOpen('moodle_material_cache_open'),
   moodleMaterialCacheRemove('moodle_material_cache_remove'),
   moodleMaterialCacheClear('moodle_material_cache_clear'),
