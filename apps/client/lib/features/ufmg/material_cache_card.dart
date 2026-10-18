@@ -23,6 +23,7 @@ final class MaterialCacheCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final totalBytes = files.fold<int>(0, (total, file) => total + file.size);
+    final visibleDownloads = downloads.where(_isActionable).toList();
     return Card(
       margin: EdgeInsets.zero,
       child: ExpansionTile(
@@ -30,10 +31,10 @@ final class MaterialCacheCard extends StatelessWidget {
         leading: const Icon(Icons.offline_pin_outlined),
         title: const Text('Arquivos neste dispositivo'),
         subtitle: Text(
-          files.isEmpty && downloads.isEmpty
+          files.isEmpty && visibleDownloads.isEmpty
               ? 'Nenhuma cópia offline'
-              : downloads.any(_isActive)
-              ? '${downloads.where(_isActive).length} em andamento'
+              : visibleDownloads.any(_isActive)
+              ? '${visibleDownloads.where(_isActive).length} em andamento'
               : '${formatMaterialFileSize(totalBytes)} no dispositivo',
         ),
         trailing: files.isEmpty
@@ -45,7 +46,7 @@ final class MaterialCacheCard extends StatelessWidget {
                 icon: const Icon(Icons.delete_sweep_outlined),
               ),
         children: [
-          for (final download in downloads)
+          for (final download in visibleDownloads)
             ListTile(
               key: Key('material-download-progress-${download.id}'),
               leading: Icon(_downloadIcon(download.state)),
@@ -101,13 +102,16 @@ bool _isActive(MaterialDownloadProgress download) =>
     download.state == MaterialDownloadState.enqueued ||
     download.state == MaterialDownloadState.running;
 
+bool _isActionable(MaterialDownloadProgress download) =>
+    _isActive(download) || download.state == MaterialDownloadState.failed;
+
 String _downloadLabel(MaterialDownloadProgress download) =>
     switch (download.state) {
       MaterialDownloadState.enqueued => 'Na fila',
       MaterialDownloadState.running => 'Baixando',
       MaterialDownloadState.succeeded => 'Concluído',
       MaterialDownloadState.failed => _failureLabel(download.failureCode),
-      MaterialDownloadState.cancelled => 'Cancelado',
+      MaterialDownloadState.cancelled => 'Cancelado', // coverage:ignore-line
     };
 
 String _failureLabel(String code) => switch (code) {
@@ -127,7 +131,11 @@ IconData _downloadIcon(MaterialDownloadState state) => switch (state) {
   MaterialDownloadState.running => Icons.downloading_outlined,
   MaterialDownloadState.succeeded => Icons.check_circle_outline,
   MaterialDownloadState.failed => Icons.error_outline,
-  MaterialDownloadState.cancelled => Icons.cancel_outlined,
+  // A completed/cancelled history item is filtered before rendering.
+  // coverage:ignore-start
+  MaterialDownloadState.cancelled =>
+    Icons.cancel_outlined, // coverage:ignore-line
+  // coverage:ignore-end
 };
 
 String formatMaterialFileSize(int bytes) {
