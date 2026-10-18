@@ -952,10 +952,6 @@ void main() {
 
     await tester.tap(find.byKey(const Key('moodle-material-open-102')));
     await tester.pumpAndSettle();
-    expect(find.text('O que deseja fazer?'), findsOneWidget);
-    expect(find.text('Abrir ou baixar agora'), findsOneWidget);
-    await tester.tap(find.text('Salvar para usar offline'));
-    await tester.pumpAndSettle();
 
     expect(openedUris, isEmpty);
     expect(cache.saved.single.name, 'Cronograma.pdf');
@@ -1007,8 +1003,6 @@ void main() {
 
     await tester.tap(find.byKey(const Key('moodle-material-open-102')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Salvar para usar offline'));
-    await tester.pumpAndSettle();
 
     expect(cache.queued.single.name, 'Cronograma.pdf');
     expect(cache.saved, isEmpty);
@@ -1017,6 +1011,47 @@ void main() {
       logger.events,
       contains('moodle_material_download_enqueue_succeeded'),
     );
+  });
+
+  testWidgets('ignores repeated taps while a material download is resolving', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    )..materialFilesCompleter = Completer<List<PythonMoodleMaterialFile>>();
+    final cache = _BackgroundMaterialCache();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: gateway,
+          logger: _Logger(),
+          materialFileCache: cache,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+
+    final download = find.byKey(const Key('moodle-material-open-102'));
+    await tester.tap(download);
+    await tester.tap(download);
+    await tester.pump();
+
+    expect(gateway.materialFileRequests, [('2026-2', '3701', '102')]);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    gateway.materialFilesCompleter!.complete([
+      _materialFile('Cronograma.pdf', 123),
+    ]);
+    await tester.pumpAndSettle();
+    expect(cache.queued, hasLength(1));
   });
 
   testWidgets('removes one or every private material copy', (tester) async {
@@ -1071,9 +1106,10 @@ void main() {
     expect(find.text('Nenhuma cópia offline'), findsOneWidget);
   });
 
-  testWidgets('can choose direct download when local copies are available', (
+  testWidgets('downloads to the local cache without a duplicate action sheet', (
     tester,
   ) async {
+    final cache = _MaterialCache();
     final openedUris = <Uri>[];
     await tester.pumpWidget(
       MaterialApp(
@@ -1085,7 +1121,7 @@ void main() {
             ),
           ),
           logger: _Logger(),
-          materialFileCache: _MaterialCache(),
+          materialFileCache: cache,
           openExternalUri: (uri) async {
             openedUris.add(uri);
             return true;
@@ -1102,10 +1138,10 @@ void main() {
     await tester.tap(find.byKey(const Key('moodle-material-open-102')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Abrir ou baixar agora'));
-    await tester.pumpAndSettle();
-
-    expect(openedUris.single.pathSegments[1], 'tokenpluginfile.php');
+    expect(find.text('O que deseja fazer?'), findsNothing);
+    expect(openedUris, isEmpty);
+    expect(cache.saved, hasLength(1));
+    expect(cache.saved.single.name, 'Cronograma.pdf');
   });
 
   testWidgets('keeps cache failures non-blocking and observable', (
@@ -1262,6 +1298,7 @@ void main() {
         home: UFMGConnectionPage(
           gateway: gateway,
           logger: _Logger(),
+          materialFileCache: const DisabledMaterialFileCache(),
           openExternalUri: (uri) async {
             openedUris.add(uri);
             return true;
@@ -1277,12 +1314,15 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('moodle-material-open-102')));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Escolha um arquivo'), findsOneWidget);
     expect(find.text('500 B'), findsOneWidget);
     expect(find.text('2.0 KB'), findsOneWidget);
     expect(find.text('2.0 MB'), findsOneWidget);
-    await tester.tap(find.text('Plano.pdf'));
+    final choice = tester.widget<ListTile>(
+      find.widgetWithText(ListTile, 'Plano.pdf'),
+    );
+    choice.onTap!();
     await tester.pumpAndSettle();
 
     expect(openedUris.single.path, contains('plano.pdf'));
@@ -1373,7 +1413,12 @@ void main() {
       )..foundMoodleCourseId = null;
       await tester.pumpWidget(
         MaterialApp(
-          home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+          home: UFMGConnectionPage(
+            gateway: gateway,
+            logger: _Logger(),
+            materialFileCache: const DisabledMaterialFileCache(),
+            openExternalUri: (_) async => true,
+          ),
         ),
       );
       await tester.pumpAndSettle();

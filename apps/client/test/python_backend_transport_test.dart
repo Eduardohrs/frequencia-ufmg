@@ -1041,6 +1041,39 @@ void main() {
   });
 
   test(
+    'shares an in-flight regular App Check token across parallel reads',
+    () async {
+      final tokens = _DelayedRegularAppCheckTokens();
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: tokens,
+        client: MockClient((request) async {
+          if (request.url.path == '/v1/identity') {
+            return http.Response(jsonEncode({'authenticated': true}), 200);
+          }
+          return http.Response(
+            jsonEncode({
+              'connected': true,
+              'created_at': 900,
+              'expires_at': 33300,
+              'reauthentication_required': false,
+            }),
+            200,
+          );
+        }),
+      );
+
+      final identity = transport.verifyIdentity();
+      final status = transport.getUFMGSessionStatus();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(tokens.regularCalls, 1);
+      tokens.regularToken.complete('shared-app-check');
+      await Future.wait([identity, status]);
+    },
+  );
+
+  test(
     'reuses the audited operation id across an authentication retry',
     () async {
       final requests = <http.Request>[];
@@ -1917,6 +1950,21 @@ final class _FailingAppCheckTokens implements PythonBackendTokens {
   Future<String> appCheckToken({required bool limitedUse}) async {
     calls++;
     throw StateError('App Check attestation failed');
+  }
+}
+
+final class _DelayedRegularAppCheckTokens implements PythonBackendTokens {
+  final regularToken = Completer<String>();
+  int regularCalls = 0;
+
+  @override
+  Future<String> firebaseIdToken({required bool forceRefresh}) async => 'id';
+
+  @override
+  Future<String> appCheckToken({required bool limitedUse}) {
+    if (limitedUse) return Future.value('limited');
+    regularCalls++;
+    return regularToken.future;
   }
 }
 
