@@ -53,7 +53,7 @@ final class MaterialCacheCard extends StatelessWidget {
               subtitle: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(_downloadLabel(download.state)),
+                  Text(_downloadLabel(download)),
                   if (_isActive(download))
                     LinearProgressIndicator(value: download.fraction),
                 ],
@@ -101,12 +101,25 @@ bool _isActive(MaterialDownloadProgress download) =>
     download.state == MaterialDownloadState.enqueued ||
     download.state == MaterialDownloadState.running;
 
-String _downloadLabel(MaterialDownloadState state) => switch (state) {
-  MaterialDownloadState.enqueued => 'Na fila',
-  MaterialDownloadState.running => 'Baixando',
-  MaterialDownloadState.succeeded => 'Concluído',
-  MaterialDownloadState.failed => 'Falhou',
-  MaterialDownloadState.cancelled => 'Cancelado',
+String _downloadLabel(MaterialDownloadProgress download) =>
+    switch (download.state) {
+      MaterialDownloadState.enqueued => 'Na fila',
+      MaterialDownloadState.running => 'Baixando',
+      MaterialDownloadState.succeeded => 'Concluído',
+      MaterialDownloadState.failed => _failureLabel(download.failureCode),
+      MaterialDownloadState.cancelled => 'Cancelado',
+    };
+
+String _failureLabel(String code) => switch (code) {
+  'timeout' => 'Falhou: o Moodle demorou para responder',
+  'io_failure' => 'Falhou: conexão interrompida',
+  'body_too_large' || 'declared_too_large' => 'Falhou: arquivo acima do limite',
+  'directory_failure' => 'Falhou: armazenamento indisponível',
+  'foreground_failure' => 'Falhou: execução em segundo plano bloqueada',
+  'cancelled' => 'Cancelado',
+  _ when code.startsWith('upstream_') =>
+    'Falhou: resposta HTTP ${code.substring(9)}',
+  _ => 'Falhou: motivo indisponível',
 };
 
 IconData _downloadIcon(MaterialDownloadState state) => switch (state) {

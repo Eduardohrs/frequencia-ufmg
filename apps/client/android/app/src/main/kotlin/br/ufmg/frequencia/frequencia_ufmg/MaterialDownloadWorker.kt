@@ -40,15 +40,15 @@ class MaterialDownloadWorker(
 
         try {
             setProgressAsync(progressData(spec, 0, spec.expectedSize)).get()
-            setForegroundAsync(foregroundInfo(0, spec.expectedSize)).get()
+            setForegroundAsync(foregroundInfo(spec, 0, spec.expectedSize)).get()
         } catch (_: Exception) {
             log("foreground_failure")
-            return Result.failure(progressData(spec, 0, spec.expectedSize))
+            return failure(spec, "foreground_failure")
         }
         val directory = File(applicationContext.filesDir, "moodle_materials/${spec.namespace}")
         if (!directory.exists() && !directory.mkdirs()) {
             log("directory_failure")
-            return Result.failure(progressData(spec, 0, spec.expectedSize))
+            return failure(spec, "directory_failure")
         }
         val destination = File(directory, spec.storedName)
         val temporary = File(directory, "${spec.storedName}.part")
@@ -65,12 +65,12 @@ class MaterialDownloadWorker(
             if (status in 500..599) return retryOrFail(spec, "upstream_$status")
             if (status != HttpURLConnection.HTTP_OK) {
                 log("upstream_$status")
-                return Result.failure(progressData(spec, 0, spec.expectedSize))
+                return failure(spec, "upstream_$status")
             }
             val declared = connection.contentLengthLong
             if (declared > MaterialDownloadSpec.MAX_FILE_BYTES) {
                 log("declared_too_large")
-                return Result.failure(progressData(spec, 0, declared))
+                return failure(spec, "declared_too_large", total = declared)
             }
             var total = 0L
             var lastReportedBytes = 0L
@@ -113,10 +113,10 @@ class MaterialDownloadWorker(
             return Result.success(progressData(spec, total, total))
         } catch (_: DownloadCancelled) {
             log("cancelled")
-            return Result.failure(progressData(spec, 0, spec.expectedSize))
+            return failure(spec, "cancelled")
         } catch (_: FileTooLarge) {
             log("body_too_large")
-            return Result.failure(progressData(spec, 0, spec.expectedSize))
+            return failure(spec, "body_too_large")
         } catch (_: SocketTimeoutException) {
             return retryOrFail(spec, "timeout")
         } catch (_: IOException) {
@@ -132,27 +132,39 @@ class MaterialDownloadWorker(
         return if (runAttemptCount < 2) {
             Result.retry()
         } else {
-            Result.failure(progressData(spec, 0, spec.expectedSize))
+            failure(spec, code)
         }
     }
 
+    private fun failure(
+        spec: MaterialDownloadSpec,
+        code: String,
+        total: Long = spec.expectedSize,
+    ): Result = Result.success(progressData(spec, 0, total, code))
+
     private fun reportProgress(spec: MaterialDownloadSpec, downloaded: Long, total: Long) {
         setProgressAsync(progressData(spec, downloaded, total))
-        setForegroundAsync(foregroundInfo(downloaded, total))
+        setForegroundAsync(foregroundInfo(spec, downloaded, total))
     }
 
     private fun progressData(
         spec: MaterialDownloadSpec,
         downloaded: Long,
         total: Long,
+        failureCode: String = "",
     ) = androidx.work.Data.Builder()
         .putString("id", spec.id)
         .putString("name", spec.name)
         .putLong("downloaded", downloaded)
         .putLong("total", total)
+        .putString("failure_code", failureCode)
         .build()
 
-    private fun foregroundInfo(downloaded: Long, total: Long): ForegroundInfo {
+    private fun foregroundInfo(
+        spec: MaterialDownloadSpec,
+        downloaded: Long,
+        total: Long,
+    ): ForegroundInfo {
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(
@@ -168,7 +180,7 @@ class MaterialDownloadWorker(
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(applicationContext.applicationInfo.icon)
             .setContentTitle("Baixando material da UFMG")
-            .setContentText(if (knownTotal) "$progress%" else "Preparando download")
+            .setContentText(if (knownTotal) "${spec.name} · $progress%" else spec.name)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setProgress(100, progress, !knownTotal)
@@ -180,13 +192,11 @@ class MaterialDownloadWorker(
             )
             .build()
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ForegroundInfo(notificationId(), notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            ForegroundInfo(spec.notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
-            ForegroundInfo(notificationId(), notification)
+            ForegroundInfo(spec.notificationId, notification)
         }
     }
-
-    private fun notificationId(): Int = id.hashCode() and Int.MAX_VALUE
 
     private fun log(code: String) {
         Log.i(TAG, "event=material_download code=$code work=${id.toString().take(8)}")

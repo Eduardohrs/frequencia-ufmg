@@ -13,6 +13,9 @@ data class MaterialDownloadSpec(
 ) {
     val storedName: String = sha256(id).take(16) + safeExtension(name)
     val uniqueWorkName: String = uniqueWorkName(namespace, id)
+    val queueWorkName: String = "moodle-material-queue-$namespace"
+    val itemTag: String = uniqueWorkName
+    val notificationId: Int = sha256(namespace).take(7).toInt(16)
 
     companion object {
         const val MAX_FILE_BYTES = 100L * 1024L * 1024L

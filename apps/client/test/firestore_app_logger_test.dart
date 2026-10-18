@@ -25,6 +25,9 @@ void main() {
           'operation_id': 'operation-42',
           'outcome': 'failed',
           'duration_ms': 125,
+          'screen': 'ufmg_connection',
+          'action': 'download_all',
+          'failure_code': 'io_failure',
         },
       );
 
@@ -41,6 +44,9 @@ void main() {
         'operation': 'firestore_course_save',
         'outcome': 'failed',
         'durationMs': 125,
+        'screen': 'ufmg_connection',
+        'action': 'download_all',
+        'failureCode': 'io_failure',
         'errorType': null,
         'errorCode': null,
         'errorMessage': null,

@@ -70,6 +70,7 @@ final class MaterialDownloadProgress {
     required this.state,
     required this.downloaded,
     required this.total,
+    this.failureCode = '',
   });
 
   final String id;
@@ -77,6 +78,7 @@ final class MaterialDownloadProgress {
   final MaterialDownloadState state;
   final int downloaded;
   final int total;
+  final String failureCode;
 
   double? get fraction => total > 0
       ? (downloaded / total).clamp(0, 1).toDouble()
