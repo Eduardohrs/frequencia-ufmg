@@ -307,7 +307,9 @@ void main() {
     );
 
     expect(find.text('Suas disciplinas'), findsOneWidget);
-    await tester.tap(find.byTooltip('Sair'));
+    await tester.tap(find.byTooltip('Perfil e configurações'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sair'));
     await tester.pumpAndSettle();
 
     expect(gateway.signOutCalls, 1);

@@ -25,6 +25,10 @@ import 'course_editor_dialog.dart';
 typedef CourseIdGenerator = String Function();
 typedef CurrentTime = DateTime Function();
 
+enum _ProfileAction { ufmgAccount, signOut }
+
+enum _CourseTileAction { edit, delete }
+
 class CoursePage extends StatefulWidget {
   // The runtime defaults intentionally prevent callers from needing utility
   // objects merely to construct the production page.
@@ -418,7 +422,6 @@ class _CoursePageState extends State<CoursePage> {
   }
 
   Future<void> _openGeneralCalendar() async {
-    Navigator.of(context).pop();
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => GeneralCalendarPage(
@@ -437,7 +440,6 @@ class _CoursePageState extends State<CoursePage> {
   Future<void> _openUFMGConnection() async {
     final gateway = widget.ufmgSessionGateway;
     if (gateway == null) return;
-    Navigator.of(context).pop();
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => UFMGConnectionPage(
@@ -451,8 +453,7 @@ class _CoursePageState extends State<CoursePage> {
     if (mounted) await _load();
   }
 
-  Future<void> _openAbsenceDashboard({bool closeDrawer = true}) async {
-    if (closeDrawer) Navigator.of(context).pop();
+  Future<void> _openAbsenceDashboard() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => AbsenceDashboardPage(
@@ -467,6 +468,28 @@ class _CoursePageState extends State<CoursePage> {
       ),
     );
     if (mounted) await _loadPastPendingCount(_courses);
+  }
+
+  void _selectDestination(int index) {
+    switch (index) {
+      case 0:
+        return;
+      case 1:
+        unawaited(_openGeneralCalendar());
+        return;
+      case 2:
+        unawaited(_openAbsenceDashboard());
+        return;
+    }
+  }
+
+  Future<void> _selectProfileAction(_ProfileAction action) async {
+    switch (action) {
+      case _ProfileAction.ufmgAccount:
+        await _openUFMGConnection();
+      case _ProfileAction.signOut:
+        await widget.onSignOut();
+    }
   }
 
   Future<void> _openPendingAttendance() async {
@@ -630,130 +653,205 @@ class _CoursePageState extends State<CoursePage> {
   @override
   Widget build(BuildContext context) {
     final firstName = widget.user.displayName?.trim().split(' ').first;
-    return Scaffold(
-      drawer: Drawer(
-        child: SafeArea(
-          child: ListView(
-            children: [
-              const ListTile(
-                title: Text('Frequência UFMG'),
-                subtitle: Text('Navegação'),
-              ),
-              ListTile(
-                key: const Key('nav-courses'),
-                title: const Text('Disciplinas'),
-                onTap: () => Navigator.of(context).pop(),
-              ),
-              ListTile(
-                key: const Key('nav-general-calendar'),
-                title: const Text('Calendário geral'),
-                onTap: _openGeneralCalendar,
-              ),
-              ListTile(
-                key: const Key('nav-absence-dashboard'),
-                title: const Text('Faltas restantes'),
-                onTap: () => _openAbsenceDashboard(),
-              ),
-              if (widget.ufmgSessionGateway != null)
-                ListTile(
-                  key: const Key('nav-ufmg-connection'),
-                  leading: const Icon(Icons.account_balance_outlined),
-                  title: const Text('Conexão UFMG'),
-                  onTap: _openUFMGConnection,
-                ),
-            ],
-          ),
-        ),
-      ),
-      appBar: AppBar(
-        title: const Text('Frequência UFMG'),
-        actions: [
-          IconButton(
-            tooltip: 'Sair',
-            onPressed: widget.onSignOut,
-            icon: const Icon(Icons.logout),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 960),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final usesRail = constraints.maxWidth >= 840;
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Início'),
+            actions: [
+              PopupMenuButton<_ProfileAction>(
+                key: const Key('profile-menu'),
+                tooltip: 'Perfil e configurações',
+                onSelected: (action) => unawaited(_selectProfileAction(action)),
+                icon: CircleAvatar(
+                  child: Text(
                     firstName == null || firstName.isEmpty
-                        ? 'Suas disciplinas'
-                        : 'Olá, $firstName',
-                    style: Theme.of(context).textTheme.headlineMedium,
+                        ? widget.user.email.characters.first.toUpperCase()
+                        : firstName.characters.first.toUpperCase(),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    widget.user.email,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                itemBuilder: (context) => [
+                  if (widget.ufmgSessionGateway != null)
+                    const PopupMenuItem(
+                      key: Key('profile-ufmg-account'),
+                      value: _ProfileAction.ufmgAccount,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.account_balance_outlined),
+                        title: Text('Conta acadêmica UFMG'),
+                      ),
+                    ),
+                  const PopupMenuItem(
+                    value: _ProfileAction.signOut,
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.logout),
+                      title: Text('Sair'),
                     ),
                   ),
-                  const SizedBox(height: 28),
-                  if (_ufmgSyncNotice != null) ...[
-                    Card(
-                      key: const Key('ufmg-sync-notice'),
-                      color: Theme.of(context).colorScheme.tertiaryContainer,
-                      child: ListTile(
-                        leading: const Icon(Icons.sync_problem_outlined),
-                        title: Text(_ufmgSyncNotice!),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-                  if (_usingLocalCopy) ...[
-                    Card(
-                      key: const Key('offline-copy-banner'),
-                      color: Theme.of(context).colorScheme.secondaryContainer,
-                      child: const ListTile(
-                        leading: Icon(Icons.cloud_off_outlined),
-                        title: Text('Modo offline'),
-                        subtitle: Text(
-                          'Exibindo a última cópia salva neste aparelho.',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-                  if (_pastPendingCount > 0) ...[
-                    Card(
-                      color: Theme.of(context).colorScheme.errorContainer,
-                      child: ListTile(
-                        key: const Key('past-attendance-pending-alert'),
-                        leading: const Icon(Icons.warning_amber_rounded),
-                        title: Text(
-                          _pastPendingCount == 1
-                              ? '1 aula anterior está sem frequência'
-                              : '$_pastPendingCount aulas anteriores estão sem frequência',
-                        ),
-                        subtitle: Text(
-                          'Mais recente: ${_nextPastPending!.course.code} • '
-                          '${_date(_nextPastPending!.session.startsAt, tz.getLocation('America/Sao_Paulo'))}',
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: _openPendingAttendance,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-                  _SectionHeader(onAdd: () => _openEditor()),
-                  const SizedBox(height: 16),
-                  Expanded(child: _content()),
                 ],
               ),
+              const SizedBox(width: 8),
+            ],
+          ),
+          bottomNavigationBar: usesRail
+              ? null
+              : NavigationBar(
+                  selectedIndex: 0,
+                  onDestinationSelected: _selectDestination,
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.home_outlined, key: Key('nav-home')),
+                      selectedIcon: Icon(Icons.home, key: Key('nav-home')),
+                      label: 'Início',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(
+                        Icons.calendar_month_outlined,
+                        key: Key('nav-general-calendar'),
+                      ),
+                      label: 'Calendário',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(
+                        Icons.donut_small_outlined,
+                        key: Key('nav-absence-dashboard'),
+                      ),
+                      label: 'Faltas',
+                    ),
+                  ],
+                ),
+          body: SafeArea(
+            child: Row(
+              children: [
+                if (usesRail) ...[
+                  NavigationRail(
+                    selectedIndex: 0,
+                    labelType: NavigationRailLabelType.all,
+                    onDestinationSelected: _selectDestination,
+                    destinations: const [
+                      NavigationRailDestination(
+                        icon: Icon(Icons.home_outlined, key: Key('nav-home')),
+                        selectedIcon: Icon(Icons.home, key: Key('nav-home')),
+                        label: Text('Início'),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(
+                          Icons.calendar_month_outlined,
+                          key: Key('nav-general-calendar'),
+                        ),
+                        label: Text('Calendário'),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(
+                          Icons.donut_small_outlined,
+                          key: Key('nav-absence-dashboard'),
+                        ),
+                        label: Text('Faltas'),
+                      ),
+                    ],
+                  ),
+                  const VerticalDivider(width: 1),
+                ],
+                Expanded(
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 960),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              firstName == null || firstName.isEmpty
+                                  ? 'Suas disciplinas'
+                                  : 'Olá, $firstName',
+                              style: Theme.of(context).textTheme.headlineMedium,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              widget.user.email,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                            const SizedBox(height: 28),
+                            if (_ufmgSyncNotice != null) ...[
+                              Card(
+                                key: const Key('ufmg-sync-notice'),
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.tertiaryContainer,
+                                child: ListTile(
+                                  leading: const Icon(
+                                    Icons.sync_problem_outlined,
+                                  ),
+                                  title: Text(_ufmgSyncNotice!),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                            ],
+                            if (_usingLocalCopy) ...[
+                              Card(
+                                key: const Key('offline-copy-banner'),
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.secondaryContainer,
+                                child: const ListTile(
+                                  leading: Icon(Icons.cloud_off_outlined),
+                                  title: Text('Modo offline'),
+                                  subtitle: Text(
+                                    'Exibindo a última cópia salva neste aparelho.',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                            ],
+                            if (_pastPendingCount > 0) ...[
+                              Card(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.errorContainer,
+                                child: ListTile(
+                                  key: const Key(
+                                    'past-attendance-pending-alert',
+                                  ),
+                                  leading: const Icon(
+                                    Icons.warning_amber_rounded,
+                                  ),
+                                  title: Text(
+                                    _pastPendingCount == 1
+                                        ? '1 aula anterior está sem frequência'
+                                        : '$_pastPendingCount aulas anteriores estão sem frequência',
+                                  ),
+                                  subtitle: Text(
+                                    'Mais recente: ${_nextPastPending!.course.code} • '
+                                    '${_date(_nextPastPending!.session.startsAt, tz.getLocation('America/Sao_Paulo'))}',
+                                  ),
+                                  trailing: const Icon(Icons.chevron_right),
+                                  onTap: _openPendingAttendance,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                            ],
+                            _SectionHeader(onAdd: () => _openEditor()),
+                            const SizedBox(height: 16),
+                            Expanded(child: _content()),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -783,8 +881,8 @@ class _CoursePageState extends State<CoursePage> {
         course: _courses[index],
         deleting: _deletingId == _courses[index].id,
         saving: _savingIds.contains(_courses[index].id),
+        onOpen: () => _openSchedule(_courses[index]),
         onEdit: () => _openEditor(_courses[index]),
-        onSchedule: () => _openSchedule(_courses[index]),
         onDelete: () => _confirmDelete(_courses[index]),
       ),
     );
@@ -826,16 +924,16 @@ class _CourseTile extends StatelessWidget {
     required this.course,
     required this.deleting,
     required this.saving,
+    required this.onOpen,
     required this.onEdit,
-    required this.onSchedule,
     required this.onDelete,
   });
 
   final CourseRecord course;
   final bool deleting;
   final bool saving;
+  final VoidCallback onOpen;
   final VoidCallback onEdit;
-  final VoidCallback onSchedule;
   final VoidCallback onDelete;
 
   @override
@@ -844,7 +942,9 @@ class _CourseTile extends StatelessWidget {
       elevation: 0,
       clipBehavior: Clip.antiAlias,
       child: ListTile(
+        key: Key('course-card-${course.id}'),
         contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        onTap: deleting || saving ? null : onOpen,
         title: Text(
           course.code,
           style: Theme.of(context).textTheme.titleMedium,
@@ -865,23 +965,32 @@ class _CourseTile extends StatelessWidget {
                 dimension: 24,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: 'Horários ${course.code}',
-                    onPressed: onSchedule,
-                    icon: const Icon(Icons.calendar_view_week_outlined),
+            : PopupMenuButton<_CourseTileAction>(
+                tooltip: 'Mais ações de ${course.code}',
+                onSelected: (action) {
+                  switch (action) {
+                    case _CourseTileAction.edit:
+                      onEdit();
+                    case _CourseTileAction.delete:
+                      onDelete();
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: _CourseTileAction.edit,
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.edit_outlined),
+                      title: Text('Editar'),
+                    ),
                   ),
-                  IconButton(
-                    tooltip: 'Editar ${course.code}',
-                    onPressed: onEdit,
-                    icon: const Icon(Icons.edit_outlined),
-                  ),
-                  IconButton(
-                    tooltip: 'Excluir ${course.code}',
-                    onPressed: onDelete,
-                    icon: const Icon(Icons.delete_outline),
+                  PopupMenuItem(
+                    value: _CourseTileAction.delete,
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.delete_outline),
+                      title: Text('Excluir'),
+                    ),
                   ),
                 ],
               ),
@@ -907,20 +1016,31 @@ class _MessageState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 48, color: Theme.of(context).colorScheme.primary),
-          const SizedBox(height: 16),
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
-          if (description != null) ...[
-            const SizedBox(height: 6),
-            Text(description!, textAlign: TextAlign.center),
-          ],
-          const SizedBox(height: 20),
-          OutlinedButton(onPressed: onAction, child: Text(actionLabel)),
-        ],
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 48,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(height: 16),
+                Text(title, style: Theme.of(context).textTheme.titleMedium),
+                if (description != null) ...[
+                  const SizedBox(height: 6),
+                  Text(description!, textAlign: TextAlign.center),
+                ],
+                const SizedBox(height: 20),
+                OutlinedButton(onPressed: onAction, child: Text(actionLabel)),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
