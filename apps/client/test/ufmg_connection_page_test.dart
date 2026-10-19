@@ -437,6 +437,114 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'presents the connected account as independent academic sources',
+    (tester) async {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Conta acadêmica UFMG'), findsOneWidget);
+      expect(find.text('Fontes acadêmicas'), findsOneWidget);
+      expect(find.byKey(const Key('ufmg-source-siga')), findsOneWidget);
+      expect(find.byKey(const Key('ufmg-source-moodle')), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const Key('ufmg-manage-connection')),
+      );
+      await tester.tap(find.byKey(const Key('ufmg-manage-connection')));
+      await tester.pumpAndSettle();
+      expect(find.text('Seus dados manuais são preservados'), findsOneWidget);
+    },
+  );
+
+  testWidgets('keeps Moodle available after a SIGA synchronization failure', (
+    tester,
+  ) async {
+    final gateway =
+        _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..syncError = const PythonBackendException(
+            PythonBackendError.ufmgUnavailable,
+          );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('ufmg-sync-siga')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ufmg-source-siga-error')), findsOneWidget);
+    expect(find.byKey(const Key('ufmg-sync-moodle')), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('ufmg-sync-moodle')))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets('points synchronized results back to disciplines and calendar', (
+    tester,
+  ) async {
+    var coursesOpened = 0;
+    var calendarOpened = 0;
+    final logger = _Logger();
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: gateway,
+          logger: logger,
+          onOpenCourses: () async => coursesOpened++,
+          onOpenCalendar: () async => calendarOpened++,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('ufmg-sync-siga')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('ufmg-open-courses')));
+    await tester.tap(find.byKey(const Key('ufmg-open-courses')));
+    expect(coursesOpened, 1);
+    expect(
+      logger.parameters,
+      contains(containsPair('action', 'ufmg_open_courses')),
+    );
+
+    await tester.ensureVisible(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('ufmg-open-calendar')));
+    await tester.tap(find.byKey(const Key('ufmg-open-calendar')));
+    expect(calendarOpened, 1);
+    expect(
+      logger.parameters,
+      contains(containsPair('action', 'ufmg_open_calendar')),
+    );
+  });
+
   testWidgets('explains synchronization failures and expired sessions', (
     tester,
   ) async {

@@ -1311,11 +1311,61 @@ void main() {
     await tester.tap(find.byKey(const Key('profile-ufmg-account')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Conexão UFMG'), findsOneWidget);
+    expect(find.text('Conta acadêmica UFMG'), findsOneWidget);
     expect(find.text('Conectar à UFMG'), findsOneWidget);
     Navigator.of(tester.element(find.text('Conectar à UFMG'))).pop();
     await tester.pumpAndSettle();
     expect(repository.listCalls, 2);
+  });
+
+  testWidgets('returns synchronized academic sources to their app sections', (
+    tester,
+  ) async {
+    final gateway = _UFMGGateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          ufmgSessionGateway: gateway,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Future<void> openAccount() async {
+      await tester.tap(find.byTooltip('Perfil e configurações'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('profile-ufmg-account')));
+      await tester.pumpAndSettle();
+    }
+
+    await openAccount();
+    await tester.tap(find.byKey(const Key('ufmg-sync-siga')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('ufmg-open-courses')));
+    await tester.tap(find.byKey(const Key('ufmg-open-courses')));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Perfil e configurações'), findsOneWidget);
+    expect(find.text('Conta acadêmica UFMG'), findsNothing);
+
+    await openAccount();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('ufmg-open-calendar')));
+    await tester.tap(find.byKey(const Key('ufmg-open-calendar')));
+    await tester.pumpAndSettle();
+    expect(find.text('Calendário operacional'), findsOneWidget);
   });
 
   testWidgets('uses a navigation rail when the available width is large', (
@@ -1791,7 +1841,7 @@ final class _UFMGGateway implements BackendUFMGSessionGateway {
 
   @override
   Future<PythonMoodleContentDiscovery> discoverMoodleContent() =>
-      throw UnimplementedError();
+      Future.value(materialCatalog);
 
   @override
   Future<PythonMoodleContentDiscovery> listMoodleMaterialCatalog() =>
@@ -1836,8 +1886,15 @@ final class _UFMGGateway implements BackendUFMGSessionGateway {
       throw UnimplementedError();
 
   @override
-  Future<PythonMoodleDateImportResult> importMoodleDates() =>
-      throw UnimplementedError();
+  Future<PythonMoodleDateImportResult> importMoodleDates() async =>
+      const PythonMoodleDateImportResult(
+        total: 0,
+        matched: 0,
+        unmatched: 0,
+        created: 0,
+        updated: 0,
+        unchanged: 0,
+      );
 
   @override
   Future<List<PythonMoodleDate>> listMoodleDates() async => const [];

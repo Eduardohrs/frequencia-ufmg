@@ -23,6 +23,8 @@ class UFMGConnectionPage extends StatefulWidget {
     this.materialCourseId,
     this.materialCourseCode,
     this.materialCourseTerm,
+    this.onOpenCourses,
+    this.onOpenCalendar,
     super.key,
   });
 
@@ -35,6 +37,8 @@ class UFMGConnectionPage extends StatefulWidget {
   final String? materialCourseId;
   final String? materialCourseCode;
   final String? materialCourseTerm;
+  final Future<void> Function()? onOpenCourses;
+  final Future<void> Function()? onOpenCalendar;
 
   bool get isMaterialScope => materialCourseId != null;
 
@@ -51,7 +55,12 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   bool _busy = false;
   bool _showReconnectForm = false;
   String? _error;
-  String? _importSummary;
+  String? _sigaSummary;
+  String? _moodleSummary;
+  String? _sigaError;
+  String? _moodleError;
+  bool _sigaBusy = false;
+  bool _moodleBusy = false;
   List<PythonMoodleDate> _dates = const [];
   PythonMoodleContentDiscovery? _contentDiscovery;
   late final MaterialFileCache _materialFileCache;
@@ -799,9 +808,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   Future<void> _syncSiga() async {
     _logInteraction('ufmg_sync_siga');
     setState(() {
-      _busy = true;
+      _sigaBusy = true;
       _error = null;
-      _importSummary = null;
+      _sigaError = null;
+      _sigaSummary = null;
     });
     try {
       final result = await runAuditedOperation(
@@ -816,7 +826,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       }
       if (mounted) {
         setState(() {
-          _importSummary =
+          _sigaSummary =
               '${result.courses.created} ${_plural(result.courses.created, 'disciplina importada', 'disciplinas importadas')}. '
               '${result.courses.existing} já ${result.courses.existing == 1 ? 'estava cadastrada' : 'estavam cadastradas'}. '
               '${result.schedules.updated} ${_plural(result.schedules.updated, 'grade atualizada', 'grades atualizadas')}. '
@@ -834,21 +844,25 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             reauthenticationRequired: true,
           );
           _error = 'Sua sessão expirou. Reconecte para sincronizar.';
+          _sigaError = _error;
         });
       } else {
-        setState(() => _error = _syncMessageFor(error));
+        setState(() {
+          _sigaError = _syncMessageFor(error);
+        });
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _sigaBusy = false);
     }
   }
 
   Future<void> _syncMoodle() async {
     _logInteraction('ufmg_sync_moodle');
     setState(() {
-      _busy = true;
+      _moodleBusy = true;
       _error = null;
-      _importSummary = null;
+      _moodleError = null;
+      _moodleSummary = null;
     });
     try {
       final result = await runAuditedOperation(
@@ -914,7 +928,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         setState(() {
           _dates = dates;
           _contentDiscovery = discovery;
-          _importSummary =
+          _moodleSummary =
               '${result.created} ${_plural(result.created, 'data do Moodle importada', 'datas do Moodle importadas')}. '
               '${result.updated} ${_plural(result.updated, 'data atualizada', 'datas atualizadas')}. '
               '${result.unchanged} sem alteração. '
@@ -933,12 +947,15 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             reauthenticationRequired: true,
           );
           _error = 'Sua sessão expirou. Reconecte para sincronizar o Moodle.';
+          _moodleError = _error;
         });
       } else {
-        setState(() => _error = _moodleSyncMessageFor(error));
+        setState(() {
+          _moodleError = _moodleSyncMessageFor(error);
+        });
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _moodleBusy = false);
     }
   }
 
@@ -955,7 +972,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         title: Text(
           widget.isMaterialScope
               ? 'Materiais • ${widget.materialCourseCode}'
-              : 'Conexão UFMG',
+              : 'Conta acadêmica UFMG',
         ),
       ),
       body: SafeArea(
@@ -1037,31 +1054,30 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Icon(
-          connected
-              ? Icons.verified_user_outlined
-              : Icons.account_balance_outlined,
-          size: 56,
-          color: connected
-              ? Theme.of(context).colorScheme.primary
-              : Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
-        const SizedBox(height: 16),
-        Text(
-          connected
-              ? 'UFMG conectada'
-              : status?.reauthenticationRequired == true
-              ? 'Sua sessão expirou'
-              : 'Conectar à UFMG',
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          connected
-              ? 'A sessão acadêmica pode ser usada nas próximas sincronizações.'
-              : 'Use seu login institucional para permitir sincronizações. Sua senha não é armazenada.',
-          textAlign: TextAlign.center,
+        Card(
+          margin: EdgeInsets.zero,
+          child: ListTile(
+            leading: Icon(
+              connected
+                  ? Icons.verified_user_outlined
+                  : Icons.account_balance_outlined,
+              color: connected
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            title: Text(
+              connected
+                  ? 'UFMG conectada'
+                  : status?.reauthenticationRequired == true
+                  ? 'Sua sessão expirou'
+                  : 'Conectar à UFMG',
+            ),
+            subtitle: Text(
+              connected
+                  ? 'Sessão pronta para sincronizar suas fontes acadêmicas.'
+                  : 'Sua senha não é armazenada; ela é usada somente para conectar.',
+            ),
+          ),
         ),
         if (connected && status?.expiresAt != null) ...[
           const SizedBox(height: 16),
@@ -1091,21 +1107,6 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           _connectionForm()
         else
           _syncActions(),
-        if (_importSummary != null) ...[
-          const SizedBox(height: 16),
-          Semantics(
-            liveRegion: true,
-            child: Card(
-              child: ListTile(
-                leading: const Icon(Icons.check_circle_outline),
-                title: Text(_importSummary!),
-                subtitle: const Text(
-                  'Dados já cadastrados, correções manuais e registros de frequência foram preservados.',
-                ),
-              ),
-            ),
-          ),
-        ],
         if (_materialFileCache.isAvailable) ...[
           const SizedBox(height: 16),
           MaterialCacheCard(
@@ -1272,48 +1273,52 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'Sincronizar dados',
+          'Fontes acadêmicas',
           style: Theme.of(context).textTheme.titleLarge,
         ),
-        const SizedBox(height: 12),
-        FilledButton.icon(
-          key: const Key('ufmg-sync-siga'),
-          onPressed: _busy ? null : _syncSiga,
-          icon: _busy
-              ? const SizedBox.square(
-                  dimension: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.school_outlined),
-          label: const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: Column(
-              children: [
-                Text('Sincronizar SIGA'),
-                Text('Disciplinas e horários'),
-              ],
-            ),
-          ),
+        const SizedBox(height: 8),
+        _academicSourceCard(
+          key: const Key('ufmg-source-siga'),
+          icon: Icons.school_outlined,
+          title: 'SIGA',
+          description: 'Disciplinas e horários',
+          actionKey: const Key('ufmg-sync-siga'),
+          actionLabel: 'Sincronizar SIGA',
+          busy: _sigaBusy,
+          onSync: _syncSiga,
+          errorKey: const Key('ufmg-source-siga-error'),
+          error: _sigaError,
+          summary: _sigaSummary,
+          resultActionKey: const Key('ufmg-open-courses'),
+          resultActionLabel: 'Ver disciplinas',
+          onOpenResult: widget.onOpenCourses == null
+              ? null
+              : () async {
+                  _logInteraction('ufmg_open_courses');
+                  await widget.onOpenCourses!();
+                },
         ),
         const SizedBox(height: 12),
-        FilledButton.tonalIcon(
-          key: const Key('ufmg-sync-moodle'),
-          onPressed: _busy ? null : _syncMoodle,
-          icon: _busy
-              ? const SizedBox.square(
-                  dimension: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.menu_book_outlined),
-          label: const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: Column(
-              children: [
-                Text('Sincronizar Moodle'),
-                Text('Datas, planos de ensino e cronogramas'),
-              ],
-            ),
-          ),
+        _academicSourceCard(
+          key: const Key('ufmg-source-moodle'),
+          icon: Icons.menu_book_outlined,
+          title: 'Moodle',
+          description: 'Datas, planos de ensino e cronogramas',
+          actionKey: const Key('ufmg-sync-moodle'),
+          actionLabel: 'Sincronizar Moodle',
+          busy: _moodleBusy,
+          onSync: _syncMoodle,
+          errorKey: const Key('ufmg-source-moodle-error'),
+          error: _moodleError,
+          summary: _moodleSummary,
+          resultActionKey: const Key('ufmg-open-calendar'),
+          resultActionLabel: 'Ver calendário',
+          onOpenResult: widget.onOpenCalendar == null
+              ? null
+              : () async {
+                  _logInteraction('ufmg_open_calendar');
+                  await widget.onOpenCalendar!();
+                },
         ),
         const SizedBox(height: 12),
         Card(
@@ -1327,6 +1332,15 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             title: const Text('Gerenciar conexão'),
             childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             children: [
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.shield_outlined),
+                title: Text('Seus dados manuais são preservados'),
+                subtitle: Text(
+                  'Sincronizações complementam seus registros. Sua senha não '
+                  'é armazenada e os arquivos vêm direto da UFMG.',
+                ),
+              ),
               SizedBox(
                 width: double.infinity,
                 child: TextButton.icon(
@@ -1356,6 +1370,100 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       ],
     );
   }
+
+  Widget _academicSourceCard({
+    required Key key,
+    required IconData icon,
+    required String title,
+    required String description,
+    required Key actionKey,
+    required String actionLabel,
+    required bool busy,
+    required Future<void> Function() onSync,
+    required Key errorKey,
+    required String? error,
+    required String? summary,
+    required Key resultActionKey,
+    required String resultActionLabel,
+    required Future<void> Function()? onOpenResult,
+  }) => Card(
+    key: key,
+    margin: EdgeInsets.zero,
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final action = FilledButton.tonalIcon(
+          key: actionKey,
+          onPressed: busy || _busy ? null : onSync,
+          icon: busy
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.sync),
+          label: Text(busy ? 'Atualizando…' : actionLabel),
+        );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ListTile(
+              leading: Icon(icon),
+              title: Text(title),
+              subtitle: Text(description),
+              trailing: constraints.maxWidth >= 420 ? action : null,
+            ),
+            if (constraints.maxWidth < 420)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: action,
+              ),
+            if (error != null)
+              Semantics(
+                liveRegion: true,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Text(
+                    error,
+                    key: errorKey,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+              ),
+            if (summary != null) ...[
+              Semantics(
+                liveRegion: true,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(summary),
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'Dados já cadastrados, correções manuais e registros de '
+                  'frequência foram preservados.',
+                ),
+              ),
+              if (onOpenResult != null)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    key: resultActionKey,
+                    onPressed: onOpenResult,
+                    icon: const Icon(Icons.arrow_forward),
+                    label: Text(resultActionLabel),
+                  ),
+                )
+              else
+                const SizedBox(height: 12),
+            ],
+          ],
+        );
+      },
+    ),
+  );
 
   Widget _connectionForm() {
     return AutofillGroup(
