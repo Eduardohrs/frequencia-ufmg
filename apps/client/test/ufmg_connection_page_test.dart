@@ -99,6 +99,47 @@ void main() {
     expect(logger.parameters.toString(), isNot(contains('private-password')));
   });
 
+  testWidgets('shows only the selected discipline in material scope', (
+    tester,
+  ) async {
+    final gateway =
+        _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..materialCatalog = PythonMoodleContentDiscovery(
+            candidateTotal: 2,
+            metaturmaCandidateTotal: 0,
+            courses: [
+              _catalogCourse('dcc203', 'DCC203', 'Plano de POO', '101'),
+              _catalogCourse('mat001', 'MAT001', 'Plano de Cálculo', '102'),
+            ],
+          );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: gateway,
+          logger: _Logger(),
+          materialCourseId: 'different-id',
+          materialCourseCode: 'DCC203',
+          materialCourseTerm: '2026-2',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Materiais • DCC203'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+    expect(find.text('Plano de POO'), findsOneWidget);
+    expect(find.text('Plano de Cálculo'), findsNothing);
+    expect(find.text('Sincronizar dados'), findsNothing);
+    expect(gateway.materialCatalogCalls, 1);
+  });
+
   testWidgets('syncs SIGA while connected and shows the safe summary', (
     tester,
   ) async {
@@ -2241,6 +2282,32 @@ PythonMoodleMaterialFile _materialFile(String name, int size) =>
       size: size,
       mimeType: 'application/pdf',
     );
+
+PythonMoodleCourseContent _catalogCourse(
+  String courseId,
+  String courseCode,
+  String title,
+  String sourceId,
+) => PythonMoodleCourseContent(
+  courseId: courseId,
+  courseCode: courseCode,
+  term: '2026-2',
+  moodleCourseId: '3701',
+  status: PythonMoodleContentStatus.found,
+  candidates: [
+    PythonMoodleContentCandidate(
+      sourceId: sourceId,
+      moodleCourseId: '3701',
+      kind: 'page',
+      title: title,
+      url: Uri.parse(
+        'https://virtual.ufmg.br/20262/mod/page/view.php?id=$sourceId',
+      ),
+      relevance: 'teaching_plan',
+      origin: PythonMoodleContentOrigin.canonical,
+    ),
+  ],
+);
 
 final class _Gateway implements BackendUFMGSessionGateway {
   _Gateway({required this.status});

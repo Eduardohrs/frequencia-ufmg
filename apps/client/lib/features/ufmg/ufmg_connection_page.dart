@@ -20,6 +20,9 @@ class UFMGConnectionPage extends StatefulWidget {
     this.syncSchedule,
     this.openExternalUri,
     this.materialFileCache,
+    this.materialCourseId,
+    this.materialCourseCode,
+    this.materialCourseTerm,
     super.key,
   });
 
@@ -29,6 +32,11 @@ class UFMGConnectionPage extends StatefulWidget {
   final UFMGSyncScheduleGateway? syncSchedule;
   final Future<bool> Function(Uri uri)? openExternalUri;
   final MaterialFileCache? materialFileCache;
+  final String? materialCourseId;
+  final String? materialCourseCode;
+  final String? materialCourseTerm;
+
+  bool get isMaterialScope => materialCourseId != null;
 
   @override
   State<UFMGConnectionPage> createState() => _UFMGConnectionPageState();
@@ -204,12 +212,40 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         action: widget.gateway.listMoodleMaterialCatalog,
       );
       if (mounted && catalog.courses.isNotEmpty) {
-        setState(() => _contentDiscovery = catalog);
+        final courses = widget.isMaterialScope
+            ? catalog.courses.where(_matchesMaterialScope).toList()
+            : catalog.courses;
+        setState(
+          () => _contentDiscovery = PythonMoodleContentDiscovery(
+            courses: courses,
+            candidateTotal: courses.fold(
+              0,
+              (total, course) => total + course.candidates.length,
+            ),
+            metaturmaCandidateTotal: courses.fold(
+              0,
+              (total, course) =>
+                  total +
+                  course.candidates
+                      .where(
+                        (item) =>
+                            item.origin == PythonMoodleContentOrigin.metaturma,
+                      )
+                      .length,
+            ),
+          ),
+        );
       }
     } catch (_) {
       // The persisted catalogue is supplementary and may be synced later.
     }
   }
+
+  bool _matchesMaterialScope(PythonMoodleCourseContent course) =>
+      course.courseId == widget.materialCourseId ||
+      (course.courseCode.toUpperCase() ==
+              widget.materialCourseCode?.toUpperCase() &&
+          course.term == widget.materialCourseTerm);
 
   Future<void> _openMoodleMaterial(
     PythonMoodleCourseContent course,
@@ -915,14 +951,24 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Conexão UFMG')),
+      appBar: AppBar(
+        title: Text(
+          widget.isMaterialScope
+              ? 'Materiais • ${widget.materialCourseCode}'
+              : 'Conexão UFMG',
+        ),
+      ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 560),
-              child: _loading ? _loadingContent() : _content(),
+              child: _loading
+                  ? _loadingContent()
+                  : widget.isMaterialScope
+                  ? _scopedMaterialContent()
+                  : _content(),
             ),
           ),
         ),
@@ -936,8 +982,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     children: [
       const Center(child: CircularProgressIndicator()),
       const SizedBox(height: 12),
-      const Text(
-        'Conferindo a conexão com a UFMG…',
+      Text(
+        widget.isMaterialScope
+            ? 'Carregando materiais…'
+            : 'Conferindo a conexão com a UFMG…',
         textAlign: TextAlign.center,
       ),
       if (_materialFileCache.isAvailable) ...[
@@ -952,6 +1000,34 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           onClear: _clearCachedMaterials,
         ),
       ],
+    ],
+  );
+
+  Widget _scopedMaterialContent() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        'Materiais do Moodle',
+        style: Theme.of(context).textTheme.headlineSmall,
+      ),
+      const SizedBox(height: 8),
+      const Text(
+        'Os arquivos são baixados diretamente da UFMG para este dispositivo, '
+        'sem ocupar espaço no nosso servidor.',
+      ),
+      if (_contentDiscovery?.courses.isEmpty ?? true) ...[
+        const SizedBox(height: 24),
+        const Card(
+          child: ListTile(
+            leading: Icon(Icons.folder_off_outlined),
+            title: Text('Nenhum material sincronizado'),
+            subtitle: Text(
+              'Sincronize o Moodle pela conta para atualizar o catálogo.',
+            ),
+          ),
+        ),
+      ] else
+        ..._materialSections(includeHeading: false),
     ],
   );
 
@@ -1060,135 +1136,136 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               ),
             ),
         ],
-        if (_contentDiscovery != null) ...[
-          const SizedBox(height: 24),
-          Text(
-            'Materiais do Moodle',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Arquivos são baixados diretamente da UFMG sem ocupar espaço no '
-            'nosso servidor. Páginas interativas continuam abrindo no Moodle.',
-          ),
-          const SizedBox(height: 8),
-          if (_materialFileCache.isAvailable &&
-              _downloadableMaterials(_contentDiscovery!.courses).isNotEmpty)
-            OutlinedButton.icon(
-              key: const Key('moodle-download-all'),
-              onPressed: _materialBatchRunning
-                  ? null
-                  : () => _confirmMaterialBatch(
-                      'Baixar todos os materiais?',
-                      _downloadableMaterials(_contentDiscovery!.courses),
-                    ),
-              icon: const Icon(Icons.download_for_offline_outlined),
-              label: const Text('Baixar tudo'),
-            ),
-          if (_materialBatchTotal > 0) ...[
-            const SizedBox(height: 8),
-            Semantics(
-              liveRegion: true,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  LinearProgressIndicator(
-                    value: _materialBatchTotal == 0
-                        ? null
-                        : _materialBatchCompleted / _materialBatchTotal,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _materialBatchRunning
-                        ? '$_materialBatchCompleted de $_materialBatchTotal materiais processados'
-                        : '${_materialBatchCompleted - _materialBatchFailed} de $_materialBatchTotal materiais preparados',
-                  ),
-                  if (!_materialBatchRunning &&
-                      _materialBatchFailures.isNotEmpty)
-                    TextButton.icon(
-                      key: const Key('moodle-download-retry-failed'),
-                      onPressed: () {
-                        _logInteraction('moodle_material_batch_retry');
-                        _downloadMaterialBatch(List.of(_materialBatchFailures));
-                      },
-                      icon: const Icon(Icons.refresh),
-                      label: Text(
-                        'Tentar novamente (${_materialBatchFailures.length})',
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          for (final course in _contentDiscovery!.courses)
-            Card(
-              child: ExpansionTile(
-                key: Key('moodle-content-${course.courseId}'),
-                onExpansionChanged: (expanded) => _logInteraction(
-                  expanded ? 'moodle_course_expand' : 'moodle_course_collapse',
-                ),
-                title: Text(course.courseCode),
-                subtitle: Text(_contentStatus(course)),
-                children: [
-                  if (_materialFileCache.isAvailable &&
-                      _downloadableMaterials([course]).isNotEmpty)
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
-                        child: TextButton.icon(
-                          key: Key('moodle-download-all-${course.courseId}'),
-                          onPressed: _materialBatchRunning
-                              ? null
-                              : () => _confirmMaterialBatch(
-                                  'Baixar todos de ${course.courseCode}?',
-                                  _downloadableMaterials([course]),
-                                ),
-                          icon: const Icon(Icons.download_for_offline_outlined),
-                          label: const Text('Baixar tudo'),
-                        ),
-                      ),
-                    ),
-                  for (final candidate in course.candidates)
-                    ListTile(
-                      leading: Icon(_contentIcon(candidate.kind)),
-                      title: Text(candidate.title),
-                      subtitle: Text(_candidateLabel(candidate)),
-                      trailing: candidate.canOpenDirectly
-                          ? _materialDownloadsInFlight.contains(
-                                  _materialOperationId(course, candidate),
-                                )
-                                ? const SizedBox.square(
-                                    dimension: 24,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : IconButton(
-                                    key: Key(
-                                      'moodle-material-open-${candidate.sourceId}',
-                                    ),
-                                    tooltip: candidate.kind == 'file'
-                                        ? 'Baixar'
-                                        : 'Abrir no Moodle',
-                                    onPressed: () =>
-                                        _openMoodleMaterial(course, candidate),
-                                    icon: Icon(
-                                      candidate.kind == 'file'
-                                          ? Icons.download_outlined
-                                          : Icons.open_in_new,
-                                    ),
-                                  )
-                          : null,
-                    ),
-                ],
-              ),
-            ),
-        ],
+        if (_contentDiscovery != null) ..._materialSections(),
       ],
     );
   }
+
+  List<Widget> _materialSections({bool includeHeading = true}) => [
+    if (includeHeading) ...[
+      const SizedBox(height: 24),
+      Text(
+        'Materiais do Moodle',
+        style: Theme.of(context).textTheme.titleLarge,
+      ),
+      const SizedBox(height: 8),
+      const Text(
+        'Arquivos são baixados diretamente da UFMG sem ocupar espaço no '
+        'nosso servidor. Páginas interativas continuam abrindo no Moodle.',
+      ),
+    ],
+    const SizedBox(height: 8),
+    if (_materialFileCache.isAvailable &&
+        _downloadableMaterials(_contentDiscovery!.courses).isNotEmpty)
+      OutlinedButton.icon(
+        key: const Key('moodle-download-all'),
+        onPressed: _materialBatchRunning
+            ? null
+            : () => _confirmMaterialBatch(
+                'Baixar todos os materiais?',
+                _downloadableMaterials(_contentDiscovery!.courses),
+              ),
+        icon: const Icon(Icons.download_for_offline_outlined),
+        label: const Text('Baixar tudo'),
+      ),
+    if (_materialBatchTotal > 0) ...[
+      const SizedBox(height: 8),
+      Semantics(
+        liveRegion: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            LinearProgressIndicator(
+              value: _materialBatchTotal == 0
+                  ? null
+                  : _materialBatchCompleted / _materialBatchTotal,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _materialBatchRunning
+                  ? '$_materialBatchCompleted de $_materialBatchTotal materiais processados'
+                  : '${_materialBatchCompleted - _materialBatchFailed} de $_materialBatchTotal materiais preparados',
+            ),
+            if (!_materialBatchRunning && _materialBatchFailures.isNotEmpty)
+              TextButton.icon(
+                key: const Key('moodle-download-retry-failed'),
+                onPressed: () {
+                  _logInteraction('moodle_material_batch_retry');
+                  _downloadMaterialBatch(List.of(_materialBatchFailures));
+                },
+                icon: const Icon(Icons.refresh),
+                label: Text(
+                  'Tentar novamente (${_materialBatchFailures.length})',
+                ),
+              ),
+          ],
+        ),
+      ),
+    ],
+    const SizedBox(height: 8),
+    for (final course in _contentDiscovery!.courses)
+      Card(
+        child: ExpansionTile(
+          key: Key('moodle-content-${course.courseId}'),
+          onExpansionChanged: (expanded) => _logInteraction(
+            expanded ? 'moodle_course_expand' : 'moodle_course_collapse',
+          ),
+          title: Text(course.courseCode),
+          subtitle: Text(_contentStatus(course)),
+          children: [
+            if (_materialFileCache.isAvailable &&
+                _downloadableMaterials([course]).isNotEmpty)
+              Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+                  child: TextButton.icon(
+                    key: Key('moodle-download-all-${course.courseId}'),
+                    onPressed: _materialBatchRunning
+                        ? null
+                        : () => _confirmMaterialBatch(
+                            'Baixar todos de ${course.courseCode}?',
+                            _downloadableMaterials([course]),
+                          ),
+                    icon: const Icon(Icons.download_for_offline_outlined),
+                    label: const Text('Baixar tudo'),
+                  ),
+                ),
+              ),
+            for (final candidate in course.candidates)
+              ListTile(
+                leading: Icon(_contentIcon(candidate.kind)),
+                title: Text(candidate.title),
+                subtitle: Text(_candidateLabel(candidate)),
+                trailing: candidate.canOpenDirectly
+                    ? _materialDownloadsInFlight.contains(
+                            _materialOperationId(course, candidate),
+                          )
+                          ? const SizedBox.square(
+                              dimension: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : IconButton(
+                              key: Key(
+                                'moodle-material-open-${candidate.sourceId}',
+                              ),
+                              tooltip: candidate.kind == 'file'
+                                  ? 'Baixar'
+                                  : 'Abrir no Moodle',
+                              onPressed: () =>
+                                  _openMoodleMaterial(course, candidate),
+                              icon: Icon(
+                                candidate.kind == 'file'
+                                    ? Icons.download_outlined
+                                    : Icons.open_in_new,
+                              ),
+                            )
+                    : null,
+              ),
+          ],
+        ),
+      ),
+  ];
 
   Widget _syncActions() {
     return Column(
