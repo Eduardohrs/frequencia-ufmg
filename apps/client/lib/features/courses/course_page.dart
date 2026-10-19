@@ -769,91 +769,86 @@ class _CoursePageState extends State<CoursePage> {
                   child: Center(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 960),
-                      child: Padding(
+                      child: ListView(
                         padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Text(
-                              firstName == null || firstName.isEmpty
-                                  ? 'Suas disciplinas'
-                                  : 'Olá, $firstName',
-                              style: Theme.of(context).textTheme.headlineMedium,
+                        children: [
+                          Text(
+                            firstName == null || firstName.isEmpty
+                                ? 'Suas disciplinas'
+                                : 'Olá, $firstName',
+                            style: Theme.of(context).textTheme.headlineMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            widget.user.email,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                          ),
+                          const SizedBox(height: 28),
+                          if (_ufmgSyncNotice != null) ...[
+                            Card(
+                              key: const Key('ufmg-sync-notice'),
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.tertiaryContainer,
+                              child: ListTile(
+                                leading: const Icon(
+                                  Icons.sync_problem_outlined,
+                                ),
+                                title: Text(_ufmgSyncNotice!),
+                              ),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              widget.user.email,
-                              style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
-                                  ),
-                            ),
-                            const SizedBox(height: 28),
-                            if (_ufmgSyncNotice != null) ...[
-                              Card(
-                                key: const Key('ufmg-sync-notice'),
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.tertiaryContainer,
-                                child: ListTile(
-                                  leading: const Icon(
-                                    Icons.sync_problem_outlined,
-                                  ),
-                                  title: Text(_ufmgSyncNotice!),
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                            ],
-                            if (_usingLocalCopy) ...[
-                              Card(
-                                key: const Key('offline-copy-banner'),
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.secondaryContainer,
-                                child: const ListTile(
-                                  leading: Icon(Icons.cloud_off_outlined),
-                                  title: Text('Modo offline'),
-                                  subtitle: Text(
-                                    'Exibindo a última cópia salva neste aparelho.',
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                            ],
-                            if (_pastPendingCount > 0) ...[
-                              Card(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.errorContainer,
-                                child: ListTile(
-                                  key: const Key(
-                                    'past-attendance-pending-alert',
-                                  ),
-                                  leading: const Icon(
-                                    Icons.warning_amber_rounded,
-                                  ),
-                                  title: Text(
-                                    _pastPendingCount == 1
-                                        ? '1 aula anterior está sem frequência'
-                                        : '$_pastPendingCount aulas anteriores estão sem frequência',
-                                  ),
-                                  subtitle: Text(
-                                    'Mais recente: ${_nextPastPending!.course.code} • '
-                                    '${_date(_nextPastPending!.session.startsAt, tz.getLocation('America/Sao_Paulo'))}',
-                                  ),
-                                  trailing: const Icon(Icons.chevron_right),
-                                  onTap: _openPendingAttendance,
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                            ],
-                            _SectionHeader(onAdd: () => _openEditor()),
                             const SizedBox(height: 16),
-                            Expanded(child: _content()),
                           ],
-                        ),
+                          if (_usingLocalCopy) ...[
+                            Card(
+                              key: const Key('offline-copy-banner'),
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.secondaryContainer,
+                              child: const ListTile(
+                                leading: Icon(Icons.cloud_off_outlined),
+                                title: Text('Modo offline'),
+                                subtitle: Text(
+                                  'Exibindo a última cópia salva neste aparelho.',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                          ],
+                          if (_pastPendingCount > 0) ...[
+                            Card(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.errorContainer,
+                              child: ListTile(
+                                key: const Key('past-attendance-pending-alert'),
+                                leading: const Icon(
+                                  Icons.warning_amber_rounded,
+                                ),
+                                title: Text(
+                                  _pastPendingCount == 1
+                                      ? '1 aula anterior está sem frequência'
+                                      : '$_pastPendingCount aulas anteriores estão sem frequência',
+                                ),
+                                subtitle: Text(
+                                  'Mais recente: ${_nextPastPending!.course.code} • '
+                                  '${_date(_nextPastPending!.session.startsAt, tz.getLocation('America/Sao_Paulo'))}',
+                                ),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: _openPendingAttendance,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                          ],
+                          _SectionHeader(onAdd: () => _openEditor()),
+                          const SizedBox(height: 16),
+                          _content(),
+                        ],
                       ),
                     ),
                   ),
@@ -885,17 +880,20 @@ class _CoursePageState extends State<CoursePage> {
         onAction: _openEditor,
       );
     }
-    return ListView.separated(
-      itemCount: _courses.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, index) => _CourseTile(
-        course: _courses[index],
-        deleting: _deletingId == _courses[index].id,
-        saving: _savingIds.contains(_courses[index].id),
-        onOpen: () => _openCourseHub(_courses[index]),
-        onEdit: () => _openEditor(_courses[index]),
-        onDelete: () => _confirmDelete(_courses[index]),
-      ),
+    return Column(
+      children: [
+        for (var index = 0; index < _courses.length; index++) ...[
+          if (index > 0) const SizedBox(height: 8),
+          _CourseTile(
+            course: _courses[index],
+            deleting: _deletingId == _courses[index].id,
+            saving: _savingIds.contains(_courses[index].id),
+            onOpen: () => _openCourseHub(_courses[index]),
+            onEdit: () => _openEditor(_courses[index]),
+            onDelete: () => _confirmDelete(_courses[index]),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -908,24 +906,35 @@ class _SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
-      builder: (context, constraints) => Row(
-        children: [
-          Expanded(
-            child: Text(
-              'Disciplinas',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+      builder: (context, constraints) {
+        final textScaler = MediaQuery.textScalerOf(context);
+        final stacksActions =
+            constraints.maxWidth < 500 || textScaler.scale(14) > 20;
+        final title = Text(
+          'Disciplinas',
+          style: Theme.of(context).textTheme.titleLarge,
+        );
+        final action = FilledButton.icon(
+          key: const Key('add-course'),
+          onPressed: onAdd,
+          icon: const Icon(Icons.add),
+          label: Text(
+            constraints.maxWidth < 500 ? 'Adicionar' : 'Adicionar disciplina',
           ),
-          FilledButton.icon(
-            key: const Key('add-course'),
-            onPressed: onAdd,
-            icon: const Icon(Icons.add),
-            label: Text(
-              constraints.maxWidth < 500 ? 'Adicionar' : 'Adicionar disciplina',
-            ),
-          ),
-        ],
-      ),
+        );
+        if (stacksActions) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [title, const SizedBox(height: 12), action],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: title),
+            action,
+          ],
+        );
+      },
     );
   }
 }
@@ -1026,35 +1035,25 @@ class _MessageState extends StatelessWidget {
   final VoidCallback onAction;
 
   @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: constraints.maxHeight),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  icon,
-                  size: 48,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(height: 16),
-                Text(title, style: Theme.of(context).textTheme.titleMedium),
-                if (description != null) ...[
-                  const SizedBox(height: 6),
-                  Text(description!, textAlign: TextAlign.center),
-                ],
-                const SizedBox(height: 20),
-                OutlinedButton(onPressed: onAction, child: Text(actionLabel)),
-              ],
-            ),
-          ),
-        ),
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 48),
+    child: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 48, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(height: 16),
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          if (description != null) ...[
+            const SizedBox(height: 6),
+            Text(description!, textAlign: TextAlign.center),
+          ],
+          const SizedBox(height: 20),
+          OutlinedButton(onPressed: onAction, child: Text(actionLabel)),
+        ],
       ),
-    );
-  }
+    ),
+  );
 }
 
 String _newCourseId() {
