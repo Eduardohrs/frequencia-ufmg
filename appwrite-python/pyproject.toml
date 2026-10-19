@@ -6,7 +6,7 @@ requires-python = ">=3.12,<3.15"
 dependencies = [
   "appwrite==24.0.0",
   "cryptography>=46,<51",
-  "google-auth==2.59.1",
+  "google-auth==2.62.0",
   "PyJWT[crypto]>=2.10,<3",
   "tzdata>=2025.2,<2027",
 ]
