@@ -112,3 +112,12 @@ produção. Antes da 42.994, o usuário principal deve validar: hierarquia da In
 compreensão da barra de frequência, encontrabilidade de materiais, clareza do sheet e
 sensação geral de calma/confiança. Qualquer mudança de arquitetura volta ao contrato;
 ajustes de cor, ritmo e densidade seguem para os tokens.
+
+## Evidência de validação — segunda passada
+
+O usuário principal aprovou a direção e considerou o resultado “mil por cento” melhor,
+mas relatou excesso de estímulos simultâneos. A revisão mantém arquitetura e identidade,
+reduzindo densidade em três pontos: a Início mostra apenas o próximo prazo por extenso;
+faltas aparecem no cartão somente quando pedem atenção; e a pendência abandona o grande
+tratamento de alerta em favor de uma superfície neutra. O gate passa quando a tela parecer
+mais calma sem esconder a próxima ação, o próximo prazo ou uma situação crítica.
