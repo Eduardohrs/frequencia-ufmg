@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Frequência UFMG — protótipo 42.993</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="prototype-note" role="note">Protótipo interativo · dados demonstrativos</div>
+    <div class="app-shell">
+      <aside class="rail" aria-label="Navegação principal">
+        <button class="brand" data-route="home" aria-label="Ir para Início">F</button>
+        <nav>
+          <button class="nav-item active" data-route="home" aria-current="page">
+            <span aria-hidden="true">⌂</span><b>Início</b>
+          </button>
+          <button class="nav-item" data-route="calendar">
+            <span aria-hidden="true">□</span><b>Calendário</b>
+          </button>
+          <button class="nav-item" data-route="absences">
+            <span aria-hidden="true">◒</span><b>Faltas</b>
+          </button>
+        </nav>
+        <button class="profile" aria-label="Abrir perfil de Eduardo">ER</button>
+      </aside>
+
+      <main id="app" tabindex="-1">
+        <section class="screen active" data-screen="home" aria-labelledby="home-title">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">Segunda, 19 de outubro</p>
+              <h1 id="home-title">Boa tarde, Eduardo</h1>
+            </div>
+            <button class="avatar" aria-label="Abrir perfil de Eduardo">ER</button>
+          </header>
+
+          <section class="now-panel" aria-labelledby="now-title">
+            <div class="section-heading">
+              <div><p class="eyebrow">Agora</p><h2 id="now-title">Uma pendência pede atenção</h2></div>
+              <span class="status-dot">Hoje</span>
+            </div>
+            <button class="attention-row" data-open-course="ele028">
+              <span class="course-symbol coral">CE</span>
+              <span><b>Laboratório de Circuitos</b><small>Frequência de 15 out ainda não registrada</small></span>
+              <span class="arrow" aria-hidden="true">→</span>
+            </button>
+          </section>
+
+          <div class="home-grid">
+            <section aria-labelledby="dates-title">
+              <div class="section-heading compact"><h2 id="dates-title">Próximas datas</h2><button class="text-action">Ver calendário</button></div>
+              <div class="timeline">
+                <article><time datetime="2026-10-22"><b>22</b><span>OUT</span></time><i class="line violet"></i><div><b>Segunda prova</b><span>Cálculo III · 19:00</span></div></article>
+                <article><time datetime="2026-10-26"><b>26</b><span>OUT</span></time><i class="line teal"></i><div><b>Lista 4</b><span>Programação Orientada a Objetos</span></div></article>
+              </div>
+            </section>
+
+            <section aria-labelledby="courses-title">
+              <div class="section-heading compact"><h2 id="courses-title">Minhas disciplinas</h2><button class="round-action" aria-label="Adicionar disciplina">＋</button></div>
+              <div class="course-list">
+                <button class="course-card" data-open-course="ele028" style="--course:#e35d4f">
+                  <span class="course-symbol coral">CE</span>
+                  <span class="course-copy"><small>ELE028</small><b>Laboratório de Circuitos</b><em>Próxima hoje, 19:00</em></span>
+                  <span class="absence-count"><b>6</b><small>faltas restantes</small></span>
+                </button>
+                <button class="course-card" data-open-course="dcc203" style="--course:#168b83">
+                  <span class="course-symbol teal">PO</span>
+                  <span class="course-copy"><small>DCC203</small><b>Programação Orientada a Objetos</b><em>Próxima amanhã, 13:00</em></span>
+                  <span class="absence-count"><b>8</b><small>faltas restantes</small></span>
+                </button>
+                <button class="course-card" data-open-course="mat002" style="--course:#7157c7">
+                  <span class="course-symbol violet">∫</span>
+                  <span class="course-copy"><small>MAT002</small><b>Cálculo III</b><em>Quarta, 19:00</em></span>
+                  <span class="absence-count warning"><b>2</b><small>encontros restantes</small></span>
+                </button>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="screen" data-screen="course" aria-labelledby="course-title">
+          <header class="course-hero">
+            <button class="back" data-route="home" aria-label="Voltar para Início">←</button>
+            <div class="course-mark coral">CE</div>
+            <div class="course-heading"><p class="eyebrow">ELE028 · 2026/2</p><h1 id="course-title">Laboratório de Circuitos</h1></div>
+            <button class="more" aria-label="Mais ações da disciplina">•••</button>
+          </header>
+
+          <section class="primary-action">
+            <div><span class="pulse" aria-hidden="true"></span><p><b>Frequência pendente</b><small>Quinta, 15 de outubro · 19:00–20:40</small></p></div>
+            <button class="filled" data-open-attendance>Resolver agora</button>
+          </section>
+
+          <div class="course-layout">
+            <div class="main-column">
+              <section class="frequency-section" aria-labelledby="frequency-title">
+                <div class="section-heading compact"><div><p class="eyebrow">Situação atual</p><h2 id="frequency-title">Frequência</h2></div><button class="text-action">Ver registros</button></div>
+                <div class="frequency-figure">
+                  <div><strong id="remaining-number">6</strong><span>faltas restantes</span></div>
+                  <div class="frequency-track" role="img" aria-label="14 presenças, 2 faltas, 4 aulas futuras">
+                    <i class="present"></i><i class="future"></i><i class="absent"></i><span class="limit" title="Limite de 25%"></span>
+                  </div>
+                  <div class="legend"><span><i class="green"></i>14 presenças</span><span><i class="gray"></i>4 futuras</span><span><i class="red"></i>2 faltas</span></div>
+                </div>
+              </section>
+
+              <section aria-labelledby="agenda-title">
+                <div class="section-heading compact"><h2 id="agenda-title">Próximas datas</h2><button class="text-action">Ver calendário</button></div>
+                <div class="event-list">
+                  <article><span class="date-tile"><b>29</b>OUT</span><div><b>Relatório do experimento 4</b><small>Entrega · 23:59</small></div><span class="arrow">→</span></article>
+                  <article><span class="date-tile"><b>05</b>NOV</span><div><b>Prova prática</b><small>Laboratório · 19:00</small></div><span class="arrow">→</span></article>
+                </div>
+              </section>
+            </div>
+
+            <aside class="side-column">
+              <section aria-labelledby="schedule-title">
+                <div class="section-heading compact"><h2 id="schedule-title">Grade</h2><button class="text-action">Editar</button></div>
+                <p class="schedule-row"><span>QUI</span><b>19:00–20:40</b></p>
+              </section>
+              <section aria-labelledby="materials-title">
+                <div class="section-heading compact"><h2 id="materials-title">Materiais</h2><button class="text-action" data-show-materials>Ver todos</button></div>
+                <button class="material-preview" data-show-materials><span class="file-icon">PDF</span><span><b>Roteiro — experimento 4</b><small>Disponível no Moodle</small></span><span class="arrow">→</span></button>
+                <p class="quiet">12 materiais · 3 disponíveis offline</p>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section class="screen" data-screen="materials" aria-labelledby="materials-page-title">
+          <header class="topbar inner"><div class="title-with-back"><button class="back" data-route="course" aria-label="Voltar para disciplina">←</button><div><p class="eyebrow">ELE028</p><h1 id="materials-page-title">Materiais</h1></div></div><button class="text-action">Baixar tudo</button></header>
+          <div class="material-list">
+            <article><span class="file-icon">PDF</span><div><b>Roteiro — experimento 4</b><small>Plano de ensino · 1,8 MB</small></div><button class="download" data-download="Roteiro — experimento 4">Baixar</button></article>
+            <article><span class="file-icon blue">PDF</span><div><b>Instrumentação e medidas</b><small>Metaturma · 3,2 MB</small></div><button class="download" data-download="Instrumentação e medidas">Baixar</button></article>
+            <article><span class="file-icon green-file">XLS</span><div><b>Planilha do experimento</b><small>Laboratório · 84 KB</small></div><button class="download saved" disabled>Offline ✓</button></article>
+          </div>
+        </section>
+
+        <section class="screen placeholder" data-screen="calendar"><h1>Calendário</h1><p>O protótipo desta sessão preserva este destino, mas concentra a validação nos dois fluxos críticos.</p></section>
+        <section class="screen placeholder" data-screen="absences"><h1>Faltas</h1><p>O snapshot global continua como destino próprio e abre cada disciplina no contexto.</p></section>
+      </main>
+
+      <nav class="bottom-nav" aria-label="Navegação principal">
+        <button class="active" data-route="home" aria-current="page"><span>⌂</span>Início</button>
+        <button data-route="calendar"><span>□</span>Calendário</button>
+        <button data-route="absences"><span>◒</span>Faltas</button>
+      </nav>
+    </div>
+
+    <div class="scrim" hidden></div>
+    <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+      <div class="grabber" aria-hidden="true"></div>
+      <header><div><p class="eyebrow">ELE028 · 15 de outubro</p><h2 id="sheet-title">Como foi esta aula?</h2></div><button class="close-sheet" aria-label="Fechar">×</button></header>
+      <p class="sheet-context">19:00–20:40 · duas aulas · uma chamada</p>
+      <div class="attendance-options" role="radiogroup" aria-label="Situação da frequência">
+        <button role="radio" aria-checked="true" data-status="Presente">Presente</button>
+        <button role="radio" aria-checked="false" data-status="Atrasado">Cheguei tarde</button>
+        <button role="radio" aria-checked="false" data-status="Saída antecipada">Saí mais cedo</button>
+        <button role="radio" aria-checked="false" data-status="Ausente">Ausente</button>
+      </div>
+      <button class="filled save-attendance">Salvar frequência</button>
+    </section>
+    <div class="toast" role="status" aria-live="polite" hidden><span></span><button>Desfazer</button></div>
+    <script src="app.js"></script>
+  </body>
+</html>
