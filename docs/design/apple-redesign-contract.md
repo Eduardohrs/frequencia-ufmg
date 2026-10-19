@@ -121,3 +121,8 @@ reduzindo densidade em três pontos: a Início mostra apenas o próximo prazo po
 faltas aparecem no cartão somente quando pedem atenção; e a pendência abandona o grande
 tratamento de alerta em favor de uma superfície neutra. O gate passa quando a tela parecer
 mais calma sem esconder a próxima ação, o próximo prazo ou uma situação crítica.
+
+**Aceite em 19/10/2026:** a segunda direção foi aprovada pelo usuário principal para
+orientar a implementação. Mudanças futuras devem preservar essa relação entre identidade
+forte e silêncio visual; aumentar novamente a densidade ou a quantidade de acentos exige
+nova validação, não apenas preferência de implementação.
