@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/auth/auth_user.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
@@ -185,6 +186,7 @@ void main() {
   testWidgets('hides the automatic term on creation and allows editing it', (
     tester,
   ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final course = CourseRecord(
       id: 'course-1',
       code: 'DCC203',
@@ -1394,6 +1396,96 @@ void main() {
     expect(find.byKey(const Key('nav-home')), findsOneWidget);
     expect(find.byKey(const Key('nav-general-calendar')), findsOneWidget);
     expect(find.byKey(const Key('nav-absence-dashboard')), findsOneWidget);
+  });
+
+  testWidgets('keeps the primary shell usable across supported breakpoints', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'responsive-course',
+      code: 'DCC203',
+      name: 'Programação Orientada a Objetos com nome extenso',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    for (final width in [320.0, 768.0, 1024.0, 1440.0]) {
+      await tester.binding.setSurfaceSize(Size(width, 900));
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: CoursePage(
+            repository: _FakeCourseRepository(courses: [course]),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            user: user,
+            logger: _RecordingAppLogger(),
+            onSignOut: () async {},
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('nav-home')), findsOneWidget);
+      expect(find.byKey(const Key('nav-general-calendar')), findsOneWidget);
+      expect(find.byKey(const Key('nav-absence-dashboard')), findsOneWidget);
+      expect(
+        find.byType(width >= 840 ? NavigationRail : NavigationBar),
+        findsOneWidget,
+      );
+      await tester.drag(find.byType(ListView).first, const Offset(0, -600));
+      await tester.pumpAndSettle();
+      final courseCard = find.byKey(const Key('course-card-responsive-course'));
+      expect(tester.getCenter(courseCard).dy, lessThan(900));
+      await tester.tap(courseCard);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('course-hub-materials')));
+      expect(find.byKey(const Key('course-hub-frequency')), findsOneWidget);
+      expect(find.byKey(const Key('course-hub-agenda')), findsOneWidget);
+      expect(find.byKey(const Key('course-hub-schedule')), findsOneWidget);
+      expect(find.byKey(const Key('course-hub-materials')), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'width $width');
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+    }
+  });
+
+  testWidgets('activates the primary course action from the keyboard', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_app(_FakeCourseRepository(), user, now));
+    await tester.pumpAndSettle();
+
+    final addCourse = find.byKey(const Key('add-course'));
+    final addElement = tester.element(addCourse);
+    var reachedAction = false;
+    for (var index = 0; index < 12 && !reachedAction; index++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      final focused = FocusManager.instance.primaryFocus?.context;
+      if (identical(focused, addElement)) reachedAction = true;
+      focused?.visitAncestorElements((ancestor) {
+        if (identical(ancestor, addElement)) {
+          reachedAction = true;
+          return false;
+        }
+        return true;
+      });
+    }
+    expect(reachedAction, isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Nova disciplina'), findsOneWidget);
+    expect(find.byKey(const Key('course-code')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('runs a due UFMG synchronization after the dashboard loads', (
