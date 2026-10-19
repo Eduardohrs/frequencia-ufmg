@@ -352,7 +352,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('opens the selected course weekly schedule', (tester) async {
+  testWidgets('opens a course hub with academic sections and focused routes', (
+    tester,
+  ) async {
     final course = CourseRecord(
       id: 'course-1',
       code: 'DCC203',
@@ -363,18 +365,87 @@ void main() {
       updatedAt: now,
     );
     final repository = _FakeCourseRepository(courses: [course]);
-    final meetingRepository = _FakeMeetingRepository();
+    final meetingRepository = _FakeMeetingRepository(
+      meetings: {
+        'course-1': [
+          MeetingRecord(
+            id: 'meeting-1',
+            weekday: DateTime.monday,
+            startMinutes: 19 * 60,
+            endMinutes: 20 * 60 + 40,
+            lessonCount: QuantidadeAulas.two,
+            callCount: NumeroChamadas.one,
+            createdAt: now,
+            updatedAt: now,
+          ),
+          MeetingRecord(
+            id: 'meeting-2',
+            weekday: DateTime.monday,
+            startMinutes: 21 * 60,
+            endMinutes: 22 * 60 + 40,
+            lessonCount: QuantidadeAulas.two,
+            callCount: NumeroChamadas.one,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        ],
+      },
+    );
+    final sessions = _FakeSessionRepository({
+      'course-1': [
+        SessionRecord(
+          id: 'session-1',
+          startsAt: DateTime.utc(2026, 10, 19, 22),
+          endsAt: DateTime.utc(2026, 10, 19, 23, 40),
+          lessonCount: QuantidadeAulas.two,
+          callCount: NumeroChamadas.one,
+          absences: 0,
+          assessmentTitle: 'Trabalho prático',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      ],
+    });
+    final ufmgGateway = _UFMGGateway(
+      materialCatalog: PythonMoodleContentDiscovery(
+        courses: [
+          PythonMoodleCourseContent(
+            courseId: 'catalog-course',
+            courseCode: 'DCC203',
+            term: '2026-2',
+            moodleCourseId: '3701',
+            status: PythonMoodleContentStatus.found,
+            candidates: [
+              PythonMoodleContentCandidate(
+                sourceId: '101',
+                moodleCourseId: '3701',
+                kind: 'page',
+                title: 'Plano de ensino',
+                url: Uri.parse(
+                  'https://virtual.ufmg.br/20262/mod/page/view.php?id=101',
+                ),
+                relevance: 'teaching_plan',
+                origin: PythonMoodleContentOrigin.canonical,
+              ),
+            ],
+          ),
+        ],
+        candidateTotal: 1,
+        metaturmaCandidateTotal: 0,
+      ),
+    );
 
     await tester.pumpWidget(
       MaterialApp(
         home: CoursePage(
           repository: repository,
           meetingRepository: meetingRepository,
-          sessionRepository: _FakeSessionRepository(),
+          sessionRepository: sessions,
           user: user,
           logger: _RecordingAppLogger(),
           onSignOut: () async {},
           now: () => now,
+          ufmgSessionGateway: ufmgGateway,
         ),
       ),
     );
@@ -382,11 +453,61 @@ void main() {
     await tester.tap(find.byKey(const Key('course-card-course-1')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Grade • DCC203'), findsOneWidget);
+    expect(find.text('DCC203'), findsOneWidget);
+    expect(find.text('POO'), findsOneWidget);
+    expect(find.byKey(const Key('course-hub-frequency')), findsOneWidget);
+    expect(find.byKey(const Key('course-hub-agenda')), findsOneWidget);
+    expect(find.byKey(const Key('course-hub-schedule')), findsOneWidget);
+    expect(find.byKey(const Key('course-hub-materials')), findsOneWidget);
+    expect(sessions.listedCourseIds, contains('course-1'));
+    expect(find.textContaining('Trabalho prático'), findsOneWidget);
+    expect(find.textContaining('Segunda'), findsNWidgets(2));
+    expect(find.text('1 material disponível'), findsOneWidget);
     expect(meetingRepository.listedCourseIds, ['course-1']);
+
+    await tester.ensureVisible(
+      find.byKey(const Key('course-hub-open-calendar')),
+    );
+    await tester.tap(find.byKey(const Key('course-hub-open-calendar')));
+    await tester.pumpAndSettle();
+    expect(find.text('Calendário operacional'), findsOneWidget);
+    expect(find.text('DCC203'), findsWidgets);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(
+      find.byKey(const Key('course-hub-open-attendance')),
+    );
+    await tester.tap(find.byKey(const Key('course-hub-open-attendance')));
+    await tester.pumpAndSettle();
+    expect(find.text('Frequência • DCC203'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(
+      find.byKey(const Key('course-hub-open-schedule')),
+    );
+    await tester.tap(find.byKey(const Key('course-hub-open-schedule')));
+    await tester.pumpAndSettle();
+    expect(find.text('Grade • DCC203'), findsOneWidget);
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.text('DCC203'), findsOneWidget);
+
+    await tester.ensureVisible(
+      find.byKey(const Key('course-hub-open-materials')),
+    );
+    await tester.tap(find.byKey(const Key('course-hub-open-materials')));
+    await tester.pumpAndSettle();
+    expect(find.text('Materiais • DCC203'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('moodle-content-catalog-course')));
+    await tester.pumpAndSettle();
+    expect(find.text('Plano de ensino'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-card-course-1')), findsOneWidget);
   });
 
   testWidgets('uses compact navigation for calendar and absence snapshot', (
@@ -426,6 +547,57 @@ void main() {
     await tester.tap(find.byKey(const Key('nav-general-calendar')));
     await tester.pumpAndSettle();
     expect(find.text('Calendário operacional'), findsOneWidget);
+  });
+
+  testWidgets('keeps independent hub sections useful after partial failures', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final meetings = _FakeMeetingRepository()
+      ..listError = StateError('meeting offline');
+    final sessions = _FakeSessionRepository()
+      ..listError = StateError('session offline');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(courses: [course]),
+          meetingRepository: meetings,
+          sessionRepository: sessions,
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('course-card-course-1')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Não foi possível carregar a frequência agora.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Não foi possível carregar a grade agora.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Nenhum material sincronizado para esta disciplina.'),
+      findsOneWidget,
+    );
+    final materialsButton = tester.widget<TextButton>(
+      find.byKey(const Key('course-hub-open-materials')),
+    );
+    expect(materialsButton.onPressed, isNull);
   });
 
   testWidgets('loads and reuses one Python overview snapshot', (tester) async {
@@ -489,7 +661,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('course-card-course-1')));
     await tester.pumpAndSettle();
-    expect(find.text('Grade • DCC203'), findsOneWidget);
+    expect(find.byKey(const Key('course-hub-frequency')), findsOneWidget);
+    expect(sessionRepository.listedCourseIds, isEmpty);
   });
 
   testWidgets('warns when disciplines come from the saved offline copy', (
@@ -1392,7 +1565,11 @@ final class _FakeCourseRepository implements CourseRepository {
 }
 
 final class _FakeMeetingRepository implements MeetingRepository {
+  _FakeMeetingRepository({this.meetings = const {}});
+
+  final Map<String, List<MeetingRecord>> meetings;
   final listedCourseIds = <String>[];
+  Object? listError;
 
   @override
   Future<void> deleteMeeting(String courseId, String meetingId) async {}
@@ -1400,7 +1577,8 @@ final class _FakeMeetingRepository implements MeetingRepository {
   @override
   Future<List<MeetingRecord>> listMeetings(String courseId) async {
     listedCourseIds.add(courseId);
-    return [];
+    if (listError case final error?) throw error;
+    return List.of(meetings[courseId] ?? const []);
   }
 
   @override
@@ -1597,11 +1775,17 @@ final class _UFMGGateway implements BackendUFMGSessionGateway {
     ),
     this.createdCourses = 0,
     this.syncError,
+    this.materialCatalog = const PythonMoodleContentDiscovery(
+      courses: [],
+      candidateTotal: 0,
+      metaturmaCandidateTotal: 0,
+    ),
   });
 
   final PythonUFMGSessionStatus status;
   final int createdCourses;
   final Object? syncError;
+  final PythonMoodleContentDiscovery materialCatalog;
   int statusCalls = 0;
   int syncCalls = 0;
 
@@ -1611,7 +1795,7 @@ final class _UFMGGateway implements BackendUFMGSessionGateway {
 
   @override
   Future<PythonMoodleContentDiscovery> listMoodleMaterialCatalog() =>
-      throw UnimplementedError();
+      Future.value(materialCatalog);
 
   @override
   Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities() =>

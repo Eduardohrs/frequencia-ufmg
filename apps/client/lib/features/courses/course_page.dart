@@ -17,10 +17,10 @@ import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import '../attendance/absence_dashboard_page.dart';
 import '../attendance/attendance_page.dart';
-import '../schedule/course_schedule_page.dart';
 import '../schedule/general_calendar_page.dart';
 import '../ufmg/ufmg_connection_page.dart';
 import 'course_editor_dialog.dart';
+import 'course_hub_page.dart';
 
 typedef CourseIdGenerator = String Function();
 typedef CurrentTime = DateTime Function();
@@ -394,15 +394,17 @@ class _CoursePageState extends State<CoursePage> {
     );
   }
 
-  Future<void> _openSchedule(CourseRecord course) async {
+  Future<void> _openCourseHub(CourseRecord course) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (context) => CourseSchedulePage(
+        builder: (context) => CourseHubPage(
           course: course,
+          allCourses: _courses,
           courseRepository: widget.repository,
-          repository: widget.meetingRepository,
+          meetingRepository: widget.meetingRepository,
           sessionRepository: widget.sessionRepository,
           logger: widget.logger,
+          now: widget.now,
           attendanceEvaluator: widget.attendanceEvaluator,
           scheduleGateway: widget.scheduleGateway,
           scheduleReadsEnabled: widget.scheduleReadsEnabled,
@@ -413,8 +415,9 @@ class _CoursePageState extends State<CoursePage> {
           initialSessionsByCourse: _usingOverviewSnapshot
               ? _sessionsByCourse
               : null,
-          allCourses: _courses,
-          allCourseIds: _courses.map((item) => item.id),
+          ufmgSessionGateway: widget.ufmgSessionGateway,
+          ufmgSyncSchedule: widget.ufmgSyncSchedule,
+          userId: widget.user.id,
         ),
       ),
     );
@@ -881,7 +884,7 @@ class _CoursePageState extends State<CoursePage> {
         course: _courses[index],
         deleting: _deletingId == _courses[index].id,
         saving: _savingIds.contains(_courses[index].id),
-        onOpen: () => _openSchedule(_courses[index]),
+        onOpen: () => _openCourseHub(_courses[index]),
         onEdit: () => _openEditor(_courses[index]),
         onDelete: () => _confirmDelete(_courses[index]),
       ),
