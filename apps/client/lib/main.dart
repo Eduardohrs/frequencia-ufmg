@@ -21,6 +21,7 @@ import 'data/repository_academic_overview.dart';
 import 'data/shared_preferences_academic_overview_cache.dart';
 import 'data/shared_preferences_schedule_cache.dart';
 import 'data/ufmg_sync_schedule.dart';
+import 'design/app_theme.dart';
 import 'firebase_options.dart';
 import 'observability/app_logger.dart';
 import 'observability/error_reporting.dart';
@@ -196,25 +197,11 @@ class FrequenciaUFMGApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Frequência UFMG',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF006633)),
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF7F9F7),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFFF7F9F7),
-          surfaceTintColor: Colors.transparent,
-        ),
-        cardTheme: CardThemeData(
-          color: Colors.white,
-          shape: RoundedRectangleBorder(
-            side: const BorderSide(color: Color(0xFFDDE5DF)),
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        inputDecorationTheme: const InputDecorationTheme(
-          border: OutlineInputBorder(),
-        ),
-      ),
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
+      highContrastTheme: AppTheme.light(highContrast: true),
+      highContrastDarkTheme: AppTheme.dark(highContrast: true),
+      themeMode: ThemeMode.system,
       home: AuthGate(
         authGateway: authGateway,
         logger: logger,
