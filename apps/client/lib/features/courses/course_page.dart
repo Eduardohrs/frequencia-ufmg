@@ -450,6 +450,14 @@ class _CoursePageState extends State<CoursePage> {
           logger: widget.logger,
           userId: widget.user.id,
           syncSchedule: widget.ufmgSyncSchedule,
+          onOpenCourses: () async {
+            Navigator.of(context).pop();
+          },
+          onOpenCalendar: () async {
+            Navigator.of(context).pop();
+            await Future<void>.delayed(Duration.zero);
+            if (mounted) await _openGeneralCalendar();
+          },
         ),
       ),
     );
