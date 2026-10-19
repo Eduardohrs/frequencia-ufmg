@@ -41,7 +41,7 @@ dependencies:
   firebase_analytics: ^12.4.3
   firebase_crashlytics: ^5.2.4
   cloud_firestore: ^6.10.0
-  crypto: ^3.0.3
+  crypto: ^3.0.7
   google_sign_in: ^7.2.0
   geolocator: ^14.0.3
   http: ^1.6.0
