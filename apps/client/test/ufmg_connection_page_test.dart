@@ -132,6 +132,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Materiais • DCC203'), findsOneWidget);
+    expect(find.byKey(const Key('material-scope-header')), findsOneWidget);
+    expect(find.byKey(const Key('material-course-mark')), findsOneWidget);
     await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
     await tester.pumpAndSettle();
     expect(find.text('Plano de POO'), findsOneWidget);
@@ -454,7 +456,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Conta acadêmica UFMG'), findsOneWidget);
+      expect(find.byKey(const Key('ufmg-account-overview')), findsOneWidget);
       expect(find.text('Fontes acadêmicas'), findsOneWidget);
+      expect(find.byKey(const Key('ufmg-sources-grid')), findsOneWidget);
       expect(find.byKey(const Key('ufmg-source-siga')), findsOneWidget);
       expect(find.byKey(const Key('ufmg-source-moodle')), findsOneWidget);
       await tester.ensureVisible(
@@ -950,6 +954,7 @@ void main() {
       find.textContaining('3 materiais candidatos encontrados'),
       findsOneWidget,
     );
+    expect(find.byKey(const Key('ufmg-academic-agenda')), findsOneWidget);
     expect(find.textContaining('Download direto disponível'), findsOneWidget);
     expect(find.text('3 materiais candidatos'), findsOneWidget);
     expect(
@@ -977,6 +982,38 @@ void main() {
     );
     expect(logger.events, contains('moodle_content_discovery_succeeded'));
     expect(logger.events, contains('moodle_mobile_capability_succeeded'));
+  });
+
+  testWidgets('keeps academic sources usable on a phone with enlarged text', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: UFMGConnectionPage(
+          gateway: _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          ),
+          logger: _Logger(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ufmg-account-overview')), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('ufmg-source-moodle')));
+    await tester.ensureVisible(find.byKey(const Key('ufmg-manage-connection')));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('shows the persisted material catalog before a new Moodle sync', (
