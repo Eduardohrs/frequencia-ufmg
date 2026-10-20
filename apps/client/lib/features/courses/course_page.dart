@@ -12,6 +12,7 @@ import '../../data/academic_period.dart';
 import '../../data/calendar_status.dart';
 import '../../data/python_overview_repository.dart';
 import '../../data/ufmg_sync_schedule.dart';
+import '../../design/adaptive_app_shell.dart';
 import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
@@ -664,200 +665,111 @@ class _CoursePageState extends State<CoursePage> {
   @override
   Widget build(BuildContext context) {
     final firstName = widget.user.displayName?.trim().split(' ').first;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final usesRail = constraints.maxWidth >= 840;
-        return Scaffold(
-          appBar: AppBar(
-            title: const Text('Início'),
-            actions: [
-              PopupMenuButton<_ProfileAction>(
-                key: const Key('profile-menu'),
-                tooltip: 'Perfil e configurações',
-                onSelected: (action) => unawaited(_selectProfileAction(action)),
-                icon: CircleAvatar(
-                  child: Text(
-                    firstName == null || firstName.isEmpty
-                        ? widget.user.email.characters.first.toUpperCase()
-                        : firstName.characters.first.toUpperCase(),
-                  ),
-                ),
-                itemBuilder: (context) => [
-                  if (widget.ufmgSessionGateway != null)
-                    const PopupMenuItem(
-                      key: Key('profile-ufmg-account'),
-                      value: _ProfileAction.ufmgAccount,
-                      child: ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(Icons.account_balance_outlined),
-                        title: Text('Conta acadêmica UFMG'),
-                      ),
-                    ),
-                  const PopupMenuItem(
-                    value: _ProfileAction.signOut,
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.logout),
-                      title: Text('Sair'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 8),
-            ],
-          ),
-          bottomNavigationBar: usesRail
-              ? null
-              : NavigationBar(
-                  selectedIndex: 0,
-                  onDestinationSelected: _selectDestination,
-                  destinations: const [
-                    NavigationDestination(
-                      icon: Icon(Icons.home_outlined, key: Key('nav-home')),
-                      selectedIcon: Icon(Icons.home, key: Key('nav-home')),
-                      label: 'Início',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(
-                        Icons.calendar_month_outlined,
-                        key: Key('nav-general-calendar'),
-                      ),
-                      label: 'Calendário',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(
-                        Icons.donut_small_outlined,
-                        key: Key('nav-absence-dashboard'),
-                      ),
-                      label: 'Faltas',
-                    ),
-                  ],
-                ),
-          body: SafeArea(
-            child: Row(
-              children: [
-                if (usesRail) ...[
-                  NavigationRail(
-                    selectedIndex: 0,
-                    labelType: NavigationRailLabelType.all,
-                    onDestinationSelected: _selectDestination,
-                    destinations: const [
-                      NavigationRailDestination(
-                        icon: Icon(Icons.home_outlined, key: Key('nav-home')),
-                        selectedIcon: Icon(Icons.home, key: Key('nav-home')),
-                        label: Text('Início'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(
-                          Icons.calendar_month_outlined,
-                          key: Key('nav-general-calendar'),
-                        ),
-                        label: Text('Calendário'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(
-                          Icons.donut_small_outlined,
-                          key: Key('nav-absence-dashboard'),
-                        ),
-                        label: Text('Faltas'),
-                      ),
-                    ],
-                  ),
-                  const VerticalDivider(width: 1),
-                ],
-                Expanded(
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 960),
-                      child: ListView(
-                        padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
-                        children: [
-                          Text(
-                            firstName == null || firstName.isEmpty
-                                ? 'Suas disciplinas'
-                                : 'Olá, $firstName',
-                            style: Theme.of(context).textTheme.headlineMedium,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            widget.user.email,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
-                                ),
-                          ),
-                          const SizedBox(height: 28),
-                          if (_ufmgSyncNotice != null) ...[
-                            Card(
-                              key: const Key('ufmg-sync-notice'),
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.tertiaryContainer,
-                              child: ListTile(
-                                leading: const Icon(
-                                  Icons.sync_problem_outlined,
-                                ),
-                                title: Text(_ufmgSyncNotice!),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                          ],
-                          if (_usingLocalCopy) ...[
-                            Card(
-                              key: const Key('offline-copy-banner'),
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.secondaryContainer,
-                              child: const ListTile(
-                                leading: Icon(Icons.cloud_off_outlined),
-                                title: Text('Modo offline'),
-                                subtitle: Text(
-                                  'Exibindo a última cópia salva neste aparelho.',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                          ],
-                          if (_pastPendingCount > 0) ...[
-                            Card(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.errorContainer,
-                              child: ListTile(
-                                key: const Key('past-attendance-pending-alert'),
-                                leading: const Icon(
-                                  Icons.warning_amber_rounded,
-                                ),
-                                title: Text(
-                                  _pastPendingCount == 1
-                                      ? '1 aula anterior está sem frequência'
-                                      : '$_pastPendingCount aulas anteriores estão sem frequência',
-                                ),
-                                subtitle: Text(
-                                  'Mais recente: ${_nextPastPending!.course.code} • '
-                                  '${_date(_nextPastPending!.session.startsAt, tz.getLocation('America/Sao_Paulo'))}',
-                                ),
-                                trailing: const Icon(Icons.chevron_right),
-                                onTap: _openPendingAttendance,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                          ],
-                          _SectionHeader(onAdd: () => _openEditor()),
-                          const SizedBox(height: 16),
-                          _content(),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+    return AdaptiveAppShell(
+      title: 'Início',
+      selectedIndex: 0,
+      onDestinationSelected: _selectDestination,
+      actions: [
+        PopupMenuButton<_ProfileAction>(
+          key: const Key('profile-menu'),
+          tooltip: 'Perfil e configurações',
+          onSelected: (action) => unawaited(_selectProfileAction(action)),
+          icon: CircleAvatar(
+            child: Text(
+              firstName == null || firstName.isEmpty
+                  ? widget.user.email.characters.first.toUpperCase()
+                  : firstName.characters.first.toUpperCase(),
             ),
           ),
-        );
-      },
+          itemBuilder: (context) => [
+            if (widget.ufmgSessionGateway != null)
+              const PopupMenuItem(
+                key: Key('profile-ufmg-account'),
+                value: _ProfileAction.ufmgAccount,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.account_balance_outlined),
+                  title: Text('Conta acadêmica UFMG'),
+                ),
+              ),
+            const PopupMenuItem(
+              value: _ProfileAction.signOut,
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.logout),
+                title: Text('Sair'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(width: 8),
+      ],
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
+        children: [
+          Text(
+            firstName == null || firstName.isEmpty
+                ? 'Suas disciplinas'
+                : 'Olá, $firstName',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            widget.user.email,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 28),
+          if (_ufmgSyncNotice != null) ...[
+            Card(
+              key: const Key('ufmg-sync-notice'),
+              color: Theme.of(context).colorScheme.tertiaryContainer,
+              child: ListTile(
+                leading: const Icon(Icons.sync_problem_outlined),
+                title: Text(_ufmgSyncNotice!),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (_usingLocalCopy) ...[
+            Card(
+              key: const Key('offline-copy-banner'),
+              color: Theme.of(context).colorScheme.secondaryContainer,
+              child: const ListTile(
+                leading: Icon(Icons.cloud_off_outlined),
+                title: Text('Modo offline'),
+                subtitle: Text('Exibindo a última cópia salva neste aparelho.'),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (_pastPendingCount > 0) ...[
+            Card(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: ListTile(
+                key: const Key('past-attendance-pending-alert'),
+                leading: const Icon(Icons.warning_amber_rounded),
+                title: Text(
+                  _pastPendingCount == 1
+                      ? '1 aula anterior está sem frequência'
+                      : '$_pastPendingCount aulas anteriores estão sem frequência',
+                ),
+                subtitle: Text(
+                  'Mais recente: ${_nextPastPending!.course.code} • '
+                  '${_date(_nextPastPending!.session.startsAt, tz.getLocation('America/Sao_Paulo'))}',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _openPendingAttendance,
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+          _SectionHeader(onAdd: () => _openEditor()),
+          const SizedBox(height: 16),
+          _content(),
+        ],
+      ),
     );
   }
 

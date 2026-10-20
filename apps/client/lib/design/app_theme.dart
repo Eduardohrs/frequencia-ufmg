@@ -151,6 +151,32 @@ abstract final class AppTheme {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
+        titleTextStyle: text.titleLarge,
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        elevation: 0,
+        height: 68,
+        backgroundColor: Colors.transparent,
+        indicatorColor: scheme.secondaryContainer,
+        labelTextStyle: WidgetStatePropertyAll(text.labelMedium),
+      ),
+      navigationRailTheme: NavigationRailThemeData(
+        elevation: 0,
+        minWidth: 84,
+        backgroundColor: Colors.transparent,
+        indicatorColor: scheme.secondaryContainer,
+        selectedLabelTextStyle: text.labelMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+        ),
+        unselectedLabelTextStyle: text.labelMedium,
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: card,
+        surfaceTintColor: Colors.transparent,
+        elevation: 3,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.card),
+        ),
       ),
       cardTheme: CardThemeData(
         color: card,

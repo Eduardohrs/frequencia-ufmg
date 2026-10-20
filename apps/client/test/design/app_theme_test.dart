@@ -14,6 +14,10 @@ void main() {
       expect(theme.textTheme.titleLarge?.height, greaterThan(1));
       expect(theme.textTheme.bodyMedium?.height, greaterThan(1));
       expect(theme.cardTheme.elevation, 0);
+      expect(theme.navigationBarTheme.elevation, 0);
+      expect(theme.navigationRailTheme.elevation, 0);
+      expect(theme.popupMenuTheme.elevation, 3);
+      expect(theme.appBarTheme.titleTextStyle?.fontWeight, FontWeight.w700);
     }
 
     expect(AppTheme.light().brightness, Brightness.light);
