@@ -71,6 +71,7 @@ void main() {
 
     await tester.tap(find.text('Lista'));
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('calendar-course-mark-poo')), findsNWidgets(3));
     expect(find.text('DCC203 • 16/09/2026'), findsNWidgets(3));
     expect(find.text('MAT001 • 17/09/2026'), findsNothing);
     expect(find.text('DCC203 • 18/09/2026'), findsNothing);
@@ -108,6 +109,46 @@ void main() {
     await tester.tap(find.text('Lista'));
     await tester.pumpAndSettle();
     expect(find.text('Nenhuma sessão encontrada'), findsOneWidget);
+  });
+
+  testWidgets('reflows the global calendar with enlarged text', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: GeneralCalendarPage(
+          courses: courses,
+          repository: _Repository({}),
+          location: location,
+          now: () => now,
+          initialSessionsByCourse: const {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('calendar-course-filter')),
+      200,
+    );
+    expect(find.byKey(const Key('calendar-course-filter')), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('month-calendar-grid')),
+      200,
+    );
+    expect(find.byKey(const Key('month-calendar-grid')), findsOneWidget);
+    await tester.tap(find.byTooltip('Mês anterior'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Próximo mês'));
+    await tester.pump();
+    expect(find.text('Setembro 2026'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }
 

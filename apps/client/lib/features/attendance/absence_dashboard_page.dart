@@ -7,6 +7,7 @@ import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/calendar_status.dart';
 import '../../domain/attendance.dart';
+import '../../design/course_identity.dart';
 
 final class CourseAbsenceSummary {
   CourseAbsenceSummary._({
@@ -204,27 +205,125 @@ class _AbsenceDashboardPageState extends State<AbsenceDashboardPage> {
     if (_summaries.isEmpty) {
       return const Center(child: Text('Nenhuma disciplina cadastrada'));
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          'O limite corresponde a 25% das aulas sujeitas a chamada.',
-          style: Theme.of(context).textTheme.bodyMedium,
-        ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: ListView.separated(
-            itemCount: _summaries.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 8),
-            itemBuilder: (_, index) => _SummaryCard(
-              summary: _summaries[index],
-              location: widget.location,
+    return SingleChildScrollView(
+      key: const Key('absence-overview-list'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Sua frequência',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Veja primeiro onde sua atenção é necessária.',
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
-        ),
-      ],
+          const SizedBox(height: 16),
+          _GlobalSnapshot(summaries: _summaries),
+          const SizedBox(height: 24),
+          Text('Por disciplina', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 6),
+          Text(
+            'O limite corresponde a 25% das aulas sujeitas a chamada.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 12),
+          for (var index = 0; index < _summaries.length; index++) ...[
+            if (index > 0) const SizedBox(height: 8),
+            _SummaryCard(summary: _summaries[index], location: widget.location),
+          ],
+        ],
+      ),
     );
   }
+}
+
+class _GlobalSnapshot extends StatelessWidget {
+  const _GlobalSnapshot({required this.summaries});
+
+  final List<CourseAbsenceSummary> summaries;
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = summaries.fold<int>(
+      0,
+      (total, summary) => total + summary.pendingSessions,
+    );
+    final atLimit = summaries
+        .where(
+          (summary) =>
+              summary.eligibleLessons > 0 && summary.remainingAbsences == 0,
+        )
+        .length;
+    return Card(
+      key: const Key('global-absence-snapshot'),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final courseLabel = summaries.length == 1
+              ? 'disciplina acompanhada'
+              : 'disciplinas acompanhadas';
+          if (constraints.maxWidth < 520) {
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                '${summaries.length} $courseLabel  ·  '
+                '$pending pendentes  ·  $atLimit no limite',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            );
+          }
+          return Padding(
+            padding: const EdgeInsets.all(20),
+            child: Wrap(
+              spacing: 28,
+              runSpacing: 16,
+              children: [
+                _SnapshotValue(
+                  value: '${summaries.length}',
+                  label: courseLabel,
+                ),
+                _SnapshotValue(value: '$pending', label: 'registros pendentes'),
+                _SnapshotValue(value: '$atLimit', label: 'no limite de faltas'),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _SnapshotValue extends StatelessWidget {
+  const _SnapshotValue({required this.value, required this.label});
+
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: '$value $label',
+    child: ExcludeSemantics(
+      child: SizedBox(
+        width: 180,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(value, style: Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height: 2),
+            Text(label, style: Theme.of(context).textTheme.bodyMedium),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _SummaryCard extends StatelessWidget {
@@ -240,6 +339,11 @@ class _SummaryCard extends StatelessWidget {
       elevation: 0,
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
+        leading: CourseMark(
+          key: Key('absence-course-mark-${course.id}'),
+          code: course.code,
+          size: 40,
+        ),
         title: Text(course.code),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

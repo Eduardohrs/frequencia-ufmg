@@ -166,6 +166,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Faltas restantes'), findsOneWidget);
+    expect(find.byKey(const Key('global-absence-snapshot')), findsOneWidget);
+    expect(find.text('disciplinas acompanhadas'), findsOneWidget);
+    expect(find.byKey(const Key('absence-course-mark-poo')), findsOneWidget);
     expect(find.text('0 encontros restantes'), findsOneWidget);
     expect(
       find.text('3 de 3 faltas usadas • 2 sessões anteriores pendentes'),
@@ -241,6 +244,35 @@ void main() {
       ),
     );
     await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('keeps the global snapshot usable with enlarged text', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: AbsenceDashboardPage(
+          courses: [poo],
+          repository: _Repository({}),
+          location: location,
+          now: () => now,
+          initialSessionsByCourse: const {'poo': []},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('global-absence-snapshot')), findsOneWidget);
+    expect(find.byKey(const Key('absence-overview-list')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
