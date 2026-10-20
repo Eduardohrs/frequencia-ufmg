@@ -7,6 +7,7 @@ import '../../data/academic_records.dart';
 import '../../backend/python_backend_transport.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/calendar_status.dart';
+import '../../design/course_identity.dart';
 import '../../domain/attendance.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
@@ -248,8 +249,25 @@ class _AttendancePageState extends State<AttendancePage> {
       return const Center(child: Text('Nenhuma sessão gerada'));
     }
     final sections = _sections();
+    final pendingCount = _sessions.where(_isPending).length;
+    final upcomingCount = _sessions.where(_isUpcoming).length;
+    final registeredCount = _sessions
+        .where((item) => item.attendanceStatus != null)
+        .length;
     return CustomScrollView(
       slivers: [
+        if (widget.courseCode case final code?) ...[
+          SliverToBoxAdapter(child: _courseHeader(code)),
+          const SliverToBoxAdapter(child: SizedBox(height: 16)),
+        ],
+        SliverToBoxAdapter(
+          child: _attendanceOverview(
+            pendingCount: pendingCount,
+            registeredCount: registeredCount,
+            upcomingCount: upcomingCount,
+          ),
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 8)),
         for (var index = 0; index < sections.length; index++) ...[
           SliverToBoxAdapter(
             child: Padding(
@@ -269,6 +287,84 @@ class _AttendancePageState extends State<AttendancePage> {
         ],
       ],
     );
+  }
+
+  Widget _courseHeader(String code) => Row(
+    key: const Key('attendance-course-header'),
+    children: [
+      CourseMark(
+        key: const Key('attendance-course-mark'),
+        code: code,
+        size: 48,
+      ),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              code,
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            Text(
+              'Registros de frequência',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+
+  Widget _attendanceOverview({
+    required int pendingCount,
+    required int registeredCount,
+    required int upcomingCount,
+  }) => Card(
+    key: const Key('attendance-overview'),
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Wrap(
+        spacing: 20,
+        runSpacing: 8,
+        children: [
+          _OverviewValue(
+            value:
+                '$pendingCount ${pendingCount == 1 ? 'pendência' : 'pendências'}',
+            label: 'para resolver',
+          ),
+          _OverviewValue(value: '$registeredCount', label: 'registradas'),
+          _OverviewValue(value: '$upcomingCount', label: 'próximas'),
+        ],
+      ),
+    ),
+  );
+
+  bool _isPending(SessionRecord session) {
+    final local = tz.TZDateTime.from(session.startsAt, widget.location);
+    final now = tz.TZDateTime.from(widget.now(), widget.location);
+    return _requiresAttendance(session) &&
+        session.absences == null &&
+        DateTime(
+          local.year,
+          local.month,
+          local.day,
+        ).isBefore(DateTime(now.year, now.month, now.day));
+  }
+
+  bool _isUpcoming(SessionRecord session) {
+    final local = tz.TZDateTime.from(session.startsAt, widget.location);
+    final now = tz.TZDateTime.from(widget.now(), widget.location);
+    return DateTime(
+      local.year,
+      local.month,
+      local.day,
+    ).isAfter(DateTime(now.year, now.month, now.day));
   }
 
   List<_AttendanceSection> _sections() {
@@ -360,6 +456,26 @@ final class _AttendanceSection {
 
   final String title;
   final List<SessionRecord> sessions;
+}
+
+class _OverviewValue extends StatelessWidget {
+  const _OverviewValue({required this.value, required this.label});
+
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Text.rich(
+    TextSpan(
+      children: [
+        TextSpan(
+          text: value,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        TextSpan(text: ' $label'),
+      ],
+    ),
+  );
 }
 
 class _StatusBadge extends StatelessWidget {

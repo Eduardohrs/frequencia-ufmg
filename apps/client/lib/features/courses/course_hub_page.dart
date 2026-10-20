@@ -7,6 +7,7 @@ import '../../backend/python_backend_transport.dart';
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/ufmg_sync_schedule.dart';
+import '../../design/course_identity.dart';
 import '../../observability/app_logger.dart';
 import '../attendance/absence_dashboard_page.dart';
 import '../attendance/attendance_page.dart';
@@ -234,27 +235,11 @@ class _CourseHubPageState extends State<CourseHubPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      widget.course.name,
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${widget.course.code} • ${widget.course.term}',
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    _attendanceAction(),
-                    const SizedBox(height: 12),
+                    _courseIdentity(),
+                    const SizedBox(height: 16),
                     _frequencySection(),
-                    const SizedBox(height: 12),
-                    _agendaSection(),
-                    const SizedBox(height: 12),
-                    _scheduleSection(),
-                    const SizedBox(height: 12),
-                    _materialsSection(),
+                    const SizedBox(height: 16),
+                    _sectionGrid(constraints.maxWidth),
                   ],
                 ),
               ),
@@ -262,6 +247,68 @@ class _CourseHubPageState extends State<CourseHubPage> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _courseIdentity() => Row(
+    key: const Key('course-hub-identity'),
+    crossAxisAlignment: CrossAxisAlignment.center,
+    children: [
+      CourseMark(
+        key: const Key('course-hub-course-mark'),
+        code: widget.course.code,
+        size: 56,
+      ),
+      const SizedBox(width: 14),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.course.name,
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '${widget.course.code} • ${widget.course.term}',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+
+  Widget _sectionGrid(double width) {
+    final sections = [
+      _agendaSection(),
+      _scheduleSection(),
+      _materialsSection(),
+    ];
+    if (width < 700) {
+      return Column(
+        key: const Key('course-hub-section-grid'),
+        children: [
+          for (var index = 0; index < sections.length; index++) ...[
+            sections[index],
+            if (index != sections.length - 1) const SizedBox(height: 12),
+          ],
+        ],
+      );
+    }
+    final itemWidth = (width - 12) / 2;
+    return Wrap(
+      key: const Key('course-hub-section-grid'),
+      spacing: 12,
+      runSpacing: 12,
+      children: [
+        for (final section in sections)
+          SizedBox(width: itemWidth, child: section),
+      ],
     );
   }
 
@@ -281,19 +328,60 @@ class _CourseHubPageState extends State<CourseHubPage> {
       now: widget.now(),
       location: _location,
     );
-    return _HubSection(
+    final pending = _firstPending != null;
+    return Card(
       key: const Key('course-hub-frequency'),
-      icon: Icons.donut_large_outlined,
-      title: 'Frequência',
-      actionLabel: 'Ver registros',
-      onAction: _openAttendance,
-      child: _sessionsFailed
-          ? const Text('Não foi possível carregar a frequência agora.')
-          : Text(
-              _loading && _sessions.isEmpty
-                  ? 'Carregando…'
-                  : '${summary.consumedAbsences} de ${summary.absenceLimit} faltas usadas • ${summary.remainingMeetingsLabel}',
+      margin: EdgeInsets.zero,
+      child: Padding(
+        key: const Key('course-hub-frequency-summary'),
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.donut_large_outlined),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Frequência',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Ver registros',
+                  onPressed: _openAttendance,
+                  icon: const Icon(Icons.chevron_right),
+                ),
+              ],
             ),
+            const SizedBox(height: 12),
+            if (_sessionsFailed)
+              const Text('Não foi possível carregar a frequência agora.')
+            else if (_loading && _sessions.isEmpty)
+              const Text('Carregando…')
+            else ...[
+              Text(
+                summary.remainingMeetingsLabel,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${summary.consumedAbsences} de ${summary.absenceLimit} faltas usadas${pending ? ' • há uma pendência' : ''}',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            _attendanceAction(),
+          ],
+        ),
+      ),
     );
   }
 

@@ -458,6 +458,13 @@ void main() {
 
     expect(find.text('DCC203'), findsOneWidget);
     expect(find.text('POO'), findsOneWidget);
+    expect(find.byKey(const Key('course-hub-identity')), findsOneWidget);
+    expect(find.byKey(const Key('course-hub-course-mark')), findsOneWidget);
+    expect(
+      find.byKey(const Key('course-hub-frequency-summary')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('course-hub-section-grid')), findsOneWidget);
     expect(find.byKey(const Key('course-hub-frequency')), findsOneWidget);
     expect(find.byKey(const Key('course-hub-agenda')), findsOneWidget);
     expect(find.byKey(const Key('course-hub-schedule')), findsOneWidget);
