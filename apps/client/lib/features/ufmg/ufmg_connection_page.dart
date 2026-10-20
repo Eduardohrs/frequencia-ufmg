@@ -8,6 +8,7 @@ import '../../backend/python_backend_transport.dart';
 import '../../data/material_file_cache.dart';
 import '../../data/material_file_cache_factory.dart';
 import '../../data/ufmg_sync_schedule.dart';
+import '../../design/course_identity.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import 'material_cache_card.dart';
@@ -980,7 +981,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
+              constraints: BoxConstraints(
+                maxWidth: widget.isMaterialScope ? 720 : 920,
+              ),
               child: _loading
                   ? _loadingContent()
                   : widget.isMaterialScope
@@ -1023,11 +1026,37 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   Widget _scopedMaterialContent() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      Text(
-        'Materiais do Moodle',
-        style: Theme.of(context).textTheme.headlineSmall,
+      Row(
+        key: const Key('material-scope-header'),
+        children: [
+          CourseMark(
+            key: const Key('material-course-mark'),
+            code: widget.materialCourseCode!,
+            size: 52,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.materialCourseCode!,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  'Materiais do Moodle',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: 16),
       const Text(
         'Os arquivos são baixados diretamente da UFMG para este dispositivo, '
         'sem ocupar espaço no nosso servidor.',
@@ -1054,43 +1083,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Card(
-          margin: EdgeInsets.zero,
-          child: ListTile(
-            leading: Icon(
-              connected
-                  ? Icons.verified_user_outlined
-                  : Icons.account_balance_outlined,
-              color: connected
-                  ? Theme.of(context).colorScheme.primary
-                  : Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-            title: Text(
-              connected
-                  ? 'UFMG conectada'
-                  : status?.reauthenticationRequired == true
-                  ? 'Sua sessão expirou'
-                  : 'Conectar à UFMG',
-            ),
-            subtitle: Text(
-              connected
-                  ? 'Sessão pronta para sincronizar suas fontes acadêmicas.'
-                  : 'Sua senha não é armazenada; ela é usada somente para conectar.',
-            ),
-          ),
-        ),
-        if (connected && status?.expiresAt != null) ...[
-          const SizedBox(height: 16),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.schedule_outlined),
-              title: const Text('Sessão temporária'),
-              subtitle: Text(
-                'Válida até ${_formattedExpiry(status!.expiresAt!)}',
-              ),
-            ),
-          ),
-        ],
+        _accountOverview(status, connected),
         if (_error != null) ...[
           const SizedBox(height: 16),
           Semantics(
@@ -1121,26 +1114,113 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         ],
         if (_dates.isNotEmpty) ...[
           const SizedBox(height: 24),
-          Text(
-            'Datas do Moodle',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 8),
-          for (final date in _dates)
-            Card(
-              child: ListTile(
-                leading: Icon(_dateIcon(date.kind)),
-                title: Text(date.title),
-                subtitle: Text(
-                  '${date.courseCode} • ${_formattedDate(date.dueAt)}',
-                ),
-              ),
-            ),
+          _academicAgenda(),
         ],
         if (_contentDiscovery != null) ..._materialSections(),
       ],
     );
   }
+
+  Widget _academicAgenda() => Card(
+    key: const Key('ufmg-academic-agenda'),
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.calendar_month_outlined),
+            title: Text(
+              'Agenda do Moodle',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            subtitle: const Text('Avaliações e entregas encontradas'),
+          ),
+          for (final date in _dates)
+            ListTile(
+              leading: Icon(_dateIcon(date.kind)),
+              title: Text(date.title),
+              subtitle: Text(
+                '${date.courseCode} • ${_formattedDate(date.dueAt)}',
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _accountOverview(
+    PythonUFMGSessionStatus? status,
+    bool connected,
+  ) => Card(
+    key: const Key('ufmg-account-overview'),
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: connected
+                  ? Theme.of(
+                      context,
+                    ).colorScheme.primaryContainer.withValues(alpha: .65)
+                  : Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(
+              connected
+                  ? Icons.verified_user_outlined
+                  : Icons.account_balance_outlined,
+              color: connected
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  connected
+                      ? 'UFMG conectada'
+                      : status?.reauthenticationRequired == true
+                      ? 'Sua sessão expirou'
+                      : 'Conectar à UFMG',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  connected
+                      ? 'Suas fontes acadêmicas estão prontas para sincronizar.'
+                      : 'Sua senha não é armazenada; ela é usada somente para conectar.',
+                ),
+                if (connected && status?.expiresAt != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Sessão válida até ${_formattedExpiry(status!.expiresAt!)}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 
   List<Widget> _materialSections({bool includeHeading = true}) => [
     if (includeHeading) ...[
@@ -1211,6 +1291,11 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           onExpansionChanged: (expanded) => _logInteraction(
             expanded ? 'moodle_course_expand' : 'moodle_course_collapse',
           ),
+          leading: CourseMark(
+            key: Key('moodle-course-mark-${course.courseId}'),
+            code: course.courseCode,
+            size: 40,
+          ),
           title: Text(course.courseCode),
           subtitle: Text(_contentStatus(course)),
           children: [
@@ -1269,6 +1354,50 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   ];
 
   Widget _syncActions() {
+    final sources = [
+      _academicSourceCard(
+        key: const Key('ufmg-source-siga'),
+        icon: Icons.school_outlined,
+        title: 'SIGA',
+        description: 'Disciplinas e horários',
+        actionKey: const Key('ufmg-sync-siga'),
+        actionLabel: 'Sincronizar SIGA',
+        busy: _sigaBusy,
+        onSync: _syncSiga,
+        errorKey: const Key('ufmg-source-siga-error'),
+        error: _sigaError,
+        summary: _sigaSummary,
+        resultActionKey: const Key('ufmg-open-courses'),
+        resultActionLabel: 'Ver disciplinas',
+        onOpenResult: widget.onOpenCourses == null
+            ? null
+            : () async {
+                _logInteraction('ufmg_open_courses');
+                await widget.onOpenCourses!();
+              },
+      ),
+      _academicSourceCard(
+        key: const Key('ufmg-source-moodle'),
+        icon: Icons.menu_book_outlined,
+        title: 'Moodle',
+        description: 'Datas, planos de ensino e cronogramas',
+        actionKey: const Key('ufmg-sync-moodle'),
+        actionLabel: 'Sincronizar Moodle',
+        busy: _moodleBusy,
+        onSync: _syncMoodle,
+        errorKey: const Key('ufmg-source-moodle-error'),
+        error: _moodleError,
+        summary: _moodleSummary,
+        resultActionKey: const Key('ufmg-open-calendar'),
+        resultActionLabel: 'Ver calendário',
+        onOpenResult: widget.onOpenCalendar == null
+            ? null
+            : () async {
+                _logInteraction('ufmg_open_calendar');
+                await widget.onOpenCalendar!();
+              },
+      ),
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1277,48 +1406,25 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           style: Theme.of(context).textTheme.titleLarge,
         ),
         const SizedBox(height: 8),
-        _academicSourceCard(
-          key: const Key('ufmg-source-siga'),
-          icon: Icons.school_outlined,
-          title: 'SIGA',
-          description: 'Disciplinas e horários',
-          actionKey: const Key('ufmg-sync-siga'),
-          actionLabel: 'Sincronizar SIGA',
-          busy: _sigaBusy,
-          onSync: _syncSiga,
-          errorKey: const Key('ufmg-source-siga-error'),
-          error: _sigaError,
-          summary: _sigaSummary,
-          resultActionKey: const Key('ufmg-open-courses'),
-          resultActionLabel: 'Ver disciplinas',
-          onOpenResult: widget.onOpenCourses == null
-              ? null
-              : () async {
-                  _logInteraction('ufmg_open_courses');
-                  await widget.onOpenCourses!();
-                },
-        ),
-        const SizedBox(height: 12),
-        _academicSourceCard(
-          key: const Key('ufmg-source-moodle'),
-          icon: Icons.menu_book_outlined,
-          title: 'Moodle',
-          description: 'Datas, planos de ensino e cronogramas',
-          actionKey: const Key('ufmg-sync-moodle'),
-          actionLabel: 'Sincronizar Moodle',
-          busy: _moodleBusy,
-          onSync: _syncMoodle,
-          errorKey: const Key('ufmg-source-moodle-error'),
-          error: _moodleError,
-          summary: _moodleSummary,
-          resultActionKey: const Key('ufmg-open-calendar'),
-          resultActionLabel: 'Ver calendário',
-          onOpenResult: widget.onOpenCalendar == null
-              ? null
-              : () async {
-                  _logInteraction('ufmg_open_calendar');
-                  await widget.onOpenCalendar!();
-                },
+        LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth < 700) {
+              return Column(
+                key: const Key('ufmg-sources-grid'),
+                children: [sources[0], const SizedBox(height: 12), sources[1]],
+              );
+            }
+            final width = (constraints.maxWidth - 12) / 2;
+            return Wrap(
+              key: const Key('ufmg-sources-grid'),
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                for (final source in sources)
+                  SizedBox(width: width, child: source),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 12),
         Card(
