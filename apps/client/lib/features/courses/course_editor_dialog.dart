@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../data/academic_records.dart';
+import '../../design/app_feedback.dart';
 
 final class CourseInput {
   const CourseInput({
@@ -89,11 +90,17 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(
-        widget.course == null ? 'Nova disciplina' : 'Editar disciplina',
+      title: AppDialogHeader(
+        icon: widget.course == null
+            ? Icons.add_circle_outline
+            : Icons.edit_outlined,
+        title: widget.course == null ? 'Nova disciplina' : 'Editar disciplina',
+        subtitle: widget.course == null
+            ? 'Identifique a matéria para começar a acompanhar sua frequência.'
+            : 'Atualize os dados sem alterar o histórico da matéria.',
       ),
-      content: SizedBox(
-        width: 480,
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
@@ -144,14 +151,9 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
                 ],
                 if (_error != null) ...[
                   const SizedBox(height: 16),
-                  Semantics(
-                    liveRegion: true,
-                    child: Text(
-                      _error!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
+                  AppInlineMessage(
+                    tone: AppMessageTone.error,
+                    message: _error!,
                   ),
                 ],
               ],
