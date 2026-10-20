@@ -8,6 +8,7 @@ import '../../data/academic_records.dart';
 import '../../backend/python_backend_transport.dart';
 import '../../data/academic_repositories.dart';
 import '../../domain/attendance.dart';
+import '../../design/app_feedback.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import '../attendance/attendance_page.dart';
@@ -228,7 +229,12 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Excluir horário?'),
+        title: const AppDialogHeader(
+          icon: Icons.delete_outline,
+          title: 'Excluir horário?',
+          subtitle: 'Confirme o horário antes de removê-lo da grade.',
+          destructive: true,
+        ),
         content: Text(
           '${_weekdayLabel(meeting.weekday)}, ${_time(meeting.startMinutes)}–'
           '${_time(meeting.endMinutes)}',
@@ -239,6 +245,10 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
             child: const Text('Cancelar'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('Excluir'),
           ),
@@ -360,7 +370,12 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
           context: context,
           barrierDismissible: false,
           builder: (context) => AlertDialog(
-            title: const Text('Há frequências registradas'),
+            title: const AppDialogHeader(
+              icon: Icons.warning_amber_rounded,
+              title: 'Há frequências registradas',
+              subtitle: 'Revise o impacto antes de alterar a grade.',
+              destructive: true,
+            ),
             content: Text(
               '$count ${count == 1 ? 'aula registrada será removida' : 'aulas registradas serão removidas'} com esta alteração.',
             ),
@@ -370,6 +385,10 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
                 child: const Text('Manter como está'),
               ),
               FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  foregroundColor: Theme.of(context).colorScheme.onError,
+                ),
                 onPressed: () => Navigator.of(context).pop(true),
                 child: const Text('Alterar mesmo assim'),
               ),

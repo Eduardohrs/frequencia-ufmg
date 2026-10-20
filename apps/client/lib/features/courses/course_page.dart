@@ -13,6 +13,7 @@ import '../../data/calendar_status.dart';
 import '../../data/python_overview_repository.dart';
 import '../../data/ufmg_sync_schedule.dart';
 import '../../design/adaptive_app_shell.dart';
+import '../../design/app_feedback.dart';
 import '../../design/course_identity.dart';
 import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
@@ -629,7 +630,12 @@ class _CoursePageState extends State<CoursePage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Excluir disciplina?'),
+        title: const AppDialogHeader(
+          icon: Icons.delete_outline,
+          title: 'Excluir disciplina?',
+          subtitle: 'Esta ação também remove os dados vinculados.',
+          destructive: true,
+        ),
         content: Text(
           'Todos os horários e registros de ${course.code} também serão excluídos.',
         ),
@@ -639,6 +645,10 @@ class _CoursePageState extends State<CoursePage> {
             child: const Text('Cancelar'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('Excluir'),
           ),

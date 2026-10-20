@@ -8,6 +8,7 @@ import '../../backend/python_backend_transport.dart';
 import '../../data/material_file_cache.dart';
 import '../../data/material_file_cache_factory.dart';
 import '../../data/ufmg_sync_schedule.dart';
+import '../../design/app_feedback.dart';
 import '../../design/course_identity.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
@@ -679,7 +680,12 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Remover todas as cópias?'),
+        title: const AppDialogHeader(
+          icon: Icons.delete_sweep_outlined,
+          title: 'Remover todas as cópias?',
+          subtitle: 'Os arquivos originais continuarão disponíveis no Moodle.',
+          destructive: true,
+        ),
         content: const Text(
           'Os arquivos deixarão de abrir offline e as falhas serão removidas da lista. '
           'Os originais permanecem no Moodle.',
@@ -690,6 +696,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             child: const Text('Cancelar'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Remover todas'),
           ),
@@ -768,7 +778,12 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Desconectar da UFMG?'),
+        title: const AppDialogHeader(
+          icon: Icons.link_off_outlined,
+          title: 'Desconectar da UFMG?',
+          subtitle: 'Seus registros pessoais não serão apagados.',
+          destructive: true,
+        ),
         content: const Text(
           'A sessão acadêmica salva será apagada. Seus registros de frequência permanecem intactos.',
         ),
@@ -778,6 +793,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             child: const Text('Cancelar'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('Desconectar'),
           ),

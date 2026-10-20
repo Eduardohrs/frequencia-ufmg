@@ -18,6 +18,18 @@ void main() {
       expect(theme.navigationRailTheme.elevation, 0);
       expect(theme.popupMenuTheme.elevation, 3);
       expect(theme.appBarTheme.titleTextStyle?.fontWeight, FontWeight.w700);
+      expect(theme.dialogTheme.elevation, 8);
+      expect(theme.dialogTheme.surfaceTintColor, Colors.transparent);
+      expect(theme.snackBarTheme.behavior, SnackBarBehavior.floating);
+      expect(theme.progressIndicatorTheme.linearMinHeight, 4);
+      expect(
+        theme.filledButtonTheme.style?.minimumSize?.resolve({}),
+        const Size(64, 48),
+      );
+      expect(
+        theme.textButtonTheme.style?.minimumSize?.resolve({}),
+        const Size(48, 48),
+      );
     }
 
     expect(AppTheme.light().brightness, Brightness.light);

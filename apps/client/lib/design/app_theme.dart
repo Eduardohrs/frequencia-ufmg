@@ -178,6 +178,61 @@ abstract final class AppTheme {
           borderRadius: BorderRadius.circular(AppRadii.card),
         ),
       ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: card,
+        surfaceTintColor: Colors.transparent,
+        elevation: 8,
+        insetPadding: const EdgeInsets.all(AppSpacing.md),
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: separator),
+          borderRadius: BorderRadius.circular(AppRadii.prominent),
+        ),
+        titleTextStyle: text.titleLarge,
+        contentTextStyle: text.bodyMedium,
+      ),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        elevation: 6,
+        backgroundColor: scheme.inverseSurface,
+        contentTextStyle: text.bodyMedium?.copyWith(
+          color: scheme.onInverseSurface,
+          fontWeight: FontWeight.w500,
+        ),
+        actionTextColor: scheme.inversePrimary,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.card),
+        ),
+      ),
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: scheme.primary,
+        linearTrackColor: scheme.surfaceContainerHighest,
+        circularTrackColor: scheme.surfaceContainerHighest,
+        linearMinHeight: 4,
+        borderRadius: BorderRadius.circular(AppRadii.control),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(64, 48),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.lg,
+            vertical: AppSpacing.sm,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadii.control),
+          ),
+          textStyle: text.labelLarge,
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadii.control),
+          ),
+          textStyle: text.labelLarge,
+        ),
+      ),
       cardTheme: CardThemeData(
         color: card,
         surfaceTintColor: Colors.transparent,
@@ -197,6 +252,23 @@ abstract final class AppTheme {
           vertical: AppSpacing.sm,
         ),
         border: OutlineInputBorder(
+          borderSide: BorderSide(color: separator),
+          borderRadius: BorderRadius.circular(AppRadii.control),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: separator),
+          borderRadius: BorderRadius.circular(AppRadii.control),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: scheme.primary, width: 2),
+          borderRadius: BorderRadius.circular(AppRadii.control),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: scheme.error),
+          borderRadius: BorderRadius.circular(AppRadii.control),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: scheme.error, width: 2),
           borderRadius: BorderRadius.circular(AppRadii.control),
         ),
       ),
