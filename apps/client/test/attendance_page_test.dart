@@ -146,10 +146,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Frequência • DCC203'), findsOneWidget);
+    expect(find.byKey(const Key('attendance-course-header')), findsOneWidget);
+    expect(find.byKey(const Key('attendance-course-mark')), findsOneWidget);
+    expect(find.byKey(const Key('attendance-overview')), findsOneWidget);
+    expect(find.textContaining('2 pendências'), findsOneWidget);
     expect(find.text('Pendências anteriores'), findsOneWidget);
     expect(find.text('Hoje'), findsOneWidget);
     expect(find.text('Próximas aulas'), findsOneWidget);
-    expect(find.text('Histórico'), findsOneWidget);
     expect(find.text('Selecionada pelo alerta'), findsOneWidget);
     expect(find.text('Pendente de registro'), findsNWidgets(2));
     expect(
@@ -168,6 +171,12 @@ void main() {
       tester.getTopLeft(find.text('Pendências anteriores')).dy,
       lessThan(tester.getTopLeft(find.text('Hoje')).dy),
     );
+    await tester.scrollUntilVisible(
+      find.text('Histórico'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Histórico'), findsOneWidget);
   });
 
   testWidgets('keeps the highlighted pending session readable on a phone', (
