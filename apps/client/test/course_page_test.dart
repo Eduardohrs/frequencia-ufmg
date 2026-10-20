@@ -80,6 +80,7 @@ void main() {
     expect(find.text('DCC203'), findsOneWidget);
     expect(find.text('Programação Orientada a Objetos'), findsOneWidget);
     expect(find.text('2026-2'), findsOneWidget);
+    expect(find.byKey(const Key('course-mark-course-1')), findsOneWidget);
 
     await _selectCourseAction(tester, 'DCC203', 'Editar');
     await tester.enterText(find.byKey(const Key('course-name')), 'POO');

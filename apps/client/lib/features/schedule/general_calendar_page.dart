@@ -4,6 +4,7 @@ import 'package:timezone/timezone.dart' as tz;
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/calendar_status.dart';
+import '../../design/course_identity.dart';
 
 enum CalendarDisplay { month, list }
 
@@ -95,61 +96,106 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Calendário operacional')),
+    appBar: AppBar(title: const Text('Calendário')),
     body: SafeArea(
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 980),
           child: Padding(
             padding: const EdgeInsets.all(20),
-            child: Column(
-              children: [
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    SizedBox(
-                      width: 260,
-                      child: DropdownButtonFormField<String?>(
-                        key: const Key('calendar-course-filter'),
-                        initialValue: _courseId,
-                        decoration: const InputDecoration(
-                          labelText: 'Disciplina',
-                        ),
-                        items: [
-                          const DropdownMenuItem(
-                            value: null,
-                            child: Text('Todas'),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final enlargedText =
+                    MediaQuery.textScalerOf(context).scale(14) > 20;
+                final scrollWholePage =
+                    constraints.maxWidth < 320 || enlargedText;
+                final children = <Widget>[
+                  Text(
+                    'Calendário operacional',
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Aulas, reposições e avaliações em uma visão só.',
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      SizedBox(
+                        width: 260,
+                        child: DropdownButtonFormField<String?>(
+                          key: const Key('calendar-course-filter'),
+                          initialValue: _courseId,
+                          decoration: const InputDecoration(
+                            labelText: 'Disciplina',
                           ),
-                          for (final course in widget.courses)
-                            DropdownMenuItem(
-                              value: course.id,
-                              child: Text(course.code),
+                          items: [
+                            const DropdownMenuItem(
+                              value: null,
+                              child: Text('Todas'),
                             ),
-                        ],
-                        onChanged: (value) => setState(() => _courseId = value),
+                            for (final course in widget.courses)
+                              DropdownMenuItem(
+                                value: course.id,
+                                child: Text(course.code),
+                              ),
+                          ],
+                          onChanged: (value) =>
+                              setState(() => _courseId = value),
+                        ),
                       ),
-                    ),
-                    SegmentedButton<CalendarDisplay>(
-                      segments: const [
-                        ButtonSegment(
-                          value: CalendarDisplay.month,
-                          label: Text('Calendário'),
-                        ),
-                        ButtonSegment(
-                          value: CalendarDisplay.list,
-                          label: Text('Lista'),
-                        ),
-                      ],
-                      selected: {_display},
-                      onSelectionChanged: (value) =>
-                          setState(() => _display = value.single),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Expanded(child: _content()),
-              ],
+                      SegmentedButton<CalendarDisplay>(
+                        showSelectedIcon: false,
+                        segments:
+                            MediaQuery.sizeOf(context).width < 420 ||
+                                MediaQuery.textScalerOf(context).scale(14) > 20
+                            ? const [
+                                ButtonSegment(
+                                  value: CalendarDisplay.month,
+                                  icon: Icon(Icons.calendar_month_outlined),
+                                  label: Text('Mês'),
+                                ),
+                                ButtonSegment(
+                                  value: CalendarDisplay.list,
+                                  icon: Icon(Icons.view_agenda_outlined),
+                                  label: Text('Lista'),
+                                ),
+                              ]
+                            : const [
+                                ButtonSegment(
+                                  value: CalendarDisplay.month,
+                                  label: Text('Calendário'),
+                                ),
+                                ButtonSegment(
+                                  value: CalendarDisplay.list,
+                                  label: Text('Lista'),
+                                ),
+                              ],
+                        selected: {_display},
+                        onSelectionChanged: (value) =>
+                            setState(() => _display = value.single),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  if (scrollWholePage)
+                    SizedBox(height: 520, child: _content())
+                  else
+                    Expanded(child: _content()),
+                ];
+                if (scrollWholePage) {
+                  return ListView(children: children);
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: children,
+                );
+              },
             ),
           ),
         ),
@@ -193,33 +239,49 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
   Widget _calendar() {
     final first = DateTime(_month.year, _month.month, 1);
     final firstCell = first.subtract(Duration(days: first.weekday - 1));
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    final compactDays =
+        MediaQuery.sizeOf(context).width < 420 || textScale > 1.4;
     return Column(
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            TextButton(
-              onPressed: () => _moveMonth(-1),
-              child: const Text('Anterior'),
-            ),
-            SizedBox(
-              width: 180,
+            if (compactDays)
+              IconButton(
+                tooltip: 'Mês anterior',
+                onPressed: () => _moveMonth(-1),
+                icon: const Icon(Icons.chevron_left_rounded),
+              )
+            else
+              TextButton(
+                onPressed: () => _moveMonth(-1),
+                child: const Text('Anterior'),
+              ),
+            Expanded(
               child: Text(
                 '${_monthName(_month.month)} ${_month.year}',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
-            TextButton(
-              onPressed: () => _moveMonth(1),
-              child: const Text('Próximo'),
-            ),
+            if (compactDays)
+              IconButton(
+                tooltip: 'Próximo mês',
+                onPressed: () => _moveMonth(1),
+                icon: const Icon(Icons.chevron_right_rounded),
+              )
+            else
+              TextButton(
+                onPressed: () => _moveMonth(1),
+                child: const Text('Próximo'),
+              ),
           ],
         ),
         Row(
           children: [
             for (final day in ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'])
-              Expanded(child: Center(child: Text(day))),
+              Expanded(child: Center(child: Text(compactDays ? day[0] : day))),
           ],
         ),
         const SizedBox(height: 8),
@@ -227,9 +289,9 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
           child: GridView.builder(
             key: const Key('month-calendar-grid'),
             itemCount: 42,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              childAspectRatio: .9,
+              childAspectRatio: compactDays ? .42 : .9,
             ),
             itemBuilder: (_, index) {
               final day = firstCell.add(Duration(days: index));
@@ -247,7 +309,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                   'calendar-day-${day.toIso8601String().substring(0, 10)}',
                 ),
                 margin: const EdgeInsets.all(2),
-                padding: const EdgeInsets.all(6),
+                padding: EdgeInsets.all(compactDays ? 2 : 6),
                 decoration: BoxDecoration(
                   border: Border.all(
                     color: Theme.of(context).colorScheme.outlineVariant,
@@ -259,6 +321,8 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                   children: [
                     Text(
                       '${day.day}',
+                      maxLines: 1,
+                      softWrap: false,
                       style: TextStyle(
                         color: day.month == _month.month
                             ? null
@@ -266,22 +330,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                       ),
                     ),
                     for (final entry in entries.take(2))
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              entry.course.code,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.labelSmall,
-                            ),
-                          ),
-                          if (entry.session.assessmentTitle != null)
-                            const Padding(
-                              padding: EdgeInsets.only(left: 2),
-                              child: Icon(Icons.assignment_outlined, size: 12),
-                            ),
-                        ],
-                      ),
+                      _CalendarEventLabel(entry: entry),
                     if (entries.length > 2) Text('+${entries.length - 2}'),
                   ],
                 ),
@@ -298,6 +347,11 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     return Card(
       elevation: 0,
       child: ListTile(
+        leading: CourseMark(
+          key: Key('calendar-course-mark-${entry.course.id}'),
+          code: entry.course.code,
+          size: 40,
+        ),
         title: Text('${entry.course.code} • ${_date(local)}'),
         subtitle: Text(
           [
@@ -310,6 +364,42 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
             ? null
             : const Icon(Icons.assignment_outlined),
       ),
+    );
+  }
+}
+
+class _CalendarEventLabel extends StatelessWidget {
+  const _CalendarEventLabel({required this.entry});
+
+  final _CalendarEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final identity = CourseIdentity.fromCode(entry.course.code);
+    return Row(
+      children: [
+        Container(
+          width: 4,
+          height: 14,
+          decoration: BoxDecoration(
+            color: identity.color,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            entry.course.code,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall,
+          ),
+        ),
+        if (entry.session.assessmentTitle != null)
+          const Padding(
+            padding: EdgeInsets.only(left: 2),
+            child: Icon(Icons.assignment_outlined, size: 12),
+          ),
+      ],
     );
   }
 }

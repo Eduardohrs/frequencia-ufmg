@@ -13,6 +13,7 @@ import '../../data/calendar_status.dart';
 import '../../data/python_overview_repository.dart';
 import '../../data/ufmg_sync_schedule.dart';
 import '../../design/adaptive_app_shell.dart';
+import '../../design/course_identity.dart';
 import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
@@ -877,8 +878,12 @@ class _CourseTile extends StatelessWidget {
         key: Key('course-card-${course.id}'),
         contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         onTap: deleting || saving ? null : onOpen,
+        leading: CourseMark(
+          key: Key('course-mark-${course.id}'),
+          code: course.code,
+        ),
         title: Text(
-          course.code,
+          course.name,
           style: Theme.of(context).textTheme.titleMedium,
         ),
         subtitle: Padding(
@@ -886,9 +891,14 @@ class _CourseTile extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(course.name),
+              Text(course.code),
               const SizedBox(height: 2),
-              Text(course.term),
+              Text(
+                course.term,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
             ],
           ),
         ),
@@ -897,32 +907,41 @@ class _CourseTile extends StatelessWidget {
                 dimension: 24,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : PopupMenuButton<_CourseTileAction>(
-                tooltip: 'Mais ações de ${course.code}',
-                onSelected: (action) {
-                  switch (action) {
-                    case _CourseTileAction.edit:
-                      onEdit();
-                    case _CourseTileAction.delete:
-                      onDelete();
-                  }
-                },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(
-                    value: _CourseTileAction.edit,
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.edit_outlined),
-                      title: Text('Editar'),
-                    ),
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  PopupMenuButton<_CourseTileAction>(
+                    tooltip: 'Mais ações de ${course.code}',
+                    onSelected: (action) {
+                      switch (action) {
+                        case _CourseTileAction.edit:
+                          onEdit();
+                        case _CourseTileAction.delete:
+                          onDelete();
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: _CourseTileAction.edit,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.edit_outlined),
+                          title: Text('Editar'),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: _CourseTileAction.delete,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.delete_outline),
+                          title: Text('Excluir'),
+                        ),
+                      ),
+                    ],
                   ),
-                  PopupMenuItem(
-                    value: _CourseTileAction.delete,
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.delete_outline),
-                      title: Text('Excluir'),
-                    ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: Theme.of(context).dividerColor,
                   ),
                 ],
               ),
