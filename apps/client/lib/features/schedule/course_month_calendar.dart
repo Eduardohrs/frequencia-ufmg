@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../design/app_theme.dart';
+
 class CourseMonthCalendar extends StatelessWidget {
   const CourseMonthCalendar({
     required this.month,
@@ -86,7 +88,9 @@ class CourseMonthCalendar extends StatelessWidget {
             borderRadius: BorderRadius.circular(20),
             onTap: enabled ? () => onSelect(date) : null,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : context.motion.feedback,
               decoration: BoxDecoration(
                 color: boundary
                     ? colors.primary

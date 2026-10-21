@@ -1,54 +1,10 @@
 import 'package:flutter/material.dart';
 
+export 'app_motion.dart' show AppPressable;
+
+import 'app_motion.dart';
 import 'app_theme.dart';
 import 'course_identity.dart';
-
-class AppPressable extends StatefulWidget {
-  const AppPressable({
-    required this.child,
-    required this.onPressed,
-    required this.semanticLabel,
-    super.key,
-  });
-
-  final Widget child;
-  final VoidCallback? onPressed;
-  final String semanticLabel;
-
-  @override
-  State<AppPressable> createState() => _AppPressableState();
-}
-
-class _AppPressableState extends State<AppPressable> {
-  bool _pressed = false;
-
-  void _setPressed(bool value) {
-    if (widget.onPressed != null && _pressed != value) {
-      setState(() => _pressed = value);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    return Semantics(
-      button: true,
-      label: widget.semanticLabel,
-      enabled: widget.onPressed != null,
-      child: InkWell(
-        onTap: widget.onPressed,
-        onHighlightChanged: _setPressed,
-        borderRadius: BorderRadius.circular(AppRadii.card),
-        child: AnimatedScale(
-          scale: _pressed ? .985 : 1,
-          duration: reduceMotion ? Duration.zero : context.motion.feedback,
-          curve: Curves.easeOutCubic,
-          child: widget.child,
-        ),
-      ),
-    );
-  }
-}
 
 class DesignCatalogPage extends StatelessWidget {
   const DesignCatalogPage({super.key});
