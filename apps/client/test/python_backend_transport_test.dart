@@ -659,6 +659,73 @@ void main() {
     );
   });
 
+  test('validates a bounded Diario de Classe PDF probe', () async {
+    late http.Request captured;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'available': true,
+            'delivery': 'form',
+            'format': 'pdf',
+            'content_length': 12345,
+            'term': '2026-2',
+            'source_id': '701',
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await transport.probeMoodleDiarioPlan(
+      term: '2026-2',
+      sourceId: '701',
+    );
+
+    expect(result.delivery, 'form');
+    expect(result.contentLength, 12345);
+    expect(captured.url.path, '/v1/ufmg/moodle/diario-plan');
+    expect(jsonDecode(captured.body), {'term': '2026-2', 'source_id': 701});
+  });
+
+  test('rejects malformed Diario plan requests and responses', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'available': true,
+            'delivery': 'other',
+            'format': 'pdf',
+            'content_length': 12345,
+            'term': '2026-2',
+            'source_id': '701',
+          }),
+          200,
+        ),
+      ),
+    );
+
+    expect(
+      () => transport.probeMoodleDiarioPlan(term: 'invalid', sourceId: '701'),
+      throwsArgumentError,
+    );
+    await expectLater(
+      transport.probeMoodleDiarioPlan(term: '2026-2', sourceId: '701'),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'code',
+          PythonBackendError.invalidResponse,
+        ),
+      ),
+    );
+  });
+
   test('resolves bounded direct Moodle material files', () async {
     late http.Request captured;
     final transport = PythonBackendTransport(
@@ -766,6 +833,21 @@ void main() {
     });
 
     expect(candidate.title, title);
+  });
+
+  test('accepts a bounded Moodle link module', () {
+    final candidate = PythonMoodleContentCandidate.fromJson({
+      'source_id': '701',
+      'moodle_course_id': '3701',
+      'kind': 'link',
+      'title': 'Plano de ensino',
+      'url': 'https://virtual.ufmg.br/20262/mod/url/view.php?id=701',
+      'relevance': 'teaching_plan',
+      'origin': 'canonical',
+    });
+
+    expect(candidate.kind, 'link');
+    expect(candidate.canOpenDirectly, isTrue);
   });
 
   test('rejects unknown Moodle content origins', () {

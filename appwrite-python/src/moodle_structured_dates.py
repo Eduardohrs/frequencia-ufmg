@@ -24,6 +24,7 @@ MAX_EVENTS = 500
 MAX_MONTHS = 12
 MAX_COURSES = 50
 MAX_CANDIDATES = 500
+MAX_DIARIO_BYTES = 20 * 1_048_576
 MOODLE_ORIGIN = "https://virtual.ufmg.br"
 _SESSKEY = re.compile(rb'"sesskey"\s*:\s*"([A-Za-z0-9_-]{8,128})"')
 _MOBILE_TOKEN = re.compile(r"[A-Za-z0-9]{16,256}")
@@ -58,6 +59,23 @@ class MoodleMobileAuthorization:
             "download_files": self.download_files,
             "private_file_access": self.private_file_access,
             "webservice_token_issued": True,
+        }
+
+
+@dataclass(frozen=True)
+class DiarioPlanProbe:
+    """Non-sensitive facts proving that a Moodle plan resolves to a UFMG PDF."""
+
+    delivery: str
+    content_length: int
+    format: str = "pdf"
+
+    def safe_result(self) -> dict[str, object]:
+        return {
+            "available": True,
+            "delivery": self.delivery,
+            "format": self.format,
+            "content_length": self.content_length,
         }
 
 
@@ -293,6 +311,52 @@ class MoodleStructuredDatesClient:
             private_token=private_token,
         )
 
+    def probe_diario_plan(
+        self,
+        token: str,
+        *,
+        term: str,
+        source_id: int,
+    ) -> DiarioPlanProbe:
+        """Validate one Moodle plan link without retaining or returning its PDF."""
+
+        if type(source_id) is not int or not 1 <= source_id <= 2_147_483_647:
+            raise ValueError("invalid Diario source")
+        root, _, _ = self._connect(token, term)
+        launch_path = f"{root}/mod/url/view.php"
+        body, final_url, content_type = self._open_bounded(
+            Request(
+                f"{MOODLE_ORIGIN}{launch_path}?{urlencode({'id': source_id})}",
+                headers={"Accept": "text/html,application/pdf"},
+            ),
+            limit=MAX_DIARIO_BYTES,
+        )
+        delivery = "redirect"
+        if _is_moodle_module(final_url, launch_path):
+            form = _DiarioFormParser()
+            try:
+                form.feed(body.decode("utf-8"))
+            except UnicodeDecodeError:
+                raise InvalidMoodleResponse("diario_launch_encoding") from None
+            action, fields = form.result()
+            body, final_url, content_type = self._open_bounded(
+                Request(
+                    action,
+                    data=urlencode(fields).encode(),
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Accept": "application/pdf",
+                        "Origin": MOODLE_ORIGIN,
+                        "Referer": f"{MOODLE_ORIGIN}{launch_path}",
+                    },
+                    method="POST",
+                ),
+                limit=MAX_DIARIO_BYTES,
+            )
+            delivery = "form"
+        _require_diario_pdf(final_url, content_type, body)
+        return DiarioPlanProbe(delivery=delivery, content_length=len(body))
+
     def _mobile_launch(self, root: str, passport: str) -> str:
         launch_url = f"{MOODLE_ORIGIN}{root}/admin/tool/mobile/launch.php?" + urlencode(
             {
@@ -405,14 +469,17 @@ class MoodleStructuredDatesClient:
         return payload
 
     def _open(self, request: Request) -> tuple[bytes, str, str]:
+        return self._open_bounded(request, limit=MAX_RESPONSE_BYTES)
+
+    def _open_bounded(self, request: Request, *, limit: int) -> tuple[bytes, str, str]:
         try:
             with self._opener.open(request, timeout=self._timeout) as response:
-                body = response.read(MAX_RESPONSE_BYTES + 1)
+                body = response.read(limit + 1)
                 url = response.geturl()
                 content_type = response.headers.get_content_type()
         except OSError:
             raise MoodleUnavailable("Moodle is unavailable") from None
-        if len(body) > MAX_RESPONSE_BYTES:
+        if len(body) > limit:
             raise InvalidMoodleResponse("response_oversized")
         return body, url, content_type
 
@@ -453,6 +520,46 @@ class _SAMLFormParser(HTMLParser):
         ):
             raise InvalidMoodleResponse("sso_form")
         return action, relay_state, assertion
+
+
+class _DiarioFormParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._active = False
+        self._action: str | None = None
+        self._fields: dict[str, str] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if tag == "form":
+            action = values.get("action")
+            method = values.get("method", "get")
+            if _is_diario_url(action) and isinstance(method, str) and method.lower() == "post":
+                if self._action is not None:
+                    raise InvalidMoodleResponse("diario_launch_forms")
+                self._active = True
+                self._action = action
+        elif tag == "input" and self._active:
+            name = values.get("name")
+            value = values.get("value", "")
+            if (
+                not isinstance(name, str)
+                or re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", name) is None
+                or not isinstance(value, str)
+                or len(value) > 4_096
+                or name in self._fields
+            ):
+                raise InvalidMoodleResponse("diario_launch_field")
+            self._fields[name] = value
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "form":
+            self._active = False
+
+    def result(self) -> tuple[str, dict[str, str]]:
+        if self._action is None or not self._fields or len(self._fields) > 32:
+            raise InvalidMoodleResponse("diario_launch_form")
+        return self._action, self._fields
 
 
 def _parse_calendar(payload: bytes, expected_calls: int) -> list[dict[str, str]]:
@@ -719,6 +826,7 @@ def _parse_course_states(
                     "resource": "file",
                     "folder": "file",
                     "label": "text",
+                    "url": "link",
                 }.get(module)
                 if kind is None:
                     continue
@@ -975,6 +1083,46 @@ def _require_moodle_page(url: str, root: str) -> None:
         or not parsed.path.startswith(f"{root}/")
     ):
         raise UFMGReauthenticationRequired("UFMG reauthentication required")
+
+
+def _is_moodle_module(url: str, path: str) -> bool:
+    parsed = urlsplit(url)
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == "virtual.ufmg.br"
+        and parsed.port is None
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path == path
+        and not parsed.fragment
+    )
+
+
+def _is_diario_url(value: object) -> bool:
+    if not isinstance(value, str) or not value or len(value) > 8_192:
+        return False
+    parsed = urlsplit(value)
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == "sistemas.ufmg.br"
+        and parsed.port is None
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path == "/diario/JasperServlet"
+        and not parsed.fragment
+    )
+
+
+def _require_diario_pdf(url: str, content_type: str, body: bytes) -> None:
+    parsed = urlsplit(url)
+    if parsed.hostname == "sistemas.ufmg.br" and parsed.path == "/idp/login.jsp":
+        raise UFMGReauthenticationRequired("UFMG reauthentication required")
+    if not _is_diario_url(url):
+        raise InvalidMoodleResponse("diario_response_url")
+    if content_type != "application/pdf":
+        raise InvalidMoodleResponse("diario_response_type")
+    if len(body) < 9 or not body.startswith(b"%PDF-") or b"%%EOF" not in body[-1_024:]:
+        raise InvalidMoodleResponse("diario_response_pdf")
 
 
 def _require_ajax(url: str, content_type: str, ajax_path: str) -> None:

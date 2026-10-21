@@ -10,6 +10,7 @@ import pytest
 
 import moodle_structured_dates as module
 from moodle_structured_dates import (
+    DiarioPlanProbe,
     InvalidMoodleResponse,
     MoodleMobileAuthorization,
     MoodleStructuredDatesClient,
@@ -17,14 +18,18 @@ from moodle_structured_dates import (
     _candidate_relevance,
     _candidate_url,
     _course_matches,
+    _DiarioFormParser,
     _event,
+    _is_diario_url,
     _is_metaturma,
+    _is_moodle_module,
     _mobile_tokens,
     _parse_calendar,
     _parse_course_list,
     _parse_course_states,
     _parse_module_files,
     _require_ajax,
+    _require_diario_pdf,
     _require_json_endpoint,
     _require_moodle_acs,
     _require_moodle_page,
@@ -54,7 +59,7 @@ class _Response:
         return None
 
     def read(self, limit: int) -> bytes:
-        assert limit == 1_048_577
+        assert limit in {1_048_577, 20 * 1_048_576 + 1}
         return self._body
 
     def geturl(self) -> str:
@@ -85,6 +90,199 @@ def _saml_page() -> bytes:
 
 def _dashboard() -> bytes:
     return b'<script>M.cfg={"sesskey":"session-key-123"};</script>'
+
+
+def _diario_pdf() -> bytes:
+    return b"%PDF-1.7\nvalidated plan\n%%EOF"
+
+
+def test_diario_probe_accepts_a_direct_pdf_redirect_without_exposing_parameters() -> None:
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(
+                _diario_pdf(),
+                "https://sistemas.ufmg.br/diario/JasperServlet?private=course",
+                content_type="application/pdf",
+            ),
+        ]
+    )
+
+    result = MoodleStructuredDatesClient(opener=opener).probe_diario_plan(
+        "token-safe", term="2026-2", source_id=99
+    )
+
+    assert result == DiarioPlanProbe(delivery="redirect", content_length=len(_diario_pdf()))
+    assert result.safe_result() == {
+        "available": True,
+        "delivery": "redirect",
+        "format": "pdf",
+        "content_length": len(_diario_pdf()),
+    }
+    assert "private" not in repr(result)
+
+
+def test_diario_probe_submits_a_bounded_official_post_form() -> None:
+    launch = b"""
+      <form method="POST" action="https://sistemas.ufmg.br/diario/JasperServlet">
+        <input type="hidden" name="course" value="safe-id">
+      </form>
+    """
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(launch, "https://virtual.ufmg.br/20262/mod/url/view.php?id=99"),
+            _Response(
+                _diario_pdf(),
+                "https://sistemas.ufmg.br/diario/JasperServlet",
+                content_type="application/pdf",
+            ),
+        ]
+    )
+
+    result = MoodleStructuredDatesClient(opener=opener).probe_diario_plan(
+        "token-safe", term="2026-2", source_id=99
+    )
+
+    assert result.delivery == "form"
+    request = opener.requests[3][0]
+    assert request.method == "POST"
+    assert request.data == b"course=safe-id"
+    assert request.headers["Origin"] == "https://virtual.ufmg.br"
+
+
+def test_diario_probe_rejects_a_non_utf8_launch_page() -> None:
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(b"\xff", "https://virtual.ufmg.br/20262/mod/url/view.php?id=99"),
+        ]
+    )
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        MoodleStructuredDatesClient(opener=opener).probe_diario_plan(
+            "token-safe", term="2026-2", source_id=99
+        )
+    assert caught.value.reason == "diario_launch_encoding"
+
+
+@pytest.mark.parametrize(
+    "markup,reason",
+    [
+        ("<p>none</p>", "diario_launch_form"),
+        (
+            '<form method="post" action="https://sistemas.ufmg.br/diario/JasperServlet"></form>',
+            "diario_launch_form",
+        ),
+        (
+            """<form method="post" action="https://sistemas.ufmg.br/diario/JasperServlet">
+            <input name="a" value="1"></form>
+            <form method="post" action="https://sistemas.ufmg.br/diario/JasperServlet">""",
+            "diario_launch_forms",
+        ),
+        (
+            """<form method="post" action="https://sistemas.ufmg.br/diario/JasperServlet">
+            <input name="bad name" value="1"></form>""",
+            "diario_launch_field",
+        ),
+        (
+            """<form method="post" action="https://sistemas.ufmg.br/diario/JasperServlet">
+            <input name="a" value="1"><input name="a" value="2"></form>""",
+            "diario_launch_field",
+        ),
+    ],
+)
+def test_diario_form_parser_rejects_ambiguous_or_unbounded_forms(
+    markup: str, reason: str
+) -> None:
+    parser = _DiarioFormParser()
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        parser.feed(markup)
+        parser.result()
+    assert caught.value.reason == reason
+
+
+def test_diario_form_parser_ignores_untrusted_and_non_post_forms() -> None:
+    parser = _DiarioFormParser()
+    parser.feed(
+        '<form method="get" action="https://sistemas.ufmg.br/diario/JasperServlet">'
+        '<input name="ignored" value="1"></form>'
+        '<form method="post" action="https://attacker.example/x"></form>'
+    )
+    with pytest.raises(InvalidMoodleResponse, match="invalid Moodle response"):
+        parser.result()
+
+
+@pytest.mark.parametrize(
+    "url,content_type,body,exception,reason",
+    [
+        (
+            "https://sistemas.ufmg.br/idp/login.jsp",
+            "text/html",
+            b"login",
+            UFMGReauthenticationRequired,
+            None,
+        ),
+        (
+            "https://attacker.example/x",
+            "application/pdf",
+            b"%PDF-1.7%%EOF",
+            InvalidMoodleResponse,
+            "diario_response_url",
+        ),
+        (
+            "https://sistemas.ufmg.br/diario/JasperServlet",
+            "text/html",
+            b"html",
+            InvalidMoodleResponse,
+            "diario_response_type",
+        ),
+        (
+            "https://sistemas.ufmg.br/diario/JasperServlet",
+            "application/pdf",
+            b"not-pdf",
+            InvalidMoodleResponse,
+            "diario_response_pdf",
+        ),
+    ],
+)
+def test_diario_pdf_gate_classifies_every_rejected_response(
+    url: str,
+    content_type: str,
+    body: bytes,
+    exception: type[Exception],
+    reason: str | None,
+) -> None:
+    with pytest.raises(exception) as caught:
+        _require_diario_pdf(url, content_type, body)
+    if reason is not None:
+        assert isinstance(caught.value, InvalidMoodleResponse)
+        assert caught.value.reason == reason
+
+
+def test_diario_url_and_moodle_module_guards_reject_unsafe_shapes() -> None:
+    assert _is_diario_url(None) is False
+    assert _is_diario_url("x" * 8_193) is False
+    assert _is_diario_url("https://user@sistemas.ufmg.br/diario/JasperServlet") is False
+    assert _is_diario_url("https://sistemas.ufmg.br/diario/JasperServlet#x") is False
+    assert _is_moodle_module(
+        "https://virtual.ufmg.br/20262/mod/url/view.php?id=1",
+        "/20262/mod/url/view.php",
+    )
+    assert not _is_moodle_module(
+        "https://virtual.ufmg.br:444/20262/mod/url/view.php?id=1",
+        "/20262/mod/url/view.php",
+    )
+
+
+@pytest.mark.parametrize("source_id", [0, True, 2_147_483_648])
+def test_diario_probe_rejects_invalid_source_ids(source_id: object) -> None:
+    with pytest.raises(ValueError, match="invalid Diario source"):
+        MoodleStructuredDatesClient(opener=_Opener([])).probe_diario_plan(
+            "token-safe", term="2026-2", source_id=source_id  # type: ignore[arg-type]
+        )
 
 
 def _calendar_response() -> bytes:
@@ -1265,11 +1463,19 @@ def test_course_state_parser_supports_all_candidate_modules_and_visibility() -> 
             "url": "https://virtual.ufmg.br/20262/mod/forum/view.php?id=4",
             "uservisible": True,
         },
+        {
+            "id": 5,
+            "name": "Plano de ensino",
+            "module": "url",
+            "url": "https://virtual.ufmg.br/20262/mod/url/view.php?id=5",
+            "uservisible": True,
+        },
     ]
     payload = json.dumps([{"error": False, "data": json.dumps({"cm": modules})}]).encode()
     result = _parse_course_states(payload, "/20262", 1)[0]
-    assert [item["kind"] for item in result] == ["page", "file"]
+    assert [item["kind"] for item in result] == ["page", "file", "link"]
     assert result[0]["relevance"] == "teaching_plan"
+    assert result[2]["relevance"] == "teaching_plan"
 
 
 def test_course_state_parser_normalizes_long_module_titles() -> None:
@@ -1354,7 +1560,7 @@ def test_candidate_url_reports_only_a_safe_rejection_reason(value: object, reaso
     assert str(caught.value) == reason
 
 
-@pytest.mark.parametrize("module", ["page", "book", "resource", "folder"])
+@pytest.mark.parametrize("module", ["page", "book", "resource", "folder", "url"])
 def test_candidate_url_builds_a_bounded_canonical_url_when_moodle_omits_it(
     module: str,
 ) -> None:

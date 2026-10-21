@@ -914,6 +914,129 @@ def test_moodle_material_files_route_sanitizes_failures(
     assert result["body"] == {"error": code}
 
 
+def test_moodle_diario_plan_route_returns_only_safe_probe_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    class Service:
+        def probe(self, user_id: str, **values: object) -> dict[str, object]:
+            assert user_id == "user-1"
+            assert values["term"] == "2026-2"
+            assert values["source_id"] == 701
+            assert isinstance(values["now"], int)
+            return {
+                "available": True,
+                "delivery": "form",
+                "format": "pdf",
+                "content_length": 12_345,
+                "term": "2026-2",
+                "source_id": "701",
+            }
+
+    monkeypatch.setattr(function, "_moodle_diario_plan_service", lambda *_: Service())
+    context = FakeContext(
+        FakeRequest(
+            "POST",
+            "/v1/ufmg/moodle/diario-plan",
+            body_json={"term": "2026-2", "source_id": 701},
+        )
+    )
+    result = function.main(context)
+
+    assert result["status"] == 200
+    assert result["body"]["available"] is True
+    assert (
+        '{"content_length":12345,"delivery":"form",'
+        '"event":"moodle_diario_plan_succeeded","format":"pdf"}'
+    ) in context.logs
+
+
+def test_moodle_diario_plan_route_returns_authentication_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejected = {"status": 401, "body": {"error": "identity_invalid"}}
+    monkeypatch.setattr(function, "_authentication", lambda *_: (None, rejected))
+
+    result = function._moodle_diario_plan(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/moodle/diario-plan")),
+        None,
+    )
+
+    assert result is rejected
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (UFMGReauthenticationRequired(), 401, "ufmg_reauthentication_required"),
+        (MoodleUnavailable(), 503, "moodle_unavailable"),
+        (InvalidMoodleResponse("diario_response_pdf"), 502, "moodle_response_invalid"),
+        (UFMGSessionStoreUnavailable(), 503, "ufmg_session_store_unavailable"),
+        (ValueError(), 400, "moodle_diario_plan_rejected"),
+    ],
+)
+def test_moodle_diario_plan_route_sanitizes_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    status: int,
+    code: str,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    class Service:
+        def probe(self, *_args: object, **_kwargs: object) -> None:
+            raise error
+
+    monkeypatch.setattr(function, "_moodle_diario_plan_service", lambda *_: Service())
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/ufmg/moodle/diario-plan",
+                body_json={"term": "2026-2", "source_id": 701},
+            )
+        )
+    )
+    assert result["status"] == status
+    assert result["body"] == {"error": code}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"term": "20262", "source_id": 701},
+        {"term": "2026-2", "source_id": "701"},
+        {"term": "2026-2", "source_id": 0},
+        {"term": "2026-2", "source_id": 701, "unexpected": True},
+    ],
+)
+def test_moodle_diario_plan_route_rejects_invalid_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+    body: dict[str, object],
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+    result = function.main(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/moodle/diario-plan", body_json=body))
+    )
+    assert result["status"] == 400
+    assert result["body"] == {"error": "moodle_diario_plan_rejected"}
+
+
+def test_moodle_diario_plan_factory_uses_server_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = {"sessions": object(), "client": object()}
+    monkeypatch.setattr(function, "_ufmg_session_store", lambda _: values["sessions"])
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: values["client"])
+
+    service = function._moodle_diario_plan_service({})
+
+    assert service._sessions is values["sessions"]
+    assert service._client is values["client"]
+
+
 @pytest.mark.parametrize(
     "body",
     [

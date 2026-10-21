@@ -984,6 +984,185 @@ void main() {
     expect(logger.events, contains('moodle_mobile_capability_succeeded'));
   });
 
+  testWidgets('validates an official Diario plan without downloading it', (
+    tester,
+  ) async {
+    final gateway =
+        _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..materialCatalog = PythonMoodleContentDiscovery(
+            candidateTotal: 1,
+            metaturmaCandidateTotal: 0,
+            courses: [
+              PythonMoodleCourseContent(
+                courseId: 'dcc203',
+                courseCode: 'DCC203',
+                term: '2026-2',
+                moodleCourseId: '3701',
+                status: PythonMoodleContentStatus.found,
+                candidates: [
+                  PythonMoodleContentCandidate(
+                    sourceId: '701',
+                    moodleCourseId: '3701',
+                    kind: 'link',
+                    title: 'Plano de ensino',
+                    url: Uri.parse(
+                      'https://virtual.ufmg.br/20262/mod/url/view.php?id=701',
+                    ),
+                    relevance: 'teaching_plan',
+                    origin: PythonMoodleContentOrigin.canonical,
+                  ),
+                ],
+              ),
+            ],
+          );
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+
+    final probeButton = find.byKey(const Key('moodle-diario-probe-701'));
+    await tester.ensureVisible(probeButton);
+    await tester.tap(probeButton);
+    await tester.pumpAndSettle();
+
+    expect(gateway.diarioProbeRequests, [('2026-2', '701')]);
+    expect(
+      find.text(
+        'Plano estruturado disponível (2 KB). Nenhum documento foi armazenado.',
+      ),
+      findsOneWidget,
+    );
+    expect(logger.events, contains('moodle_diario_plan_probe_succeeded'));
+  });
+
+  testWidgets('explains expired Diario validation', (tester) async {
+    final gateway =
+        _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..materialCatalog = PythonMoodleContentDiscovery(
+            candidateTotal: 1,
+            metaturmaCandidateTotal: 0,
+            courses: [
+              PythonMoodleCourseContent(
+                courseId: 'dcc203',
+                courseCode: 'DCC203',
+                term: '2026-2',
+                moodleCourseId: '3701',
+                status: PythonMoodleContentStatus.found,
+                candidates: [
+                  PythonMoodleContentCandidate(
+                    sourceId: '701',
+                    moodleCourseId: '3701',
+                    kind: 'link',
+                    title: 'Plano de ensino',
+                    url: Uri.parse(
+                      'https://virtual.ufmg.br/20262/mod/url/view.php?id=701',
+                    ),
+                    relevance: 'teaching_plan',
+                    origin: PythonMoodleContentOrigin.canonical,
+                  ),
+                ],
+              ),
+            ],
+          );
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+    final probeButton = find.byKey(const Key('moodle-diario-probe-701'));
+    await tester.ensureVisible(probeButton);
+
+    gateway.diarioProbeError = const PythonBackendException(
+      PythonBackendError.ufmgReauthenticationRequired,
+    );
+    await tester.tap(probeButton);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Reconecte a UFMG para validar este plano.'),
+      findsOneWidget,
+    );
+
+    expect(logger.events, contains('moodle_diario_plan_probe_failed'));
+  });
+
+  testWidgets('explains an unexpected Diario validation failure', (
+    tester,
+  ) async {
+    final gateway =
+        _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..diarioProbeError = StateError('invalid response')
+          ..materialCatalog = PythonMoodleContentDiscovery(
+            candidateTotal: 1,
+            metaturmaCandidateTotal: 0,
+            courses: [
+              PythonMoodleCourseContent(
+                courseId: 'dcc203',
+                courseCode: 'DCC203',
+                term: '2026-2',
+                moodleCourseId: '3701',
+                status: PythonMoodleContentStatus.found,
+                candidates: [
+                  PythonMoodleContentCandidate(
+                    sourceId: '701',
+                    moodleCourseId: '3701',
+                    kind: 'link',
+                    title: 'Plano de ensino',
+                    url: Uri.parse(
+                      'https://virtual.ufmg.br/20262/mod/url/view.php?id=701',
+                    ),
+                    relevance: 'teaching_plan',
+                    origin: PythonMoodleContentOrigin.canonical,
+                  ),
+                ],
+              ),
+            ],
+          );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+    await tester.pumpAndSettle();
+    final probeButton = find.byKey(const Key('moodle-diario-probe-701'));
+    await tester.ensureVisible(probeButton);
+    await tester.tap(probeButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Não foi possível validar este plano de ensino.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('keeps academic sources usable on a phone with enlarged text', (
     tester,
   ) async {
@@ -2454,7 +2633,8 @@ PythonMoodleCourseContent _catalogCourse(
   ],
 );
 
-final class _Gateway implements BackendUFMGSessionGateway {
+final class _Gateway
+    implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
   _Gateway({required this.status});
 
   PythonUFMGSessionStatus status;
@@ -2489,6 +2669,8 @@ final class _Gateway implements BackendUFMGSessionGateway {
   int contentDiscoveryCalls = 0;
   int materialCatalogCalls = 0;
   final materialFileRequests = <(String, String, String)>[];
+  final diarioProbeRequests = <(String, String)>[];
+  Object? diarioProbeError;
   PythonMoodleContentDiscovery materialCatalog =
       const PythonMoodleContentDiscovery(
         courses: [],
@@ -2511,6 +2693,21 @@ final class _Gateway implements BackendUFMGSessionGateway {
       downloadFiles: true,
       privateFileAccess: true,
       webserviceTokenIssued: true,
+    );
+  }
+
+  @override
+  Future<PythonDiarioPlanProbe> probeMoodleDiarioPlan({
+    required String term,
+    required String sourceId,
+  }) async {
+    diarioProbeRequests.add((term, sourceId));
+    if (diarioProbeError case final error?) throw error;
+    return PythonDiarioPlanProbe(
+      term: term,
+      sourceId: sourceId,
+      delivery: 'redirect',
+      contentLength: 1536,
     );
   }
 
