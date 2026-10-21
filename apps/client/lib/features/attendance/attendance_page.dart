@@ -512,8 +512,7 @@ class _StatusBadge extends StatelessWidget {
 }
 
 bool _requiresAttendance(SessionRecord session) =>
-    session.calendarStatus == SessionCalendarStatus.scheduled ||
-    session.calendarStatus == SessionCalendarStatus.makeup;
+    session.calendarStatus.requiresAttendance;
 
 class _AttendanceDialog extends StatefulWidget {
   const _AttendanceDialog({

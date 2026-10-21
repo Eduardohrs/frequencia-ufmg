@@ -14,3 +14,9 @@ enum SessionCalendarStatus {
     orElse: () => throw ArgumentError.value(code, 'code'),
   );
 }
+
+extension SessionCalendarStatusAttendance on SessionCalendarStatus {
+  bool get requiresAttendance =>
+      this == SessionCalendarStatus.scheduled ||
+      this == SessionCalendarStatus.makeup;
+}

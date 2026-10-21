@@ -7,7 +7,9 @@ import 'package:timezone/timezone.dart' as tz;
 import '../../backend/python_backend_transport.dart';
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
+import '../../data/calendar_status.dart';
 import '../../data/ufmg_sync_schedule.dart';
+import '../../design/attendance_progress_bar.dart';
 import '../../design/app_theme.dart';
 import '../../design/course_identity.dart';
 import '../../observability/app_logger.dart';
@@ -166,7 +168,11 @@ class _CourseHubPageState extends State<CourseHubPage> {
         local.month,
         local.day,
       ).isBefore(DateTime(today.year, today.month, today.day));
-      if (beforeToday && session.absences == null) return session;
+      if (beforeToday &&
+          session.calendarStatus.requiresAttendance &&
+          session.absences == null) {
+        return session;
+      }
     }
     return null;
   }
@@ -688,10 +694,6 @@ class _FrequencyFigure extends StatelessWidget {
   final CourseAbsenceSummary summary;
   @override
   Widget build(BuildContext context) {
-    final total = summary.eligibleLessons;
-    final present = total == 0 ? 0.0 : summary.presentLessons / total;
-    final absent = total == 0 ? 0.0 : summary.consumedAbsences / total;
-    final unresolved = (1 - present - absent).clamp(0.0, 1.0);
     final figure = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -713,58 +715,12 @@ class _FrequencyFigure extends StatelessWidget {
         ),
       ],
     );
-    final track = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ClipRRect(
-          key: const Key('course-hub-frequency-track'),
-          borderRadius: BorderRadius.circular(12),
-          child: SizedBox(
-            height: 18,
-            child: Row(
-              children: [
-                if (present > 0)
-                  Expanded(
-                    flex: (present * 1000).round(),
-                    child: ColoredBox(color: _semantic(context).success),
-                  ),
-                if (unresolved > 0)
-                  Expanded(
-                    flex: (unresolved * 1000).round(),
-                    child: ColoredBox(color: _semantic(context).separator),
-                  ),
-                if (absent > 0)
-                  Expanded(
-                    flex: (absent * 1000).round(),
-                    child: ColoredBox(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                if (total == 0)
-                  Expanded(
-                    child: ColoredBox(color: _semantic(context).separator),
-                  ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 14,
-          runSpacing: 7,
-          children: [
-            _LegendDot(color: _semantic(context).success, label: 'Presenças'),
-            _LegendDot(
-              color: _semantic(context).separator,
-              label: 'Pendentes e futuras',
-            ),
-            _LegendDot(
-              color: Theme.of(context).colorScheme.error,
-              label: 'Faltas',
-            ),
-          ],
-        ),
-      ],
+    final track = AttendanceProgressBar(
+      present: summary.presentLessons,
+      unresolved: summary.unresolvedLessons,
+      absent: summary.consumedAbsences,
+      barKey: const Key('course-hub-frequency-track'),
+      markerKey: const Key('course-hub-frequency-limit-marker'),
     );
     return LayoutBuilder(
       builder: (context, constraints) => constraints.maxWidth < 520
@@ -781,35 +737,6 @@ class _FrequencyFigure extends StatelessWidget {
             ),
     );
   }
-}
-
-class _LegendDot extends StatelessWidget {
-  const _LegendDot({required this.color, required this.label});
-  final Color color;
-  final String label;
-  @override
-  Widget build(BuildContext context) => ConstrainedBox(
-    constraints: const BoxConstraints(maxWidth: 190),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 5),
-        Flexible(
-          child: Text(
-            label,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
 }
 
 class _EventRow extends StatelessWidget {

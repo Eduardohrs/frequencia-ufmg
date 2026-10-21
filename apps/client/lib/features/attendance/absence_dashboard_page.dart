@@ -6,7 +6,7 @@ import 'package:timezone/timezone.dart' as tz;
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/calendar_status.dart';
-import '../../design/app_theme.dart';
+import '../../design/attendance_progress_bar.dart';
 import '../../design/course_identity.dart';
 import '../../domain/attendance.dart';
 
@@ -105,8 +105,7 @@ final class CourseAbsenceSummary {
 }
 
 bool _countsAcademically(SessionRecord session) =>
-    session.calendarStatus == SessionCalendarStatus.scheduled ||
-    session.calendarStatus == SessionCalendarStatus.makeup ||
+    session.calendarStatus.requiresAttendance ||
     session.calendarStatus == SessionCalendarStatus.noCall;
 
 class AbsenceDashboardPage extends StatefulWidget {
@@ -401,8 +400,6 @@ class _AttendanceBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final semanticColors = Theme.of(context).extension<AppSemanticColors>();
     return Semantics(
       label:
           '${summary.presentLessons} presenças, '
@@ -412,26 +409,12 @@ class _AttendanceBar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final width = min(232.0, constraints.maxWidth);
-              return SizedBox(
-                key: ValueKey('attendance-bar-${summary.course.id}'),
-                width: width,
-                height: width / 2 + 8,
-                child: CustomPaint(
-                  painter: _AttendanceBarPainter(
-                    present: summary.presentLessons,
-                    unresolved: summary.unresolvedLessons,
-                    absent: summary.consumedAbsences,
-                    presentColor: semanticColors?.success ?? colors.primary,
-                    unresolvedColor: colors.outlineVariant,
-                    absentColor: colors.error,
-                    markerColor: colors.onSurface,
-                  ),
-                ),
-              );
-            },
+          AttendanceProgressBar(
+            present: summary.presentLessons,
+            unresolved: summary.unresolvedLessons,
+            absent: summary.consumedAbsences,
+            barKey: ValueKey('attendance-bar-${summary.course.id}'),
+            markerKey: ValueKey('attendance-limit-marker-${summary.course.id}'),
           ),
           const SizedBox(height: 4),
           Text(
@@ -444,93 +427,6 @@ class _AttendanceBar extends StatelessWidget {
       ),
     );
   }
-}
-
-class _AttendanceBarPainter extends CustomPainter {
-  const _AttendanceBarPainter({
-    required this.present,
-    required this.unresolved,
-    required this.absent,
-    required this.presentColor,
-    required this.unresolvedColor,
-    required this.absentColor,
-    required this.markerColor,
-  });
-
-  final int present;
-  final int unresolved;
-  final int absent;
-  final Color presentColor;
-  final Color unresolvedColor;
-  final Color absentColor;
-  final Color markerColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final total = present + unresolved + absent;
-    if (total == 0 || size.isEmpty) return;
-    const strokeWidth = 18.0;
-    final center = Offset(size.width / 2, size.height - strokeWidth / 2);
-    final radius = min(
-      (size.width - strokeWidth) / 2,
-      center.dy - strokeWidth / 2,
-    );
-    final rect = Rect.fromCircle(center: center, radius: radius);
-    var start = pi;
-    final segments = [
-      (value: present, color: presentColor),
-      (value: unresolved, color: unresolvedColor),
-      (value: absent, color: absentColor),
-    ];
-    for (final segment in segments) {
-      if (segment.value == 0) continue;
-      final sweep = pi * segment.value / total;
-      canvas.drawArc(
-        rect,
-        start,
-        sweep,
-        false,
-        Paint()
-          ..color = segment.color
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = strokeWidth
-          ..strokeCap = StrokeCap.butt,
-      );
-      start += sweep;
-    }
-    final nonEmpty = segments.where((segment) => segment.value > 0).toList();
-    canvas
-      ..drawCircle(
-        Offset(center.dx - radius, center.dy),
-        strokeWidth / 2,
-        Paint()..color = nonEmpty.first.color,
-      )
-      ..drawCircle(
-        Offset(center.dx + radius, center.dy),
-        strokeWidth / 2,
-        Paint()..color = nonEmpty.last.color,
-      );
-
-    final markerAngle = pi * 1.75;
-    final direction = Offset(cos(markerAngle), sin(markerAngle));
-    canvas.drawLine(
-      center + direction * (radius - strokeWidth / 2 - 4),
-      center + direction * (radius + strokeWidth / 2 + 4),
-      Paint()
-        ..color = markerColor
-        ..strokeWidth = 2,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_AttendanceBarPainter oldDelegate) =>
-      present != oldDelegate.present ||
-      unresolved != oldDelegate.unresolved ||
-      absent != oldDelegate.absent ||
-      presentColor != oldDelegate.presentColor ||
-      unresolvedColor != oldDelegate.unresolvedColor ||
-      absentColor != oldDelegate.absentColor ||
-      markerColor != oldDelegate.markerColor;
 }
 
 class _SessionImpactTile extends StatelessWidget {
