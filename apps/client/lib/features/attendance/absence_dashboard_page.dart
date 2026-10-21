@@ -6,8 +6,9 @@ import 'package:timezone/timezone.dart' as tz;
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/calendar_status.dart';
-import '../../domain/attendance.dart';
+import '../../design/app_theme.dart';
 import '../../design/course_identity.dart';
+import '../../domain/attendance.dart';
 
 final class CourseAbsenceSummary {
   CourseAbsenceSummary._({
@@ -401,6 +402,7 @@ class _AttendanceBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final semanticColors = Theme.of(context).extension<AppSemanticColors>();
     return Semantics(
       label:
           '${summary.presentLessons} presenças, '
@@ -422,7 +424,7 @@ class _AttendanceBar extends StatelessWidget {
                     present: summary.presentLessons,
                     unresolved: summary.unresolvedLessons,
                     absent: summary.consumedAbsences,
-                    presentColor: Colors.green.shade600,
+                    presentColor: semanticColors?.success ?? colors.primary,
                     unresolvedColor: colors.outlineVariant,
                     absentColor: colors.error,
                     markerColor: colors.onSurface,
