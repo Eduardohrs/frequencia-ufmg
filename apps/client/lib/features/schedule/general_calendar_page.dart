@@ -304,6 +304,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                     local.month == day.month &&
                     local.day == day.day;
               }).toList();
+              final isToday = DateUtils.isSameDay(day, widget.now());
               return Container(
                 key: ValueKey(
                   'calendar-day-${day.toIso8601String().substring(0, 10)}',
@@ -311,6 +312,11 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                 margin: const EdgeInsets.all(2),
                 padding: EdgeInsets.all(compactDays ? 2 : 6),
                 decoration: BoxDecoration(
+                  color: isToday
+                      ? Theme.of(context).colorScheme.primaryContainer
+                      : day.month == _month.month
+                      ? Theme.of(context).colorScheme.surface
+                      : Colors.transparent,
                   border: Border.all(
                     color: Theme.of(context).colorScheme.outlineVariant,
                   ),

@@ -135,7 +135,7 @@ abstract final class AppTheme {
       brightness: brightness,
       contrastLevel: highContrast ? 1 : .15,
     );
-    final surface = dark ? const Color(0xFF111412) : const Color(0xFFF6F8F6);
+    final surface = dark ? const Color(0xFF111412) : const Color(0xFFF1F5F6);
     final card = dark ? const Color(0xFF191D1A) : const Color(0xFFFFFFFF);
     final separator = dark
         ? (highContrast ? const Color(0xFF8C958F) : const Color(0xFF343A36))
@@ -200,14 +200,14 @@ abstract final class AppTheme {
         elevation: 0,
         height: 68,
         backgroundColor: Colors.transparent,
-        indicatorColor: scheme.secondaryContainer,
+        indicatorColor: scheme.primaryContainer.withValues(alpha: .72),
         labelTextStyle: WidgetStatePropertyAll(text.labelMedium),
       ),
       navigationRailTheme: NavigationRailThemeData(
         elevation: 0,
         minWidth: 84,
         backgroundColor: Colors.transparent,
-        indicatorColor: scheme.secondaryContainer,
+        indicatorColor: card,
         selectedLabelTextStyle: text.labelMedium?.copyWith(
           fontWeight: FontWeight.w600,
         ),
