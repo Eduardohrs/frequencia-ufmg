@@ -677,62 +677,94 @@ class _CoursePageState extends State<CoursePage> {
   @override
   Widget build(BuildContext context) {
     final firstName = widget.user.displayName?.trim().split(' ').first;
+    final enlargedText = MediaQuery.textScalerOf(context).scale(14) > 20;
+    Widget profileMenu() => PopupMenuButton<_ProfileAction>(
+      key: const Key('profile-menu'),
+      tooltip: 'Perfil e configurações',
+      onSelected: (action) => unawaited(_selectProfileAction(action)),
+      icon: CircleAvatar(
+        child: Text(
+          firstName == null || firstName.isEmpty
+              ? widget.user.email.characters.first.toUpperCase()
+              : firstName.characters.first.toUpperCase(),
+        ),
+      ),
+      itemBuilder: (context) => [
+        if (widget.ufmgSessionGateway != null)
+          const PopupMenuItem(
+            key: Key('profile-ufmg-account'),
+            value: _ProfileAction.ufmgAccount,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.account_balance_outlined),
+              title: Text('Conta acadêmica UFMG'),
+            ),
+          ),
+        const PopupMenuItem(
+          value: _ProfileAction.signOut,
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.logout),
+            title: Text('Sair'),
+          ),
+        ),
+      ],
+    );
     return AdaptiveAppShell(
       title: 'Início',
       selectedIndex: 0,
       onDestinationSelected: _selectDestination,
-      actions: [
-        PopupMenuButton<_ProfileAction>(
-          key: const Key('profile-menu'),
-          tooltip: 'Perfil e configurações',
-          onSelected: (action) => unawaited(_selectProfileAction(action)),
-          icon: CircleAvatar(
-            child: Text(
-              firstName == null || firstName.isEmpty
-                  ? widget.user.email.characters.first.toUpperCase()
-                  : firstName.characters.first.toUpperCase(),
-            ),
-          ),
-          itemBuilder: (context) => [
-            if (widget.ufmgSessionGateway != null)
-              const PopupMenuItem(
-                key: Key('profile-ufmg-account'),
-                value: _ProfileAction.ufmgAccount,
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.account_balance_outlined),
-                  title: Text('Conta acadêmica UFMG'),
-                ),
-              ),
-            const PopupMenuItem(
-              value: _ProfileAction.signOut,
-              child: ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.logout),
-                title: Text('Sair'),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(width: 8),
-      ],
+      actions: [profileMenu(), const SizedBox(width: 8)],
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
         children: [
-          Text(
-            firstName == null || firstName.isEmpty
-                ? 'Suas disciplinas'
-                : 'Olá, $firstName',
-            style: Theme.of(context).textTheme.headlineMedium,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            widget.user.email,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+          LayoutBuilder(
+            builder: (context, constraints) => Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (!enlargedText) ...[
+                        Text(
+                          _longDate(widget.now()),
+                          style: Theme.of(context).textTheme.labelMedium
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: .4,
+                              ),
+                        ),
+                        const SizedBox(height: 6),
+                      ],
+                      Text(
+                        firstName == null || firstName.isEmpty
+                            ? 'Suas disciplinas'
+                            : 'Olá, $firstName',
+                        style: Theme.of(context).textTheme.headlineMedium,
+                      ),
+                      if (!enlargedText) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          widget.user.email,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 24),
           if (_ufmgSyncNotice != null) ...[
             Card(
               key: const Key('ufmg-sync-notice'),
@@ -758,28 +790,83 @@ class _CoursePageState extends State<CoursePage> {
           ],
           if (_pastPendingCount > 0) ...[
             Card(
-              color: Theme.of(context).colorScheme.errorContainer,
-              child: ListTile(
-                key: const Key('past-attendance-pending-alert'),
-                leading: const Icon(Icons.warning_amber_rounded),
-                title: Text(
-                  _pastPendingCount == 1
-                      ? '1 aula anterior está sem frequência'
-                      : '$_pastPendingCount aulas anteriores estão sem frequência',
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'AGORA',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: .8,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Frequência pendente',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(),
+                    ListTile(
+                      key: const Key('past-attendance-pending-alert'),
+                      contentPadding: EdgeInsets.zero,
+                      leading: CourseMark(
+                        code: _nextPastPending!.course.code,
+                        size: 44,
+                      ),
+                      title: Text(
+                        _pastPendingCount == 1
+                            ? '1 aula anterior está sem frequência'
+                            : '$_pastPendingCount aulas anteriores estão sem frequência',
+                      ),
+                      subtitle: Text(
+                        'Mais recente: ${_nextPastPending!.course.code} • '
+                        '${_shortDate(_nextPastPending!.session.startsAt)}',
+                      ),
+                      trailing: const Icon(Icons.arrow_forward_rounded),
+                      onTap: _openPendingAttendance,
+                    ),
+                  ],
                 ),
-                subtitle: Text(
-                  'Mais recente: ${_nextPastPending!.course.code} • '
-                  '${_date(_nextPastPending!.session.startsAt, tz.getLocation('America/Sao_Paulo'))}',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _openPendingAttendance,
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 32),
           ],
-          _SectionHeader(onAdd: () => _openEditor()),
-          const SizedBox(height: 16),
-          _content(),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final courses = Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _SectionHeader(onAdd: () => _openEditor()),
+                  const SizedBox(height: 14),
+                  _content(),
+                ],
+              );
+              final dates = _UpcomingDates(
+                courses: _courses,
+                sessionsByCourse: _sessionsByCourse,
+                now: widget.now(),
+                onOpenCalendar: _openGeneralCalendar,
+              );
+              if (constraints.maxWidth < 900) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [courses, const SizedBox(height: 32), dates],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(width: constraints.maxWidth * .34, child: dates),
+                  const SizedBox(width: 44),
+                  Expanded(child: courses),
+                ],
+              );
+            },
+          ),
         ],
       ),
     );
@@ -820,7 +907,7 @@ class _CoursePageState extends State<CoursePage> {
       child: Column(
         children: [
           for (var index = 0; index < _courses.length; index++) ...[
-            if (index > 0) const SizedBox(height: 8),
+            if (index > 0) const SizedBox(height: 10),
             _CourseTile(
               course: _courses[index],
               deleting: _deletingId == _courses[index].id,
@@ -830,6 +917,139 @@ class _CoursePageState extends State<CoursePage> {
               onDelete: () => _confirmDelete(_courses[index]),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _UpcomingDates extends StatelessWidget {
+  const _UpcomingDates({
+    required this.courses,
+    required this.sessionsByCourse,
+    required this.now,
+    required this.onOpenCalendar,
+  });
+
+  final List<CourseRecord> courses;
+  final Map<String, List<SessionRecord>> sessionsByCourse;
+  final DateTime now;
+  final VoidCallback onOpenCalendar;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = <({CourseRecord course, SessionRecord session})>[
+      for (final course in courses)
+        for (final session in sessionsByCourse[course.id] ?? const [])
+          if (session.startsAt.isAfter(now) &&
+              session.assessmentTitle != null &&
+              session.calendarStatus != SessionCalendarStatus.cancelled &&
+              session.calendarStatus != SessionCalendarStatus.holiday)
+            (course: course, session: session),
+    ]..sort((a, b) => a.session.startsAt.compareTo(b.session.startsAt));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          children: [
+            Text(
+              'Próximas datas',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            TextButton(
+              onPressed: onOpenCalendar,
+              child: const Text('Ver calendário'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (entries.isEmpty)
+          Text(
+            'Nenhuma avaliação ou entrega próxima.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          )
+        else
+          for (final entry in entries.take(3))
+            _UpcomingDateTile(course: entry.course, session: entry.session),
+      ],
+    );
+  }
+}
+
+class _UpcomingDateTile extends StatelessWidget {
+  const _UpcomingDateTile({required this.course, required this.session});
+
+  final CourseRecord course;
+  final SessionRecord session;
+
+  @override
+  Widget build(BuildContext context) {
+    final date = session.startsAt.toLocal();
+    const months = [
+      'JAN',
+      'FEV',
+      'MAR',
+      'ABR',
+      'MAI',
+      'JUN',
+      'JUL',
+      'AGO',
+      'SET',
+      'OUT',
+      'NOV',
+      'DEZ',
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 54,
+            height: 54,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              border: Border.all(color: Theme.of(context).dividerColor),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '${date.day}',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                Text(
+                  months[date.month - 1],
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  session.assessmentTitle!,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  course.code,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -849,13 +1069,13 @@ class _SectionHeader extends StatelessWidget {
         final stacksActions =
             constraints.maxWidth < 500 || textScaler.scale(14) > 20;
         final title = Text(
-          'Disciplinas',
+          'Minhas disciplinas',
           style: Theme.of(context).textTheme.titleLarge,
         );
         final action = FilledButton.icon(
           key: const Key('add-course'),
           onPressed: onAdd,
-          icon: const Icon(Icons.add),
+          icon: const Icon(Icons.add_rounded),
           label: Text(
             constraints.maxWidth < 500 ? 'Adicionar' : 'Adicionar disciplina',
           ),
@@ -901,7 +1121,10 @@ class _CourseTile extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: ListTile(
         key: Key('course-card-${course.id}'),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 18,
+          vertical: 10,
+        ),
         onTap: deleting || saving ? null : onOpen,
         leading: CourseMark(
           key: Key('course-mark-${course.id}'),
@@ -1035,8 +1258,35 @@ final class _PendingAttendance {
   final SessionRecord session;
 }
 
-String _date(DateTime value, tz.Location location) {
-  final local = tz.TZDateTime.from(value, location);
+String _longDate(DateTime value) {
+  const weekdays = [
+    'segunda-feira',
+    'terça-feira',
+    'quarta-feira',
+    'quinta-feira',
+    'sexta-feira',
+    'sábado',
+    'domingo',
+  ];
+  const months = [
+    'janeiro',
+    'fevereiro',
+    'março',
+    'abril',
+    'maio',
+    'junho',
+    'julho',
+    'agosto',
+    'setembro',
+    'outubro',
+    'novembro',
+    'dezembro',
+  ];
+  return '${weekdays[value.weekday - 1]}, ${value.day} de ${months[value.month - 1]}';
+}
+
+String _shortDate(DateTime value) {
+  final local = tz.TZDateTime.from(value, tz.getLocation('America/Sao_Paulo'));
   return '${local.day.toString().padLeft(2, '0')}/'
       '${local.month.toString().padLeft(2, '0')}/${local.year}';
 }

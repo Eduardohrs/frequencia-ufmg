@@ -730,6 +730,71 @@ void main() {
     expect(sessionRepository.listedCourseIds, isEmpty);
   });
 
+  testWidgets('shows the next assessment dates from the overview snapshot', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-dates',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final sessions = [
+      _session('plain', now.add(const Duration(days: 1))),
+      _session(
+        'cancelled',
+        now.add(const Duration(days: 2)),
+        status: SessionCalendarStatus.cancelled,
+        assessmentTitle: 'Ignorada',
+      ),
+      _session(
+        'holiday',
+        now.add(const Duration(days: 3)),
+        status: SessionCalendarStatus.holiday,
+        assessmentTitle: 'Também ignorada',
+      ),
+      for (var day = 4; day <= 7; day++)
+        _session(
+          'assessment-$day',
+          now.add(Duration(days: day)),
+          assessmentTitle: 'Avaliação $day',
+        ),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          overviewRepository: _FakeOverviewRepository(
+            AcademicOverviewSnapshot(
+              courses: [course],
+              sessionsByCourse: {'course-dates': sessions},
+            ),
+          ),
+          overviewReadsEnabled: true,
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Avaliação 4'), findsOneWidget);
+    expect(find.text('Avaliação 5'), findsOneWidget);
+    expect(find.text('Avaliação 6'), findsOneWidget);
+    expect(find.text('Avaliação 7'), findsNothing);
+    expect(find.text('Ignorada'), findsNothing);
+    await tester.tap(find.text('Ver calendário'));
+    await tester.pumpAndSettle();
+    expect(find.text('Calendário operacional'), findsOneWidget);
+  });
+
   testWidgets('warns when disciplines come from the saved offline copy', (
     tester,
   ) async {
@@ -1859,6 +1924,7 @@ SessionRecord _session(
   String id,
   DateTime startsAt, {
   SessionCalendarStatus status = SessionCalendarStatus.scheduled,
+  String? assessmentTitle,
 }) => SessionRecord(
   id: id,
   startsAt: startsAt,
@@ -1866,6 +1932,7 @@ SessionRecord _session(
   lessonCount: QuantidadeAulas.two,
   callCount: NumeroChamadas.one,
   calendarStatus: status,
+  assessmentTitle: assessmentTitle,
   createdAt: startsAt,
   updatedAt: startsAt,
 );
