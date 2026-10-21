@@ -179,6 +179,10 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const Key('attendance-bar-poo')), findsOneWidget);
+    expect(
+      find.byKey(const Key('attendance-limit-marker-poo')),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('attendance-semicircle-poo')), findsNothing);
     expect(find.text('Frequência mínima garantida'), findsOneWidget);
 

@@ -605,6 +605,10 @@ void main() {
 
     expect(find.byKey(const Key('course-hub-pending-action')), findsOneWidget);
     expect(find.byKey(const Key('course-hub-frequency-track')), findsOneWidget);
+    expect(
+      find.byKey(const Key('course-hub-frequency-limit-marker')),
+      findsOneWidget,
+    );
     expect(find.text('Resolver agora'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
@@ -612,6 +616,64 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('course-hub-pending-action')), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('does not offer to resolve non-attendance sessions', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-inactive',
+      code: 'ELE028',
+      name: 'Laboratório de Circuitos',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final sessions = _FakeSessionRepository({
+      course.id: [
+        _session(
+          'cancelled',
+          DateTime.utc(2026, 9, 24, 12),
+          status: SessionCalendarStatus.cancelled,
+        ),
+        _session(
+          'holiday',
+          DateTime.utc(2026, 9, 25, 12),
+          status: SessionCalendarStatus.holiday,
+        ),
+        _session(
+          'no-call',
+          DateTime.utc(2026, 9, 26, 12),
+          status: SessionCalendarStatus.noCall,
+        ),
+      ],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(courses: [course]),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: sessions,
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('past-attendance-pending-alert')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const Key('course-card-course-inactive')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-hub-pending-action')), findsNothing);
+    expect(find.text('Resolver agora'), findsNothing);
+    expect(find.byKey(const Key('course-hub-open-attendance')), findsOneWidget);
   });
 
   testWidgets('keeps independent hub sections useful after partial failures', (
@@ -733,6 +795,8 @@ void main() {
   testWidgets('shows the next assessment dates from the overview snapshot', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final course = CourseRecord(
       id: 'course-dates',
       code: 'DCC203',
@@ -784,6 +848,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.text('Próximas datas')).dy,
+      lessThan(tester.getTopLeft(find.text('Minhas disciplinas')).dy),
+    );
 
     expect(find.text('Avaliação 4'), findsOneWidget);
     expect(find.text('Avaliação 5'), findsOneWidget);

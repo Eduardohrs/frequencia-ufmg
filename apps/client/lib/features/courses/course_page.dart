@@ -317,9 +317,6 @@ class _CoursePageState extends State<CoursePage> {
     final pending = <_PendingAttendance>[];
     for (var index = 0; index < courses.length; index++) {
       for (final session in loaded[index]) {
-        final requiresAttendance =
-            session.calendarStatus == SessionCalendarStatus.scheduled ||
-            session.calendarStatus == SessionCalendarStatus.makeup;
         final localSession = tz.TZDateTime.from(
           session.startsAt,
           effectiveLocation,
@@ -329,7 +326,7 @@ class _CoursePageState extends State<CoursePage> {
           localSession.month,
           localSession.day,
         );
-        if (requiresAttendance &&
+        if (session.calendarStatus.requiresAttendance &&
             session.absences == null &&
             day.isBefore(effectiveToday)) {
           pending.add(_PendingAttendance(courses[index], session));
@@ -852,9 +849,21 @@ class _CoursePageState extends State<CoursePage> {
                 onOpenCalendar: _openGeneralCalendar,
               );
               if (constraints.maxWidth < 900) {
+                final datesFirst = _courses.any(
+                  (course) => (_sessionsByCourse[course.id] ?? const []).any(
+                    (session) =>
+                        session.startsAt.isAfter(widget.now()) &&
+                        session.assessmentTitle != null &&
+                        session.calendarStatus !=
+                            SessionCalendarStatus.cancelled &&
+                        session.calendarStatus != SessionCalendarStatus.holiday,
+                  ),
+                );
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [courses, const SizedBox(height: 32), dates],
+                  children: datesFirst
+                      ? [dates, const SizedBox(height: 32), courses]
+                      : [courses, const SizedBox(height: 32), dates],
                 );
               }
               return Row(
