@@ -1,9 +1,48 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/design/app_theme.dart';
 import 'package:frequencia_ufmg/design/design_catalog.dart';
 
+class _CrossPlatformGoldenComparator extends LocalFileComparator {
+  _CrossPlatformGoldenComparator(super.testFile);
+
+  static const double _maxPlatformRasterizationDifference = 0.01;
+
+  @override
+  Future<bool> compare(Uint8List imageBytes, Uri golden) async {
+    final result = await GoldenFileComparator.compareLists(
+      imageBytes,
+      await getGoldenBytes(golden),
+    );
+    final isEquivalent =
+        result.passed ||
+        result.diffPercent <= _maxPlatformRasterizationDifference;
+    result.dispose();
+    if (isEquivalent) {
+      return true;
+    }
+    return super.compare(imageBytes, golden);
+  }
+}
+
 void main() {
+  final originalGoldenComparator = goldenFileComparator;
+
+  setUpAll(() {
+    goldenFileComparator = _CrossPlatformGoldenComparator(
+      Directory.current.uri.resolve(
+        'test/design/redesign_visual_regression_test.dart',
+      ),
+    );
+  });
+
+  tearDownAll(() {
+    goldenFileComparator = originalGoldenComparator;
+  });
+
   Future<void> expectCatalogGolden(
     WidgetTester tester, {
     required Size size,
