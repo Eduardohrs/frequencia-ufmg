@@ -115,6 +115,13 @@ abstract interface class BackendUFMGSessionGateway {
   Future<PythonUFMGSigaSyncResult> syncSiga();
 }
 
+abstract interface class BackendDiarioPlanGateway {
+  Future<PythonDiarioPlanProbe> probeMoodleDiarioPlan({
+    required String term,
+    required String sourceId,
+  });
+}
+
 enum PythonMoodleContentStatus { found, empty, unmatched, ambiguous }
 
 enum PythonMoodleContentOrigin { canonical, metaturma }
@@ -133,6 +140,20 @@ final class PythonMoodleMobileCapabilities {
   final bool downloadFiles;
   final bool privateFileAccess;
   final bool webserviceTokenIssued;
+}
+
+final class PythonDiarioPlanProbe {
+  const PythonDiarioPlanProbe({
+    required this.term,
+    required this.sourceId,
+    required this.delivery,
+    required this.contentLength,
+  });
+
+  final String term;
+  final String sourceId;
+  final String delivery;
+  final int contentLength;
 }
 
 final class PythonMoodleContentCandidate {
@@ -176,7 +197,7 @@ final class PythonMoodleContentCandidate {
         !_moodleSourceId.hasMatch(moodleCourseId) ||
         (int.tryParse(moodleCourseId) ?? 0) > 2147483647 ||
         kind is! String ||
-        !const {'page', 'file', 'text'}.contains(kind) ||
+        !const {'page', 'file', 'text', 'link'}.contains(kind) ||
         title is! String ||
         title.isEmpty ||
         title.trim() != title ||
@@ -295,6 +316,7 @@ bool _isSafeMoodleMaterialUri(Uri uri, String sourceId, String kind) {
   return switch (kind) {
     'page' => const {'page', 'book'}.contains(segments[2]),
     'file' => const {'resource', 'folder'}.contains(segments[2]),
+    'link' => segments[2] == 'url',
     _ => false,
   };
 }
@@ -1447,6 +1469,59 @@ final class PythonBackendTransport
             ),
           )
           .toList(growable: false);
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  Future<PythonDiarioPlanProbe> probeMoodleDiarioPlan({
+    required String term,
+    required String sourceId,
+  }) async {
+    final numericSourceId = int.tryParse(sourceId);
+    if (!RegExp(r'^20[2-9][0-9]-[12]$').hasMatch(term) ||
+        numericSourceId == null ||
+        numericSourceId < 1 ||
+        numericSourceId > 2147483647) {
+      throw ArgumentError('invalid Diario plan identity');
+    }
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/moodle/diario-plan',
+      method: _BackendMethod.post,
+      body: {'term': term, 'source_id': numericSourceId},
+    );
+    try {
+      final value = jsonDecode(response.body);
+      const keys = {
+        'available',
+        'delivery',
+        'format',
+        'content_length',
+        'term',
+        'source_id',
+      };
+      if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
+        throw const FormatException();
+      }
+      final delivery = value['delivery'];
+      final contentLength = value['content_length'];
+      if (value['available'] is! bool ||
+          value['available'] != true ||
+          !const {'redirect', 'form'}.contains(delivery) ||
+          value['format'] != 'pdf' ||
+          contentLength is! int ||
+          contentLength < 9 ||
+          contentLength > 20 * 1024 * 1024 ||
+          value['term'] != term ||
+          value['source_id'] != sourceId) {
+        throw const FormatException();
+      }
+      return PythonDiarioPlanProbe(
+        term: term,
+        sourceId: sourceId,
+        delivery: delivery as String,
+        contentLength: contentLength,
+      );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
     }

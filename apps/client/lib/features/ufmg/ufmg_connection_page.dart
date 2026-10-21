@@ -71,6 +71,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   List<MaterialDownloadProgress> _materialDownloadProgress = const [];
   Timer? _materialProgressTimer;
   final Set<String> _materialDownloadsInFlight = {};
+  final Set<String> _diarioProbesInFlight = {};
   final Set<String> _materialDownloadsScheduled = {};
   final Set<String> _reportedMaterialDownloadFailures = {};
   bool _materialBatchRunning = false;
@@ -297,6 +298,57 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       ).showSnackBar(SnackBar(content: Text(message)));
     } finally {
       _materialDownloadsInFlight.remove(operationId);
+      if (mounted) setState(() {});
+    }
+  }
+
+  bool _canProbeDiario(PythonMoodleContentCandidate candidate) =>
+      candidate.kind == 'link' &&
+      candidate.relevance == 'teaching_plan' &&
+      widget.gateway is BackendDiarioPlanGateway;
+
+  Future<void> _probeDiarioPlan(
+    PythonMoodleCourseContent course,
+    PythonMoodleContentCandidate candidate,
+  ) async {
+    _logInteraction('moodle_diario_plan_probe');
+    final operationId = _materialOperationId(course, candidate);
+    if (!_diarioProbesInFlight.add(operationId)) return;
+    setState(() {});
+    try {
+      final probe = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleDiarioPlanProbe,
+        action: () =>
+            (widget.gateway as BackendDiarioPlanGateway).probeMoodleDiarioPlan(
+              term: course.term,
+              sourceId: candidate.sourceId,
+            ),
+      );
+      if (!mounted) return;
+      final sizeKb = (probe.contentLength / 1024).ceil();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Plano estruturado disponível ($sizeKb KB). '
+            'Nenhum documento foi armazenado.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final message = switch (error) {
+        PythonBackendException(
+          code: PythonBackendError.ufmgReauthenticationRequired,
+        ) =>
+          'Reconecte a UFMG para validar este plano.',
+        _ => 'Não foi possível validar este plano de ensino.',
+      };
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      _diarioProbesInFlight.remove(operationId);
       if (mounted) setState(() {});
     }
   }
@@ -1342,7 +1394,24 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                 leading: Icon(_contentIcon(candidate.kind)),
                 title: Text(candidate.title),
                 subtitle: Text(_candidateLabel(candidate)),
-                trailing: candidate.canOpenDirectly
+                trailing: _canProbeDiario(candidate)
+                    ? _diarioProbesInFlight.contains(
+                            _materialOperationId(course, candidate),
+                          )
+                          ? const SizedBox.square(
+                              dimension: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : IconButton(
+                              key: Key(
+                                'moodle-diario-probe-${candidate.sourceId}',
+                              ),
+                              tooltip: 'Validar plano estruturado',
+                              onPressed: () =>
+                                  _probeDiarioPlan(course, candidate),
+                              icon: const Icon(Icons.fact_check_outlined),
+                            )
+                    : candidate.canOpenDirectly
                     ? _materialDownloadsInFlight.contains(
                             _materialOperationId(course, candidate),
                           )
@@ -1689,6 +1758,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   static IconData _contentIcon(String kind) => switch (kind) {
     'page' => Icons.article_outlined,
     'file' => Icons.attach_file,
+    'link' => Icons.link_outlined,
     _ => Icons.notes_outlined,
   };
 

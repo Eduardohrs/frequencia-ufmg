@@ -41,6 +41,7 @@ final class _FirebasePythonBackendVerifier
         BackendScheduleGateway,
         BackendSessionGateway,
         BackendUFMGSessionGateway,
+        BackendDiarioPlanGateway,
         BackendOverviewGateway {
   _FirebasePythonBackendVerifier(Uri endpoint)
     : _transport = PythonBackendTransport(
@@ -119,6 +120,15 @@ final class _FirebasePythonBackendVerifier
   Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities() async {
     await (_activation ??= _activateAppCheck());
     return _transport.probeMoodleMobileCapabilities();
+  }
+
+  @override
+  Future<PythonDiarioPlanProbe> probeMoodleDiarioPlan({
+    required String term,
+    required String sourceId,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.probeMoodleDiarioPlan(term: term, sourceId: sourceId);
   }
 
   @override
