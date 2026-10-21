@@ -14,6 +14,7 @@ import '../../data/python_overview_repository.dart';
 import '../../data/ufmg_sync_schedule.dart';
 import '../../design/adaptive_app_shell.dart';
 import '../../design/app_feedback.dart';
+import '../../design/app_motion.dart';
 import '../../design/course_identity.dart';
 import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
@@ -785,38 +786,52 @@ class _CoursePageState extends State<CoursePage> {
   }
 
   Widget _content() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) {
+      return const AppStateTransition(
+        stateKey: ValueKey('courses-loading'),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
     if (_loadFailed) {
-      return _MessageState(
-        icon: Icons.cloud_off_outlined,
-        title: 'Não foi possível carregar suas disciplinas.',
-        actionLabel: 'Tentar novamente',
-        onAction: _load,
+      return AppStateTransition(
+        stateKey: const ValueKey('courses-error'),
+        child: _MessageState(
+          icon: Icons.cloud_off_outlined,
+          title: 'Não foi possível carregar suas disciplinas.',
+          actionLabel: 'Tentar novamente',
+          onAction: _load,
+        ),
       );
     }
     if (_courses.isEmpty) {
-      return _MessageState(
-        icon: Icons.menu_book_outlined,
-        title: 'Nenhuma disciplina cadastrada',
-        description: 'Adicione as matérias deste período para começar.',
-        actionLabel: 'Adicionar disciplina',
-        onAction: _openEditor,
+      return AppStateTransition(
+        stateKey: const ValueKey('courses-empty'),
+        child: _MessageState(
+          icon: Icons.menu_book_outlined,
+          title: 'Nenhuma disciplina cadastrada',
+          description: 'Adicione as matérias deste período para começar.',
+          actionLabel: 'Adicionar disciplina',
+          onAction: _openEditor,
+        ),
       );
     }
-    return Column(
-      children: [
-        for (var index = 0; index < _courses.length; index++) ...[
-          if (index > 0) const SizedBox(height: 8),
-          _CourseTile(
-            course: _courses[index],
-            deleting: _deletingId == _courses[index].id,
-            saving: _savingIds.contains(_courses[index].id),
-            onOpen: () => _openCourseHub(_courses[index]),
-            onEdit: () => _openEditor(_courses[index]),
-            onDelete: () => _confirmDelete(_courses[index]),
-          ),
+    return AppStateTransition(
+      stateKey: const ValueKey('courses-loaded'),
+      child: Column(
+        children: [
+          for (var index = 0; index < _courses.length; index++) ...[
+            if (index > 0) const SizedBox(height: 8),
+            _CourseTile(
+              course: _courses[index],
+              deleting: _deletingId == _courses[index].id,
+              saving: _savingIds.contains(_courses[index].id),
+              onOpen: () => _openCourseHub(_courses[index]),
+              onEdit: () => _openEditor(_courses[index]),
+              onDelete: () => _confirmDelete(_courses[index]),
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }

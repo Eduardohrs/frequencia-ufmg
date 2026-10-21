@@ -2,8 +2,37 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/features/schedule/course_date_range_picker.dart';
+import 'package:frequencia_ufmg/features/schedule/course_month_calendar.dart';
 
 void main() {
+  testWidgets('calendar selection respects reduced motion', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: Scaffold(
+            body: CourseMonthCalendar(
+              month: DateTime(2026, 10),
+              firstDate: DateTime(2026, 10, 1),
+              lastDate: DateTime(2026, 10, 31),
+              start: DateTime(2026, 10, 5),
+              end: DateTime(2026, 10, 12),
+              highlightedWeekdays: const {DateTime.monday},
+              onSelect: (_) {},
+              onHover: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final cells = tester.widgetList<AnimatedContainer>(
+      find.byType(AnimatedContainer),
+    );
+    expect(cells, isNotEmpty);
+    expect(cells.every((cell) => cell.duration == Duration.zero), isTrue);
+  });
+
   testWidgets('selects a range without typing and counts teaching days', (
     tester,
   ) async {

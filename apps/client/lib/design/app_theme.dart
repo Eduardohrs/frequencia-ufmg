@@ -83,6 +83,39 @@ class AppMotion extends ThemeExtension<AppMotion> {
   }
 }
 
+class AppPageTransitionsBuilder extends PageTransitionsBuilder {
+  const AppPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    final faded = FadeTransition(
+      key: const ValueKey('app-page-fade-transition'),
+      opacity: curved,
+      child: child,
+    );
+    if (MediaQuery.disableAnimationsOf(context)) return faded;
+    return SlideTransition(
+      key: const ValueKey('app-page-slide-transition'),
+      position: Tween(
+        begin: const Offset(.035, 0),
+        end: Offset.zero,
+      ).animate(curved),
+      child: faded,
+    );
+  }
+}
+
 abstract final class AppTheme {
   static const _seed = Color(0xFF006633);
 
@@ -145,6 +178,16 @@ abstract final class AppTheme {
       scaffoldBackgroundColor: surface,
       textTheme: text,
       splashFactory: NoSplash.splashFactory,
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: AppPageTransitionsBuilder(),
+          TargetPlatform.iOS: AppPageTransitionsBuilder(),
+          TargetPlatform.macOS: AppPageTransitionsBuilder(),
+          TargetPlatform.windows: AppPageTransitionsBuilder(),
+          TargetPlatform.linux: AppPageTransitionsBuilder(),
+          TargetPlatform.fuchsia: AppPageTransitionsBuilder(),
+        },
+      ),
       appBarTheme: AppBarTheme(
         backgroundColor: surface,
         foregroundColor: scheme.onSurface,
@@ -292,5 +335,6 @@ extension AppThemeContext on BuildContext {
   AppSemanticColors get semanticColors =>
       Theme.of(this).extension<AppSemanticColors>()!;
 
-  AppMotion get motion => Theme.of(this).extension<AppMotion>()!;
+  AppMotion get motion =>
+      Theme.of(this).extension<AppMotion>() ?? const AppMotion();
 }

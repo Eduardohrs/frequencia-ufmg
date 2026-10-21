@@ -7,6 +7,7 @@ import '../../data/academic_records.dart';
 import '../../backend/python_backend_transport.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/calendar_status.dart';
+import '../../design/app_motion.dart';
 import '../../design/course_identity.dart';
 import '../../domain/attendance.dart';
 import '../../observability/app_logger.dart';
@@ -229,24 +230,35 @@ class _AttendancePageState extends State<AttendancePage> {
   );
 
   Widget _content() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) {
+      return const AppStateTransition(
+        stateKey: ValueKey('attendance-loading'),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
     if (_failed) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Não foi possível carregar as sessões.'),
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: _load,
-              child: const Text('Tentar novamente'),
-            ),
-          ],
+      return AppStateTransition(
+        stateKey: const ValueKey('attendance-error'),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Não foi possível carregar as sessões.'),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: _load,
+                child: const Text('Tentar novamente'),
+              ),
+            ],
+          ),
         ),
       );
     }
     if (_sessions.isEmpty) {
-      return const Center(child: Text('Nenhuma sessão gerada'));
+      return const AppStateTransition(
+        stateKey: ValueKey('attendance-empty'),
+        child: Center(child: Text('Nenhuma sessão gerada')),
+      );
     }
     final sections = _sections();
     final pendingCount = _sessions.where(_isPending).length;
@@ -254,38 +266,41 @@ class _AttendancePageState extends State<AttendancePage> {
     final registeredCount = _sessions
         .where((item) => item.attendanceStatus != null)
         .length;
-    return CustomScrollView(
-      slivers: [
-        if (widget.courseCode case final code?) ...[
-          SliverToBoxAdapter(child: _courseHeader(code)),
-          const SliverToBoxAdapter(child: SizedBox(height: 16)),
-        ],
-        SliverToBoxAdapter(
-          child: _attendanceOverview(
-            pendingCount: pendingCount,
-            registeredCount: registeredCount,
-            upcomingCount: upcomingCount,
-          ),
-        ),
-        const SliverToBoxAdapter(child: SizedBox(height: 8)),
-        for (var index = 0; index < sections.length; index++) ...[
+    return AppStateTransition(
+      stateKey: const ValueKey('attendance-loaded'),
+      child: CustomScrollView(
+        slivers: [
+          if (widget.courseCode case final code?) ...[
+            SliverToBoxAdapter(child: _courseHeader(code)),
+            const SliverToBoxAdapter(child: SizedBox(height: 16)),
+          ],
           SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.only(top: index == 0 ? 0 : 20, bottom: 8),
-              child: Text(
-                sections[index].title,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+            child: _attendanceOverview(
+              pendingCount: pendingCount,
+              registeredCount: registeredCount,
+              upcomingCount: upcomingCount,
             ),
           ),
-          SliverList.separated(
-            itemCount: sections[index].sessions.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 8),
-            itemBuilder: (_, sessionIndex) =>
-                _sessionCard(sections[index].sessions[sessionIndex]),
-          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 8)),
+          for (var index = 0; index < sections.length; index++) ...[
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.only(top: index == 0 ? 0 : 20, bottom: 8),
+                child: Text(
+                  sections[index].title,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+            ),
+            SliverList.separated(
+              itemCount: sections[index].sessions.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
+              itemBuilder: (_, sessionIndex) =>
+                  _sessionCard(sections[index].sessions[sessionIndex]),
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 
