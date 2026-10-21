@@ -559,6 +559,61 @@ void main() {
     expect(find.text('Calendário operacional'), findsOneWidget);
   });
 
+  testWidgets('shows the compact pending action and segmented absence bar', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 900));
+    final course = CourseRecord(
+      id: 'course-compact',
+      code: 'ELE028',
+      name: 'Laboratório de Circuitos',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final recorded = SessionRecord(
+      id: 'recorded',
+      startsAt: DateTime.utc(2026, 9, 20, 22),
+      endsAt: DateTime.utc(2026, 9, 20, 23, 40),
+      lessonCount: QuantidadeAulas.two,
+      callCount: NumeroChamadas.one,
+      absences: 2,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final pending = _session('pending', DateTime.utc(2026, 9, 26, 22));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(courses: [course]),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository({
+            course.id: [recorded, pending],
+          }),
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('course-card-course-compact')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('course-hub-pending-action')), findsOneWidget);
+    expect(find.byKey(const Key('course-hub-frequency-track')), findsOneWidget);
+    expect(find.text('Resolver agora'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.binding.setSurfaceSize(const Size(900, 900));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-hub-pending-action')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('keeps independent hub sections useful after partial failures', (
     tester,
   ) async {

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:timezone/timezone.dart' as tz;
 
@@ -7,6 +8,7 @@ import '../../backend/python_backend_transport.dart';
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/ufmg_sync_schedule.dart';
+import '../../design/app_theme.dart';
 import '../../design/course_identity.dart';
 import '../../observability/app_logger.dart';
 import '../attendance/absence_dashboard_page.dart';
@@ -222,42 +224,165 @@ class _CourseHubPageState extends State<CourseHubPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(widget.course.code)),
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) => Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 960),
-              child: SingleChildScrollView(
-                padding: EdgeInsets.all(constraints.maxWidth < 600 ? 16 : 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _courseIdentity(),
-                    const SizedBox(height: 16),
-                    _frequencySection(),
-                    const SizedBox(height: 16),
-                    _sectionGrid(constraints.maxWidth),
-                  ],
-                ),
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      toolbarHeight: 64,
+      leadingWidth: 76,
+      leading: Padding(
+        padding: const EdgeInsets.only(left: 18, top: 8, bottom: 8),
+        child: Tooltip(
+          message: 'Voltar',
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.secondaryContainer,
+              shape: BoxShape.circle,
+            ),
+            child: MediaQuery.withClampedTextScaling(
+              maxScaleFactor: 1,
+              child: CupertinoNavigationBarBackButton(
+                previousPageTitle: '',
+                color: Theme.of(context).colorScheme.onSecondaryContainer,
+                onPressed: () => Navigator.of(context).maybePop(),
               ),
             ),
           ),
         ),
       ),
-    );
-  }
+    ),
+    body: SafeArea(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 780;
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1080),
+              child: SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(
+                  compact ? 18 : 36,
+                  compact ? 24 : 42,
+                  compact ? 18 : 36,
+                  56,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _courseIdentity(compact),
+                    if (_firstPending != null) ...[
+                      const SizedBox(height: 24),
+                      _pendingAction(compact),
+                    ],
+                    SizedBox(height: compact ? 28 : 34),
+                    _courseContent(compact),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    ),
+  );
 
-  Widget _courseIdentity() => Row(
+  Widget _courseIdentity(bool compact) => Row(
     key: const Key('course-hub-identity'),
-    crossAxisAlignment: CrossAxisAlignment.center,
     children: [
       CourseMark(
         key: const Key('course-hub-course-mark'),
         code: widget.course.code,
-        size: 56,
+        size: compact ? 50 : 62,
+      ),
+      SizedBox(width: compact ? 12 : 18),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 0,
+              runSpacing: 2,
+              children: [
+                Text(
+                  widget.course.code,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: .6,
+                  ),
+                ),
+                Text(
+                  ' · ${widget.course.term.replaceFirst('-', '/')}',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: .6,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              widget.course.name,
+              maxLines: compact ? 2 : 1,
+              overflow: TextOverflow.ellipsis,
+              style:
+                  (compact
+                          ? Theme.of(context).textTheme.headlineSmall
+                          : Theme.of(context).textTheme.headlineMedium)
+                      ?.copyWith(fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+
+  Widget _pendingAction(bool compact) {
+    final pending = _firstPending!;
+    return Container(
+      key: const Key('course-hub-pending-action'),
+      padding: const EdgeInsets.all(16),
+      decoration: _panelDecoration(context, radius: 18),
+      child: compact
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _pendingCopy(pending),
+                const SizedBox(height: 16),
+                FilledButton(
+                  key: const Key('course-hub-open-attendance'),
+                  onPressed: _openAttendance,
+                  child: const Text('Resolver agora'),
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(child: _pendingCopy(pending)),
+                const SizedBox(width: 20),
+                FilledButton(
+                  key: const Key('course-hub-open-attendance'),
+                  onPressed: _openAttendance,
+                  child: const Text('Resolver agora'),
+                ),
+              ],
+            ),
+    );
+  }
+
+  Widget _pendingCopy(SessionRecord pending) => Row(
+    children: [
+      Container(
+        width: 9,
+        height: 9,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Theme.of(context).colorScheme.error,
+          boxShadow: [
+            BoxShadow(
+              color: Theme.of(context).colorScheme.error.withValues(alpha: .15),
+              spreadRadius: 6,
+            ),
+          ],
+        ),
       ),
       const SizedBox(width: 14),
       Expanded(
@@ -265,15 +390,13 @@ class _CourseHubPageState extends State<CourseHubPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              widget.course.name,
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+              'Frequência pendente',
+              style: Theme.of(context).textTheme.titleSmall,
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 3),
             Text(
-              '${widget.course.code} • ${widget.course.term}',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              _pendingDescription(pending),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
@@ -283,43 +406,35 @@ class _CourseHubPageState extends State<CourseHubPage> {
     ],
   );
 
-  Widget _sectionGrid(double width) {
-    final sections = [
-      _agendaSection(),
-      _scheduleSection(),
-      _materialsSection(),
-    ];
-    if (width < 700) {
-      return Column(
-        key: const Key('course-hub-section-grid'),
-        children: [
-          for (var index = 0; index < sections.length; index++) ...[
-            sections[index],
-            if (index != sections.length - 1) const SizedBox(height: 12),
-          ],
-        ],
-      );
-    }
-    final itemWidth = (width - 12) / 2;
-    return Wrap(
-      key: const Key('course-hub-section-grid'),
-      spacing: 12,
-      runSpacing: 12,
+  Widget _courseContent(bool compact) {
+    final main = Column(
       children: [
-        for (final section in sections)
-          SizedBox(width: itemWidth, child: section),
+        _frequencySection(),
+        const SizedBox(height: 28),
+        _agendaSection(),
       ],
     );
+    final side = Column(
+      children: [
+        _scheduleSection(),
+        const SizedBox(height: 28),
+        _materialsSection(),
+      ],
+    );
+    return KeyedSubtree(
+      key: const Key('course-hub-section-grid'),
+      child: compact
+          ? Column(children: [main, const SizedBox(height: 28), side])
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 165, child: main),
+                const SizedBox(width: 28),
+                Expanded(flex: 80, child: side),
+              ],
+            ),
+    );
   }
-
-  Widget _attendanceAction() => FilledButton.icon(
-    key: const Key('course-hub-open-attendance'),
-    onPressed: _openAttendance,
-    icon: const Icon(Icons.how_to_reg_outlined),
-    label: Text(
-      _firstPending == null ? 'Registrar frequência' : 'Resolver pendência',
-    ),
-  );
 
   Widget _frequencySection() {
     final summary = CourseAbsenceSummary.from(
@@ -328,59 +443,35 @@ class _CourseHubPageState extends State<CourseHubPage> {
       now: widget.now(),
       location: _location,
     );
-    final pending = _firstPending != null;
-    return Card(
+    return _Panel(
       key: const Key('course-hub-frequency'),
-      margin: EdgeInsets.zero,
-      child: Padding(
+      child: Column(
         key: const Key('course-hub-frequency-summary'),
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.donut_large_outlined),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Frequência',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Ver registros',
-                  onPressed: _openAttendance,
-                  icon: const Icon(Icons.chevron_right),
-                ),
-              ],
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SectionHeading(
+            eyebrow: 'Situação atual',
+            title: 'Frequência',
+            action: TextButton.icon(
+              key: Key(
+                _firstPending == null
+                    ? 'course-hub-open-attendance'
+                    : 'course-hub-open-attendance-secondary',
+              ),
+              onPressed: _openAttendance,
+              iconAlignment: IconAlignment.end,
+              icon: const Icon(Icons.arrow_forward, size: 18),
+              label: const Text('Ver registros'),
             ),
-            const SizedBox(height: 12),
-            if (_sessionsFailed)
-              const Text('Não foi possível carregar a frequência agora.')
-            else if (_loading && _sessions.isEmpty)
-              const Text('Carregando…')
-            else ...[
-              Text(
-                summary.remainingMeetingsLabel,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${summary.consumedAbsences} de ${summary.absenceLimit} faltas usadas${pending ? ' • há uma pendência' : ''}',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            _attendanceAction(),
-          ],
-        ),
+          ),
+          const SizedBox(height: 22),
+          if (_sessionsFailed)
+            const Text('Não foi possível carregar a frequência agora.')
+          else if (_loading && _sessions.isEmpty)
+            const Text('Carregando…')
+          else
+            _FrequencyFigure(summary: summary),
+        ],
       ),
     );
   }
@@ -397,7 +488,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
         .toList();
     return _HubSection(
       key: const Key('course-hub-agenda'),
-      icon: Icons.event_outlined,
+      eyebrow: 'Agenda',
       title: 'Próximas datas',
       actionKey: const Key('course-hub-open-calendar'),
       actionLabel: 'Ver calendário',
@@ -405,14 +496,11 @@ class _CourseHubPageState extends State<CourseHubPage> {
       child: upcoming.isEmpty
           ? const Text('Nenhuma avaliação ou entrega futura encontrada.')
           : Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 for (final session in upcoming)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Text(
-                      '${session.assessmentTitle} • ${_shortDate(session.startsAt)}',
-                    ),
+                  _EventRow(
+                    session: session,
+                    date: _shortDate(session.startsAt),
                   ),
               ],
             ),
@@ -421,7 +509,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
 
   Widget _scheduleSection() => _HubSection(
     key: const Key('course-hub-schedule'),
-    icon: Icons.schedule_outlined,
+    eyebrow: 'Organização',
     title: 'Grade e período',
     actionKey: const Key('course-hub-open-schedule'),
     actionLabel: 'Ver grade',
@@ -431,14 +519,11 @@ class _CourseHubPageState extends State<CourseHubPage> {
         : _meetings.isEmpty
         ? const Text('Nenhum horário cadastrado.')
         : Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               for (final meeting in _meetings)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Text(
-                    '${_weekday(meeting.weekday)}, ${_clock(meeting.startMinutes)}–${_clock(meeting.endMinutes)}',
-                  ),
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _ScheduleRow(meeting: meeting),
                 ),
             ],
           ),
@@ -448,16 +533,17 @@ class _CourseHubPageState extends State<CourseHubPage> {
     final count = _materials?.candidates.length ?? 0;
     return _HubSection(
       key: const Key('course-hub-materials'),
-      icon: Icons.folder_outlined,
+      eyebrow: 'Moodle',
       title: 'Materiais',
       actionKey: const Key('course-hub-open-materials'),
-      actionLabel: 'Ver materiais',
+      actionLabel: 'Ver todos',
       onAction: widget.ufmgSessionGateway == null ? null : _openMaterials,
-      child: Text(
-        count == 0
-            ? 'Nenhum material sincronizado para esta disciplina.'
-            : '$count ${count == 1 ? 'material disponível' : 'materiais disponíveis'}',
-      ),
+      child: count == 0
+          ? const Text('Nenhum material sincronizado para esta disciplina.')
+          : _MaterialPreview(
+              candidate: _materials!.candidates.first,
+              count: count,
+            ),
     );
   }
 
@@ -465,11 +551,41 @@ class _CourseHubPageState extends State<CourseHubPage> {
     final local = tz.TZDateTime.from(value, _location);
     return '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}';
   }
+
+  String _pendingDescription(SessionRecord session) {
+    final local = tz.TZDateTime.from(session.startsAt, _location);
+    const months = [
+      'janeiro',
+      'fevereiro',
+      'março',
+      'abril',
+      'maio',
+      'junho',
+      'julho',
+      'agosto',
+      'setembro',
+      'outubro',
+      'novembro',
+      'dezembro',
+    ];
+    return '${local.day} de ${months[local.month - 1]} · ${_clock(local.hour * 60 + local.minute)}';
+  }
+}
+
+class _Panel extends StatelessWidget {
+  const _Panel({required this.child, super.key});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(22),
+    decoration: _panelDecoration(context),
+    child: child,
+  );
 }
 
 class _HubSection extends StatelessWidget {
   const _HubSection({
-    required this.icon,
+    required this.eyebrow,
     required this.title,
     required this.child,
     required this.actionLabel,
@@ -477,48 +593,364 @@ class _HubSection extends StatelessWidget {
     this.onAction,
     super.key,
   });
-
-  final IconData icon;
+  final String eyebrow;
   final String title;
   final Widget child;
   final String actionLabel;
   final Key? actionKey;
   final VoidCallback? onAction;
-
   @override
-  Widget build(BuildContext context) => Card(
-    margin: EdgeInsets.zero,
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Icon(icon),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-            ],
+  Widget build(BuildContext context) => _Panel(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionHeading(
+          eyebrow: eyebrow,
+          title: title,
+          action: TextButton(
+            key: actionKey,
+            onPressed: onAction,
+            child: Text(actionLabel),
           ),
-          const SizedBox(height: 12),
-          child,
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              key: actionKey,
-              onPressed: onAction,
-              child: Text(actionLabel),
+        ),
+        const SizedBox(height: 16),
+        child,
+      ],
+    ),
+  );
+}
+
+BoxDecoration _panelDecoration(BuildContext context, {double radius = 22}) =>
+    BoxDecoration(
+      color: Theme.of(context).colorScheme.surface.withValues(alpha: .84),
+      borderRadius: BorderRadius.circular(radius),
+      border: Border.all(color: _semantic(context).separator),
+    );
+
+AppSemanticColors _semantic(BuildContext context) =>
+    Theme.of(context).extension<AppSemanticColors>() ??
+    const AppSemanticColors(
+      success: Color(0xFF197A3E),
+      warning: Color(0xFF925900),
+      info: Color(0xFF1769AA),
+      subtleSurface: Color(0xFFEEF2EF),
+      separator: Color(0xFFDCE3DE),
+    );
+
+class _SectionHeading extends StatelessWidget {
+  const _SectionHeading({
+    required this.eyebrow,
+    required this.title,
+    required this.action,
+  });
+  final String eyebrow;
+  final String title;
+  final Widget action;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final copy = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            eyebrow.toUpperCase(),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+              letterSpacing: .6,
             ),
           ),
+          const SizedBox(height: 4),
+          Text(title, style: Theme.of(context).textTheme.titleLarge),
+        ],
+      );
+      if (constraints.maxWidth < 300) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            copy,
+            Align(alignment: Alignment.centerLeft, child: action),
+          ],
+        );
+      }
+      return Row(
+        children: [
+          Expanded(child: copy),
+          action,
+        ],
+      );
+    },
+  );
+}
+
+class _FrequencyFigure extends StatelessWidget {
+  const _FrequencyFigure({required this.summary});
+  final CourseAbsenceSummary summary;
+  @override
+  Widget build(BuildContext context) {
+    final total = summary.eligibleLessons;
+    final present = total == 0 ? 0.0 : summary.presentLessons / total;
+    final absent = total == 0 ? 0.0 : summary.consumedAbsences / total;
+    final unresolved = (1 - present - absent).clamp(0.0, 1.0);
+    final figure = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${summary.remainingAbsences}',
+          style: Theme.of(context).textTheme.displaySmall?.copyWith(
+            color: _semantic(context).success,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -1.5,
+            height: .95,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          summary.remainingMeetingsLabel,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+    final track = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          key: const Key('course-hub-frequency-track'),
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox(
+            height: 18,
+            child: Row(
+              children: [
+                if (present > 0)
+                  Expanded(
+                    flex: (present * 1000).round(),
+                    child: ColoredBox(color: _semantic(context).success),
+                  ),
+                if (unresolved > 0)
+                  Expanded(
+                    flex: (unresolved * 1000).round(),
+                    child: ColoredBox(color: _semantic(context).separator),
+                  ),
+                if (absent > 0)
+                  Expanded(
+                    flex: (absent * 1000).round(),
+                    child: ColoredBox(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                if (total == 0)
+                  Expanded(
+                    child: ColoredBox(color: _semantic(context).separator),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 14,
+          runSpacing: 7,
+          children: [
+            _LegendDot(color: _semantic(context).success, label: 'Presenças'),
+            _LegendDot(
+              color: _semantic(context).separator,
+              label: 'Pendentes e futuras',
+            ),
+            _LegendDot(
+              color: Theme.of(context).colorScheme.error,
+              label: 'Faltas',
+            ),
+          ],
+        ),
+      ],
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) => constraints.maxWidth < 520
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [figure, const SizedBox(height: 22), track],
+            )
+          : Row(
+              children: [
+                SizedBox(width: 136, child: figure),
+                const SizedBox(width: 20),
+                Expanded(child: track),
+              ],
+            ),
+    );
+  }
+}
+
+class _LegendDot extends StatelessWidget {
+  const _LegendDot({required this.color, required this.label});
+  final Color color;
+  final String label;
+  @override
+  Widget build(BuildContext context) => ConstrainedBox(
+    constraints: const BoxConstraints(maxWidth: 190),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _EventRow extends StatelessWidget {
+  const _EventRow({required this.session, required this.date});
+  final SessionRecord session;
+  final String date;
+  @override
+  Widget build(BuildContext context) {
+    final parts = date.split('/');
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 11),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: _semantic(context).separator)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 50,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _semantic(context).subtleSurface,
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Text(
+              '${parts[0]}\n${parts[1]}',
+              textAlign: TextAlign.center,
+              style: Theme.of(
+                context,
+              ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Text(
+              session.assessmentTitle!,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+          const Icon(Icons.chevron_right, size: 20),
         ],
       ),
-    ),
+    );
+  }
+}
+
+class _ScheduleRow extends StatelessWidget {
+  const _ScheduleRow({required this.meeting});
+  final MeetingRecord meeting;
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+        decoration: BoxDecoration(
+          color: _semantic(context).success.withValues(alpha: .10),
+          borderRadius: BorderRadius.circular(9),
+        ),
+        child: Text(
+          _weekday(meeting.weekday),
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: _semantic(context).success,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Text(
+          '${_clock(meeting.startMinutes)}–${_clock(meeting.endMinutes)}',
+        ),
+      ),
+    ],
+  );
+}
+
+class _MaterialPreview extends StatelessWidget {
+  const _MaterialPreview({required this.candidate, required this.count});
+  final PythonMoodleContentCandidate candidate;
+  final int count;
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Container(height: 1, color: _semantic(context).separator),
+      const SizedBox(height: 12),
+      Row(
+        children: [
+          Container(
+            width: 38,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Theme.of(
+                context,
+              ).colorScheme.errorContainer.withValues(alpha: .65),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Text(
+              candidate.kind == 'file' ? 'PDF' : 'WEB',
+              style: Theme.of(
+                context,
+              ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  candidate.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'Disponível no Moodle',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.arrow_forward, size: 19),
+        ],
+      ),
+      const SizedBox(height: 10),
+      Text(
+        '$count ${count == 1 ? 'material disponível' : 'materiais disponíveis'}',
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
+    ],
   );
 }
 
