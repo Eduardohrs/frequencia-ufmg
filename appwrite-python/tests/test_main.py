@@ -693,6 +693,27 @@ def test_moodle_content_discovery_sanitizes_failures(
     assert result["body"] == {"error": error}
 
 
+def test_moodle_content_discovery_logs_safe_failure_classification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user", None))
+
+    class Service:
+        def discover(self, *_args: Any, **_kwargs: Any) -> None:
+            raise ValueError("private upstream detail")
+
+    monkeypatch.setattr(function, "_moodle_content_discovery_service", lambda *_: Service())
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/discover/content"))
+
+    function.main(context)
+
+    assert json.loads(context.errors[0]) == {
+        "event": "moodle_content_discovery_rejected",
+        "reason": "value_error",
+    }
+    assert "private upstream detail" not in "".join(context.errors)
+
+
 def test_moodle_content_discovery_rejects_auth_and_nonempty_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

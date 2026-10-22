@@ -135,6 +135,30 @@ def test_list_returns_persisted_catalog_with_explicit_origin_and_course_identity
     ]
 
 
+def test_reconcile_persists_moodle_link_modules() -> None:
+    firestore = _Firestore()
+    repository = MoodleMaterialCatalogRepository(firestore, now=lambda: NOW)
+    link = _candidate(
+        kind="link",
+        title="Sala virtual da disciplina",
+        url="https://virtual.ufmg.br/20262/mod/url/view.php?id=101",
+        relevance="other",
+    )
+
+    result = repository.reconcile([_course(candidates=[link])])
+
+    assert result == {
+        "created": 1,
+        "updated": 0,
+        "unchanged": 0,
+        "removed": 0,
+        "writes": 1,
+    }
+    assert repository.list_catalog(
+        [{"id": "course-a", "code": "DCC203", "term": "2026-2"}]
+    )[0]["candidates"] == [link]
+
+
 def test_reconcile_replaces_removed_materials_and_preserves_empty_states() -> None:
     firestore = _Firestore()
     repository = MoodleMaterialCatalogRepository(firestore, now=lambda: NOW)

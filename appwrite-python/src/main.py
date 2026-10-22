@@ -604,8 +604,21 @@ def _moodle_content_discovery(context: Any, origin: str | None) -> Any:
         FirestoreRequestRejected,
         TypeError,
         ValueError,
-    ):
-        return _ufmg_session_error(context, origin, "moodle_content_discovery_rejected", 502)
+    ) as error:
+        reason = {
+            InvalidCourse: "invalid_course",
+            InvalidMoodleMaterialCatalog: "invalid_material_catalog",
+            FirestoreRequestRejected: "firestore_request_rejected",
+            TypeError: "type_error",
+            ValueError: "value_error",
+        }[type(error)]
+        return _ufmg_session_error(
+            context,
+            origin,
+            "moodle_content_discovery_rejected",
+            502,
+            reason=reason,
+        )
     catalog = cast(Mapping[str, int], result["catalog"])
     _log(
         context,

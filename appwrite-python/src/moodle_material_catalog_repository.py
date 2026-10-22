@@ -206,7 +206,7 @@ def _validate_candidate(value: object, term: str) -> dict[str, object]:
     relevance = value["relevance"]
     origin = value["origin"]
     if (
-        kind not in {"page", "file", "text"}
+        kind not in {"page", "file", "link", "text"}
         or not isinstance(title, str)
         or not title
         or title.strip() != title
@@ -231,8 +231,12 @@ def _validate_candidate(value: object, term: str) -> dict[str, object]:
 def _safe_material_url(value: object, term: str, source_id: str, kind: str) -> bool:
     if not isinstance(value, str) or len(value) > 4_096:
         return False
+    expected_modules = {
+        "page": {"page", "book"},
+        "file": {"resource", "folder"},
+        "link": {"url"},
+    }.get(kind, set())
     parsed = urlsplit(value)
-    expected_modules = {"page", "book"} if kind == "page" else {"resource", "folder"}
     query = parse_qs(parsed.query, keep_blank_values=True)
     return (
         parsed.scheme == "https"
