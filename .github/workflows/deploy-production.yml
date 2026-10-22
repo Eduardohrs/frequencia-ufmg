@@ -1,0 +1,262 @@
+name: Deploy production
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Build and deploy
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: https://frequencia-ufmg-eduardo.web.app
+    env:
+      APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT }}
+      APPWRITE_FUNCTION_ID: ${{ vars.APPWRITE_FUNCTION_ID }}
+      APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID }}
+      ENABLE_PYTHON_BACKEND: ${{ vars.ENABLE_PYTHON_BACKEND || 'false' }}
+      ENABLE_PYTHON_OVERVIEW_READS: ${{ vars.ENABLE_PYTHON_OVERVIEW_READS || 'false' }}
+      ENABLE_PYTHON_SCHEDULE_WRITES: ${{ vars.ENABLE_PYTHON_SCHEDULE_WRITES || 'false' }}
+      ENABLE_PYTHON_SESSION_WRITES: ${{ vars.ENABLE_PYTHON_SESSION_WRITES || 'false' }}
+      FIREBASE_APP_CHECK_WEB_SITE_KEY: ${{ vars.FIREBASE_APP_CHECK_WEB_SITE_KEY }}
+      PYTHON_BACKEND_ORIGIN: ${{ vars.PYTHON_BACKEND_ORIGIN }}
+      ANDROID_DEBUG_CERT_SHA256: ${{ secrets.ANDROID_DEBUG_CERT_SHA256 }}
+      ANDROID_DEBUG_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEYSTORE_PASSWORD }}
+      ANDROID_DEBUG_KEY_ALIAS: ${{ secrets.ANDROID_DEBUG_KEY_ALIAS }}
+      ANDROID_DEBUG_KEY_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEY_PASSWORD }}
+    steps:
+      - name: Select the validated revision
+        id: revision
+        env:
+          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            test -n "$VALIDATED_SHA"
+            echo "sha=$VALIDATED_SHA" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.revision.outputs.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Validate production configuration
+        run: |
+          test -n "$APPWRITE_ENDPOINT"
+          test -n "$APPWRITE_FUNCTION_ID"
+          test -n "$APPWRITE_PROJECT_ID"
+          [[ "$PYTHON_BACKEND_ORIGIN" == https://* ]]
+          test -n "$FIREBASE_APP_CHECK_WEB_SITE_KEY"
+          for flag in \
+            "$ENABLE_PYTHON_BACKEND" \
+            "$ENABLE_PYTHON_OVERVIEW_READS" \
+            "$ENABLE_PYTHON_SCHEDULE_WRITES" \
+            "$ENABLE_PYTHON_SESSION_WRITES"; do
+            [[ "$flag" == "true" || "$flag" == "false" ]]
+          done
+
+      - name: Build production web and Android artifacts
+        working-directory: apps/client
+        env:
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          flutter pub get --enforce-lockfile
+          keystore_path="$RUNNER_TEMP/frequencia-ufmg-release.keystore"
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          chmod 600 "$keystore_path"
+          export ANDROID_DEBUG_KEYSTORE_PATH="$keystore_path"
+          echo "ANDROID_DEBUG_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
+
+          build_name="0.0.${GITHUB_RUN_NUMBER}"
+          common_defines=(
+            --dart-define="ENABLE_PYTHON_BACKEND=$ENABLE_PYTHON_BACKEND"
+            --dart-define="ENABLE_PYTHON_SCHEDULE_WRITES=$ENABLE_PYTHON_SCHEDULE_WRITES"
+            --dart-define="ENABLE_PYTHON_SESSION_WRITES=$ENABLE_PYTHON_SESSION_WRITES"
+            --dart-define="ENABLE_PYTHON_OVERVIEW_READS=$ENABLE_PYTHON_OVERVIEW_READS"
+            --dart-define="PYTHON_BACKEND_ORIGIN=$PYTHON_BACKEND_ORIGIN"
+          )
+          flutter build web \
+            --build-name "$build_name" \
+            --build-number "$GITHUB_RUN_NUMBER" \
+            "${common_defines[@]}" \
+            --dart-define="FIREBASE_APP_CHECK_WEB_SITE_KEY=$FIREBASE_APP_CHECK_WEB_SITE_KEY"
+          flutter build apk --release \
+            --build-name "$build_name" \
+            --build-number "$GITHUB_RUN_NUMBER" \
+            "${common_defines[@]}"
+
+      - name: Verify Android signing certificate
+        working-directory: apps/client
+        run: |
+          apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
+          certificates=$("$apksigner" verify --print-certs \
+            build/app/outputs/flutter-apk/app-release.apk)
+          actual=$(printf '%s\n' "$certificates" | \
+            sed -n -E 's/.*SHA-256 digest:[[:space:]]*//p' | \
+            head -n 1 | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')
+          expected=$(printf '%s' "$ANDROID_DEBUG_CERT_SHA256" | \
+            tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')
+          test -n "$actual"
+          test "$actual" = "$expected"
+
+      - name: Package the validated Appwrite function
+        run: |
+          mkdir -p appwrite-python/.bundle/src/frequencia_ufmg
+          cp appwrite-python/requirements.txt appwrite-python/.bundle/
+          cp appwrite-python/src/*.py appwrite-python/.bundle/src/
+          cp backend/src/frequencia_ufmg/__init__.py \
+            appwrite-python/.bundle/src/frequencia_ufmg/
+          cp backend/src/frequencia_ufmg/models.py \
+            appwrite-python/.bundle/src/frequencia_ufmg/
+          tar -C appwrite-python/.bundle -czf appwrite-python/appwrite-python.tar.gz \
+            requirements.txt src
+          tar -tzf appwrite-python/appwrite-python.tar.gz | \
+            grep -Fx 'src/frequencia_ufmg/models.py'
+
+      - name: Save build artifacts
+        uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v4
+        with:
+          name: production-${{ steps.revision.outputs.sha }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            apps/client/build/app/outputs/flutter-apk/app-release.apk
+            apps/client/build/web
+            appwrite-python/appwrite-python.tar.gz
+
+      - name: Configure Appwrite deployment identity
+        env:
+          APPWRITE_DEPLOY_KEY: ${{ secrets.APPWRITE_DEPLOY_KEY }}
+        run: |
+          test -n "$APPWRITE_DEPLOY_KEY"
+          npx --yes appwrite-cli@28.8.0 client \
+            --endpoint "$APPWRITE_ENDPOINT" \
+            --project-id "$APPWRITE_PROJECT_ID" \
+            --key "$APPWRITE_DEPLOY_KEY"
+
+      - name: Deploy Appwrite and roll back a failed activation
+        id: appwrite
+        run: |
+          previous=$(npx --yes appwrite-cli@28.8.0 functions get \
+            --function-id "$APPWRITE_FUNCTION_ID" --json | jq -r '.deploymentId')
+          test -n "$previous"
+
+          created=$(npx --yes appwrite-cli@28.8.0 functions create-deployment \
+            --function-id "$APPWRITE_FUNCTION_ID" \
+            --code appwrite-python/.bundle \
+            --entrypoint src/main.py \
+            --commands 'pip install -r requirements.txt' \
+            --json)
+          deployment=$(jq -r '.["$id"]' <<< "$created")
+          test -n "$deployment"
+
+          status=waiting
+          for _ in {1..60}; do
+            status=$(npx --yes appwrite-cli@28.8.0 functions get-deployment \
+              --function-id "$APPWRITE_FUNCTION_ID" \
+              --deployment-id "$deployment" --json | jq -r '.status')
+            [[ "$status" == "ready" || "$status" == "failed" ]] && break
+            sleep 10
+          done
+          test "$status" = "ready"
+
+          npx --yes appwrite-cli@28.8.0 functions update-function-deployment \
+            --function-id "$APPWRITE_FUNCTION_ID" \
+            --deployment-id "$deployment" --force
+
+          rollback() {
+            npx --yes appwrite-cli@28.8.0 functions update-function-deployment \
+              --function-id "$APPWRITE_FUNCTION_ID" \
+              --deployment-id "$previous" --force
+          }
+
+          identity_status=000
+          for _ in {1..12}; do
+            identity_status=$(curl --silent --show-error --output /dev/null \
+              --write-out '%{http_code}' "$PYTHON_BACKEND_ORIGIN/v1/identity") || true
+            [[ "$identity_status" == "401" ]] && break
+            sleep 5
+          done
+          if [[ "$identity_status" != "401" ]]; then
+            rollback
+            exit 1
+          fi
+
+          cors_status=000
+          for _ in {1..6}; do
+            cors_status=$(curl --silent --show-error --output /dev/null \
+              --write-out '%{http_code}' -X OPTIONS \
+              -H 'Origin: https://frequencia-ufmg-eduardo.web.app' \
+              -H 'Access-Control-Request-Method: POST' \
+              "$PYTHON_BACKEND_ORIGIN/v1/ufmg/session") || true
+            [[ "$cors_status" == "204" ]] && break
+            sleep 5
+          done
+          if [[ "$cors_status" != "204" ]]; then
+            rollback
+            exit 1
+          fi
+
+          echo "deployment=$deployment" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud without a stored key
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+
+      - name: Deploy Firestore configuration and Firebase Hosting
+        run: |
+          npm install --global firebase-tools@15.34.1
+          firebase deploy \
+            --project frequencia-ufmg-eduardo \
+            --only firestore:rules,firestore:indexes,hosting \
+            --non-interactive \
+            --message "GitHub ${{ steps.revision.outputs.sha }}"
+
+      - name: Verify the public site
+        run: |
+          url="https://frequencia-ufmg-eduardo.web.app/?release=${{ steps.revision.outputs.sha }}"
+          for _ in {1..12}; do
+            body=$(curl --fail --silent --show-error "$url") && \
+              grep -q 'flutter_bootstrap.js' <<< "$body" && exit 0
+            sleep 5
+          done
+          exit 1
+
+      - name: Publish deployment summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Production deployed
+
+          - Revision: \`${{ steps.revision.outputs.sha }}\`
+          - Site: https://frequencia-ufmg-eduardo.web.app
+          - Appwrite deployment: \`${{ steps.appwrite.outputs.deployment }}\`
+          - Android APK and web bundle: attached to this workflow run for 14 days
+          EOF
