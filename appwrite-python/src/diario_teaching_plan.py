@@ -103,6 +103,7 @@ def parse_teaching_plan_html(markup: str) -> dict[str, object]:
         raise TeachingPlanParseError("identity_values", rows=rows)
 
     assessments: list[dict[str, object]] = []
+    undated_assessment_total = 0
     criteria: list[dict[str, str]] = []
     schedule: list[dict[str, object]] = []
     section: str | None = None
@@ -134,7 +135,7 @@ def parse_teaching_plan_html(markup: str) -> dict[str, object]:
                 schedule.append(_schedule_entry(row))
 
         if not assessments:
-            assessments = _labeled_assessments(rows)
+            assessments, undated_assessment_total = _parse_labeled_assessments(rows)
     except ValueError:
         raise TeachingPlanParseError(
             "section_values",
@@ -144,7 +145,7 @@ def parse_teaching_plan_html(markup: str) -> dict[str, object]:
             schedule_total=len(schedule),
         ) from None
 
-    if not assessments or not criteria or not schedule:
+    if not assessments and not criteria and not schedule:
         raise TeachingPlanParseError(
             "required_sections",
             rows=rows,
@@ -158,6 +159,7 @@ def parse_teaching_plan_html(markup: str) -> dict[str, object]:
         "course_name": _required(course_match[2]),
         "class_group": _required(class_group),
         "assessments": assessments,
+        "undated_assessment_total": undated_assessment_total,
         "criteria": criteria,
         "schedule": schedule,
         "source": "ufmg_diario",
@@ -189,7 +191,13 @@ def _header_token(value: str) -> str:
     token = value.rstrip(":.").replace(".", "")
     if token in {"cod avl", "codigo", "codigo avl"}:
         return "cod"
-    if token in {"num aulas", "num aula", "numero aulas", "numero aula"}:
+    if token in {
+        "horas aula",
+        "num aulas",
+        "num aula",
+        "numero aulas",
+        "numero aula",
+    }:
         return "num aula"
     return token
 
@@ -208,23 +216,34 @@ def _assessment(row: list[str]) -> dict[str, object]:
 
 
 def _labeled_assessments(rows: list[list[str]]) -> list[dict[str, object]]:
+    return _parse_labeled_assessments(rows)[0]
+
+
+def _parse_labeled_assessments(
+    rows: list[list[str]],
+) -> tuple[list[dict[str, object]], int]:
     labels = ("cod avl", "cod", "tipo", "nome", "data/hora", "local", "valor", "peso")
     assessments: list[dict[str, object]] = []
+    undated_total = 0
     pending: dict[str, str] = {}
     for row in rows:
         values = _row_labeled_values(row, labels)
         if "cod avl" in values or "cod" in values:
             if pending:
-                assessments.append(_assessment_from_labels(pending))
+                _assessment_from_labels(pending)
+                undated_total += 1
             pending = {"code": values.pop("cod avl", values.pop("cod", ""))}
         if pending:
             pending.update(values)
             if {"code", "tipo", "nome", "data/hora", "valor", "peso"} <= set(pending):
-                assessments.append(_assessment_from_labels(pending))
+                assessment = _assessment_from_labels(pending)
+                assert assessment is not None
+                assessments.append(assessment)
                 pending = {}
     if pending:
-        assessments.append(_assessment_from_labels(pending))
-    return assessments
+        _assessment_from_labels(pending)
+        undated_total += 1
+    return assessments, undated_total
 
 
 def _row_labeled_values(row: list[str], labels: tuple[str, ...]) -> dict[str, str]:
@@ -252,8 +271,12 @@ def _row_labeled_values(row: list[str], labels: tuple[str, ...]) -> dict[str, st
     return result
 
 
-def _assessment_from_labels(values: dict[str, str]) -> dict[str, object]:
+def _assessment_from_labels(values: dict[str, str]) -> dict[str, object] | None:
     try:
+        if not values.get("data/hora"):
+            for key in ("code", "tipo", "nome", "valor", "peso"):
+                _required(values[key])
+            return None
         return _assessment(
             [
                 values["code"],

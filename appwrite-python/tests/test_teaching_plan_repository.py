@@ -31,6 +31,7 @@ def _plan() -> dict[str, object]:
         "course_name": "CIRCUITOS ELÉTRICOS II",
         "class_group": "T1",
         "assessments": [],
+        "undated_assessment_total": 0,
         "criteria": [{"description": "Soma", "value": "100.00"}],
         "schedule": [],
         "source": "ufmg_diario",

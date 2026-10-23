@@ -15,6 +15,7 @@ _PLAN_KEYS = {
     "course_name",
     "class_group",
     "assessments",
+    "undated_assessment_total",
     "criteria",
     "schedule",
     "source",

@@ -958,6 +958,7 @@ def _moodle_teaching_plan_import(context: Any, origin: str | None) -> Any:
         context,
         "teaching_plan_import_succeeded",
         assessment_total=result["assessment_total"],
+        undated_assessment_total=result["undated_assessment_total"],
         criteria_total=result["criteria_total"],
         schedule_total=result["schedule_total"],
         dates_created=result["dates_created"],
