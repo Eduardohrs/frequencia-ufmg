@@ -1409,7 +1409,7 @@ final class PythonBackendTransport
           downloads is! bool ||
           privateAccess is! bool ||
           issued is! bool ||
-          direct != (downloads && privateAccess && issued)) {
+          direct != (downloads && privateAccess)) {
         throw const FormatException();
       }
       return PythonMoodleMobileCapabilities(

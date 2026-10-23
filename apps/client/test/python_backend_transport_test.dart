@@ -659,6 +659,33 @@ void main() {
     );
   });
 
+  test(
+    'accepts reusable Moodle download credentials without reissuing them',
+    () async {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'term': '2026-2',
+              'direct_download_supported': true,
+              'download_files': true,
+              'private_file_access': true,
+              'webservice_token_issued': false,
+            }),
+            200,
+          ),
+        ),
+      );
+
+      final result = await transport.probeMoodleMobileCapabilities();
+
+      expect(result.directDownloadSupported, isTrue);
+      expect(result.webserviceTokenIssued, isFalse);
+    },
+  );
+
   test('validates a bounded Diario de Classe PDF probe', () async {
     late http.Request captured;
     final transport = PythonBackendTransport(
