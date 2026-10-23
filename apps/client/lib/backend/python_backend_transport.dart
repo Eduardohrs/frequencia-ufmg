@@ -1507,8 +1507,8 @@ final class PythonBackendTransport
       final contentLength = value['content_length'];
       if (value['available'] is! bool ||
           value['available'] != true ||
-          !const {'redirect', 'form'}.contains(delivery) ||
-          value['format'] != 'pdf' ||
+          !const {'redirect', 'form', 'link'}.contains(delivery) ||
+          !const {'pdf', 'html'}.contains(value['format']) ||
           contentLength is! int ||
           contentLength < 9 ||
           contentLength > 20 * 1024 * 1024 ||
