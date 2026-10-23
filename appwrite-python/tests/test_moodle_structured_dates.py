@@ -153,6 +153,42 @@ def test_diario_probe_submits_a_bounded_official_post_form() -> None:
     assert request.headers["Origin"] == "https://virtual.ufmg.br"
 
 
+@pytest.mark.parametrize(
+    "markup",
+    [
+        '<a href="https://sistemas.ufmg.br/diario/JasperServlet?report=safe">Abrir</a>',
+        '<iframe src="https://sistemas.ufmg.br/diario/JasperServlet?report=safe"></iframe>',
+        '<embed src="https://sistemas.ufmg.br/diario/JasperServlet?report=safe">',
+        '<object data="https://sistemas.ufmg.br/diario/JasperServlet?report=safe"></object>',
+    ],
+)
+def test_diario_probe_follows_a_single_official_get_target(markup: str) -> None:
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(
+                markup.encode(),
+                "https://virtual.ufmg.br/20262/mod/url/view.php?id=99",
+            ),
+            _Response(
+                _diario_pdf(),
+                "https://sistemas.ufmg.br/diario/JasperServlet?report=safe",
+                content_type="application/pdf",
+            ),
+        ]
+    )
+
+    result = MoodleStructuredDatesClient(opener=opener).probe_diario_plan(
+        "token-safe", term="2026-2", source_id=99
+    )
+
+    assert result.delivery == "link"
+    request = opener.requests[3][0]
+    assert request.get_method() == "GET"
+    assert request.data is None
+
+
 def test_diario_probe_rejects_a_non_utf8_launch_page() -> None:
     opener = _Opener(
         [
@@ -171,7 +207,7 @@ def test_diario_probe_rejects_a_non_utf8_launch_page() -> None:
 @pytest.mark.parametrize(
     "markup,reason",
     [
-        ("<p>none</p>", "diario_launch_form"),
+        ("<p>none</p>", "diario_launch_target"),
         (
             '<form method="post" action="https://sistemas.ufmg.br/diario/JasperServlet"></form>',
             "diario_launch_form",
@@ -192,6 +228,11 @@ def test_diario_probe_rejects_a_non_utf8_launch_page() -> None:
             <input name="a" value="1"><input name="a" value="2"></form>""",
             "diario_launch_field",
         ),
+        (
+            """<a href="https://sistemas.ufmg.br/diario/JasperServlet?a=1">one</a>
+            <iframe src="https://sistemas.ufmg.br/diario/JasperServlet?a=2"></iframe>""",
+            "diario_launch_targets",
+        ),
     ],
 )
 def test_diario_form_parser_rejects_ambiguous_or_unbounded_forms(
@@ -209,6 +250,7 @@ def test_diario_form_parser_ignores_untrusted_and_non_post_forms() -> None:
     parser.feed(
         '<form method="get" action="https://sistemas.ufmg.br/diario/JasperServlet">'
         '<input name="ignored" value="1"></form>'
+        '<a href="https://attacker.example/diario/JasperServlet">ignored</a>'
         '<form method="post" action="https://attacker.example/x"></form>'
     )
     with pytest.raises(InvalidMoodleResponse, match="invalid Moodle response"):
