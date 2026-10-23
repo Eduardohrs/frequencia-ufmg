@@ -14,7 +14,7 @@ from http.cookiejar import Cookie, CookieJar
 from secrets import token_hex
 from typing import Any, Protocol
 from urllib.error import HTTPError
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 from ufmg_session_store import UFMGReauthenticationRequired
@@ -365,8 +365,24 @@ class MoodleStructuredDatesClient:
                 request,
                 limit=MAX_DIARIO_BYTES,
             )
-        _require_diario_pdf(final_url, content_type, body)
-        return DiarioPlanProbe(delivery=delivery, content_length=len(body))
+            if _is_diario_request_url(final_url) and content_type == "text/html":
+                transition_target = _diario_transition_target(body, final_url)
+                body, final_url, content_type = self._open_bounded(
+                    Request(
+                        transition_target,
+                        headers={
+                            "Accept": "text/html,application/pdf",
+                            "Referer": final_url,
+                        },
+                    ),
+                    limit=MAX_DIARIO_BYTES,
+                )
+        document_format = _require_diario_document(final_url, content_type, body)
+        return DiarioPlanProbe(
+            delivery=delivery,
+            content_length=len(body),
+            format=document_format,
+        )
 
     def _mobile_launch(self, root: str, passport: str) -> str:
         launch_url = f"{MOODLE_ORIGIN}{root}/admin/tool/mobile/launch.php?" + urlencode(
@@ -554,7 +570,7 @@ class _DiarioFormParser(HTMLParser):
         elif tag in {"a", "iframe", "embed", "object"}:
             attribute = "data" if tag == "object" else "href" if tag == "a" else "src"
             target = values.get(attribute)
-            if isinstance(target, str) and _is_diario_url(target):
+            if isinstance(target, str) and _is_diario_launch_url(target):
                 self._get_targets.add(target)
                 if len(self._get_targets) > 1:
                     raise InvalidMoodleResponse("diario_launch_targets")
@@ -1134,6 +1150,110 @@ def _is_diario_url(value: object) -> bool:
         and parsed.path == "/diario/JasperServlet"
         and not parsed.fragment
     )
+
+
+def _is_diario_launch_url(value: object) -> bool:
+    if _is_diario_url(value):
+        return True
+    return _is_diario_request_url(value)
+
+
+def _is_diario_request_url(value: object) -> bool:
+    if not isinstance(value, str) or not value or len(value) > 8_192:
+        return False
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "sistemas.ufmg.br"
+        or parsed.port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        != (
+            "/diario/planoAula/relatorio/solicitar/"
+            "solicitarRelatorioPlanoEnsino.do"
+        )
+        or parsed.fragment
+    ):
+        return False
+    try:
+        query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
+    except ValueError:
+        return False
+    patterns = {
+        "plt": r"[0-9]{5}",
+        "oft": r"[0-9]{1,12}",
+        "tac": r"[A-Za-z0-9_-]{1,16}",
+        "aac": r"[A-Za-z0-9_.-]{1,32}",
+        "trm": r"[A-Za-z0-9_.-]{1,32}",
+    }
+    return query.keys() == patterns.keys() and all(
+        len(query[name]) == 1 and re.fullmatch(pattern, query[name][0]) is not None
+        for name, pattern in patterns.items()
+    )
+
+
+def _diario_transition_target(body: bytes, source_url: str) -> str:
+    try:
+        markup = body.decode("utf-8")
+    except UnicodeDecodeError:
+        raise InvalidMoodleResponse("diario_transition_encoding") from None
+    targets: set[str] = set()
+    for raw in re.findall(r'''["']([^"']{1,8192})["']''', markup):
+        candidate = urljoin(source_url, raw)
+        if _is_diario_url(candidate):
+            targets.add(candidate)
+    if len(targets) != 1:
+        reason = "diario_transition_targets" if targets else "diario_transition_target"
+        raise InvalidMoodleResponse(reason)
+    return next(iter(targets))
+
+
+class _DiarioReportParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self._parts.append(data)
+
+    def is_plan(self) -> bool:
+        raw_text = " ".join(" ".join(self._parts).split()).casefold()
+        text = "".join(
+            character
+            for character in unicodedata.normalize("NFKD", raw_text)
+            if not unicodedata.combining(character)
+        )
+        required = (
+            "universidade federal de minas gerais",
+            "plano de ensino",
+            "periodo:",
+            "atividade:",
+        )
+        return all(marker in text for marker in required) and (
+            "cronograma" in text or "avaliacoes" in text
+        )
+
+
+def _require_diario_document(url: str, content_type: str, body: bytes) -> str:
+    if content_type == "application/pdf":
+        _require_diario_pdf(url, content_type, body)
+        return "pdf"
+    parsed = urlsplit(url)
+    if parsed.hostname == "sistemas.ufmg.br" and parsed.path == "/idp/login.jsp":
+        raise UFMGReauthenticationRequired("UFMG reauthentication required")
+    if not _is_diario_url(url):
+        raise InvalidMoodleResponse("diario_response_url")
+    if content_type != "text/html":
+        raise InvalidMoodleResponse("diario_response_type")
+    parser = _DiarioReportParser()
+    try:
+        parser.feed(body.decode("utf-8"))
+    except UnicodeDecodeError:
+        raise InvalidMoodleResponse("diario_response_encoding") from None
+    if not parser.is_plan():
+        raise InvalidMoodleResponse("diario_response_html")
+    return "html"
 
 
 def _require_diario_pdf(url: str, content_type: str, body: bytes) -> None:

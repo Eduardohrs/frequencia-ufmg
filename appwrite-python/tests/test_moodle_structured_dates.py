@@ -18,8 +18,10 @@ from moodle_structured_dates import (
     _candidate_relevance,
     _candidate_url,
     _course_matches,
+    _diario_transition_target,
     _DiarioFormParser,
     _event,
+    _is_diario_launch_url,
     _is_diario_url,
     _is_metaturma,
     _is_moodle_module,
@@ -29,6 +31,7 @@ from moodle_structured_dates import (
     _parse_course_states,
     _parse_module_files,
     _require_ajax,
+    _require_diario_document,
     _require_diario_pdf,
     _require_json_endpoint,
     _require_moodle_acs,
@@ -94,6 +97,19 @@ def _dashboard() -> bytes:
 
 def _diario_pdf() -> bytes:
     return b"%PDF-1.7\nvalidated plan\n%%EOF"
+
+
+def _diario_html() -> bytes:
+    return b"""
+      <html><body>
+        <h1>Universidade Federal de Minas Gerais</h1>
+        <p>Diario de Classe</p>
+        <h2>Plano de Ensino</h2>
+        <p>Periodo: 2026/2</p>
+        <p>Atividade: ELE631</p>
+        <h3>Cronograma</h3>
+      </body></html>
+    """
 
 
 def test_diario_probe_accepts_a_direct_pdf_redirect_without_exposing_parameters() -> None:
@@ -187,6 +203,185 @@ def test_diario_probe_follows_a_single_official_get_target(markup: str) -> None:
     request = opener.requests[3][0]
     assert request.get_method() == "GET"
     assert request.data is None
+
+
+def test_diario_probe_follows_the_real_official_request_and_accepts_html() -> None:
+    launch_url = (
+        "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+        "solicitarRelatorioPlanoEnsino.do?"
+        "plt=20262&oft=1000057&tac=DIG&aac=ELE631&trm=TAPO"
+    )
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(
+                f'<a href="{launch_url}">Plano de Ensino</a>'.encode(),
+                "https://virtual.ufmg.br/20262/mod/url/view.php?id=99",
+            ),
+            _Response(
+                b'''<script>
+                  const ignored='not-a-report';
+                  window.location='/diario/JasperServlet';
+                </script>''',
+                launch_url,
+                content_type="text/html; charset=utf-8",
+            ),
+            _Response(
+                _diario_html(),
+                "https://sistemas.ufmg.br/diario/JasperServlet",
+                content_type="text/html; charset=utf-8",
+            ),
+        ]
+    )
+
+    result = MoodleStructuredDatesClient(opener=opener).probe_diario_plan(
+        "token-safe", term="2026-2", source_id=99
+    )
+
+    assert result == DiarioPlanProbe(
+        delivery="link", content_length=len(_diario_html()), format="html"
+    )
+    launch_request = opener.requests[3][0]
+    assert launch_request.full_url == launch_url
+    assert launch_request.get_method() == "GET"
+    report_request = opener.requests[4][0]
+    assert report_request.full_url == "https://sistemas.ufmg.br/diario/JasperServlet"
+    assert report_request.get_method() == "GET"
+
+
+@pytest.mark.parametrize(
+    "body,reason",
+    [
+        (b"\xff", "diario_transition_encoding"),
+        (b"<html><body>sem destino</body></html>", "diario_transition_target"),
+        (
+            b'''<script>
+              window.location='/diario/JasperServlet?first=1';
+              const fallback='/diario/JasperServlet?second=1';
+            </script>''',
+            "diario_transition_targets",
+        ),
+    ],
+)
+def test_diario_transition_rejects_invalid_or_ambiguous_targets(
+    body: bytes, reason: str
+) -> None:
+    source_url = (
+        "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+        "solicitarRelatorioPlanoEnsino.do?"
+        "plt=20262&oft=1000057&tac=DIG&aac=ELE631&trm=TAPO"
+    )
+
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _diario_transition_target(body, source_url)
+
+    assert caught.value.reason == reason
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        (
+            "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+            "solicitarRelatorioPlanoEnsino.do?"
+            "plt=20262&oft=1000057&tac=DIG&aac=ELE631&trm=TAPO"
+        ),
+        "https://sistemas.ufmg.br/diario/JasperServlet",
+    ],
+)
+def test_diario_launch_url_accepts_only_the_two_observed_official_targets(url: str) -> None:
+    assert _is_diario_launch_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        None,
+        "x" * 8_193,
+        (
+            "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+            "solicitarRelatorioPlanoEnsino.do?plt=20262&oft=1000057&tac=DIG&aac=ELE631"
+        ),
+        (
+            "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+            "solicitarRelatorioPlanoEnsino.do?"
+            "plt=20262&plt=20261&oft=1000057&tac=DIG&aac=ELE631&trm=TAPO"
+        ),
+        (
+            "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+            "solicitarRelatorioPlanoEnsino.do?"
+            "plt=20262&oft=1000057&tac=DIG&aac=ELE631&trm=TAPO&next=https://attacker.example"
+        ),
+        (
+            "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+            "solicitarRelatorioPlanoEnsino.do?plt"
+        ),
+        (
+            "https://attacker.example/diario/planoAula/relatorio/solicitar/"
+            "solicitarRelatorioPlanoEnsino.do?"
+            "plt=20262&oft=1000057&tac=DIG&aac=ELE631&trm=TAPO"
+        ),
+    ],
+)
+def test_diario_launch_url_rejects_incomplete_ambiguous_or_external_targets(
+    url: object,
+) -> None:
+    assert not _is_diario_launch_url(url)
+
+
+@pytest.mark.parametrize(
+    "url,content_type,body,exception,reason",
+    [
+        (
+            "https://sistemas.ufmg.br/idp/login.jsp",
+            "text/html",
+            b"login",
+            UFMGReauthenticationRequired,
+            None,
+        ),
+        (
+            "https://attacker.example/x",
+            "text/html",
+            _diario_html(),
+            InvalidMoodleResponse,
+            "diario_response_url",
+        ),
+        (
+            "https://sistemas.ufmg.br/diario/JasperServlet",
+            "application/json",
+            b"{}",
+            InvalidMoodleResponse,
+            "diario_response_type",
+        ),
+        (
+            "https://sistemas.ufmg.br/diario/JasperServlet",
+            "text/html",
+            b"\xff",
+            InvalidMoodleResponse,
+            "diario_response_encoding",
+        ),
+        (
+            "https://sistemas.ufmg.br/diario/JasperServlet",
+            "text/html",
+            b"<html><body>not a plan</body></html>",
+            InvalidMoodleResponse,
+            "diario_response_html",
+        ),
+    ],
+)
+def test_diario_document_gate_classifies_rejected_html(
+    url: str,
+    content_type: str,
+    body: bytes,
+    exception: type[Exception],
+    reason: str | None,
+) -> None:
+    with pytest.raises(exception) as caught:
+        _require_diario_document(url, content_type, body)
+    if reason is not None:
+        assert isinstance(caught.value, InvalidMoodleResponse)
+        assert caught.value.reason == reason
 
 
 def test_diario_probe_rejects_a_non_utf8_launch_page() -> None:
