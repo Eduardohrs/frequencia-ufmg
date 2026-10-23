@@ -218,10 +218,36 @@ service cloud.firestore {
         && data.title.size() <= 120
         && data.title.matches('^\\S(.*\\S)?$')
         && data.dueAt is timestamp
-        && data.kind in ['assignment', 'quiz', 'event']
-        && data.source == 'moodle'
+        && data.kind in ['assignment', 'quiz', 'event', 'assessment']
+        && data.source in ['moodle', 'diario']
         && data.sourceId is string
         && data.sourceId.matches('^[A-Za-z0-9_-]{1,80}$')
+        && hasValidAuditFields(data);
+    }
+
+    function isValidTeachingPlan(data) {
+      let fields = [
+        'schemaVersion',
+        'source',
+        'sourceId',
+        'confidence',
+        'planJson',
+        'contentHash',
+        'collectedAt',
+        'createdAt',
+        'updatedAt'
+      ];
+      return hasExactFields(data, fields)
+        && data.schemaVersion == 1
+        && data.source == 'ufmg_diario'
+        && data.sourceId is string
+        && data.sourceId.matches('^[1-9][0-9]{0,9}$')
+        && data.confidence == 'authoritative'
+        && data.planJson is string
+        && data.planJson.size() <= 750000
+        && data.contentHash is string
+        && data.contentHash.matches('^[0-9a-f]{64}$')
+        && data.collectedAt is timestamp
         && hasValidAuditFields(data);
     }
 
@@ -308,6 +334,18 @@ service cloud.firestore {
         allow update: if owns(userId)
           && catalogId == 'current'
           && isValidMaterialCatalog(request.resource.data)
+          && preservesAuditFields();
+      }
+
+      match /teachingPlans/{planId} {
+        allow read, delete: if owns(userId);
+        allow create: if owns(userId)
+          && planId == 'current'
+          && exists(/databases/$(database)/documents/users/$(userId)/courses/$(courseId))
+          && isValidTeachingPlan(request.resource.data);
+        allow update: if owns(userId)
+          && planId == 'current'
+          && isValidTeachingPlan(request.resource.data)
           && preservesAuditFields();
       }
     }

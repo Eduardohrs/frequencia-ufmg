@@ -14,6 +14,9 @@ class _Firestore:
     def __init__(self) -> None:
         self.documents: dict[tuple[str, ...], dict[str, Any]] = {}
         self.patches: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+        self.commits: list[
+            tuple[list[tuple[tuple[str, ...], dict[str, Any]]], list[tuple[str, ...]]]
+        ] = []
 
     def list_user_documents(self, *segments: str) -> list[dict[str, Any]]:
         prefix = tuple(segments)
@@ -28,6 +31,18 @@ class _Firestore:
         self.documents[path] = fields
         self.patches.append((path, fields))
         return {"name": "/".join(path), "fields": fields}
+
+    def commit_user_documents(
+        self,
+        *,
+        updates: list[tuple[tuple[str, ...], dict[str, Any]]],
+        deletes: list[tuple[str, ...]],
+    ) -> None:
+        self.commits.append((updates, deletes))
+        for path, fields in updates:
+            self.documents[path] = fields
+        for path in deletes:
+            self.documents.pop(path, None)
 
 
 NOW = datetime(2026, 10, 13, 20, tzinfo=UTC)
@@ -111,6 +126,91 @@ def test_import_rejects_duplicates_and_oversized_batches() -> None:
 def test_default_clock_and_empty_import_are_supported() -> None:
     result = AcademicDateRepository(_Firestore()).import_moodle_dates("course-a", [])
     assert result == {"total": 0, "created": 0, "updated": 0, "unchanged": 0}
+
+
+def test_diario_assessments_reconcile_without_touching_other_sources() -> None:
+    firestore = _Firestore()
+    repository = AcademicDateRepository(firestore, now=lambda: NOW)
+    repository.import_moodle_dates("course-a", [_event()])
+
+    first = repository.import_diario_assessments(
+        "course-a",
+        plan_source_id="701",
+        assessments=[
+            {
+                "code": "AV1",
+                "title": "Primeira prova",
+                "scheduled_at": "2026-09-09T20:50:00-03:00",
+            },
+            {
+                "code": "AV2",
+                "title": "Segunda prova",
+                "scheduled_at": "2026-10-19T20:50:00-03:00",
+            },
+        ],
+    )
+    second = repository.import_diario_assessments(
+        "course-a",
+        plan_source_id="701",
+        assessments=[
+            {
+                "code": "AV2",
+                "title": "Segunda prova adiada",
+                "scheduled_at": "2026-10-26T20:50:00-03:00",
+            }
+        ],
+    )
+
+    assert first == {"total": 2, "created": 2, "updated": 0, "unchanged": 0, "removed": 0}
+    assert second == {"total": 1, "created": 0, "updated": 1, "unchanged": 0, "removed": 1}
+    dates = repository.list_dates("course-a")
+    assert {(item["source"], item["source_id"]) for item in dates} == {
+        ("moodle", "910"),
+        ("diario", "701-AV2"),
+    }
+
+
+def test_diario_assessment_import_is_idempotent_without_an_extra_commit() -> None:
+    firestore = _Firestore()
+    repository = AcademicDateRepository(firestore, now=lambda: NOW)
+    assessments = [
+        {
+            "code": "AV1",
+            "title": "Primeira prova",
+            "scheduled_at": "2026-09-09T20:50:00-03:00",
+        }
+    ]
+    repository.import_diario_assessments(
+        "course-a", plan_source_id="701", assessments=assessments
+    )
+    result = repository.import_diario_assessments(
+        "course-a", plan_source_id="701", assessments=assessments
+    )
+    assert result == {
+        "total": 1,
+        "created": 0,
+        "updated": 0,
+        "unchanged": 1,
+        "removed": 0,
+    }
+    assert len(firestore.commits) == 1
+
+
+def test_diario_assessment_import_rejects_invalid_batches() -> None:
+    repository = AcademicDateRepository(_Firestore(), now=lambda: NOW)
+    with pytest.raises(InvalidAcademicDate):
+        repository.import_diario_assessments(
+            "course-a", plan_source_id="bad/id", assessments=[]
+        )
+    duplicate = {
+        "code": "AV1",
+        "title": "Primeira prova",
+        "scheduled_at": "2026-09-09T20:50:00-03:00",
+    }
+    with pytest.raises(InvalidAcademicDate):
+        repository.import_diario_assessments(
+            "course-a", plan_source_id="701", assessments=[duplicate, duplicate]
+        )
 
 
 @pytest.mark.parametrize(

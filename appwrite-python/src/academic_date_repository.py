@@ -9,7 +9,8 @@ from course_repository import validate_course_id
 
 MAX_IMPORT_DATES = 500
 _SOURCE_ID = re.compile(r"[A-Za-z0-9_-]{1,80}")
-_KINDS = {"assignment", "quiz", "event"}
+_KINDS = {"assignment", "quiz", "event", "assessment"}
+_SOURCES = {"moodle", "diario"}
 
 
 class InvalidAcademicDate(Exception):
@@ -20,6 +21,13 @@ class _Firestore(Protocol):
     def list_user_documents(self, *segments: str) -> list[dict[str, Any]]: ...
 
     def patch_user_document(self, *segments: str, fields: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    def commit_user_documents(
+        self,
+        *,
+        updates: list[tuple[tuple[str, ...], Mapping[str, Any]]],
+        deletes: list[tuple[str, ...]],
+    ) -> None: ...
 
 
 class AcademicDateRepository:
@@ -84,6 +92,79 @@ class AcademicDateRepository:
             result["updated" if previous is not None else "created"] += 1
         return result
 
+    def import_diario_assessments(
+        self,
+        course_id: str,
+        *,
+        plan_source_id: str,
+        assessments: list[dict[str, object]],
+    ) -> dict[str, int]:
+        identifier = validate_course_id(course_id)
+        if _SOURCE_ID.fullmatch(plan_source_id) is None or len(assessments) > 100:
+            raise InvalidAcademicDate("invalid academic date batch")
+        events = [
+            _validate_input(
+                {
+                    "source_id": f"{plan_source_id}-{assessment.get('code', '')}",
+                    "title": assessment.get("title"),
+                    "due_at": assessment.get("scheduled_at"),
+                    "kind": "assessment",
+                }
+            )
+            for assessment in assessments
+        ]
+        if len({event["source_id"] for event in events}) != len(events):
+            raise InvalidAcademicDate("invalid academic date batch")
+        existing = {
+            item["source_id"]: item
+            for item in self.list_dates(identifier)
+            if item["source"] == "diario"
+            and item["source_id"].startswith(f"{plan_source_id}-")
+        }
+        now = _timestamp(self._now())
+        result = {
+            "total": len(events),
+            "created": 0,
+            "updated": 0,
+            "unchanged": 0,
+            "removed": 0,
+        }
+        updates: list[tuple[tuple[str, ...], Mapping[str, Any]]] = []
+        current_ids = {event["source_id"] for event in events}
+        for event in events:
+            previous = existing.get(event["source_id"])
+            comparable = {**event, "source": "diario"}
+            if previous is not None and all(
+                previous[key] == value for key, value in comparable.items()
+            ):
+                result["unchanged"] += 1
+                continue
+            created_at = previous["created_at"] if previous is not None else now
+            document_id = f"diario-{event['source_id']}"
+            updates.append(
+                (
+                    ("courses", identifier, "academicDates", document_id),
+                    _encode(
+                        {
+                            "id": document_id,
+                            **comparable,
+                            "created_at": created_at,
+                            "updated_at": now,
+                        }
+                    ),
+                )
+            )
+            result["updated" if previous is not None else "created"] += 1
+        stale = sorted(set(existing) - current_ids)
+        deletes: list[tuple[str, ...]] = [
+            ("courses", identifier, "academicDates", f"diario-{source_id}")
+            for source_id in stale
+        ]
+        result["removed"] = len(deletes)
+        if updates or deletes:
+            self._firestore.commit_user_documents(updates=updates, deletes=deletes)
+        return result
+
 
 def _validate_input(value: Mapping[str, object]) -> dict[str, str]:
     if set(value) != {"source_id", "title", "due_at", "kind"}:
@@ -145,8 +226,8 @@ def _decode(document: Mapping[str, Any]) -> dict[str, Any]:
             {key: value[key] for key in ("source_id", "title", "due_at", "kind")}
         )
         if (
-            value["source"] != "moodle"
-            or value["id"] != f"moodle-{valid['source_id']}"
+            value["source"] not in _SOURCES
+            or value["id"] != f"{value['source']}-{valid['source_id']}"
             or _timestamp(_instant(value["created_at"])) != value["created_at"]
             or _timestamp(_instant(value["updated_at"])) != value["updated_at"]
             or _instant(value["updated_at"]) < _instant(value["created_at"])

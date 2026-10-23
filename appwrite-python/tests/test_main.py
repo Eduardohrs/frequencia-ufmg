@@ -23,6 +23,7 @@ from moodle_token_store import MoodleAuthorizationRequired, MoodleTokenStoreUnav
 from quota_guard import RateLimitExceeded, ReplayDetected, SecurityStoreUnavailable
 from schedule_repository import DestructiveScheduleChange
 from schedule_service import InvalidSchedule, ScheduleOverlap
+from teaching_plan_repository import InvalidTeachingPlan
 from ufmg_auth import InvalidUFMGCredentials, UFMGAuthenticationUnavailable
 from ufmg_course_import import (
     InvalidUFMGEnrollmentResponse,
@@ -1247,6 +1248,138 @@ def test_moodle_diario_plan_factory_uses_server_dependencies(
 
     assert service._sessions is values["sessions"]
     assert service._client is values["client"]
+
+
+def test_teaching_plan_import_route_returns_sanitized_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    class Service:
+        def import_plan(self, user_id: str, **values: object) -> dict[str, object]:
+            assert user_id == "user-1"
+            assert values["course_id"] == "course-a"
+            assert values["term"] == "2026-2"
+            assert values["source_id"] == 701
+            return {
+                "course_id": "course-a",
+                "term": "2026-2",
+                "source_id": "701",
+                "plan": "created",
+                "assessment_total": 2,
+                "dates_created": 2,
+                "dates_updated": 0,
+                "dates_unchanged": 0,
+                "dates_removed": 0,
+                "criteria_total": 2,
+                "schedule_total": 30,
+                "confidence": "authoritative",
+            }
+
+    monkeypatch.setattr(function, "_moodle_teaching_plan_import_service", lambda *_: Service())
+    context = FakeContext(
+        FakeRequest(
+            "POST",
+            "/v1/ufmg/import/teaching-plan",
+            body_json={"course_id": "course-a", "term": "2026-2", "source_id": 701},
+        )
+    )
+
+    result = function.main(context)
+
+    assert result["status"] == 200
+    assert result["body"]["assessment_total"] == 2
+    assert '"event":"teaching_plan_import_succeeded"' in context.logs[0]
+
+
+def test_teaching_plan_import_returns_authentication_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejected = {"status": 401, "body": {"error": "identity_invalid"}}
+    monkeypatch.setattr(function, "_authentication", lambda *_: (None, rejected))
+    result = function._moodle_teaching_plan_import(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/import/teaching-plan")), None
+    )
+    assert result is rejected
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (UFMGReauthenticationRequired(), 401, "ufmg_reauthentication_required"),
+        (MoodleUnavailable(), 503, "moodle_unavailable"),
+        (InvalidMoodleResponse("diario_plan_structure"), 502, "moodle_response_invalid"),
+        (InvalidTeachingPlan(), 400, "teaching_plan_import_rejected"),
+        (InvalidAcademicDate(), 400, "teaching_plan_import_rejected"),
+        (FirestoreUnavailable(), 503, "teaching_plan_store_unavailable"),
+        (UFMGSessionStoreUnavailable(), 503, "teaching_plan_store_unavailable"),
+    ],
+)
+def test_teaching_plan_import_route_sanitizes_failures(
+    monkeypatch: pytest.MonkeyPatch, error: Exception, status: int, code: str
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    class Service:
+        def import_plan(self, *_args: object, **_kwargs: object) -> None:
+            raise error
+
+    monkeypatch.setattr(function, "_moodle_teaching_plan_import_service", lambda *_: Service())
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/ufmg/import/teaching-plan",
+                body_json={"course_id": "course-a", "term": "2026-2", "source_id": 701},
+            )
+        )
+    )
+    assert result["status"] == status
+    assert result["body"] == {"error": code}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"course_id": "course-a", "term": "20262", "source_id": 701},
+        {"course_id": 1, "term": "2026-2", "source_id": 701},
+        {"course_id": "course-a", "term": "2026-2", "source_id": 0},
+        {
+            "course_id": "course-a",
+            "term": "2026-2",
+            "source_id": 701,
+            "extra": True,
+        },
+    ],
+)
+def test_teaching_plan_import_rejects_invalid_bodies(
+    monkeypatch: pytest.MonkeyPatch, body: dict[str, object]
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+    result = function.main(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/import/teaching-plan", body_json=body))
+    )
+    assert result["status"] == 400
+    assert result["body"] == {"error": "teaching_plan_import_rejected"}
+
+
+def test_teaching_plan_import_factory_shares_firestore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = {"firestore": object(), "sessions": object(), "client": object()}
+    monkeypatch.setattr(function, "_firestore", lambda *_: values["firestore"])
+    monkeypatch.setattr(function, "_ufmg_session_store", lambda *_: values["sessions"])
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: values["client"])
+    monkeypatch.setattr(function, "_course_repository", lambda *_: "courses")
+
+    service = function._moodle_teaching_plan_import_service({}, "user-1")
+
+    assert service._sessions is values["sessions"]
+    assert service._client is values["client"]
+    assert service._courses == "courses"
+    assert service._plans._firestore is values["firestore"]
+    assert service._dates._firestore is values["firestore"]
 
 
 @pytest.mark.parametrize(

@@ -1036,14 +1036,12 @@ void main() {
     await tester.tap(probeButton);
     await tester.pumpAndSettle();
 
-    expect(gateway.diarioProbeRequests, [('2026-2', '701')]);
+    expect(gateway.diarioImportRequests, [('dcc203', '2026-2', '701')]);
     expect(
-      find.text(
-        'Plano estruturado disponível (2 KB). Nenhum documento foi armazenado.',
-      ),
+      find.text('Plano importado: 2 avaliações, 30 aulas e 2 critérios.'),
       findsOneWidget,
     );
-    expect(logger.events, contains('moodle_diario_plan_probe_succeeded'));
+    expect(logger.events, contains('moodle_teaching_plan_import_succeeded'));
   });
 
   testWidgets('explains expired Diario validation', (tester) async {
@@ -1099,11 +1097,11 @@ void main() {
     await tester.tap(probeButton);
     await tester.pumpAndSettle();
     expect(
-      find.text('Reconecte a UFMG para validar este plano.'),
+      find.text('Reconecte a UFMG para importar este plano.'),
       findsOneWidget,
     );
 
-    expect(logger.events, contains('moodle_diario_plan_probe_failed'));
+    expect(logger.events, contains('moodle_teaching_plan_import_failed'));
   });
 
   testWidgets('explains an unexpected Diario validation failure', (
@@ -1158,7 +1156,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Não foi possível validar este plano de ensino.'),
+      find.text('Não foi possível importar este plano de ensino.'),
       findsOneWidget,
     );
   });
@@ -2670,6 +2668,7 @@ final class _Gateway
   int materialCatalogCalls = 0;
   final materialFileRequests = <(String, String, String)>[];
   final diarioProbeRequests = <(String, String)>[];
+  final diarioImportRequests = <(String, String, String)>[];
   Object? diarioProbeError;
   PythonMoodleContentDiscovery materialCatalog =
       const PythonMoodleContentDiscovery(
@@ -2727,6 +2726,24 @@ final class _Gateway
       sourceId: sourceId,
       delivery: 'redirect',
       contentLength: 1536,
+    );
+  }
+
+  @override
+  Future<PythonTeachingPlanImport> importMoodleTeachingPlan({
+    required String courseId,
+    required String term,
+    required String sourceId,
+  }) async {
+    diarioImportRequests.add((courseId, term, sourceId));
+    if (diarioProbeError case final error?) throw error;
+    return const PythonTeachingPlanImport(
+      assessmentTotal: 2,
+      criteriaTotal: 2,
+      scheduleTotal: 30,
+      createdDates: 2,
+      updatedDates: 0,
+      removedDates: 0,
     );
   }
 

@@ -17,6 +17,7 @@ from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
+from diario_teaching_plan import parse_teaching_plan_html
 from ufmg_session_store import UFMGReauthenticationRequired
 
 MAX_RESPONSE_BYTES = 1_048_576
@@ -329,6 +330,38 @@ class MoodleStructuredDatesClient:
     ) -> DiarioPlanProbe:
         """Validate one Moodle plan link without retaining or returning its document."""
 
+        delivery, body, document_format = self._fetch_diario_document(
+            token, term=term, source_id=source_id
+        )
+        return DiarioPlanProbe(
+            delivery=delivery,
+            content_length=len(body),
+            format=document_format,
+        )
+
+    def fetch_diario_plan(
+        self, token: str, *, term: str, source_id: int
+    ) -> dict[str, object]:
+        """Fetch and structure one official HTML teaching plan in memory."""
+
+        _, body, document_format = self._fetch_diario_document(
+            token, term=term, source_id=source_id
+        )
+        if document_format != "html":
+            raise InvalidMoodleResponse("diario_plan_pdf_unstructured")
+        try:
+            result = parse_teaching_plan_html(
+                _decode_diario_html(body, reason="diario_response_encoding")
+            )
+        except ValueError:
+            raise InvalidMoodleResponse("diario_plan_structure") from None
+        if result["term"] != term:
+            raise InvalidMoodleResponse("diario_plan_term")
+        return result
+
+    def _fetch_diario_document(
+        self, token: str, *, term: str, source_id: int
+    ) -> tuple[str, bytes, str]:
         if type(source_id) is not int or not 1 <= source_id <= 2_147_483_647:
             raise ValueError("invalid Diario source")
         root, _, _ = self._connect(token, term)
@@ -387,11 +420,7 @@ class MoodleStructuredDatesClient:
                     limit=MAX_DIARIO_BYTES,
                 )
         document_format = _require_diario_document(final_url, content_type, body)
-        return DiarioPlanProbe(
-            delivery=delivery,
-            content_length=len(body),
-            format=document_format,
-        )
+        return delivery, body, document_format
 
     def _mobile_launch(self, root: str, passport: str) -> str:
         launch_url = f"{MOODLE_ORIGIN}{root}/admin/tool/mobile/launch.php?" + urlencode(

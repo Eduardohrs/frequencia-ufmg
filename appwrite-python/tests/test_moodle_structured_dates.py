@@ -112,6 +112,24 @@ def _diario_html() -> bytes:
     """
 
 
+def _structured_diario_html() -> bytes:
+    return """
+      <h1>Universidade Federal de Minas Gerais</h1><h2>Plano de Ensino</h2>
+      <table><tr><td>Período:</td><td>2026/2</td><td>Atividade:</td>
+      <td>ELE631 CIRCUITOS ELÉTRICOS II</td><td>Turma:</td><td>T1</td></tr></table>
+      <table><tr><th>Cód.</th><th>Tipo</th><th>Nome</th><th>Data/Hora</th>
+      <th>Local</th><th>Valor</th><th>Peso</th></tr>
+      <tr><td>AV1</td><td>PROVA</td><td>PRIMEIRA PROVA</td>
+      <td>09/09/2026 20:50</td><td>Local</td><td>50,00</td><td>1,00</td></tr></table>
+      <table><tr><th>Descrição</th><th>Valor Parcial</th></tr>
+      <tr><td>Soma das avaliações</td><td>100,00</td></tr></table>
+      <table><tr><th>Aula</th><th>Data</th><th>Dia</th><th>Num. Aulas</th>
+      <th>Horário</th><th>Tipo</th><th>Assunto</th></tr>
+      <tr><td>1</td><td>05/08/2026</td><td>Qua</td><td>2</td>
+      <td>20:55 - 22:35</td><td>Teórica</td><td>Introdução</td></tr></table>
+    """.encode("windows-1252")
+
+
 def test_client_reuses_one_authenticated_moodle_connection_per_term() -> None:
     opener = _Opener(
         [
@@ -311,6 +329,64 @@ def test_diario_probe_accepts_real_legacy_encoded_transition_and_report() -> Non
     assert result == DiarioPlanProbe(
         delivery="link", content_length=len(report), format="html"
     )
+
+
+def test_fetch_diario_plan_returns_structured_bounded_facts() -> None:
+    launch_url = (
+        "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+        "solicitarRelatorioPlanoEnsino.do?"
+        "plt=20262&oft=1000057&tac=DIG&aac=ELE631&trm=T1"
+    )
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(
+                f'<a href="{launch_url}">Plano</a>'.encode(),
+                "https://virtual.ufmg.br/20262/mod/url/view.php?id=99",
+            ),
+            _Response(
+                b"<script>location='/diario/JasperServlet'</script>",
+                launch_url,
+            ),
+            _Response(
+                _structured_diario_html(),
+                "https://sistemas.ufmg.br/diario/JasperServlet",
+            ),
+        ]
+    )
+
+    result = MoodleStructuredDatesClient(opener=opener).fetch_diario_plan(
+        "token-safe", term="2026-2", source_id=99
+    )
+
+    assert result["course_code"] == "ELE631"
+    assert result["confidence"] == "authoritative"
+    assert len(result["assessments"]) == 1
+    assert len(result["schedule"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("document", "expected_reason"),
+    [
+        (("form", b"%PDF", "pdf"), "diario_plan_pdf_unstructured"),
+        (("link", b"<html>broken</html>", "html"), "diario_plan_structure"),
+        (("link", _structured_diario_html(), "html"), "diario_plan_term"),
+    ],
+)
+def test_fetch_diario_plan_rejects_unstructured_or_cross_term_documents(
+    monkeypatch: pytest.MonkeyPatch,
+    document: tuple[str, bytes, str],
+    expected_reason: str,
+) -> None:
+    client = MoodleStructuredDatesClient(opener=_Opener([]))
+    monkeypatch.setattr(client, "_fetch_diario_document", lambda *_args, **_kwargs: document)
+    term = "2026-1" if expected_reason == "diario_plan_term" else "2026-2"
+
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        client.fetch_diario_plan("token-safe", term=term, source_id=99)
+
+    assert caught.value.reason == expected_reason
 
 
 @pytest.mark.parametrize(

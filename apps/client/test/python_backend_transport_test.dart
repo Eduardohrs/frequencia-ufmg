@@ -877,6 +877,100 @@ void main() {
     );
   });
 
+  test('imports one structured Diario teaching plan', () async {
+    late http.Request captured;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'course_id': 'dcc203',
+            'term': '2026-2',
+            'source_id': '701',
+            'plan': 'created',
+            'assessment_total': 2,
+            'dates_created': 2,
+            'dates_updated': 0,
+            'dates_unchanged': 0,
+            'dates_removed': 0,
+            'criteria_total': 1,
+            'schedule_total': 30,
+            'confidence': 'authoritative',
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await transport.importMoodleTeachingPlan(
+      courseId: 'dcc203',
+      term: '2026-2',
+      sourceId: '701',
+    );
+
+    expect(captured.url.path, '/v1/ufmg/import/teaching-plan');
+    expect(jsonDecode(captured.body), {
+      'course_id': 'dcc203',
+      'term': '2026-2',
+      'source_id': 701,
+    });
+    expect(result.assessmentTotal, 2);
+    expect(result.criteriaTotal, 1);
+    expect(result.scheduleTotal, 30);
+    expect(result.createdDates, 2);
+  });
+
+  test('rejects invalid and malformed structured Diario imports', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'course_id': 'dcc203',
+            'term': '2026-2',
+            'source_id': '701',
+            'plan': 'created',
+            'assessment_total': 101,
+            'dates_created': 2,
+            'dates_updated': 0,
+            'dates_unchanged': 0,
+            'dates_removed': 0,
+            'criteria_total': 1,
+            'schedule_total': 30,
+            'confidence': 'authoritative',
+          }),
+          200,
+        ),
+      ),
+    );
+
+    expect(
+      () => transport.importMoodleTeachingPlan(
+        courseId: 'dcc203',
+        term: 'invalid',
+        sourceId: '701',
+      ),
+      throwsArgumentError,
+    );
+    await expectLater(
+      transport.importMoodleTeachingPlan(
+        courseId: 'dcc203',
+        term: '2026-2',
+        sourceId: '701',
+      ),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'code',
+          PythonBackendError.invalidResponse,
+        ),
+      ),
+    );
+  });
+
   test('resolves bounded direct Moodle material files', () async {
     late http.Request captured;
     final transport = PythonBackendTransport(

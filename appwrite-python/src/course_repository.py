@@ -55,7 +55,13 @@ class CourseRepository:
     def delete_course(self, course_id: str) -> None:
         validate_course_id(course_id)
         paths: list[tuple[str, ...]] = []
-        for collection in ("meetings", "sessions", "academicDates", "materialCatalog"):
+        for collection in (
+            "meetings",
+            "sessions",
+            "academicDates",
+            "materialCatalog",
+            "teachingPlans",
+        ):
             documents = self._firestore.list_user_documents("courses", course_id, collection)
             for document in documents:
                 child_id = _document_id(document)

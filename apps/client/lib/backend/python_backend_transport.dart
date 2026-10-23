@@ -122,6 +122,12 @@ abstract interface class BackendDiarioPlanGateway {
     required String term,
     required String sourceId,
   });
+
+  Future<PythonTeachingPlanImport> importMoodleTeachingPlan({
+    required String courseId,
+    required String term,
+    required String sourceId,
+  });
 }
 
 enum PythonMoodleContentStatus { found, empty, unmatched, ambiguous }
@@ -168,6 +174,24 @@ final class PythonDiarioPlanProbe {
   final String sourceId;
   final String delivery;
   final int contentLength;
+}
+
+final class PythonTeachingPlanImport {
+  const PythonTeachingPlanImport({
+    required this.assessmentTotal,
+    required this.criteriaTotal,
+    required this.scheduleTotal,
+    required this.createdDates,
+    required this.updatedDates,
+    required this.removedDates,
+  });
+
+  final int assessmentTotal;
+  final int criteriaTotal;
+  final int scheduleTotal;
+  final int createdDates;
+  final int updatedDates;
+  final int removedDates;
 }
 
 final class PythonMoodleContentCandidate {
@@ -450,7 +474,7 @@ final class PythonMoodleDate {
       'created_at',
       'updated_at',
     };
-    if (!_hasExactKeys(json, keys) || json['source'] != 'moodle') {
+    if (!_hasExactKeys(json, keys)) {
       throw const FormatException();
     }
     final id = json['id'];
@@ -458,6 +482,7 @@ final class PythonMoodleDate {
     final courseCode = json['course_code'];
     final title = json['title'];
     final kind = json['kind'];
+    final source = json['source'];
     final sourceId = json['source_id'];
     final dueAt = _utcDate(json['due_at']);
     _utcDate(json['created_at']);
@@ -467,13 +492,15 @@ final class PythonMoodleDate {
         courseCode is! String ||
         title is! String ||
         sourceId is! String ||
+        source is! String ||
         kind is! String ||
-        id != 'moodle-$sourceId' ||
+        !const {'moodle', 'diario'}.contains(source) ||
+        id != '$source-$sourceId' ||
         courseId.isEmpty ||
         courseCode.isEmpty ||
         title.isEmpty ||
         title.length > 120 ||
-        !const {'assignment', 'quiz', 'event'}.contains(kind)) {
+        !const {'assignment', 'quiz', 'event', 'assessment'}.contains(kind)) {
       throw const FormatException();
     }
     return PythonMoodleDate(
@@ -1600,6 +1627,72 @@ final class PythonBackendTransport
         sourceId: sourceId,
         delivery: delivery as String,
         contentLength: contentLength,
+      );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  Future<PythonTeachingPlanImport> importMoodleTeachingPlan({
+    required String courseId,
+    required String term,
+    required String sourceId,
+  }) async {
+    _validateCourseId(courseId);
+    final numericSourceId = int.tryParse(sourceId);
+    if (!RegExp(r'^20[2-9][0-9]-[12]$').hasMatch(term) ||
+        numericSourceId == null ||
+        numericSourceId < 1 ||
+        numericSourceId > 2147483647) {
+      throw ArgumentError('invalid Diario plan identity');
+    }
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/import/teaching-plan',
+      method: _BackendMethod.post,
+      body: {'course_id': courseId, 'term': term, 'source_id': numericSourceId},
+    );
+    try {
+      final value = jsonDecode(response.body);
+      const keys = {
+        'course_id',
+        'term',
+        'source_id',
+        'plan',
+        'assessment_total',
+        'dates_created',
+        'dates_updated',
+        'dates_unchanged',
+        'dates_removed',
+        'criteria_total',
+        'schedule_total',
+        'confidence',
+      };
+      if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
+        throw const FormatException();
+      }
+      int count(String key, int maximum) {
+        final count = value[key];
+        if (count is! int || count < 0 || count > maximum) {
+          throw const FormatException();
+        }
+        return count;
+      }
+
+      if (value['course_id'] != courseId ||
+          value['term'] != term ||
+          value['source_id'] != sourceId ||
+          !const {'created', 'updated', 'unchanged'}.contains(value['plan']) ||
+          value['confidence'] != 'authoritative') {
+        throw const FormatException();
+      }
+      count('dates_unchanged', 100);
+      return PythonTeachingPlanImport(
+        assessmentTotal: count('assessment_total', 100),
+        criteriaTotal: count('criteria_total', 100),
+        scheduleTotal: count('schedule_total', 1000),
+        createdDates: count('dates_created', 100),
+        updatedDates: count('dates_updated', 100),
+        removedDates: count('dates_removed', 100),
       );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
