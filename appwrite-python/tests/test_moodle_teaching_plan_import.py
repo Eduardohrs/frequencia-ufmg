@@ -35,6 +35,7 @@ class _Client:
                     "scheduled_at": "2026-09-09T20:50:00-03:00",
                 }
             ],
+            "undated_assessment_total": 0,
             "criteria": [],
             "schedule": [],
             "source": "ufmg_diario",
@@ -76,6 +77,7 @@ def test_import_matches_course_and_persists_plan_and_assessments() -> None:
         "source_id": "701",
         "plan": "created",
         "assessment_total": 1,
+        "undated_assessment_total": 0,
         "dates_created": 1,
         "dates_updated": 0,
         "dates_unchanged": 0,

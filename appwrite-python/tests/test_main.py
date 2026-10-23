@@ -1267,6 +1267,7 @@ def test_teaching_plan_import_route_returns_sanitized_summary(
                 "source_id": "701",
                 "plan": "created",
                 "assessment_total": 2,
+                "undated_assessment_total": 0,
                 "dates_created": 2,
                 "dates_updated": 0,
                 "dates_unchanged": 0,

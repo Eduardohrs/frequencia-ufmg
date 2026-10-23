@@ -93,6 +93,7 @@ class MoodleTeachingPlanImportService:
             "source_id": str(source_id),
             "plan": plan_outcome,
             "assessment_total": len(assessments),
+            "undated_assessment_total": cast(int, plan["undated_assessment_total"]),
             "dates_created": dates["created"],
             "dates_updated": dates["updated"],
             "dates_unchanged": dates["unchanged"],

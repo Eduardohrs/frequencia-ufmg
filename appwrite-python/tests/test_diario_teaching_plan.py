@@ -76,6 +76,7 @@ def test_parses_sanitized_real_diario_tables() -> None:
                 "weight": "1.00",
             },
         ],
+        "undated_assessment_total": 0,
         "criteria": [
             {"description": "Soma das notas das 3 melhores notas", "value": "99.00"},
             {"description": "Soma das notas das avaliações", "value": "1.00"},
@@ -257,6 +258,58 @@ def test_parses_observed_jasper_label_value_assessments_with_blank_location() ->
             "weight": "1.00",
         }
     ]
+
+
+def test_accepts_observed_plan_with_undated_assessments_and_horas_aula() -> None:
+    html = """
+      <table>
+        <tr><td>Período:</td><td>2026/2</td><td>Ofertante:</td><td>ENGENHARIA ELÉTRICA</td></tr>
+        <tr><td>Atividade:</td><td>DIG ELE065 ANALISE DE CIRCUITOS ELETRICOS II</td></tr>
+        <tr><td>Turma:</td><td>TTEC</td></tr>
+        <tr><td>Cód:</td><td>AV1</td><td>Tipo:</td><td>PROVA</td>
+          <td>Nome:</td><td>Avaliação 1</td></tr>
+        <tr><td>Data/Hora:</td><td>Local:</td><td>Sala de aula</td>
+          <td>Valor:</td><td>35,00</td><td>Peso:</td><td>1,00</td></tr>
+        <tr><td>Cód:</td><td>AV2</td><td>Tipo:</td><td>PROVA</td>
+          <td>Nome:</td><td>Avaliação 2</td></tr>
+        <tr><td>Data/Hora:</td><td>Local:</td><td>Sala de aula</td>
+          <td>Valor:</td><td>35,00</td><td>Peso:</td><td>1,00</td></tr>
+        <tr><td>Descrição</td><td>Valor Parcial</td></tr>
+        <tr><td>Soma das avaliações</td><td>100,00</td></tr>
+        <tr><td>Aula</td><td>Data</td><td>Dia</td><td>Horas Aula</td>
+          <td>Horário</td><td>Tipo</td><td>Assunto</td></tr>
+        <tr><td>1</td><td>07/08/2026</td><td>Sex</td><td>2</td>
+          <td>19:00 - 20:40</td><td>Teórica</td><td>Introdução</td></tr>
+      </table>
+    """
+
+    result = parse_teaching_plan_html(html)
+
+    assert result["assessments"] == []
+    assert result["undated_assessment_total"] == 2
+    assert len(result["criteria"]) == 1
+    assert len(result["schedule"]) == 1
+
+
+def test_accepts_observed_plan_with_only_a_schedule() -> None:
+    html = """
+      <table>
+        <tr><td>Período:</td><td>2026/2</td><td>Ofertante:</td><td>ENGENHARIA ELÉTRICA</td></tr>
+        <tr><td>Atividade:</td><td>DIG ELE631 ANALISE E PROJETO ORIENTADOS A OBJETOS</td></tr>
+        <tr><td>Turma:</td><td>TAPO</td></tr>
+        <tr><td>Aula</td><td>Data</td><td>Dia</td><td>Horas Aula</td>
+          <td>Horário</td><td>Tipo</td><td>Assunto</td></tr>
+        <tr><td>1</td><td>04/08/2026</td><td>Ter</td><td>2</td>
+          <td>19:00 - 20:40</td><td>Teórica</td><td>Acerto de matrícula</td></tr>
+      </table>
+    """
+
+    result = parse_teaching_plan_html(html)
+
+    assert result["assessments"] == []
+    assert result["undated_assessment_total"] == 0
+    assert result["criteria"] == []
+    assert len(result["schedule"]) == 1
 
 
 def test_labeled_assessment_rejects_incomplete_records() -> None:
