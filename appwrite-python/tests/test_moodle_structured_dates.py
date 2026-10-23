@@ -387,6 +387,11 @@ def test_fetch_diario_plan_rejects_unstructured_or_cross_term_documents(
         client.fetch_diario_plan("token-safe", term=term, source_id=99)
 
     assert caught.value.reason == expected_reason
+    if expected_reason == "diario_plan_structure":
+        assert caught.value.details["parser_stage"] == "identity_labels"
+        assert caught.value.details["sample_rows"] == []
+    else:
+        assert caught.value.details == {}
 
 
 @pytest.mark.parametrize(

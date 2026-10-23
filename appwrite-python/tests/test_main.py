@@ -1338,6 +1338,61 @@ def test_teaching_plan_import_route_sanitizes_failures(
     assert result["body"] == {"error": code}
 
 
+def test_teaching_plan_import_logs_actionable_parser_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+    details = {
+        "parser_stage": "required_sections",
+        "row_count": 12,
+        "nonempty_cell_count": 41,
+        "max_row_cells": 7,
+        "assessment_total": 2,
+        "criteria_total": 1,
+        "schedule_total": 0,
+        "sample_rows": ["Atividade: MAT001 Cálculo I", "Cronograma"],
+    }
+
+    class Service:
+        def import_plan(self, *_args: object, **_kwargs: object) -> None:
+            raise InvalidMoodleResponse("diario_plan_structure", details=details)
+
+    monkeypatch.setattr(function, "_moodle_teaching_plan_import_service", lambda *_: Service())
+    context = FakeContext(
+        FakeRequest(
+            "POST",
+            "/v1/ufmg/import/teaching-plan",
+            body_json={"course_id": "course-a", "term": "2026-2", "source_id": 701},
+            headers={"X-Request-ID": "teaching-plan-test"},
+        )
+    )
+
+    result = function.main(context)
+
+    assert result["status"] == 502
+    diagnostic = json.loads(context.errors[0])
+    assert diagnostic == {
+        "assessment_total": 2,
+        "course_id": "course-a",
+        "criteria_total": 1,
+        "event": "moodle_response_invalid",
+        "max_row_cells": 7,
+        "nonempty_cell_count": 41,
+        "parser_stage": "required_sections",
+        "reason": "diario_plan_structure",
+        "request_id": "teaching-plan-test",
+        "row_count": 12,
+        "sample_rows": ["Atividade: MAT001 Cálculo I", "Cronograma"],
+        "schedule_total": 0,
+        "source_id": 701,
+        "term": "2026-2",
+    }
+    serialized = context.errors[0].lower()
+    assert "password" not in serialized
+    assert "cookie" not in serialized
+    assert "token" not in serialized
+
+
 @pytest.mark.parametrize(
     "body",
     [

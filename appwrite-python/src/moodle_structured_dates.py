@@ -17,7 +17,7 @@ from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
-from diario_teaching_plan import parse_teaching_plan_html
+from diario_teaching_plan import TeachingPlanParseError, parse_teaching_plan_html
 from ufmg_session_store import UFMGReauthenticationRequired
 
 MAX_RESPONSE_BYTES = 1_048_576
@@ -35,8 +35,11 @@ _REDIRECT_CODES = {301, 302, 303, 307, 308}
 class InvalidMoodleResponse(Exception):
     """Moodle or the identity provider returned an unsafe/unexpected shape."""
 
-    def __init__(self, reason: str = "unknown") -> None:
+    def __init__(
+        self, reason: str = "unknown", *, details: dict[str, object] | None = None
+    ) -> None:
         self.reason = reason if re.fullmatch(r"[a-z_]{1,64}", reason) else "unknown"
+        self.details = details or {}
         super().__init__("invalid Moodle response")
 
 
@@ -353,8 +356,10 @@ class MoodleStructuredDatesClient:
             result = parse_teaching_plan_html(
                 _decode_diario_html(body, reason="diario_response_encoding")
             )
-        except ValueError:
-            raise InvalidMoodleResponse("diario_plan_structure") from None
+        except TeachingPlanParseError as error:
+            raise InvalidMoodleResponse(
+                "diario_plan_structure", details=error.diagnostics
+            ) from None
         if result["term"] != term:
             raise InvalidMoodleResponse("diario_plan_term")
         return result

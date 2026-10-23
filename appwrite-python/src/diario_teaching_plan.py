@@ -12,6 +12,36 @@ _TIME_RANGE = re.compile(r"([0-2][0-9]:[0-5][0-9])\s*-\s*([0-2][0-9]:[0-5][0-9])
 _MAX_ROWS = 1_000
 _MAX_CELLS = 32
 _MAX_TEXT = 500
+_MAX_LOG_ROWS = 40
+_MAX_LOG_ROW_TEXT = 300
+
+
+class TeachingPlanParseError(ValueError):
+    """A plan failed parsing, with bounded report diagnostics for operations."""
+
+    def __init__(
+        self,
+        stage: str,
+        *,
+        rows: list[list[str]],
+        assessment_total: int = 0,
+        criteria_total: int = 0,
+        schedule_total: int = 0,
+    ) -> None:
+        self.stage = stage
+        self.diagnostics: dict[str, object] = {
+            "parser_stage": stage,
+            "row_count": len(rows),
+            "nonempty_cell_count": sum(len(row) for row in rows),
+            "max_row_cells": max((len(row) for row in rows), default=0),
+            "assessment_total": assessment_total,
+            "criteria_total": criteria_total,
+            "schedule_total": schedule_total,
+            "sample_rows": [
+                " | ".join(row)[:_MAX_LOG_ROW_TEXT] for row in rows[:_MAX_LOG_ROWS]
+            ],
+        }
+        super().__init__(f"invalid teaching plan at {stage}")
 
 
 class _TableParser(HTMLParser):
@@ -54,51 +84,74 @@ class _TableParser(HTMLParser):
 
 def parse_teaching_plan_html(markup: str) -> dict[str, object]:
     if not markup or len(markup) > 20 * 1_048_576:
-        raise ValueError("invalid teaching plan")
+        raise TeachingPlanParseError("document_bounds", rows=[])
     parser = _TableParser()
-    parser.feed(markup)
+    try:
+        parser.feed(markup)
+    except ValueError:
+        raise TeachingPlanParseError("html_layout", rows=parser.rows) from None
     rows = parser.rows
-    term = _label_value(rows, "periodo")
-    activity = _label_value(rows, "atividade")
-    class_group = _label_value(rows, "turma")
+    try:
+        term = _label_value(rows, "periodo")
+        activity = _label_value(rows, "atividade")
+        class_group = _label_value(rows, "turma")
+    except ValueError:
+        raise TeachingPlanParseError("identity_labels", rows=rows) from None
     term_match = _TERM.search(term)
     course_match = _COURSE.search(activity)
     if term_match is None or course_match is None or not class_group:
-        raise ValueError("invalid teaching plan")
+        raise TeachingPlanParseError("identity_values", rows=rows)
 
     assessments: list[dict[str, object]] = []
     criteria: list[dict[str, str]] = []
     schedule: list[dict[str, object]] = []
     section: str | None = None
-    for row in rows:
-        normalized = [_normalized(cell) for cell in row]
-        if _header_matches(
-            normalized,
-            ("cod", "tipo", "nome", "data/hora", "local", "valor", "peso"),
-        ):
-            section = "assessments"
-            continue
-        if _header_matches(normalized, ("descricao", "valor parcial")):
-            section = "criteria"
-            continue
-        if _header_matches(
-            normalized,
-            ("aula", "data", "dia", "num aula", "horario", "tipo", "assunto"),
-        ):
-            section = "schedule"
-            continue
-        if section == "assessments" and len(row) == 7:
-            assessments.append(_assessment(row))
-        elif section == "criteria" and len(row) == 2:
-            criteria.append({"description": _required(row[0]), "value": _decimal(row[1])})
-        elif section == "schedule" and len(row) == 7:
-            schedule.append(_schedule_entry(row))
+    try:
+        for row in rows:
+            normalized = [_normalized(cell) for cell in row]
+            if _header_matches(
+                normalized,
+                ("cod", "tipo", "nome", "data/hora", "local", "valor", "peso"),
+            ):
+                section = "assessments"
+                continue
+            if _header_matches(normalized, ("descricao", "valor parcial")):
+                section = "criteria"
+                continue
+            if _header_matches(
+                normalized,
+                ("aula", "data", "dia", "num aula", "horario", "tipo", "assunto"),
+            ):
+                section = "schedule"
+                continue
+            if section == "assessments" and len(row) == 7:
+                assessments.append(_assessment(row))
+            elif section == "criteria" and len(row) == 2:
+                criteria.append(
+                    {"description": _required(row[0]), "value": _decimal(row[1])}
+                )
+            elif section == "schedule" and len(row) == 7:
+                schedule.append(_schedule_entry(row))
 
-    if not assessments:
-        assessments = _labeled_assessments(rows)
+        if not assessments:
+            assessments = _labeled_assessments(rows)
+    except ValueError:
+        raise TeachingPlanParseError(
+            "section_values",
+            rows=rows,
+            assessment_total=len(assessments),
+            criteria_total=len(criteria),
+            schedule_total=len(schedule),
+        ) from None
 
     if not assessments or not criteria or not schedule:
-        raise ValueError("invalid teaching plan")
+        raise TeachingPlanParseError(
+            "required_sections",
+            rows=rows,
+            assessment_total=len(assessments),
+            criteria_total=len(criteria),
+            schedule_total=len(schedule),
+        )
     return {
         "term": f"{term_match[1]}-{term_match[2]}",
         "course_code": course_match[1],

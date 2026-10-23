@@ -1,6 +1,7 @@
 import pytest
 
 from diario_teaching_plan import (
+    TeachingPlanParseError,
     _decimal,
     _label_value,
     _labeled_assessments,
@@ -109,8 +110,18 @@ def test_parses_sanitized_real_diario_tables() -> None:
 def test_rejects_a_document_without_all_required_sections() -> None:
     try:
         parse_teaching_plan_html("<h2>Avaliações</h2><table></table>")
-    except ValueError as error:
-        assert str(error) == "invalid teaching plan"
+    except TeachingPlanParseError as error:
+        assert error.stage == "identity_labels"
+        assert error.diagnostics == {
+            "parser_stage": "identity_labels",
+            "row_count": 0,
+            "nonempty_cell_count": 0,
+            "max_row_cells": 0,
+            "assessment_total": 0,
+            "criteria_total": 0,
+            "schedule_total": 0,
+            "sample_rows": [],
+        }
     else:
         raise AssertionError("invalid plan accepted")
 
@@ -132,6 +143,37 @@ def test_table_parser_enforces_cell_and_row_bounds() -> None:
         _TableParser().feed("<table><tr>" + "<td>x</td>" * 33 + "</tr></table>")
     with pytest.raises(ValueError):
         _TableParser().feed("<table>" + "<tr><td>x</td></tr>" * 1001 + "</table>")
+
+
+def test_parser_reports_the_html_layout_stage_with_the_rows_seen_so_far() -> None:
+    markup = "<table><tr><td>visible</td></tr><tr>" + "<td>x</td>" * 33 + "</tr></table>"
+
+    with pytest.raises(TeachingPlanParseError) as raised:
+        parse_teaching_plan_html(markup)
+
+    assert raised.value.stage == "html_layout"
+    assert raised.value.diagnostics["row_count"] == 1
+    assert raised.value.diagnostics["sample_rows"] == ["visible"]
+
+
+def test_parser_reports_the_section_and_partial_totals_that_failed() -> None:
+    markup = """
+      <table>
+        <tr><td>Período:</td><td>2026/2</td><td>Atividade:</td><td>MAT002 Cálculo II</td></tr>
+        <tr><td>Turma:</td><td>T1</td></tr>
+        <tr><th>Cód.</th><th>Tipo</th><th>Nome</th><th>Data/Hora</th>
+          <th>Local</th><th>Valor</th><th>Peso</th></tr>
+        <tr><td>AV1</td><td>PROVA</td><td>Prova inválida</td>
+          <td>data inválida</td><td>Sala</td><td>10,00</td><td>1,00</td></tr>
+      </table>
+    """
+
+    with pytest.raises(TeachingPlanParseError) as raised:
+        parse_teaching_plan_html(markup)
+
+    assert raised.value.stage == "section_values"
+    assert raised.value.diagnostics["assessment_total"] == 0
+    assert "Prova inválida" in " ".join(raised.value.diagnostics["sample_rows"])
 
 
 def test_rejects_invalid_identity_and_missing_sections_after_identity() -> None:
