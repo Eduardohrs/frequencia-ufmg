@@ -106,6 +106,8 @@ abstract interface class BackendUFMGSessionGateway {
 
   Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities();
 
+  Future<PythonMoodleSyncResult> syncMoodle();
+
   Future<List<PythonMoodleMaterialFile>> listMoodleMaterialFiles({
     required String term,
     required String courseId,
@@ -140,6 +142,18 @@ final class PythonMoodleMobileCapabilities {
   final bool downloadFiles;
   final bool privateFileAccess;
   final bool webserviceTokenIssued;
+}
+
+final class PythonMoodleSyncResult {
+  const PythonMoodleSyncResult({
+    required this.dates,
+    required this.candidateTotal,
+    required this.capabilities,
+  });
+
+  final PythonMoodleDateImportResult dates;
+  final int candidateTotal;
+  final PythonMoodleMobileCapabilities? capabilities;
 }
 
 final class PythonDiarioPlanProbe {
@@ -1387,41 +1401,106 @@ final class PythonBackendTransport
       body: const {},
     );
     try {
+      return _moodleMobileCapabilities(jsonDecode(response.body));
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<PythonMoodleSyncResult> syncMoodle() async {
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/sync/moodle',
+      method: _BackendMethod.post,
+      body: const {},
+    );
+    try {
       final value = jsonDecode(response.body);
-      const keys = {
-        'term',
-        'direct_download_supported',
-        'download_files',
-        'private_file_access',
-        'webservice_token_issued',
-      };
-      if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
+      if (value is! Map<String, dynamic> ||
+          !_hasExactKeys(value, const {'dates', 'content', 'capabilities'})) {
         throw const FormatException();
       }
-      final term = value['term'];
-      final direct = value['direct_download_supported'];
-      final downloads = value['download_files'];
-      final privateAccess = value['private_file_access'];
-      final issued = value['webservice_token_issued'];
-      if (term is! String ||
-          !RegExp(r'^20[2-9][0-9]-[12]$').hasMatch(term) ||
-          direct is! bool ||
-          downloads is! bool ||
-          privateAccess is! bool ||
-          issued is! bool ||
-          direct != (downloads && privateAccess)) {
+      final dates = _moodleDateImportResult(value['dates']);
+      final content = Map<String, Object?>.from(value['content'] as Map);
+      if (!_hasExactKeys(content, const {
+        'course_total',
+        'candidate_total',
+        'metaturma_candidate_total',
+        'found',
+        'empty',
+        'unmatched',
+        'ambiguous',
+      })) {
         throw const FormatException();
       }
-      return PythonMoodleMobileCapabilities(
-        term: term,
-        directDownloadSupported: direct,
-        downloadFiles: downloads,
-        privateFileAccess: privateAccess,
-        webserviceTokenIssued: issued,
+      final courseTotal = content['course_total'];
+      final candidateTotal = content['candidate_total'];
+      final metaturmaTotal = content['metaturma_candidate_total'];
+      final statuses = [
+        content['found'],
+        content['empty'],
+        content['unmatched'],
+        content['ambiguous'],
+      ];
+      if (courseTotal is! int ||
+          courseTotal < 0 ||
+          courseTotal > 50 ||
+          candidateTotal is! int ||
+          candidateTotal < 0 ||
+          candidateTotal > 500 ||
+          metaturmaTotal is! int ||
+          metaturmaTotal < 0 ||
+          metaturmaTotal > candidateTotal ||
+          statuses.any((count) => count is! int || count < 0) ||
+          statuses.cast<int>().fold<int>(0, (sum, count) => sum + count) !=
+              courseTotal) {
+        throw const FormatException();
+      }
+      final rawCapabilities = value['capabilities'];
+      final capabilities = rawCapabilities == null
+          ? null
+          : _moodleMobileCapabilities(rawCapabilities);
+      return PythonMoodleSyncResult(
+        dates: dates,
+        candidateTotal: candidateTotal,
+        capabilities: capabilities,
       );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
     }
+  }
+
+  PythonMoodleMobileCapabilities _moodleMobileCapabilities(Object? raw) {
+    final value = Map<String, Object?>.from(raw as Map);
+    const keys = {
+      'term',
+      'direct_download_supported',
+      'download_files',
+      'private_file_access',
+      'webservice_token_issued',
+    };
+    if (!_hasExactKeys(value, keys)) throw const FormatException();
+    final term = value['term'];
+    final direct = value['direct_download_supported'];
+    final downloads = value['download_files'];
+    final privateAccess = value['private_file_access'];
+    final issued = value['webservice_token_issued'];
+    if (term is! String ||
+        !RegExp(r'^20[2-9][0-9]-[12]$').hasMatch(term) ||
+        direct is! bool ||
+        downloads is! bool ||
+        privateAccess is! bool ||
+        issued is! bool ||
+        direct != (downloads && privateAccess)) {
+      throw const FormatException();
+    }
+    return PythonMoodleMobileCapabilities(
+      term: term,
+      directDownloadSupported: direct,
+      downloadFiles: downloads,
+      privateFileAccess: privateAccess,
+      webserviceTokenIssued: issued,
+    );
   }
 
   @override

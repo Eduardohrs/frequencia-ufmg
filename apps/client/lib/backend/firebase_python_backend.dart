@@ -123,6 +123,12 @@ final class _FirebasePythonBackendVerifier
   }
 
   @override
+  Future<PythonMoodleSyncResult> syncMoodle() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.syncMoodle();
+  }
+
+  @override
   Future<PythonDiarioPlanProbe> probeMoodleDiarioPlan({
     required String term,
     required String sourceId,

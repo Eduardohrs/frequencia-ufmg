@@ -686,6 +686,99 @@ void main() {
     },
   );
 
+  test('synchronizes Moodle stages through one bounded contract', () async {
+    late http.Request captured;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'dates': {
+              'total': 3,
+              'matched': 2,
+              'unmatched': 1,
+              'created': 1,
+              'updated': 1,
+              'unchanged': 0,
+            },
+            'content': {
+              'course_total': 2,
+              'candidate_total': 8,
+              'metaturma_candidate_total': 3,
+              'found': 1,
+              'empty': 1,
+              'unmatched': 0,
+              'ambiguous': 0,
+            },
+            'capabilities': {
+              'term': '2026-2',
+              'direct_download_supported': true,
+              'download_files': true,
+              'private_file_access': true,
+              'webservice_token_issued': false,
+            },
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await transport.syncMoodle();
+
+    expect(result.dates.created, 1);
+    expect(result.candidateTotal, 8);
+    expect(result.capabilities?.directDownloadSupported, isTrue);
+    expect(result.capabilities?.webserviceTokenIssued, isFalse);
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/v1/ufmg/sync/moodle');
+    expect(captured.body, '{}');
+  });
+
+  test('rejects malformed combined Moodle synchronization results', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'dates': {
+              'total': 0,
+              'matched': 0,
+              'unmatched': 0,
+              'created': 0,
+              'updated': 0,
+              'unchanged': 0,
+            },
+            'content': {
+              'course_total': 2,
+              'candidate_total': 0,
+              'metaturma_candidate_total': 0,
+              'found': 1,
+              'empty': 0,
+              'unmatched': 0,
+              'ambiguous': 0,
+            },
+            'capabilities': null,
+          }),
+          200,
+        ),
+      ),
+    );
+
+    await expectLater(
+      transport.syncMoodle(),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'code',
+          PythonBackendError.invalidResponse,
+        ),
+      ),
+    );
+  });
+
   test('validates a bounded Diario de Classe PDF probe', () async {
     late http.Request captured;
     final transport = PythonBackendTransport(

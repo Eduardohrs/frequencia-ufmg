@@ -43,6 +43,7 @@ enum AuditedOperation {
   moodleContentDiscovery('moodle_content_discovery'),
   moodleMaterialCatalogList('moodle_material_catalog_list'),
   moodleMobileCapability('moodle_mobile_capability'),
+  moodleSync('moodle_sync'),
   moodleDiarioPlanProbe('moodle_diario_plan_probe'),
   moodleMaterialOpen('moodle_material_open'),
   moodleMaterialCacheList('moodle_material_cache_list'),

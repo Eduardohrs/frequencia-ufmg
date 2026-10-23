@@ -254,7 +254,7 @@ void main() {
       find.textContaining('1 data não pôde ser ligada a uma disciplina'),
       findsOneWidget,
     );
-    expect(logger.events, contains('moodle_date_import_succeeded'));
+    expect(logger.events, contains('moodle_sync_succeeded'));
     expect(find.text('Trabalho prático'), findsOneWidget);
     expect(logger.events, contains('moodle_date_list_succeeded'));
   });
@@ -980,8 +980,8 @@ void main() {
       find.text('Mais de uma disciplina correspondente no Moodle'),
       findsOneWidget,
     );
-    expect(logger.events, contains('moodle_content_discovery_succeeded'));
-    expect(logger.events, contains('moodle_mobile_capability_succeeded'));
+    expect(logger.events, contains('moodle_sync_succeeded'));
+    expect(logger.events, contains('moodle_sync_succeeded'));
   });
 
   testWidgets('validates an official Diario plan without downloading it', (
@@ -2565,8 +2565,8 @@ void main() {
         find.text('Não foi possível sincronizar os dados do Moodle.'),
         findsNothing,
       );
-      expect(logger.events, contains('moodle_content_discovery_retrying'));
-      expect(logger.events, contains('moodle_content_discovery_recovered'));
+      expect(logger.events, contains('moodle_sync_retrying'));
+      expect(logger.events, contains('moodle_sync_recovered'));
     },
   );
 
@@ -2693,6 +2693,25 @@ final class _Gateway
       downloadFiles: true,
       privateFileAccess: true,
       webserviceTokenIssued: true,
+    );
+  }
+
+  @override
+  Future<PythonMoodleSyncResult> syncMoodle() async {
+    final importedDates = await importMoodleDates();
+    final discovery = await discoverMoodleContent();
+    PythonMoodleMobileCapabilities? capabilities;
+    try {
+      capabilities = await probeMoodleMobileCapabilities();
+    } on PythonBackendException catch (error) {
+      if (error.code == PythonBackendError.ufmgReauthenticationRequired) {
+        rethrow;
+      }
+    } catch (_) {}
+    return PythonMoodleSyncResult(
+      dates: importedDates,
+      candidateTotal: discovery.candidateTotal,
+      capabilities: capabilities,
     );
   }
 

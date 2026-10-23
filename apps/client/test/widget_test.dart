@@ -441,6 +441,9 @@ final class _FakeOverviewBackend
       throw UnimplementedError();
 
   @override
+  Future<PythonMoodleSyncResult> syncMoodle() => throw UnimplementedError();
+
+  @override
   Future<List<PythonMoodleMaterialFile>> listMoodleMaterialFiles({
     required String term,
     required String courseId,

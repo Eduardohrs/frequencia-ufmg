@@ -2143,6 +2143,13 @@ final class _UFMGGateway implements BackendUFMGSessionGateway {
       throw UnimplementedError();
 
   @override
+  Future<PythonMoodleSyncResult> syncMoodle() async => PythonMoodleSyncResult(
+    dates: await importMoodleDates(),
+    candidateTotal: materialCatalog.candidateTotal,
+    capabilities: null,
+  );
+
+  @override
   Future<List<PythonMoodleMaterialFile>> listMoodleMaterialFiles({
     required String term,
     required String courseId,

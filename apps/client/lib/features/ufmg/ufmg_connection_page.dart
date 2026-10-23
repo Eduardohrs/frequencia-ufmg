@@ -937,35 +937,28 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       _moodleSummary = null;
     });
     try {
-      final result = await runAuditedOperation(
-        logger: widget.logger,
-        operation: AuditedOperation.moodleDateImport,
-        action: widget.gateway.importMoodleDates,
-      );
+      late PythonMoodleSyncResult sync;
       try {
-        await runAuditedOperation(
+        sync = await runAuditedOperation(
           logger: widget.logger,
-          operation: AuditedOperation.moodleContentDiscovery,
-          action: widget.gateway.discoverMoodleContent,
+          operation: AuditedOperation.moodleSync,
+          action: widget.gateway.syncMoodle,
         );
       } catch (error) {
         if (!isTransientPythonBackendFailure(error)) rethrow;
         await widget.logger.logEvent(
-          'moodle_content_discovery_retrying',
-          parameters: const {
-            'operation': 'moodle_content_discovery',
-            'outcome': 'retrying',
-          },
+          'moodle_sync_retrying',
+          parameters: const {'operation': 'moodle_sync', 'outcome': 'retrying'},
         );
-        await runAuditedOperation(
+        sync = await runAuditedOperation(
           logger: widget.logger,
-          operation: AuditedOperation.moodleContentDiscovery,
-          action: widget.gateway.discoverMoodleContent,
+          operation: AuditedOperation.moodleSync,
+          action: widget.gateway.syncMoodle,
         );
         await widget.logger.logEvent(
-          'moodle_content_discovery_recovered',
+          'moodle_sync_recovered',
           parameters: const {
-            'operation': 'moodle_content_discovery',
+            'operation': 'moodle_sync',
             'outcome': 'recovered',
           },
         );
@@ -975,37 +968,23 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         operation: AuditedOperation.moodleMaterialCatalogList,
         action: widget.gateway.listMoodleMaterialCatalog,
       );
-      String capabilitySummary;
-      try {
-        final capabilities = await runAuditedOperation(
-          logger: widget.logger,
-          operation: AuditedOperation.moodleMobileCapability,
-          action: widget.gateway.probeMoodleMobileCapabilities,
-        );
-        capabilitySummary = capabilities.directDownloadSupported
-            ? ' Download direto disponível.'
-            : ' Download direto ainda não disponível.';
-      } on PythonBackendException catch (error) {
-        if (error.code == PythonBackendError.ufmgReauthenticationRequired) {
-          rethrow;
-        }
-        capabilitySummary =
-            ' Não foi possível validar o download direto agora.';
-      } catch (_) {
-        capabilitySummary =
-            ' Não foi possível validar o download direto agora.';
-      }
+      final capabilities = sync.capabilities;
+      final capabilitySummary = capabilities == null
+          ? ' Não foi possível validar o download direto agora.'
+          : capabilities.directDownloadSupported
+          ? ' Download direto disponível.'
+          : ' Download direto ainda não disponível.';
       final dates = await _listDates();
       if (mounted) {
         setState(() {
           _dates = dates;
           _contentDiscovery = discovery;
           _moodleSummary =
-              '${result.created} ${_plural(result.created, 'data do Moodle importada', 'datas do Moodle importadas')}. '
-              '${result.updated} ${_plural(result.updated, 'data atualizada', 'datas atualizadas')}. '
-              '${result.unchanged} sem alteração. '
-              '${result.unmatched} ${_plural(result.unmatched, 'data não pôde ser ligada a uma disciplina', 'datas não puderam ser ligadas a uma disciplina')}. '
-              '${discovery.candidateTotal} ${_plural(discovery.candidateTotal, 'material candidato encontrado', 'materiais candidatos encontrados')}.'
+              '${sync.dates.created} ${_plural(sync.dates.created, 'data do Moodle importada', 'datas do Moodle importadas')}. '
+              '${sync.dates.updated} ${_plural(sync.dates.updated, 'data atualizada', 'datas atualizadas')}. '
+              '${sync.dates.unchanged} sem alteração. '
+              '${sync.dates.unmatched} ${_plural(sync.dates.unmatched, 'data não pôde ser ligada a uma disciplina', 'datas não puderam ser ligadas a uma disciplina')}. '
+              '${sync.candidateTotal} ${_plural(sync.candidateTotal, 'material candidato encontrado', 'materiais candidatos encontrados')}.'
               '$capabilitySummary';
         });
       }
