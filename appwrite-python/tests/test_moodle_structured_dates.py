@@ -126,6 +126,7 @@ def test_client_reuses_one_authenticated_moodle_connection_per_term() -> None:
 
     assert second == first
     assert len(opener.requests) == 2
+    assert client.connection_count == 1
 
 
 def test_diario_probe_accepts_a_direct_pdf_redirect_without_exposing_parameters() -> None:

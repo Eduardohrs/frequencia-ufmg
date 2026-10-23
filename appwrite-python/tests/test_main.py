@@ -17,6 +17,7 @@ from firestore_rest import (
     FirestoreRequestRejected,
     FirestoreUnavailable,
 )
+from moodle_material_catalog_repository import InvalidMoodleMaterialCatalog
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
 from moodle_token_store import MoodleAuthorizationRequired, MoodleTokenStoreUnavailable
 from quota_guard import RateLimitExceeded, ReplayDetected, SecurityStoreUnavailable
@@ -73,6 +74,196 @@ def test_unknown_route_returns_not_found() -> None:
     result = function.main(context)
     assert result["body"] == {"error": "not_found"}
     assert result["status"] == 404
+
+
+def test_moodle_sync_route_returns_one_bounded_combined_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    routes: list[str] = []
+
+    def authenticate(_context: Any, _origin: Any, route: str) -> tuple[str, None]:
+        routes.append(route)
+        return "firebase-user", None
+
+    class Service:
+        def sync(self, user_id: str, *, now: int) -> dict[str, object]:
+            assert user_id == "firebase-user"
+            assert now > 0
+            return {
+                "dates": {
+                    "total": 3,
+                    "matched": 2,
+                    "unmatched": 1,
+                    "created": 1,
+                    "updated": 1,
+                    "unchanged": 0,
+                },
+                "content": {
+                    "courses": [{"private": "not returned"}],
+                    "course_total": 2,
+                    "candidate_total": 8,
+                    "metaturma_candidate_total": 3,
+                    "found": 1,
+                    "empty": 1,
+                    "unmatched": 0,
+                    "ambiguous": 0,
+                    "catalog": {"writes": 1},
+                },
+                "capabilities": {
+                    "term": "2026-2",
+                    "direct_download_supported": True,
+                    "download_files": True,
+                    "private_file_access": True,
+                    "webservice_token_issued": False,
+                },
+                "saml_connections": 1,
+            }
+
+    monkeypatch.setattr(function, "_authentication", authenticate)
+    monkeypatch.setattr(function, "_moodle_sync_service", lambda *_args: Service())
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/sync/moodle"))
+
+    result = function.main(context)
+
+    assert result["status"] == 200
+    assert result["body"]["dates"]["total"] == 3
+    assert result["body"]["content"] == {
+        "course_total": 2,
+        "candidate_total": 8,
+        "metaturma_candidate_total": 3,
+        "found": 1,
+        "empty": 1,
+        "unmatched": 0,
+        "ambiguous": 0,
+    }
+    assert result["body"]["capabilities"]["webservice_token_issued"] is False
+    assert "not returned" not in json.dumps(result)
+    assert routes == ["/v1/ufmg/sync/moodle/post"]
+    sync_log = next(
+        json.loads(item)
+        for item in context.logs
+        if json.loads(item)["event"] == "moodle_sync_succeeded"
+    )
+    assert sync_log["saml_connections"] == 1
+
+
+def test_moodle_sync_route_preserves_an_optional_capability_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Service:
+        def sync(self, _user_id: str, *, now: int) -> dict[str, object]:
+            assert now > 0
+            return {
+                "dates": {"total": 0},
+                "content": {
+                    "course_total": 0,
+                    "candidate_total": 0,
+                    "metaturma_candidate_total": 0,
+                    "found": 0,
+                    "empty": 0,
+                    "unmatched": 0,
+                    "ambiguous": 0,
+                },
+                "capabilities": None,
+                "saml_connections": 0,
+            }
+
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+    monkeypatch.setattr(function, "_moodle_sync_service", lambda *_args: Service())
+
+    result = function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/sync/moodle")))
+
+    assert result["body"]["capabilities"] is None
+
+
+def test_moodle_sync_factory_shares_one_client_across_all_remote_stages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions = object()
+    client = object()
+    courses = object()
+    firestore = object()
+    catalog = object()
+    tokens = object()
+    monkeypatch.setattr(function, "_ufmg_session_store", lambda _headers: sessions)
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: client)
+    monkeypatch.setattr(function, "_course_repository", lambda _headers, _user: courses)
+    monkeypatch.setattr(function, "_firestore", lambda _headers, _user: firestore)
+    monkeypatch.setattr(
+        function,
+        "_moodle_material_catalog_repository",
+        lambda _headers, _user: catalog,
+    )
+    monkeypatch.setattr(function, "_moodle_token_store", lambda _headers: tokens)
+
+    service = function._moodle_sync_service({}, "user-1")
+
+    assert service._dates._sessions is sessions
+    assert service._dates._client is client
+    assert service._dates._courses is courses
+    assert service._dates._dates._firestore is firestore
+    assert service._content._sessions is sessions
+    assert service._content._client is client
+    assert service._content._courses is courses
+    assert service._content._catalog is catalog
+    assert service._capabilities._sessions is sessions
+    assert service._capabilities._client is client
+    assert service._capabilities._tokens is tokens
+
+
+def test_moodle_sync_route_rejects_authentication_and_nonempty_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_args: (None, rejection))
+    assert (
+        function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/sync/moodle")))
+        is rejection
+    )
+
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+    result = function.main(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/sync/moodle", body_json={"bad": True}))
+    )
+    assert result["status"] == 400
+    assert result["body"] == {"error": "moodle_sync_rejected"}
+
+
+@pytest.mark.parametrize(
+    ("failure", "error", "status"),
+    [
+        (UFMGReauthenticationRequired(), "ufmg_reauthentication_required", 401),
+        (MoodleUnavailable(), "moodle_unavailable", 503),
+        (InvalidMoodleResponse("course_list_json"), "moodle_response_invalid", 502),
+        (UFMGSessionStoreUnavailable(), "ufmg_session_store_unavailable", 503),
+        (FirestoreAccessDenied(), "course_access_denied", 403),
+        (FirestoreUnavailable(), "course_store_unavailable", 503),
+        (InvalidAcademicDate(), "moodle_sync_rejected", 502),
+        (InvalidCourse(), "moodle_sync_rejected", 502),
+        (InvalidMoodleMaterialCatalog(), "moodle_sync_rejected", 502),
+        (FirestoreRequestRejected(), "moodle_sync_rejected", 502),
+        (TypeError(), "moodle_sync_rejected", 502),
+        (ValueError(), "moodle_sync_rejected", 502),
+    ],
+)
+def test_moodle_sync_route_maps_safe_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    error: str,
+    status: int,
+) -> None:
+    class Service:
+        def sync(self, _user_id: str, *, now: int) -> dict[str, object]:
+            assert now > 0
+            raise failure
+
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
+    monkeypatch.setattr(function, "_moodle_sync_service", lambda *_args: Service())
+
+    result = function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/sync/moodle")))
+
+    assert result["status"] == status
+    assert result["body"]["error"] == error
 
 
 def test_ufmg_session_routes_are_authenticated_and_sanitized(

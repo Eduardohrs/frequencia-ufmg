@@ -118,6 +118,13 @@ class MoodleStructuredDatesClient:
             self._opener = opener
         self._connection_token_digest: bytes | None = None
         self._connections: dict[str, tuple[str, str, str]] = {}
+        self._connection_count = 0
+
+    @property
+    def connection_count(self) -> int:
+        """Return the number of successful SAML exchanges made by this client."""
+
+        return self._connection_count
 
     def fetch(
         self,
@@ -480,6 +487,7 @@ class MoodleStructuredDatesClient:
             raise UFMGReauthenticationRequired("UFMG reauthentication required")
         connection = (root, ajax_path, match.group(1).decode())
         self._connections[term] = connection
+        self._connection_count += 1
         return connection
 
     def _ajax(
