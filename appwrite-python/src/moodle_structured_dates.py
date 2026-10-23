@@ -339,8 +339,17 @@ class MoodleStructuredDatesClient:
             except UnicodeDecodeError:
                 raise InvalidMoodleResponse("diario_launch_encoding") from None
             action, fields = form.result()
-            body, final_url, content_type = self._open_bounded(
-                Request(
+            if fields is None:
+                request = Request(
+                    action,
+                    headers={
+                        "Accept": "application/pdf",
+                        "Referer": f"{MOODLE_ORIGIN}{launch_path}",
+                    },
+                )
+                delivery = "link"
+            else:
+                request = Request(
                     action,
                     data=urlencode(fields).encode(),
                     headers={
@@ -350,10 +359,12 @@ class MoodleStructuredDatesClient:
                         "Referer": f"{MOODLE_ORIGIN}{launch_path}",
                     },
                     method="POST",
-                ),
+                )
+                delivery = "form"
+            body, final_url, content_type = self._open_bounded(
+                request,
                 limit=MAX_DIARIO_BYTES,
             )
-            delivery = "form"
         _require_diario_pdf(final_url, content_type, body)
         return DiarioPlanProbe(delivery=delivery, content_length=len(body))
 
@@ -528,6 +539,7 @@ class _DiarioFormParser(HTMLParser):
         self._active = False
         self._action: str | None = None
         self._fields: dict[str, str] = {}
+        self._get_targets: set[str] = set()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = dict(attrs)
@@ -539,6 +551,13 @@ class _DiarioFormParser(HTMLParser):
                     raise InvalidMoodleResponse("diario_launch_forms")
                 self._active = True
                 self._action = action
+        elif tag in {"a", "iframe", "embed", "object"}:
+            attribute = "data" if tag == "object" else "href" if tag == "a" else "src"
+            target = values.get(attribute)
+            if isinstance(target, str) and _is_diario_url(target):
+                self._get_targets.add(target)
+                if len(self._get_targets) > 1:
+                    raise InvalidMoodleResponse("diario_launch_targets")
         elif tag == "input" and self._active:
             name = values.get("name")
             value = values.get("value", "")
@@ -556,10 +575,14 @@ class _DiarioFormParser(HTMLParser):
         if tag == "form":
             self._active = False
 
-    def result(self) -> tuple[str, dict[str, str]]:
-        if self._action is None or not self._fields or len(self._fields) > 32:
-            raise InvalidMoodleResponse("diario_launch_form")
-        return self._action, self._fields
+    def result(self) -> tuple[str, dict[str, str] | None]:
+        if self._action is not None:
+            if not self._fields or len(self._fields) > 32:
+                raise InvalidMoodleResponse("diario_launch_form")
+            return self._action, self._fields
+        if len(self._get_targets) == 1:
+            return next(iter(self._get_targets)), None
+        raise InvalidMoodleResponse("diario_launch_target")
 
 
 def _parse_calendar(payload: bytes, expected_calls: int) -> list[dict[str, str]]:
