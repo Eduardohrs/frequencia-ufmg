@@ -138,6 +138,20 @@ final class _FirebasePythonBackendVerifier
   }
 
   @override
+  Future<PythonTeachingPlanImport> importMoodleTeachingPlan({
+    required String courseId,
+    required String term,
+    required String sourceId,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.importMoodleTeachingPlan(
+      courseId: courseId,
+      term: term,
+      sourceId: sourceId,
+    );
+  }
+
+  @override
   Future<List<PythonMoodleMaterialFile>> listMoodleMaterialFiles({
     required String term,
     required String courseId,

@@ -63,6 +63,7 @@ from moodle_structured_dates import (  # noqa: E402
     MoodleUnavailable,
 )
 from moodle_sync import MoodleSyncService  # noqa: E402
+from moodle_teaching_plan_import import MoodleTeachingPlanImportService  # noqa: E402
 from moodle_token_store import (  # noqa: E402
     AppwriteMoodleTokenStore,
     MoodleAuthorizationRequired,
@@ -88,6 +89,10 @@ from session_repository import SessionMutationRepository  # noqa: E402
 from session_service import (  # noqa: E402
     InactiveAttendanceSession,
     InvalidSessionMutation,
+)
+from teaching_plan_repository import (  # noqa: E402
+    InvalidTeachingPlan,
+    TeachingPlanRepository,
 )
 from ufmg_auth import (  # noqa: E402
     InvalidUFMGCredentials,
@@ -253,6 +258,8 @@ def _dispatch(context: Any) -> Any:
         return _moodle_material_files(context, allowed_origin)
     if path == "/v1/ufmg/moodle/diario-plan" and method == "POST":
         return _moodle_diario_plan(context, allowed_origin)
+    if path == "/v1/ufmg/import/teaching-plan" and method == "POST":
+        return _moodle_teaching_plan_import(context, allowed_origin)
     if path == "/v1/ufmg/sync/moodle" and method == "POST":
         return _moodle_sync(context, allowed_origin)
     if path == "/v1/ufmg/sync" and method == "POST":
@@ -889,6 +896,59 @@ def _moodle_diario_plan(context: Any, origin: str | None) -> Any:
     return _respond(context, result, origin=origin)
 
 
+def _moodle_teaching_plan_import(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(
+        context, origin, "/v1/ufmg/import/teaching-plan/post"
+    )
+    if rejected is not None:
+        return rejected
+    payload = context.req.body_json
+    if (
+        not isinstance(payload, Mapping)
+        or set(payload) != {"course_id", "term", "source_id"}
+        or not isinstance(payload["course_id"], str)
+        or not isinstance(payload["term"], str)
+        or re.fullmatch(r"20[2-9][0-9]-[12]", payload["term"]) is None
+        or type(payload["source_id"]) is not int
+        or not 1 <= payload["source_id"] <= 2_147_483_647
+    ):
+        return _ufmg_session_error(context, origin, "teaching_plan_import_rejected", 400)
+    try:
+        result = _moodle_teaching_plan_import_service(
+            context.req.headers, cast(str, user_id)
+        ).import_plan(
+            cast(str, user_id),
+            course_id=payload["course_id"],
+            term=payload["term"],
+            source_id=payload["source_id"],
+            now=int(time()),
+        )
+    except UFMGReauthenticationRequired:
+        return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
+    except MoodleUnavailable:
+        return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
+    except InvalidMoodleResponse as error:
+        return _ufmg_session_error(
+            context, origin, "moodle_response_invalid", 502, reason=error.reason
+        )
+    except (InvalidAcademicDate, InvalidTeachingPlan, InvalidCourse, TypeError, ValueError):
+        return _ufmg_session_error(context, origin, "teaching_plan_import_rejected", 400)
+    except (FirestoreUnavailable, UFMGSessionStoreUnavailable):
+        return _ufmg_session_error(context, origin, "teaching_plan_store_unavailable", 503)
+    _log(
+        context,
+        "teaching_plan_import_succeeded",
+        assessment_total=result["assessment_total"],
+        criteria_total=result["criteria_total"],
+        schedule_total=result["schedule_total"],
+        dates_created=result["dates_created"],
+        dates_updated=result["dates_updated"],
+        dates_removed=result["dates_removed"],
+        confidence=result["confidence"],
+    )
+    return _respond(context, result, origin=origin)
+
+
 def _attendance(context: Any, origin: str | None) -> Any:
     _, rejected = _authentication(context, origin, "/v1/attendance/evaluate")
     if rejected is not None:
@@ -1234,6 +1294,19 @@ def _moodle_diario_plan_service(headers: dict[str, str]) -> MoodleDiarioPlanServ
     )
 
 
+def _moodle_teaching_plan_import_service(
+    headers: dict[str, str], user_id: str
+) -> MoodleTeachingPlanImportService:
+    firestore = _firestore(headers, user_id)
+    return MoodleTeachingPlanImportService(
+        _ufmg_session_store(headers),
+        MoodleStructuredDatesClient(),
+        _course_repository(headers, user_id),
+        TeachingPlanRepository(firestore),
+        AcademicDateRepository(firestore),
+    )
+
+
 def _ufmg_session_store(headers: dict[str, str]) -> AppwriteUFMGSessionStore:
     endpoint = environ.get("APPWRITE_FUNCTION_API_ENDPOINT", "")
     project = environ.get("APPWRITE_FUNCTION_PROJECT_ID", "")
@@ -1356,6 +1429,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/ufmg/moodle/capabilities",
         "/v1/ufmg/moodle/material-files",
         "/v1/ufmg/moodle/diario-plan",
+        "/v1/ufmg/import/teaching-plan",
         "/v1/ufmg/sync/moodle",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
@@ -1492,6 +1566,7 @@ def _route_name(path: str) -> str:
         "/v1/ufmg/moodle/capabilities",
         "/v1/ufmg/moodle/material-files",
         "/v1/ufmg/moodle/diario-plan",
+        "/v1/ufmg/import/teaching-plan",
         "/v1/ufmg/sync/moodle",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",

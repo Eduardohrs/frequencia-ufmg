@@ -47,6 +47,8 @@ const academicDatePath = (userId, dateId = "moodle-910") =>
   `${coursePath(userId)}/academicDates/${dateId}`;
 const materialCatalogPath = (userId, catalogId = "current") =>
   `${coursePath(userId)}/materialCatalog/${catalogId}`;
+const teachingPlanPath = (userId, planId = "current") =>
+  `${coursePath(userId)}/teachingPlans/${planId}`;
 const logPath = (userId, logId = "log-1") =>
   `users/${userId}/logs/${logId}`;
 
@@ -116,6 +118,19 @@ const materialCatalog = (overrides = {}) => ({
   metaturmaCandidateCount: 0,
   materialsJson: '[{"source_id":"101"}]',
   contentHash: "a".repeat(64),
+  createdAt,
+  updatedAt,
+  ...overrides,
+});
+
+const teachingPlan = (overrides = {}) => ({
+  schemaVersion: 1,
+  source: "ufmg_diario",
+  sourceId: "701",
+  confidence: "authoritative",
+  planJson: '{"source":"ufmg_diario"}',
+  contentHash: "a".repeat(64),
+  collectedAt: updatedAt,
   createdAt,
   updatedAt,
   ...overrides,
@@ -311,6 +326,20 @@ describe("academic date documents", () => {
     await assertSucceeds(deleteDoc(reference));
   });
 
+  test("owner can persist an authoritative Diario assessment", async () => {
+    await seed(coursePath("alice"), course());
+    await assertSucceeds(
+      setDoc(
+        doc(dbFor("alice"), academicDatePath("alice", "diario-701-AV1")),
+        academicDate({
+          kind: "assessment",
+          source: "diario",
+          sourceId: "701-AV1",
+        }),
+      ),
+    );
+  });
+
   test("requires an existing parent and isolates tenants", async () => {
     await assertFails(
       setDoc(doc(dbFor("alice"), academicDatePath("alice")), academicDate()),
@@ -346,6 +375,31 @@ describe("academic date documents", () => {
     await assertFails(
       updateDoc(doc(db, academicDatePath("alice")), { createdAt: updatedAt }),
     );
+  });
+});
+
+describe("structured teaching plan documents", () => {
+  test("owner can store only the current bounded authoritative plan", async () => {
+    await seed(coursePath("alice"), course());
+    const reference = doc(dbFor("alice"), teachingPlanPath("alice"));
+    await assertSucceeds(setDoc(reference, teachingPlan()));
+    await assertSucceeds(getDoc(reference));
+    await assertSucceeds(updateDoc(reference, { collectedAt: updatedAt }));
+    await assertFails(getDoc(doc(dbFor("bob"), teachingPlanPath("alice"))));
+    await assertFails(
+      setDoc(doc(dbFor("alice"), teachingPlanPath("alice", "other")), teachingPlan()),
+    );
+    for (const data of [
+      teachingPlan({ source: "moodle" }),
+      teachingPlan({ sourceId: "bad/id" }),
+      teachingPlan({ confidence: "inferred" }),
+      teachingPlan({ contentHash: "bad" }),
+      teachingPlan({ secret: "never" }),
+    ]) {
+      await assertFails(setDoc(reference, data));
+    }
+    await assertFails(updateDoc(reference, { createdAt: updatedAt }));
+    await assertSucceeds(deleteDoc(reference));
   });
 });
 

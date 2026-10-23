@@ -311,27 +311,27 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     PythonMoodleCourseContent course,
     PythonMoodleContentCandidate candidate,
   ) async {
-    _logInteraction('moodle_diario_plan_probe');
+    _logInteraction('moodle_teaching_plan_import');
     final operationId = _materialOperationId(course, candidate);
     if (!_diarioProbesInFlight.add(operationId)) return;
     setState(() {});
     try {
-      final probe = await runAuditedOperation(
+      final imported = await runAuditedOperation(
         logger: widget.logger,
-        operation: AuditedOperation.moodleDiarioPlanProbe,
-        action: () =>
-            (widget.gateway as BackendDiarioPlanGateway).probeMoodleDiarioPlan(
+        operation: AuditedOperation.moodleTeachingPlanImport,
+        action: () => (widget.gateway as BackendDiarioPlanGateway)
+            .importMoodleTeachingPlan(
+              courseId: course.courseId,
               term: course.term,
               sourceId: candidate.sourceId,
             ),
       );
       if (!mounted) return;
-      final sizeKb = (probe.contentLength / 1024).ceil();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Plano estruturado disponível ($sizeKb KB). '
-            'Nenhum documento foi armazenado.',
+            'Plano importado: ${imported.assessmentTotal} avaliações, '
+            '${imported.scheduleTotal} aulas e ${imported.criteriaTotal} critérios.',
           ),
         ),
       );
@@ -341,8 +341,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         PythonBackendException(
           code: PythonBackendError.ufmgReauthenticationRequired,
         ) =>
-          'Reconecte a UFMG para validar este plano.',
-        _ => 'Não foi possível validar este plano de ensino.',
+          'Reconecte a UFMG para importar este plano.',
+        _ => 'Não foi possível importar este plano de ensino.',
       };
       ScaffoldMessenger.of(
         context,
