@@ -509,7 +509,12 @@ def _ufmg_sync(context: Any, origin: str | None, *, siga_only: bool = False) -> 
         return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
     except InvalidMoodleResponse as error:
         return _ufmg_session_error(
-            context, origin, "moodle_response_invalid", 502, reason=error.reason
+            context,
+            origin,
+            "moodle_response_invalid",
+            502,
+            reason=error.reason,
+            **error.details,
         )
     except UFMGSessionStoreUnavailable:
         return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
@@ -564,7 +569,12 @@ def _moodle_date_import(context: Any, origin: str | None) -> Any:
         return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
     except InvalidMoodleResponse as error:
         return _ufmg_session_error(
-            context, origin, "moodle_response_invalid", 502, reason=error.reason
+            context,
+            origin,
+            "moodle_response_invalid",
+            502,
+            reason=error.reason,
+            **error.details,
         )
     except UFMGSessionStoreUnavailable:
         return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
@@ -929,7 +939,16 @@ def _moodle_teaching_plan_import(context: Any, origin: str | None) -> Any:
         return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
     except InvalidMoodleResponse as error:
         return _ufmg_session_error(
-            context, origin, "moodle_response_invalid", 502, reason=error.reason
+            context,
+            origin,
+            "moodle_response_invalid",
+            502,
+            course_id=payload["course_id"],
+            reason=error.reason,
+            request_id=_REQUEST_ID.get(),
+            source_id=payload["source_id"],
+            term=payload["term"],
+            **error.details,
         )
     except (InvalidAcademicDate, InvalidTeachingPlan, InvalidCourse, TypeError, ValueError):
         return _ufmg_session_error(context, origin, "teaching_plan_import_rejected", 400)
