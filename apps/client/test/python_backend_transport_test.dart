@@ -691,6 +691,37 @@ void main() {
     expect(jsonDecode(captured.body), {'term': '2026-2', 'source_id': 701});
   });
 
+  test(
+    'accepts the observed Diario HTML plan delivered through a link',
+    () async {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'available': true,
+              'delivery': 'link',
+              'format': 'html',
+              'content_length': 12345,
+              'term': '2026-2',
+              'source_id': '701',
+            }),
+            200,
+          ),
+        ),
+      );
+
+      final result = await transport.probeMoodleDiarioPlan(
+        term: '2026-2',
+        sourceId: '701',
+      );
+
+      expect(result.delivery, 'link');
+      expect(result.contentLength, 12345);
+    },
+  );
+
   test('rejects malformed Diario plan requests and responses', () async {
     final transport = PythonBackendTransport(
       endpoint: Uri.parse('https://backend.example'),
