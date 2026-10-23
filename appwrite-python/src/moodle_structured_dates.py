@@ -1213,10 +1213,7 @@ def _is_diario_request_url(value: object) -> bool:
 
 
 def _diario_transition_target(body: bytes, source_url: str) -> str:
-    try:
-        markup = body.decode("utf-8")
-    except UnicodeDecodeError:
-        raise InvalidMoodleResponse("diario_transition_encoding") from None
+    markup = _decode_diario_html(body, reason="diario_transition_encoding")
     targets: set[str] = set()
     for raw in re.findall(r'''["']([^"']{1,8192})["']''', markup):
         candidate = urljoin(source_url, raw)
@@ -1226,6 +1223,17 @@ def _diario_transition_target(body: bytes, source_url: str) -> str:
         reason = "diario_transition_targets" if targets else "diario_transition_target"
         raise InvalidMoodleResponse(reason)
     return next(iter(targets))
+
+
+def _decode_diario_html(body: bytes, *, reason: str) -> str:
+    """Decode HTML emitted by the legacy Diário application."""
+
+    for encoding in ("utf-8", "windows-1252"):
+        try:
+            return body.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise InvalidMoodleResponse(reason)
 
 
 class _DiarioReportParser(HTMLParser):
@@ -1266,10 +1274,7 @@ def _require_diario_document(url: str, content_type: str, body: bytes) -> str:
     if content_type != "text/html":
         raise InvalidMoodleResponse("diario_response_type")
     parser = _DiarioReportParser()
-    try:
-        parser.feed(body.decode("utf-8"))
-    except UnicodeDecodeError:
-        raise InvalidMoodleResponse("diario_response_encoding") from None
+    parser.feed(_decode_diario_html(body, reason="diario_response_encoding"))
     if not parser.is_plan():
         raise InvalidMoodleResponse("diario_response_html")
     return "html"
