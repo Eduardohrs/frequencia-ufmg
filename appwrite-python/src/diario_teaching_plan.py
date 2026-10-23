@@ -7,10 +7,10 @@ from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 
 _TERM = re.compile(r"(20[2-9][0-9])\s*[/.-]\s*([12])")
-_COURSE = re.compile(r"([A-Z]{3}[0-9]{3})\s+(.{1,160})")
+_COURSE = re.compile(r"\b([A-Z]{3}[0-9]{3})\b\s+(.{1,160})")
 _TIME_RANGE = re.compile(r"([0-2][0-9]:[0-5][0-9])\s*-\s*([0-2][0-9]:[0-5][0-9])")
 _MAX_ROWS = 1_000
-_MAX_CELLS = 12
+_MAX_CELLS = 32
 _MAX_TEXT = 500
 
 
@@ -34,9 +34,14 @@ class _TableParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag in {"td", "th"} and self._cell is not None and self._row is not None:
             value = " ".join(" ".join(self._cell).split())
-            if len(value) > _MAX_TEXT or len(self._row) >= _MAX_CELLS:
+            if len(value) > _MAX_TEXT:
                 raise ValueError("invalid teaching plan")
-            self._row.append(value)
+            # Jasper uses spacer cells to reproduce the PDF layout. They carry
+            # no data and must not count toward the bounded semantic row.
+            if value:
+                if len(self._row) >= _MAX_CELLS:
+                    raise ValueError("invalid teaching plan")
+                self._row.append(value)
             self._cell = None
         elif tag == "tr" and self._row is not None:
             if self._row:
@@ -56,8 +61,8 @@ def parse_teaching_plan_html(markup: str) -> dict[str, object]:
     term = _label_value(rows, "periodo")
     activity = _label_value(rows, "atividade")
     class_group = _label_value(rows, "turma")
-    term_match = _TERM.fullmatch(term)
-    course_match = _COURSE.fullmatch(activity)
+    term_match = _TERM.search(term)
+    course_match = _COURSE.search(activity)
     if term_match is None or course_match is None or not class_group:
         raise ValueError("invalid teaching plan")
 
@@ -67,21 +72,19 @@ def parse_teaching_plan_html(markup: str) -> dict[str, object]:
     section: str | None = None
     for row in rows:
         normalized = [_normalized(cell) for cell in row]
-        if normalized[:7] == ["cod.", "tipo", "nome", "data/hora", "local", "valor", "peso"]:
+        if _header_matches(
+            normalized,
+            ("cod", "tipo", "nome", "data/hora", "local", "valor", "peso"),
+        ):
             section = "assessments"
             continue
-        if normalized[:2] == ["descricao", "valor parcial"]:
+        if _header_matches(normalized, ("descricao", "valor parcial")):
             section = "criteria"
             continue
-        if normalized[:7] == [
-            "aula",
-            "data",
-            "dia",
-            "num. aulas",
-            "horario",
-            "tipo",
-            "assunto",
-        ]:
+        if _header_matches(
+            normalized,
+            ("aula", "data", "dia", "num aula", "horario", "tipo", "assunto"),
+        ):
             section = "schedule"
             continue
         if section == "assessments" and len(row) == 7:
@@ -90,6 +93,9 @@ def parse_teaching_plan_html(markup: str) -> dict[str, object]:
             criteria.append({"description": _required(row[0]), "value": _decimal(row[1])})
         elif section == "schedule" and len(row) == 7:
             schedule.append(_schedule_entry(row))
+
+    if not assessments:
+        assessments = _labeled_assessments(rows)
 
     if not assessments or not criteria or not schedule:
         raise ValueError("invalid teaching plan")
@@ -108,10 +114,31 @@ def parse_teaching_plan_html(markup: str) -> dict[str, object]:
 
 def _label_value(rows: list[list[str]], label: str) -> str:
     for row in rows:
-        for index, value in enumerate(row[:-1]):
-            if _normalized(value).rstrip(":") == label:
-                return row[index + 1]
+        for index, value in enumerate(row):
+            normalized = _normalized(value)
+            key, separator, inline_value = normalized.partition(":")
+            if key == label:
+                if separator and inline_value.strip():
+                    return value.split(":", 1)[1].strip()
+                if index + 1 < len(row):
+                    return row[index + 1]
     raise ValueError("invalid teaching plan")
+
+
+def _header_matches(values: list[str], expected: tuple[str, ...]) -> bool:
+    if len(values) < len(expected):
+        return False
+    canonical = tuple(_header_token(value) for value in values[: len(expected)])
+    return canonical == expected
+
+
+def _header_token(value: str) -> str:
+    token = value.rstrip(":.").replace(".", "")
+    if token in {"cod avl", "codigo", "codigo avl"}:
+        return "cod"
+    if token in {"num aulas", "num aula", "numero aulas", "numero aula"}:
+        return "num aula"
+    return token
 
 
 def _assessment(row: list[str]) -> dict[str, object]:
@@ -121,10 +148,72 @@ def _assessment(row: list[str]) -> dict[str, object]:
         "kind": _required(row[1]),
         "title": _required(row[2]),
         "scheduled_at": scheduled.isoformat() + "-03:00",
-        "location": _required(row[4]),
+        "location": _optional(row[4]),
         "value": _decimal(row[5]),
         "weight": _decimal(row[6]),
     }
+
+
+def _labeled_assessments(rows: list[list[str]]) -> list[dict[str, object]]:
+    labels = ("cod avl", "cod", "tipo", "nome", "data/hora", "local", "valor", "peso")
+    assessments: list[dict[str, object]] = []
+    pending: dict[str, str] = {}
+    for row in rows:
+        values = _row_labeled_values(row, labels)
+        if "cod avl" in values or "cod" in values:
+            if pending:
+                assessments.append(_assessment_from_labels(pending))
+            pending = {"code": values.pop("cod avl", values.pop("cod", ""))}
+        if pending:
+            pending.update(values)
+            if {"code", "tipo", "nome", "data/hora", "valor", "peso"} <= set(pending):
+                assessments.append(_assessment_from_labels(pending))
+                pending = {}
+    if pending:
+        assessments.append(_assessment_from_labels(pending))
+    return assessments
+
+
+def _row_labeled_values(row: list[str], labels: tuple[str, ...]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for index, cell in enumerate(row):
+        normalized = _normalized(cell)
+        plain = normalized.replace(".", "")
+        for label in labels:
+            if _header_token(normalized) == label:
+                if index + 1 < len(row):
+                    candidate = row[index + 1]
+                    if not any(
+                        _header_token(_normalized(candidate)) == other for other in labels
+                    ):
+                        result[label] = candidate
+                break
+            prefix = f"{label}:"
+            if plain.startswith(prefix) and plain[len(prefix) :].strip():
+                result[label] = cell.split(":", 1)[1].strip()
+                break
+            prefix = f"{label} "
+            if plain.startswith(prefix) and plain[len(prefix) :].strip():
+                result[label] = cell[len(label) :].strip(" :.\t")
+                break
+    return result
+
+
+def _assessment_from_labels(values: dict[str, str]) -> dict[str, object]:
+    try:
+        return _assessment(
+            [
+                values["code"],
+                values["tipo"],
+                values["nome"],
+                values["data/hora"],
+                values.get("local", ""),
+                values["valor"],
+                values["peso"],
+            ]
+        )
+    except KeyError:
+        raise ValueError("invalid teaching plan") from None
 
 
 def _schedule_entry(row: list[str]) -> dict[str, object]:
@@ -158,6 +247,13 @@ def _decimal(value: str) -> str:
 def _required(value: str) -> str:
     normalized = " ".join(value.split())
     if not normalized or len(normalized) > _MAX_TEXT:
+        raise ValueError("invalid teaching plan")
+    return normalized
+
+
+def _optional(value: str) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) > _MAX_TEXT:
         raise ValueError("invalid teaching plan")
     return normalized
 

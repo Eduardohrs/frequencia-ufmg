@@ -2,7 +2,11 @@ import pytest
 
 from diario_teaching_plan import (
     _decimal,
+    _label_value,
+    _labeled_assessments,
+    _optional,
     _required,
+    _row_labeled_values,
     _schedule_entry,
     _TableParser,
     parse_teaching_plan_html,
@@ -125,7 +129,7 @@ def test_table_parser_enforces_cell_and_row_bounds() -> None:
     with pytest.raises(ValueError):
         _TableParser().feed(f"<table><tr><td>{'x' * 501}</td></tr></table>")
     with pytest.raises(ValueError):
-        _TableParser().feed("<table><tr>" + "<td>x</td>" * 13 + "</tr></table>")
+        _TableParser().feed("<table><tr>" + "<td>x</td>" * 33 + "</tr></table>")
     with pytest.raises(ValueError):
         _TableParser().feed("<table>" + "<tr><td>x</td></tr>" * 1001 + "</table>")
 
@@ -146,6 +150,92 @@ def test_rejects_invalid_identity_and_missing_sections_after_identity() -> None:
     """
     with pytest.raises(ValueError):
         parse_teaching_plan_html(identity_only)
+
+
+def test_parses_jasper_layout_cells_and_observed_ufmg_labels() -> None:
+    spacers = "<td></td>" * 40
+    html = f"""
+      <table>
+        <tr>{spacers}<td>Período: 2026/2</td><td>Orientante:</td><td>MATEMÁTICA</td></tr>
+        <tr>{spacers}<td>Atividade:</td><td>DIG MAT002 CÁLCULO DIFERENCIAL II</td></tr>
+        <tr>{spacers}<td>Turma: T1</td></tr>
+        <tr>{spacers}<td>Cód. Avl:</td><td>Tipo:</td><td>Nome:</td>
+          <td>Data/Hora:</td><td>Local:</td><td>Valor:</td><td>Peso:</td></tr>
+        <tr>{spacers}<td>AV1</td><td>PROVA</td><td>PRIMEIRA PROVA</td>
+          <td>09/09/2026 20:50</td><td>Local</td><td>33,00</td><td>1,00</td></tr>
+        <tr>{spacers}<td>Descrição</td><td>Valor Parcial</td></tr>
+        <tr>{spacers}<td>Soma das avaliações</td><td>100,00</td></tr>
+        <tr>{spacers}<td>Aula</td><td>Data</td><td>Dia</td><td>Num. Aula</td>
+          <td>Horário</td><td>Tipo</td><td>Assunto</td></tr>
+        <tr>{spacers}<td>1</td><td>05/08/2026</td><td>Qua</td><td>2</td>
+          <td>20:55 - 22:35</td><td>Teórica</td><td>Integrais</td></tr>
+      </table>
+    """
+
+    result = parse_teaching_plan_html(html)
+
+    assert result["course_code"] == "MAT002"
+    assert result["course_name"] == "CÁLCULO DIFERENCIAL II"
+    assert result["class_group"] == "T1"
+    assert len(result["assessments"]) == 1
+    assert len(result["schedule"]) == 1
+
+
+def test_parses_observed_jasper_label_value_assessments_with_blank_location() -> None:
+    html = """
+      <table>
+        <tr><td>Período:</td><td>2026/2 Orientante: 1000003 MATEMÁTICA</td></tr>
+        <tr><td>Atividade:</td><td>DIG MAT002 CÁLCULO DIFERENCIAL II</td></tr>
+        <tr><td>Turma:</td><td>T1</td></tr>
+        <tr><td>Avaliações</td></tr>
+        <tr><td>Cód. Avl:</td><td>AV1</td><td>Tipo:</td><td>PROVA</td>
+          <td>Nome:</td><td>PRIMEIRA PROVA</td></tr>
+        <tr><td>Data/Hora:</td><td>09/09/2026 20:50</td><td>Local:</td>
+          <td>Valor:</td><td>33,00</td><td>Peso:</td><td>1,00</td></tr>
+        <tr><td>Descrição</td><td>Valor Parcial</td></tr>
+        <tr><td>Soma das avaliações</td><td>100,00</td></tr>
+        <tr><td>Aula</td><td>Data</td><td>Dia</td><td>Num. Aulas</td>
+          <td>Horário</td><td>Tipo</td><td>Assunto</td></tr>
+        <tr><td>1</td><td>05/08/2026</td><td>Qua</td><td>2</td>
+          <td>20:55 - 22:35</td><td>Teórica</td><td>Integrais</td></tr>
+      </table>
+    """
+
+    result = parse_teaching_plan_html(html)
+
+    assert result["term"] == "2026-2"
+    assert result["assessments"] == [
+        {
+            "code": "AV1",
+            "kind": "PROVA",
+            "title": "PRIMEIRA PROVA",
+            "scheduled_at": "2026-09-09T20:50:00-03:00",
+            "location": "",
+            "value": "33.00",
+            "weight": "1.00",
+        }
+    ]
+
+
+def test_labeled_assessment_rejects_incomplete_records() -> None:
+    with pytest.raises(ValueError):
+        _labeled_assessments([["Cód. Avl:", "AV1"], ["Cód. Avl:", "AV2"]])
+    with pytest.raises(ValueError):
+        _labeled_assessments([["Cód. Avl:", "AV1"]])
+
+
+def test_labeled_cells_support_inline_and_terminal_labels() -> None:
+    labels = ("cod avl", "tipo", "nome")
+    assert _row_labeled_values(
+        ["Cód. Avl: AV1", "Tipo PROVA", "Nome:"], labels
+    ) == {"cod avl": "AV1", "tipo": "PROVA"}
+    with pytest.raises(ValueError):
+        _label_value([["Período:"]], "periodo")
+
+
+def test_labeled_record_and_optional_values_remain_bounded() -> None:
+    with pytest.raises(ValueError):
+        _optional("x" * 501)
 
 
 @pytest.mark.parametrize(
