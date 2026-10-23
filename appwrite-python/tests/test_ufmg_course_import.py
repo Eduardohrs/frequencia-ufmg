@@ -143,6 +143,19 @@ def test_client_reads_only_enrollment_fields_and_never_exposes_the_token() -> No
     assert {course["term"] for course in numeric_client.fetch("private-token")} == {"2026-2"}
 
 
+def test_client_decodes_the_windows_1252_charset_observed_on_siga() -> None:
+    payload = _payload()
+    payload["listaObj"][0]["matriculas"][0]["turma"]["atividadeAcademica"][  # type: ignore[index]
+        "nomeReduzido"
+    ] = "Circuitos – laboratório"
+
+    def open_response(request: Any, *, timeout: float) -> _Response:
+        return _Response(json.dumps(payload, ensure_ascii=False).encode("windows-1252"))
+
+    courses = UFMGEnrollmentClient(open_response=open_response).fetch("private-ltpa-token")
+
+    assert courses[0]["name"] == "Circuitos – laboratório"
+
 @pytest.mark.parametrize(
     "response",
     [

@@ -110,7 +110,7 @@ class UFMGEnrollmentClient:
         if len(raw) > _MAX_RESPONSE_BYTES:
             raise InvalidUFMGEnrollmentResponse("invalid UFMG enrollment response")
         try:
-            payload = json.loads(raw.decode("iso-8859-1"))
+            payload = json.loads(raw.decode("windows-1252"))
             return _parse_courses(payload)
         except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError):
             raise InvalidUFMGEnrollmentResponse("invalid UFMG enrollment response") from None
