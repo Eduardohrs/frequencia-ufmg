@@ -268,10 +268,55 @@ def test_diario_probe_follows_the_real_official_request_and_accepts_html() -> No
     assert report_request.get_method() == "GET"
 
 
+def test_diario_probe_accepts_real_legacy_encoded_transition_and_report() -> None:
+    launch_url = (
+        "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+        "solicitarRelatorioPlanoEnsino.do?"
+        "plt=20262&oft=1000057&tac=DIG&aac=ELE631&trm=TAPO"
+    )
+    transition = """<script>
+      const descrição='Plano de Ensino';
+      window.location='/diario/JasperServlet';
+    </script>""".encode("windows-1252")
+    report = """
+      <html><body>
+        <h1>Universidade Federal de Minas Gerais</h1>
+        <h2>Plano de Ensino</h2>
+        <p>Período: 2026/2</p>
+        <p>Atividade: ELE631</p>
+        <h3>Avaliações</h3>
+      </body></html>
+    """.encode("windows-1252")
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(
+                f'<a href="{launch_url}">Plano de Ensino</a>'.encode(),
+                "https://virtual.ufmg.br/20262/mod/url/view.php?id=99",
+            ),
+            _Response(transition, launch_url, content_type="text/html; charset=windows-1252"),
+            _Response(
+                report,
+                "https://sistemas.ufmg.br/diario/JasperServlet",
+                content_type="text/html; charset=windows-1252",
+            ),
+        ]
+    )
+
+    result = MoodleStructuredDatesClient(opener=opener).probe_diario_plan(
+        "token-safe", term="2026-2", source_id=99
+    )
+
+    assert result == DiarioPlanProbe(
+        delivery="link", content_length=len(report), format="html"
+    )
+
+
 @pytest.mark.parametrize(
     "body,reason",
     [
-        (b"\xff", "diario_transition_encoding"),
+        (b"\x81", "diario_transition_encoding"),
         (b"<html><body>sem destino</body></html>", "diario_transition_target"),
         (
             b'''<script>
@@ -375,7 +420,7 @@ def test_diario_launch_url_rejects_incomplete_ambiguous_or_external_targets(
         (
             "https://sistemas.ufmg.br/diario/JasperServlet",
             "text/html",
-            b"\xff",
+            b"\x81",
             InvalidMoodleResponse,
             "diario_response_encoding",
         ),
