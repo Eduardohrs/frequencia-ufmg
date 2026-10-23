@@ -171,6 +171,7 @@ jobs:
             --code appwrite-python/.bundle \
             --entrypoint src/main.py \
             --commands 'pip install -r requirements.txt' \
+            --activate=false \
             --json)
           deployment=$(jq -r '.["$id"]' <<< "$created")
           test -n "$deployment"
