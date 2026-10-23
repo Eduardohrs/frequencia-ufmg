@@ -245,6 +245,7 @@ def test_diario_probe_follows_the_real_official_request_and_accepts_html() -> No
     launch_request = opener.requests[3][0]
     assert launch_request.full_url == launch_url
     assert launch_request.get_method() == "GET"
+    assert launch_request.get_header("Accept") == "text/html,application/pdf"
     report_request = opener.requests[4][0]
     assert report_request.full_url == "https://sistemas.ufmg.br/diario/JasperServlet"
     assert report_request.get_method() == "GET"

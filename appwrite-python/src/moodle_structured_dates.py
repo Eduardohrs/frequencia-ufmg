@@ -318,7 +318,7 @@ class MoodleStructuredDatesClient:
         term: str,
         source_id: int,
     ) -> DiarioPlanProbe:
-        """Validate one Moodle plan link without retaining or returning its PDF."""
+        """Validate one Moodle plan link without retaining or returning its document."""
 
         if type(source_id) is not int or not 1 <= source_id <= 2_147_483_647:
             raise ValueError("invalid Diario source")
@@ -343,7 +343,7 @@ class MoodleStructuredDatesClient:
                 request = Request(
                     action,
                     headers={
-                        "Accept": "application/pdf",
+                        "Accept": "text/html,application/pdf",
                         "Referer": f"{MOODLE_ORIGIN}{launch_path}",
                     },
                 )
@@ -354,7 +354,7 @@ class MoodleStructuredDatesClient:
                     data=urlencode(fields).encode(),
                     headers={
                         "Content-Type": "application/x-www-form-urlencoded",
-                        "Accept": "application/pdf",
+                        "Accept": "text/html,application/pdf",
                         "Origin": MOODLE_ORIGIN,
                         "Referer": f"{MOODLE_ORIGIN}{launch_path}",
                     },
