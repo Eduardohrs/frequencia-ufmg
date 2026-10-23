@@ -14,6 +14,7 @@ from ufmg_auth import (
     UFMGAuthenticator,
     _default_opener,
     _HTTPSOnlyRedirectHandler,
+    _trusted_cookie_domain,
 )
 
 
@@ -217,6 +218,16 @@ def test_redirects_are_limited_to_https_on_the_institutional_host() -> None:
 
     with pytest.raises(URLError):
         handler.redirect_request(request, BytesIO(), 302, "Found", {}, "https://attacker.example/")
+
+
+@pytest.mark.parametrize("domain", ["sistemas.ufmg.br", ".sistemas.ufmg.br", ".ufmg.br"])
+def test_authentication_accepts_only_the_required_cookie_domains(domain: str) -> None:
+    assert _trusted_cookie_domain(domain) is True
+
+
+@pytest.mark.parametrize("domain", ["br", ".br", "mg.br", "attacker.example", ""])
+def test_authentication_rejects_cookie_superdomains_and_foreign_domains(domain: str) -> None:
+    assert _trusted_cookie_domain(domain) is False
 
 
 def test_default_opener_and_timeout_configuration_are_bounded() -> None:

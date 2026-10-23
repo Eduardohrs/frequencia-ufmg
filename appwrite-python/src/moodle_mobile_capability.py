@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from moodle_structured_dates import MoodleMobileAuthorization
+from moodle_token_store import MoodleAuthorizationRequired, MoodleTokens
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
 
@@ -20,6 +21,8 @@ class _Client(Protocol):
 
 
 class _Tokens(Protocol):
+    def load(self, user_id: str, *, now: int) -> MoodleTokens | None: ...
+
     def save(
         self,
         user_id: str,
@@ -45,6 +48,18 @@ class MoodleMobileCapabilityService:
             raise UFMGReauthenticationRequired("UFMG reauthentication required")
         current = datetime.fromtimestamp(now, UTC)
         term = f"{current.year}-{'1' if current.month <= 6 else '2'}"
+        try:
+            saved = self._tokens.load(user_id, now=now)
+        except MoodleAuthorizationRequired:
+            saved = None
+        if saved is not None and saved.term == term:
+            return {
+                "term": term,
+                "direct_download_supported": True,
+                "download_files": True,
+                "private_file_access": True,
+                "webservice_token_issued": False,
+            }
         try:
             authorization = self._client.authorize_mobile_download(session.token, term=term)
         except UFMGReauthenticationRequired:

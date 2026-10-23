@@ -4,6 +4,7 @@ import pytest
 
 from moodle_mobile_capability import MoodleMobileCapabilityService
 from moodle_structured_dates import MoodleMobileAuthorization
+from moodle_token_store import MoodleAuthorizationRequired, MoodleTokens
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
 
@@ -34,9 +35,17 @@ class _Client:
 
 
 class _Tokens:
-    def __init__(self) -> None:
+    def __init__(self, current: MoodleTokens | Exception | None = None) -> None:
+        self.current = current
+        self.loaded: list[tuple[str, int]] = []
         self.saved: list[tuple[str, str, str, str, int]] = []
         self.deleted: list[str] = []
+
+    def load(self, user_id: str, *, now: int) -> MoodleTokens | None:
+        self.loaded.append((user_id, now))
+        if isinstance(self.current, Exception):
+            raise self.current
+        return self.current
 
     def save(
         self,
@@ -92,6 +101,50 @@ def test_probe_uses_the_current_semester_and_returns_only_safe_capabilities() ->
     ]
     assert "ltpa-secret" not in repr(result)
     assert "bbbbbbbbbbbbbbbb" not in repr(result)
+
+
+def test_probe_reuses_current_term_download_credentials_without_contacting_moodle() -> None:
+    sessions = _Sessions(UFMGSession("ltpa-secret", 1, 99), [])
+    client = _Client(AssertionError("Moodle must not be contacted"))
+    tokens = _Tokens(
+        MoodleTokens(
+            webservice_token="bbbbbbbbbbbbbbbb",
+            private_token="aaaaaaaaaaaaaaaa",
+            term="2026-2",
+            created_at=1_790_000_000,
+            expires_at=1_800_000_000,
+        )
+    )
+
+    result = MoodleMobileCapabilityService(sessions, client, tokens).probe(
+        "user-1",
+        now=1_791_936_000,
+    )
+
+    assert result == {
+        "term": "2026-2",
+        "direct_download_supported": True,
+        "download_files": True,
+        "private_file_access": True,
+        "webservice_token_issued": False,
+    }
+    assert tokens.loaded == [("user-1", 1_791_936_000)]
+    assert client.calls == []
+    assert tokens.saved == []
+
+
+def test_probe_reauthorizes_when_saved_download_credentials_are_invalid() -> None:
+    tokens = _Tokens(MoodleAuthorizationRequired("expired"))
+    client = _Client(_authorization())
+
+    result = MoodleMobileCapabilityService(
+        _Sessions(UFMGSession("ltpa-secret", 1, 99), []),
+        client,
+        tokens,
+    ).probe("user-1", now=1_791_936_000)
+
+    assert result["webservice_token_issued"] is True
+    assert client.calls == [("ltpa-secret", "2026-2")]
 
 
 def test_probe_requires_a_saved_session() -> None:

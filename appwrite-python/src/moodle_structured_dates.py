@@ -8,7 +8,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from hashlib import md5
+from hashlib import md5, sha256
 from html.parser import HTMLParser
 from http.cookiejar import Cookie, CookieJar
 from secrets import token_hex
@@ -116,6 +116,15 @@ class MoodleStructuredDatesClient:
         else:
             self._jar = None
             self._opener = opener
+        self._connection_token_digest: bytes | None = None
+        self._connections: dict[str, tuple[str, str, str]] = {}
+        self._connection_count = 0
+
+    @property
+    def connection_count(self) -> int:
+        """Return the number of successful SAML exchanges made by this client."""
+
+        return self._connection_count
 
     def fetch(
         self,
@@ -437,6 +446,13 @@ class MoodleStructuredDatesClient:
 
     def _connect(self, token: str, term: str) -> tuple[str, str, str]:
         _validate_token(token)
+        token_digest = sha256(token.encode()).digest()
+        if token_digest != self._connection_token_digest:
+            self._connections.clear()
+            self._connection_token_digest = token_digest
+        cached = self._connections.get(term)
+        if cached is not None:
+            return cached
         root = _moodle_root(term)
         sso_url = f"{MOODLE_ORIGIN}{root}/auth/shibboleth/index.php"
         ajax_path = f"{root}/lib/ajax/service.php"
@@ -469,7 +485,10 @@ class MoodleStructuredDatesClient:
         match = _SESSKEY.search(dashboard)
         if match is None:
             raise UFMGReauthenticationRequired("UFMG reauthentication required")
-        return root, ajax_path, match.group(1).decode()
+        connection = (root, ajax_path, match.group(1).decode())
+        self._connections[term] = connection
+        self._connection_count += 1
+        return connection
 
     def _ajax(
         self,

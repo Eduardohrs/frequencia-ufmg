@@ -112,6 +112,23 @@ def _diario_html() -> bytes:
     """
 
 
+def test_client_reuses_one_authenticated_moodle_connection_per_term() -> None:
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+        ]
+    )
+    client = MoodleStructuredDatesClient(opener=opener)
+
+    first = client._connect("token-safe", "2026-2")
+    second = client._connect("token-safe", "2026-2")
+
+    assert second == first
+    assert len(opener.requests) == 2
+    assert client.connection_count == 1
+
+
 def test_diario_probe_accepts_a_direct_pdf_redirect_without_exposing_parameters() -> None:
     opener = _Opener(
         [

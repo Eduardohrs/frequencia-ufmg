@@ -205,4 +205,4 @@ def _cookie_value(jar: CookieJar, name: str) -> str | None:
 
 def _trusted_cookie_domain(domain: str) -> bool:
     normalized = domain.removeprefix(".").lower()
-    return normalized == _TRUSTED_HOST or _TRUSTED_HOST.endswith(f".{normalized}")
+    return normalized in {_TRUSTED_HOST, "ufmg.br"}

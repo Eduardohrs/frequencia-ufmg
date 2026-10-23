@@ -62,6 +62,7 @@ from moodle_structured_dates import (  # noqa: E402
     MoodleStructuredDatesClient,
     MoodleUnavailable,
 )
+from moodle_sync import MoodleSyncService  # noqa: E402
 from moodle_token_store import (  # noqa: E402
     AppwriteMoodleTokenStore,
     MoodleAuthorizationRequired,
@@ -252,6 +253,8 @@ def _dispatch(context: Any) -> Any:
         return _moodle_material_files(context, allowed_origin)
     if path == "/v1/ufmg/moodle/diario-plan" and method == "POST":
         return _moodle_diario_plan(context, allowed_origin)
+    if path == "/v1/ufmg/sync/moodle" and method == "POST":
+        return _moodle_sync(context, allowed_origin)
     if path == "/v1/ufmg/sync" and method == "POST":
         return _ufmg_sync(context, allowed_origin)
     if path == "/v1/ufmg/sync/siga" and method == "POST":
@@ -572,6 +575,68 @@ def _moodle_date_import(context: Any, origin: str | None) -> Any:
         return _ufmg_session_error(context, origin, "moodle_date_import_rejected", 502)
     _log(context, "moodle_date_import_succeeded", **result)
     return _respond(context, result, origin=origin)
+
+
+def _moodle_sync(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/ufmg/sync/moodle/post")
+    if rejected is not None:
+        return rejected
+    if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
+        return _ufmg_session_error(context, origin, "moodle_sync_rejected", 400)
+    try:
+        result = _moodle_sync_service(context.req.headers, cast(str, user_id)).sync(
+            cast(str, user_id), now=int(time())
+        )
+    except UFMGReauthenticationRequired:
+        return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
+    except MoodleUnavailable:
+        return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
+    except InvalidMoodleResponse as error:
+        return _ufmg_session_error(
+            context, origin, "moodle_response_invalid", 502, reason=error.reason
+        )
+    except UFMGSessionStoreUnavailable:
+        return _ufmg_session_error(context, origin, "ufmg_session_store_unavailable", 503)
+    except FirestoreAccessDenied:
+        return _course_error(context, origin, "course_access_denied", 403)
+    except FirestoreUnavailable:
+        return _course_error(context, origin, "course_store_unavailable", 503)
+    except (
+        InvalidAcademicDate,
+        InvalidCourse,
+        InvalidMoodleMaterialCatalog,
+        FirestoreRequestRejected,
+        TypeError,
+        ValueError,
+    ):
+        return _ufmg_session_error(context, origin, "moodle_sync_rejected", 502)
+    dates = cast(Mapping[str, int], result["dates"])
+    content = cast(Mapping[str, object], result["content"])
+    capabilities = cast(Mapping[str, object] | None, result["capabilities"])
+    saml_connections = cast(int, result["saml_connections"])
+    content_fields = (
+        "course_total",
+        "candidate_total",
+        "metaturma_candidate_total",
+        "found",
+        "empty",
+        "unmatched",
+        "ambiguous",
+    )
+    body = {
+        "dates": dict(dates),
+        "content": {field: content[field] for field in content_fields},
+        "capabilities": dict(capabilities) if capabilities is not None else None,
+    }
+    _log(
+        context,
+        "moodle_sync_succeeded",
+        date_total=dates["total"],
+        candidate_total=content["candidate_total"],
+        mobile_authorization_available=capabilities is not None,
+        saml_connections=saml_connections,
+    )
+    return _respond(context, body, origin=origin)
 
 
 def _moodle_content_discovery(context: Any, origin: str | None) -> Any:
@@ -1093,6 +1158,32 @@ def _moodle_date_import_service(headers: dict[str, str], user_id: str) -> Moodle
     )
 
 
+def _moodle_sync_service(headers: dict[str, str], user_id: str) -> MoodleSyncService:
+    sessions = _ufmg_session_store(headers)
+    client = MoodleStructuredDatesClient()
+    courses = _course_repository(headers, user_id)
+    return MoodleSyncService(
+        MoodleDateImportService(
+            sessions,
+            client,
+            courses,
+            AcademicDateRepository(_firestore(headers, user_id)),
+        ),
+        MoodleContentDiscoveryService(
+            sessions,
+            client,
+            courses,
+            _moodle_material_catalog_repository(headers, user_id),
+        ),
+        MoodleMobileCapabilityService(
+            sessions,
+            client,
+            _moodle_token_store(headers),
+        ),
+        connection_count=lambda: client.connection_count,
+    )
+
+
 def _moodle_content_discovery_service(
     headers: dict[str, str], user_id: str
 ) -> MoodleContentDiscoveryService:
@@ -1265,6 +1356,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/ufmg/moodle/capabilities",
         "/v1/ufmg/moodle/material-files",
         "/v1/ufmg/moodle/diario-plan",
+        "/v1/ufmg/sync/moodle",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
     } or path.startswith("/v1/courses/")
@@ -1400,6 +1492,7 @@ def _route_name(path: str) -> str:
         "/v1/ufmg/moodle/capabilities",
         "/v1/ufmg/moodle/material-files",
         "/v1/ufmg/moodle/diario-plan",
+        "/v1/ufmg/sync/moodle",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
     }:
