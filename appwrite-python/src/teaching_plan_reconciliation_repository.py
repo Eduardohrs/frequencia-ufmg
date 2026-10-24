@@ -41,7 +41,7 @@ class TeachingPlanReconciliationRepository:
             sessions,
             assessments=plan.get("assessments"),
             meetings=meetings,
-            workload=int(course["workload"]),
+            workload=None if course["workload"] == 1 else int(course["workload"]),
             now=self._now(),
         )
         applied = 0

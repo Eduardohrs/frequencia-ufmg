@@ -226,7 +226,7 @@ final class PythonTeachingPlanReconciliation {
   final int applied;
   final List<PythonTeachingPlanChange> changes;
   final List<PythonTeachingPlanChange> excluded;
-  final PythonWorkloadValidation workloadValidation;
+  final PythonWorkloadValidation? workloadValidation;
 }
 
 final class PythonWorkloadValidation {
@@ -1926,9 +1926,7 @@ final class PythonBackendTransport
           conflicts is! List ||
           conflicts.length != count('conflicting') ||
           changes is! List ||
-          excluded is! List ||
-          workloadValidation is! Map ||
-          excluded.length != count('outside_schedule')) {
+          excluded is! List) {
         throw const FormatException();
       }
       List<PythonTeachingPlanChange> decodeChanges(List<Object?> values) =>
@@ -1939,6 +1937,16 @@ final class PythonBackendTransport
                 ),
               )
               .toList(growable: false);
+      final decodedChanges = decodeChanges(changes.cast<Object?>());
+      final decodedExcluded = decodeChanges(excluded.cast<Object?>());
+      final outsideChanges = decodedChanges
+          .where((change) => change.action == 'remove_session')
+          .length;
+      if (decodedExcluded.length + outsideChanges !=
+              count('outside_schedule') ||
+          workloadValidation != null && workloadValidation is! Map) {
+        throw const FormatException();
+      }
       return PythonTeachingPlanReconciliation(
         mode: mode as String,
         matched: count('matched'),
@@ -1948,11 +1956,13 @@ final class PythonBackendTransport
         assessmentConflicts: count('assessment_conflicts'),
         outsideSchedule: count('outside_schedule'),
         applied: count('applied'),
-        changes: decodeChanges(changes.cast<Object?>()),
-        excluded: decodeChanges(excluded.cast<Object?>()),
-        workloadValidation: PythonWorkloadValidation.fromJson(
-          Map<String, Object?>.from(workloadValidation),
-        ),
+        changes: decodedChanges,
+        excluded: decodedExcluded,
+        workloadValidation: workloadValidation == null
+            ? null
+            : PythonWorkloadValidation.fromJson(
+                Map<String, Object?>.from(workloadValidation as Map),
+              ),
       );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
