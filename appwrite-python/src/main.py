@@ -1040,6 +1040,7 @@ def _teaching_plan_reconciliation(context: Any, origin: str | None) -> Any:
         assessments_linked=result["assessments_linked"],
         assessment_conflicts=result["assessment_conflicts"],
         outside_schedule=result["outside_schedule"],
+        workload_validation=result["workload_validation"],
         applied=result["applied"],
         proposed_changes=cast(list[dict[str, object]], result["changes"])[:10],
         excluded_occurrences=cast(list[dict[str, object]], result["excluded"])[:10],

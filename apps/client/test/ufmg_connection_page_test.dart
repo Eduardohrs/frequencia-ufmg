@@ -1046,6 +1046,10 @@ void main() {
     expect(find.textContaining('Adicionar aula'), findsWidgets);
     expect(find.textContaining('Aula 1'), findsOneWidget);
     expect(find.textContaining('Aula 2'), findsOneWidget);
+    expect(
+      find.textContaining('58 de 60 horas-aula de 50 minutos'),
+      findsOneWidget,
+    );
     await tester.tap(
       find.byKey(const Key('teaching-plan-reconciliation-cancel')),
     );
@@ -2819,6 +2823,18 @@ final class _Gateway
         ),
       ),
       excluded: const [],
+      workloadValidation: const PythonWorkloadValidation(
+        status: 'below_expected',
+        expectedLessonUnits: 60,
+        actualLessonUnits: 58,
+        differenceLessonUnits: -2,
+        expectedTypicalMeetings: 30,
+        activeEncounters: 29,
+        excludedEncounters: 0,
+        scheduledLessonUnits: 58,
+        noCallLessonUnits: 0,
+        makeupLessonUnits: 0,
+      ),
     );
   }
 

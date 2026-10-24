@@ -4,7 +4,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import cast
 
-from course_repository import validate_course_id
+from course_repository import CourseRepository, validate_course_id
 from firestore_rest import FirestoreRestClient
 from schedule_repository import _decode_meeting, _decode_session, _session_to_firestore
 from teaching_plan_reconciliation import reconcile_teaching_plan_schedule
@@ -21,6 +21,7 @@ class TeachingPlanReconciliationRepository:
 
     def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
         identifier = validate_course_id(course_id)
+        course = CourseRepository(self._firestore).get_course(identifier)
         persisted = self._plans.load(identifier)
         plan = cast(dict[str, object], persisted["plan"])
         sessions = [
@@ -40,6 +41,7 @@ class TeachingPlanReconciliationRepository:
             sessions,
             assessments=plan.get("assessments"),
             meetings=meetings,
+            workload=int(course["workload"]),
             now=self._now(),
         )
         applied = 0
@@ -67,4 +69,5 @@ class TeachingPlanReconciliationRepository:
             "changes": list(preview.changes),
             "excluded": list(preview.excluded),
             "conflicts": list(preview.conflicts),
+            "workload_validation": preview.workload_validation,
         }

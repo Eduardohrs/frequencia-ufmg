@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
+from course_service import course_to_firestore
 from schedule_repository import _meeting_to_firestore
 from teaching_plan_reconciliation_repository import TeachingPlanReconciliationRepository
 from teaching_plan_repository import TeachingPlanRepository
@@ -62,8 +63,26 @@ def _plan() -> dict[str, object]:
     }
 
 
+def _course() -> dict[str, object]:
+    return {
+        "id": "poo",
+        "code": "DCC203",
+        "name": "POO",
+        "workload": 2,
+        "term": "2026-2",
+        "starts_on": None,
+        "ends_on": None,
+        "created_at": "2026-08-01T12:00:00Z",
+        "updated_at": "2026-08-01T12:00:00Z",
+    }
+
+
 def test_preview_never_writes_and_apply_is_idempotent() -> None:
     store = Store()
+    store.documents[("courses", "poo")] = {
+        "name": "courses/poo",
+        "fields": course_to_firestore(_course()),
+    }
     TeachingPlanRepository(store, now=lambda: NOW).save(
         "poo", source_id="1", plan=_plan()
     )
@@ -103,6 +122,18 @@ def test_preview_never_writes_and_apply_is_idempotent() -> None:
         }],
         "excluded": [],
         "conflicts": [],
+        "workload_validation": {
+            "status": "aligned",
+            "expected_lesson_units": 2,
+            "actual_lesson_units": 2,
+            "difference_lesson_units": 0,
+            "expected_typical_meetings": 1,
+            "active_encounters": 1,
+            "excluded_encounters": 0,
+            "scheduled_lesson_units": 2,
+            "no_call_lesson_units": 0,
+            "makeup_lesson_units": 0,
+        },
     }
     assert store.commits == []
 
@@ -117,6 +148,10 @@ def test_preview_never_writes_and_apply_is_idempotent() -> None:
 
 def test_apply_removes_an_untouched_import_outside_the_saved_grade() -> None:
     store = Store()
+    store.documents[("courses", "poo")] = {
+        "name": "courses/poo",
+        "fields": course_to_firestore(_course()),
+    }
     TeachingPlanRepository(store, now=lambda: NOW).save(
         "poo", source_id="1", plan=_plan()
     )

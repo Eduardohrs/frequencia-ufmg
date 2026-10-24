@@ -1470,6 +1470,12 @@ def test_teaching_plan_reconciliation_route_previews_and_logs_counts(
                 "assessments_linked": 2,
                 "assessment_conflicts": 1,
                 "outside_schedule": 1,
+                "workload_validation": {
+                    "status": "below_expected",
+                    "expected_lesson_units": 60,
+                    "actual_lesson_units": 58,
+                    "difference_lesson_units": -2,
+                },
                 "applied": 0,
                 "changes": [{
                     "action": "create_session",
@@ -1537,6 +1543,12 @@ def test_teaching_plan_reconciliation_route_previews_and_logs_counts(
             "ends_at": "20:40",
             "subject": "Polimorfismo",
         }],
+        "workload_validation": {
+            "status": "below_expected",
+            "expected_lesson_units": 60,
+            "actual_lesson_units": 58,
+            "difference_lesson_units": -2,
+        },
     }
 
 

@@ -320,3 +320,74 @@ def test_reconciliation_rejects_duplicate_occurrence_keys() -> None:
         reconcile_teaching_plan_schedule(
             [_row("2026-08-10"), _row("2026-08-10")], [], now=NOW
         )
+
+
+def test_workload_validates_lesson_units_without_generating_sessions() -> None:
+    scheduled = _session("scheduled", "2026-08-10T22:00:00Z", "2026-08-10T23:40:00Z")
+    no_call = {
+        **_session("no-call", "2026-08-17T22:00:00Z", "2026-08-17T23:40:00Z"),
+        "calendar_status": "no_call",
+    }
+    makeup = {
+        **_session("makeup", "2026-08-24T22:00:00Z", "2026-08-24T23:40:00Z"),
+        "calendar_status": "makeup",
+    }
+    cancelled = {
+        **_session("cancelled", "2026-08-31T22:00:00Z", "2026-08-31T23:40:00Z"),
+        "calendar_status": "cancelled",
+    }
+    holiday = {
+        **_session("holiday", "2026-09-07T22:00:00Z", "2026-09-07T23:40:00Z"),
+        "calendar_status": "holiday",
+    }
+
+    result = reconcile_teaching_plan_schedule(
+        [],
+        [scheduled, no_call, makeup, cancelled, holiday],
+        workload=6,
+        now=NOW,
+    )
+
+    assert result.creates == ()
+    assert result.workload_validation == {
+        "status": "aligned",
+        "expected_lesson_units": 6,
+        "actual_lesson_units": 6,
+        "difference_lesson_units": 0,
+        "expected_typical_meetings": 3,
+        "active_encounters": 3,
+        "excluded_encounters": 2,
+        "scheduled_lesson_units": 2,
+        "no_call_lesson_units": 2,
+        "makeup_lesson_units": 2,
+    }
+
+
+@pytest.mark.parametrize(
+    ("workload", "session_total", "status", "difference"),
+    [(30, 14, "below_expected", -2), (60, 31, "above_expected", 2)],
+)
+def test_workload_reports_30_and_60_hour_divergences_without_mutation(
+    workload: int, session_total: int, status: str, difference: int
+) -> None:
+    sessions = [
+        _session(
+            f"session-{index}",
+            f"2026-08-{index + 1:02d}T22:00:00Z",
+            f"2026-08-{index + 1:02d}T23:40:00Z",
+        )
+        for index in range(session_total)
+    ]
+
+    result = reconcile_teaching_plan_schedule([], sessions, workload=workload, now=NOW)
+
+    assert result.creates == ()
+    assert result.delete_ids == ()
+    assert result.workload_validation["status"] == status
+    assert result.workload_validation["difference_lesson_units"] == difference
+    assert result.workload_validation["expected_typical_meetings"] == workload // 2
+
+
+def test_workload_rejects_invalid_unit_total() -> None:
+    with pytest.raises(InvalidTeachingPlanReconciliation, match="workload"):
+        reconcile_teaching_plan_schedule([], [], workload=0, now=NOW)
