@@ -84,6 +84,7 @@ def test_parses_sanitized_real_diario_tables() -> None:
         "schedule": [
             {
                 "sequence": 1,
+                "occurrence_key": "2026-08-05T20:55-22:35",
                 "date": "2026-08-05",
                 "weekday": "Qua",
                 "lesson_count": 2,
@@ -94,6 +95,7 @@ def test_parses_sanitized_real_diario_tables() -> None:
             },
             {
                 "sequence": 2,
+                "occurrence_key": "2026-08-10T19:00-20:40",
                 "date": "2026-08-10",
                 "weekday": "Seg",
                 "lesson_count": 2,
@@ -344,6 +346,14 @@ def test_labeled_record_and_optional_values_remain_bounded() -> None:
 def test_schedule_rejects_invalid_identity(row: list[str]) -> None:
     with pytest.raises(ValueError):
         _schedule_entry(row)
+
+
+def test_schedule_entry_exposes_a_stable_occurrence_key() -> None:
+    entry = _schedule_entry(
+        ["7", "14/09/2026", "Seg", "2", "19:00 - 20:40", "Teórica", "Herança"]
+    )
+
+    assert entry["occurrence_key"] == "2026-09-14T19:00-20:40"
 
 
 @pytest.mark.parametrize("value", ["não-numérico", "-1", "100001"])

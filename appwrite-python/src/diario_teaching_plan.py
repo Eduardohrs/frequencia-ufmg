@@ -298,9 +298,11 @@ def _schedule_entry(row: list[str]) -> dict[str, object]:
     times = _TIME_RANGE.fullmatch(row[4])
     if not 1 <= sequence <= 1_000 or lessons not in {1, 2, 4} or times is None:
         raise ValueError("invalid teaching plan")
+    day = datetime.strptime(row[1], "%d/%m/%Y").date().isoformat()
     return {
         "sequence": sequence,
-        "date": datetime.strptime(row[1], "%d/%m/%Y").date().isoformat(),
+        "occurrence_key": f"{day}T{times[1]}-{times[2]}",
+        "date": day,
         "weekday": _required(row[2]),
         "lesson_count": lessons,
         "starts_at": times[1],
