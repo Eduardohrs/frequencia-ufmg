@@ -128,6 +128,11 @@ abstract interface class BackendDiarioPlanGateway {
     required String term,
     required String sourceId,
   });
+
+  Future<PythonTeachingPlanReconciliation> reconcileMoodleTeachingPlan({
+    required String courseId,
+    required bool apply,
+  });
 }
 
 enum PythonMoodleContentStatus { found, empty, unmatched, ambiguous }
@@ -194,6 +199,26 @@ final class PythonTeachingPlanImport {
   final int createdDates;
   final int updatedDates;
   final int removedDates;
+}
+
+final class PythonTeachingPlanReconciliation {
+  const PythonTeachingPlanReconciliation({
+    required this.mode,
+    required this.matched,
+    required this.missing,
+    required this.conflicting,
+    required this.assessmentsLinked,
+    required this.assessmentConflicts,
+    required this.applied,
+  });
+
+  final String mode;
+  final int matched;
+  final int missing;
+  final int conflicting;
+  final int assessmentsLinked;
+  final int assessmentConflicts;
+  final int applied;
 }
 
 final class PythonMoodleContentCandidate {
@@ -1697,6 +1722,62 @@ final class PythonBackendTransport
         createdDates: count('dates_created', 100),
         updatedDates: count('dates_updated', 100),
         removedDates: count('dates_removed', 100),
+      );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  Future<PythonTeachingPlanReconciliation> reconcileMoodleTeachingPlan({
+    required String courseId,
+    required bool apply,
+  }) async {
+    _validateCourseId(courseId);
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/reconcile/teaching-plan',
+      method: _BackendMethod.post,
+      body: {'course_id': courseId, 'apply': apply},
+    );
+    try {
+      final value = jsonDecode(response.body);
+      const keys = {
+        'course_id',
+        'mode',
+        'matched',
+        'missing',
+        'conflicting',
+        'assessments_linked',
+        'assessment_conflicts',
+        'applied',
+        'conflicts',
+      };
+      if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
+        throw const FormatException();
+      }
+      int count(String key) {
+        final result = value[key];
+        if (result is! int || result < 0 || result > 450) {
+          throw const FormatException();
+        }
+        return result;
+      }
+
+      final mode = value['mode'];
+      final conflicts = value['conflicts'];
+      if (value['course_id'] != courseId ||
+          mode != (apply ? 'applied' : 'preview') ||
+          conflicts is! List ||
+          conflicts.length != count('conflicting')) {
+        throw const FormatException();
+      }
+      return PythonTeachingPlanReconciliation(
+        mode: mode as String,
+        matched: count('matched'),
+        missing: count('missing'),
+        conflicting: count('conflicting'),
+        assessmentsLinked: count('assessments_linked'),
+        assessmentConflicts: count('assessment_conflicts'),
+        applied: count('applied'),
       );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);

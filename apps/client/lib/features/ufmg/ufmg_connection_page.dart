@@ -327,13 +327,68 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             ),
       );
       if (!mounted) return;
+      final reconciliation = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleTeachingPlanReconciliation,
+        action: () => (widget.gateway as BackendDiarioPlanGateway)
+            .reconcileMoodleTeachingPlan(
+              courseId: course.courseId,
+              apply: false,
+            ),
+      );
+      if (!mounted) return;
+      var applied = 0;
+      if (reconciliation.missing > 0 || reconciliation.assessmentsLinked > 0) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Atualizar aulas da disciplina?'),
+            content: Text(
+              '${reconciliation.matched} aulas já correspondem ao plano. '
+              '${reconciliation.missing} aulas novas podem ser adicionadas.'
+              '${reconciliation.assessmentsLinked == 0 ? '' : ' '
+                        '${reconciliation.assessmentsLinked} avaliações serão ligadas às aulas.'}'
+              '${reconciliation.conflicting == 0 ? '' : ' '
+                        '${reconciliation.conflicting} conflitos serão preservados para revisão.'}',
+            ),
+            actions: [
+              TextButton(
+                key: const Key('teaching-plan-reconciliation-cancel'),
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Agora não'),
+              ),
+              FilledButton(
+                key: const Key('teaching-plan-reconciliation-apply'),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Aplicar atualizações'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed == true) {
+          final result = await runAuditedOperation(
+            logger: widget.logger,
+            operation: AuditedOperation.moodleTeachingPlanReconciliation,
+            action: () => (widget.gateway as BackendDiarioPlanGateway)
+                .reconcileMoodleTeachingPlan(
+                  courseId: course.courseId,
+                  apply: true,
+                ),
+          );
+          applied = result.applied;
+        }
+      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             'Plano importado: ${imported.assessmentTotal} avaliações, '
             '${imported.scheduleTotal} aulas e ${imported.criteriaTotal} critérios.'
             '${imported.undatedAssessmentTotal == 0 ? '' : ' '
-                      '${imported.undatedAssessmentTotal} avaliações ainda estão sem data.'}',
+                      '${imported.undatedAssessmentTotal} avaliações ainda estão sem data.'}'
+            '${applied == 0 ? '' : ' $applied atualizações aplicadas ao calendário.'}'
+            '${reconciliation.conflicting == 0 ? '' : ' '
+                      '${reconciliation.conflicting == 1 ? '1 conflito precisa' : '${reconciliation.conflicting} conflitos precisam'} de revisão.'}',
           ),
         ),
       );

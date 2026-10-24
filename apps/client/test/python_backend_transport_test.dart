@@ -974,6 +974,59 @@ void main() {
     );
   });
 
+  test('previews and applies teaching plan reconciliation', () async {
+    final requests = <http.Request>[];
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        requests.add(request);
+        final apply =
+            (jsonDecode(request.body) as Map<String, dynamic>)['apply'] as bool;
+        return http.Response(
+          jsonEncode({
+            'course_id': 'dcc203',
+            'mode': apply ? 'applied' : 'preview',
+            'matched': 28,
+            'missing': apply ? 0 : 2,
+            'conflicting': 1,
+            'assessments_linked': 1,
+            'assessment_conflicts': 0,
+            'applied': apply ? 2 : 0,
+            'conflicts': [
+              {
+                'occurrence_key': '2026-08-10T19:00-20:40',
+                'reason': 'overlapping_session',
+                'existing_session_ids': ['manual'],
+              },
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final preview = await transport.reconcileMoodleTeachingPlan(
+      courseId: 'dcc203',
+      apply: false,
+    );
+    final applied = await transport.reconcileMoodleTeachingPlan(
+      courseId: 'dcc203',
+      apply: true,
+    );
+
+    expect(
+      requests.every(
+        (request) => request.url.path == '/v1/ufmg/reconcile/teaching-plan',
+      ),
+      isTrue,
+    );
+    expect(preview.missing, 2);
+    expect(preview.conflicting, 1);
+    expect(preview.assessmentsLinked, 1);
+    expect(applied.applied, 2);
+  });
+
   test('resolves bounded direct Moodle material files', () async {
     late http.Request captured;
     final transport = PythonBackendTransport(

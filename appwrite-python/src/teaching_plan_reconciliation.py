@@ -19,6 +19,7 @@ class InvalidTeachingPlanReconciliation(ValueError):
 @dataclass(frozen=True)
 class TeachingPlanReconciliation:
     creates: tuple[dict[str, Any], ...]
+    updates: tuple[dict[str, Any], ...]
     conflicts: tuple[dict[str, object], ...]
     counts: dict[str, int]
 
@@ -27,6 +28,7 @@ def reconcile_teaching_plan_schedule(
     schedule: object,
     existing_sessions: Iterable[Mapping[str, Any]],
     *,
+    assessments: object = None,
     now: datetime,
 ) -> TeachingPlanReconciliation:
     """Preview additive changes; exact matches remain untouched and overlaps conflict."""
@@ -39,14 +41,19 @@ def reconcile_teaching_plan_schedule(
     except InvalidSchedule:
         raise InvalidTeachingPlanReconciliation("invalid saved session") from None
     occurrences = [_occurrence(item, timestamp) for item in schedule]
+    assessment_titles = _assessment_titles(assessments or [], occurrences)
     keys = [str(item["occurrence_key"]) for item in occurrences]
     if len(set(keys)) != len(keys):
         raise InvalidTeachingPlanReconciliation("duplicate teaching plan occurrence")
 
     creates: list[dict[str, Any]] = []
+    updates: list[dict[str, Any]] = []
     conflicts: list[dict[str, object]] = []
     matched = 0
+    assessments_linked = 0
+    assessment_conflicts = 0
     for occurrence in occurrences:
+        title = assessment_titles.get(str(occurrence["occurrence_key"]))
         exact = [
             item
             for item in sessions
@@ -55,6 +62,24 @@ def reconcile_teaching_plan_schedule(
         ]
         if exact:
             matched += 1
+            if title is not None and len(exact) == 1:
+                saved_title = exact[0]["assessment_title"]
+                if saved_title is None:
+                    updates.append(
+                        {
+                            **exact[0],
+                            "assessment_title": title,
+                            "updated_at": _format(timestamp),
+                        }
+                    )
+                    assessments_linked += 1
+                elif saved_title != title:
+                    conflicts.append({
+                        "occurrence_key": occurrence["occurrence_key"],
+                        "reason": "assessment_title_mismatch",
+                        "existing_session_ids": [str(exact[0]["id"])],
+                    })
+                    assessment_conflicts += 1
             continue
         overlaps = [item for item in sessions if _overlaps(item, occurrence)]
         if overlaps:
@@ -66,14 +91,18 @@ def reconcile_teaching_plan_schedule(
                 }
             )
             continue
-        creates.append(_new_session(occurrence, timestamp))
+        creates.append(_new_session(occurrence, timestamp, assessment_title=title))
+        assessments_linked += int(title is not None)
     return TeachingPlanReconciliation(
         creates=tuple(creates),
+        updates=tuple(updates),
         conflicts=tuple(conflicts),
         counts={
             "matched": matched,
             "missing": len(creates),
             "conflicting": len(conflicts),
+            "assessments_linked": assessments_linked,
+            "assessment_conflicts": assessment_conflicts,
         },
     )
 
@@ -116,7 +145,12 @@ def _occurrence(value: object, now: datetime) -> dict[str, object]:
     }
 
 
-def _new_session(occurrence: Mapping[str, object], now: datetime) -> dict[str, Any]:
+def _new_session(
+    occurrence: Mapping[str, object],
+    now: datetime,
+    *,
+    assessment_title: str | None = None,
+) -> dict[str, Any]:
     day, interval = str(occurrence["occurrence_key"]).split("T", 1)
     start, end = interval.split("-", 1)
     return {
@@ -130,10 +164,42 @@ def _new_session(occurrence: Mapping[str, object], now: datetime) -> dict[str, A
         "attendance_status": None,
         "absences": None,
         "calendar_status": "scheduled",
-        "assessment_title": None,
+        "assessment_title": assessment_title,
         "created_at": _format(now),
         "updated_at": _format(now),
     }
+
+
+def _assessment_titles(
+    assessments: object, occurrences: list[dict[str, object]]
+) -> dict[str, str]:
+    if not isinstance(assessments, list) or len(assessments) > 100:
+        raise InvalidTeachingPlanReconciliation("invalid teaching plan assessments")
+    matches: dict[str, list[str]] = {}
+    for assessment in assessments:
+        if not isinstance(assessment, Mapping):
+            raise InvalidTeachingPlanReconciliation("invalid teaching plan assessment")
+        title = assessment.get("title")
+        scheduled_at = assessment.get("scheduled_at")
+        if (
+            not isinstance(title, str)
+            or not title
+            or len(title) > 120
+            or not isinstance(scheduled_at, str)
+        ):
+            raise InvalidTeachingPlanReconciliation("invalid teaching plan assessment")
+        try:
+            instant = datetime.fromisoformat(scheduled_at).astimezone(UTC)
+        except ValueError:
+            raise InvalidTeachingPlanReconciliation("invalid teaching plan assessment") from None
+        for occurrence in occurrences:
+            if _parse_utc(occurrence["starts_at"]) <= instant <= _parse_utc(occurrence["ends_at"]):
+                matches.setdefault(str(occurrence["occurrence_key"]), []).append(title)
+    return {key: titles[0] for key, titles in matches.items() if len(titles) == 1}
+
+
+def _parse_utc(value: object) -> datetime:
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(UTC)
 
 
 def _overlaps(left: Mapping[str, object], right: Mapping[str, object]) -> bool:

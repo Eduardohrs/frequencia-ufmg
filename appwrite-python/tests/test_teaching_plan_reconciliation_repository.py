@@ -72,6 +72,8 @@ def test_preview_never_writes_and_apply_is_idempotent() -> None:
         "matched": 0,
         "missing": 1,
         "conflicting": 0,
+        "assessments_linked": 0,
+        "assessment_conflicts": 0,
         "applied": 0,
         "conflicts": [],
     }
