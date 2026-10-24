@@ -432,6 +432,28 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           );
           applied = result.applied;
         }
+      } else if (_hasTeachingPlanNotice(reconciliation)) {
+        _logInteraction('moodle_teaching_plan_review_notice_shown');
+        await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+            key: const Key('teaching-plan-no-change-notice'),
+            title: const Text('Plano importado sem alterações automáticas'),
+            content: Text(_teachingPlanNotice(reconciliation)),
+            actions: [
+              FilledButton(
+                key: const Key('teaching-plan-no-change-notice-close'),
+                onPressed: () {
+                  _logInteraction(
+                    'moodle_teaching_plan_review_notice_acknowledged',
+                  );
+                  Navigator.pop(context);
+                },
+                child: const Text('Entendi'),
+              ),
+            ],
+          ),
+        );
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -465,6 +487,44 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       _diarioProbesInFlight.remove(operationId);
       if (mounted) setState(() {});
     }
+  }
+
+  bool _hasTeachingPlanNotice(PythonTeachingPlanReconciliation reconciliation) {
+    final hasOutsideSchedule = reconciliation.outsideSchedule > 0;
+    final hasConflicts = reconciliation.conflicting > 0;
+    final workloadStatus = reconciliation.workloadValidation?.status;
+    final hasWorkloadDifference =
+        workloadStatus != null && workloadStatus != 'aligned';
+    return hasOutsideSchedule || hasConflicts || hasWorkloadDifference;
+  }
+
+  String _teachingPlanNotice(PythonTeachingPlanReconciliation reconciliation) {
+    final details = <String>[];
+    if (reconciliation.outsideSchedule > 0) {
+      details.add(
+        '${reconciliation.outsideSchedule} '
+        '${reconciliation.outsideSchedule == 1 ? 'item está' : 'itens estão'} '
+        'fora da grade e não '
+        '${reconciliation.outsideSchedule == 1 ? 'virou' : 'viraram'} '
+        'aula de frequência.',
+      );
+    }
+    if (reconciliation.conflicting > 0) {
+      details.add(
+        '${reconciliation.conflicting} '
+        '${reconciliation.conflicting == 1 ? 'conflito precisa' : 'conflitos precisam'} '
+        'de revisão manual.',
+      );
+    }
+    if (reconciliation.workloadValidation case final workload?
+        when workload.status != 'aligned') {
+      details.add(
+        'O calendário soma ${workload.actualLessonUnits} de '
+        '${workload.expectedLessonUnits} horas-aula previstas.',
+      );
+    }
+    return '${reconciliation.matched} aulas já conferem com o plano. '
+        'Nenhuma mudança foi aplicada automaticamente. ${details.join(' ')}';
   }
 
   String _materialOperationId(
