@@ -120,6 +120,7 @@ from ufmg_session_store import (  # noqa: E402
     UFMGSessionStoreUnavailable,
 )
 from ufmg_sync import UFMGSyncService  # noqa: E402
+from unified_academic_sync import UnifiedAcademicSyncService  # noqa: E402
 
 MAX_REQUEST_BYTES = 16_384
 _REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="")
@@ -273,6 +274,8 @@ def _dispatch(context: Any) -> Any:
         return _teaching_plan_reconciliation(context, allowed_origin)
     if path == "/v1/ufmg/sync/moodle" and method == "POST":
         return _moodle_sync(context, allowed_origin)
+    if path == "/v1/ufmg/sync/all" and method == "POST":
+        return _unified_academic_sync(context, allowed_origin)
     if path == "/v1/ufmg/sync" and method == "POST":
         return _ufmg_sync(context, allowed_origin)
     if path == "/v1/ufmg/sync/siga" and method == "POST":
@@ -665,6 +668,78 @@ def _moodle_sync(context: Any, origin: str | None) -> Any:
         saml_connections=saml_connections,
     )
     return _respond(context, body, origin=origin)
+
+
+def _unified_academic_sync(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/ufmg/sync/all/post")
+    if rejected is not None:
+        return rejected
+    if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
+        return _ufmg_session_error(context, origin, "academic_sync_rejected", 400)
+    if environ.get("ENABLE_SCHEDULE_WRITES", "").lower() != "true":
+        return _schedule_error(context, origin, "schedule_writes_disabled", 503)
+    try:
+        result = _unified_academic_sync_service(
+            context.req.headers, cast(str, user_id)
+        ).sync(cast(str, user_id), now=int(time()))
+    except UFMGReauthenticationRequired:
+        return _ufmg_session_error(
+            context, origin, "ufmg_reauthentication_required", 401
+        )
+    except UFMGEnrollmentUnavailable as error:
+        return _ufmg_session_error(
+            context,
+            origin,
+            "ufmg_enrollment_unavailable",
+            503,
+            reason=error.reason,
+            upstream_status=error.upstream_status,
+        )
+    except MoodleUnavailable:
+        return _ufmg_session_error(context, origin, "moodle_unavailable", 503)
+    except InvalidMoodleResponse as error:
+        return _ufmg_session_error(
+            context,
+            origin,
+            "moodle_response_invalid",
+            502,
+            reason=error.reason,
+            **error.details,
+        )
+    except (UFMGSessionStoreUnavailable, MoodleTokenStoreUnavailable):
+        return _ufmg_session_error(context, origin, "academic_sync_store_unavailable", 503)
+    except FirestoreAccessDenied:
+        return _ufmg_session_error(context, origin, "academic_sync_access_denied", 403)
+    except FirestoreUnavailable:
+        return _ufmg_session_error(context, origin, "academic_sync_store_unavailable", 503)
+    except (
+        DuplicateCourseCode,
+        InvalidAcademicDate,
+        InvalidCourse,
+        InvalidMoodleMaterialCatalog,
+        InvalidSchedule,
+        InvalidTeachingPlan,
+        InvalidTeachingPlanReconciliation,
+        FirestoreNotFound,
+        FirestoreRequestRejected,
+        TypeError,
+        ValueError,
+    ):
+        return _ufmg_session_error(context, origin, "academic_sync_rejected", 502)
+    plans = cast(Mapping[str, int], result["teaching_plans"])
+    exceptions = cast(list[dict[str, object]], result["exceptions"])
+    _log(
+        context,
+        "academic_sync_succeeded",
+        plan_available=plans["available"],
+        plan_imported=plans["imported"],
+        plan_applied=plans["applied"],
+        plan_unchanged=plans["unchanged"],
+        review_required=plans["review_required"],
+        exception_reasons=[item["reason"] for item in exceptions],
+        exception_course_codes=[item["course_code"] for item in exceptions],
+    )
+    return _respond(context, result, origin=origin)
 
 
 def _moodle_content_discovery(context: Any, origin: str | None) -> Any:
@@ -1353,6 +1428,57 @@ def _moodle_sync_service(headers: dict[str, str], user_id: str) -> MoodleSyncSer
     )
 
 
+def _unified_academic_sync_service(
+    headers: dict[str, str], user_id: str
+) -> UnifiedAcademicSyncService:
+    sessions = _ufmg_session_store(headers)
+    enrollments = UFMGEnrollmentClient()
+    client = MoodleStructuredDatesClient()
+    firestore = _firestore(headers, user_id)
+    courses = CourseRepository(firestore)
+    dates = AcademicDateRepository(firestore)
+    siga = UFMGSyncService(
+        sessions,
+        enrollments,
+        UFMGCourseImportService(sessions, enrollments, courses),
+        UFMGScheduleImportService(
+            sessions,
+            enrollments,
+            courses,
+            ScheduleRepository(firestore),
+        ),
+        MoodleDateImportService(sessions, client, courses, dates),
+    )
+    moodle = MoodleSyncService(
+        MoodleDateImportService(sessions, client, courses, dates),
+        MoodleContentDiscoveryService(
+            sessions,
+            client,
+            courses,
+            MoodleMaterialCatalogRepository(firestore),
+        ),
+        MoodleMobileCapabilityService(
+            sessions,
+            client,
+            _moodle_token_store(headers),
+        ),
+        connection_count=lambda: client.connection_count,
+    )
+    plans = MoodleTeachingPlanImportService(
+        sessions,
+        client,
+        courses,
+        TeachingPlanRepository(firestore),
+        dates,
+    )
+    return UnifiedAcademicSyncService(
+        siga,
+        moodle,
+        plans,
+        TeachingPlanReconciliationRepository(firestore),
+    )
+
+
 def _moodle_content_discovery_service(
     headers: dict[str, str], user_id: str
 ) -> MoodleContentDiscoveryService:
@@ -1541,6 +1667,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/ufmg/import/teaching-plan",
         "/v1/ufmg/reconcile/teaching-plan",
         "/v1/ufmg/sync/moodle",
+        "/v1/ufmg/sync/all",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
     } or path.startswith("/v1/courses/")
@@ -1679,6 +1806,7 @@ def _route_name(path: str) -> str:
         "/v1/ufmg/import/teaching-plan",
         "/v1/ufmg/reconcile/teaching-plan",
         "/v1/ufmg/sync/moodle",
+        "/v1/ufmg/sync/all",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
     }:

@@ -1412,6 +1412,106 @@ void main() {
     expect(captured.body, '{}');
   });
 
+  test(
+    'synchronizes every academic source and exposes review exceptions',
+    () async {
+      late http.Request captured;
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((request) async {
+          captured = request;
+          return http.Response(
+            jsonEncode({
+              'siga': {
+                'courses': {'created': 1, 'existing': 4, 'total': 5},
+                'schedules': {
+                  'total': 5,
+                  'updated': 1,
+                  'unchanged': 3,
+                  'conflicts': 1,
+                  'missing_courses': 0,
+                  'meetings_imported': 2,
+                },
+                'checked_at': '2026-10-24T12:00:00Z',
+                'next_automatic_sync_at': '2026-12-06T00:00:00Z',
+              },
+              'moodle': {
+                'dates': {
+                  'total': 3,
+                  'matched': 3,
+                  'unmatched': 0,
+                  'created': 1,
+                  'updated': 1,
+                  'unchanged': 1,
+                },
+                'content': {
+                  'course_total': 5,
+                  'candidate_total': 8,
+                  'metaturma_candidate_total': 2,
+                  'found': 4,
+                  'empty': 1,
+                  'unmatched': 0,
+                  'ambiguous': 0,
+                },
+                'capabilities': null,
+              },
+              'teaching_plans': {
+                'available': 3,
+                'imported': 2,
+                'applied': 1,
+                'unchanged': 0,
+                'review_required': 2,
+              },
+              'exceptions': [
+                {
+                  'course_id': 'course-a',
+                  'course_code': 'ELE028',
+                  'reason': 'reconciliation_conflict',
+                  'candidate_count': 1,
+                  'changes': [
+                    {
+                      'action': 'create_session',
+                      'occurrence_key': '2026-10-24T19:00-20:40',
+                      'date': '2026-10-24',
+                      'starts_at': '19:00',
+                      'ends_at': '20:40',
+                      'subject': 'Circuitos',
+                    },
+                  ],
+                  'conflicting': 1,
+                  'assessment_conflicts': 0,
+                },
+                {
+                  'course_id': 'course-b',
+                  'course_code': 'MAT001',
+                  'reason': 'ambiguous_teaching_plan',
+                  'candidate_count': 2,
+                  'changes': [],
+                  'conflicting': 0,
+                  'assessment_conflicts': 0,
+                },
+              ],
+            }),
+            200,
+          );
+        }),
+      );
+
+      final result = await transport.syncAllAcademicData();
+
+      expect(result.siga.courses.created, 1);
+      expect(result.moodle.dates.created, 1);
+      expect(result.teachingPlans.applied, 1);
+      expect(result.exceptions.first.courseCode, 'ELE028');
+      expect(result.exceptions.first.changes.single.subject, 'Circuitos');
+      expect(result.exceptions.last.courseCode, 'MAT001');
+      expect(captured.method, 'POST');
+      expect(captured.url.path, '/v1/ufmg/sync/all');
+      expect(captured.body, '{}');
+    },
+  );
+
   test('rejects malformed intelligent synchronization contracts', () async {
     for (final body in [
       {

@@ -54,6 +54,7 @@ enum AuditedOperation {
   moodleMaterialCacheOpen('moodle_material_cache_open'),
   moodleMaterialCacheRemove('moodle_material_cache_remove'),
   moodleMaterialCacheClear('moodle_material_cache_clear'),
+  academicSync('academic_sync'),
   ufmgSync('ufmg_sync');
 
   const AuditedOperation(this.eventPrefix);
