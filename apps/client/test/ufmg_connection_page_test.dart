@@ -995,6 +995,8 @@ void main() {
             ),
           )
           ..undatedAssessmentTotal = 6
+          ..reconciliationMissing = 2
+          ..reconciliationConflicting = 1
           ..materialCatalog = PythonMoodleContentDiscovery(
             candidateTotal: 1,
             metaturmaCandidateTotal: 0,
@@ -1035,13 +1037,25 @@ void main() {
     final probeButton = find.byKey(const Key('moodle-diario-probe-701'));
     await tester.ensureVisible(probeButton);
     await tester.tap(probeButton);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Atualizar aulas da disciplina?'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const Key('teaching-plan-reconciliation-apply')),
+    );
     await tester.pumpAndSettle();
 
     expect(gateway.diarioImportRequests, [('dcc203', '2026-2', '701')]);
+    expect(gateway.reconciliationRequests, [
+      ('dcc203', false),
+      ('dcc203', true),
+    ]);
     expect(
       find.text(
         'Plano importado: 2 avaliações, 30 aulas e 2 critérios. '
-        '6 avaliações ainda estão sem data.',
+        '6 avaliações ainda estão sem data. 2 atualizações aplicadas ao calendário. '
+        '1 conflito precisa de revisão.',
       ),
       findsOneWidget,
     );
@@ -2673,8 +2687,11 @@ final class _Gateway
   final materialFileRequests = <(String, String, String)>[];
   final diarioProbeRequests = <(String, String)>[];
   final diarioImportRequests = <(String, String, String)>[];
+  final reconciliationRequests = <(String, bool)>[];
   Object? diarioProbeError;
   int undatedAssessmentTotal = 0;
+  int reconciliationMissing = 0;
+  int reconciliationConflicting = 0;
   PythonMoodleContentDiscovery materialCatalog =
       const PythonMoodleContentDiscovery(
         courses: [],
@@ -2750,6 +2767,23 @@ final class _Gateway
       createdDates: 2,
       updatedDates: 0,
       removedDates: 0,
+    );
+  }
+
+  @override
+  Future<PythonTeachingPlanReconciliation> reconcileMoodleTeachingPlan({
+    required String courseId,
+    required bool apply,
+  }) async {
+    reconciliationRequests.add((courseId, apply));
+    return PythonTeachingPlanReconciliation(
+      mode: apply ? 'applied' : 'preview',
+      matched: 30 - reconciliationMissing - reconciliationConflicting,
+      missing: apply ? 0 : reconciliationMissing,
+      conflicting: reconciliationConflicting,
+      assessmentsLinked: 0,
+      assessmentConflicts: 0,
+      applied: apply ? reconciliationMissing : 0,
     );
   }
 

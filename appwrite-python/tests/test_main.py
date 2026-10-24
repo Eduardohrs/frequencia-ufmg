@@ -1467,6 +1467,8 @@ def test_teaching_plan_reconciliation_route_previews_and_logs_counts(
                 "matched": 3,
                 "missing": 1,
                 "conflicting": 1,
+                "assessments_linked": 2,
+                "assessment_conflicts": 1,
                 "applied": 0,
                 "conflicts": [{
                     "occurrence_key": "2026-08-10T19:00-20:40",
@@ -1490,6 +1492,8 @@ def test_teaching_plan_reconciliation_route_previews_and_logs_counts(
     assert result["body"]["missing"] == 1
     assert json.loads(context.logs[0]) == {
         "applied": 0,
+        "assessment_conflicts": 1,
+        "assessments_linked": 2,
         "conflict_occurrence_keys": ["2026-08-10T19:00-20:40"],
         "conflicting": 1,
         "course_id": "course-a",

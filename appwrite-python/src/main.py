@@ -1037,6 +1037,8 @@ def _teaching_plan_reconciliation(context: Any, origin: str | None) -> Any:
         matched=result["matched"],
         missing=result["missing"],
         conflicting=result["conflicting"],
+        assessments_linked=result["assessments_linked"],
+        assessment_conflicts=result["assessment_conflicts"],
         applied=result["applied"],
         conflict_occurrence_keys=[
             item["occurrence_key"]

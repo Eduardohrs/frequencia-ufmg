@@ -46,6 +46,7 @@ enum AuditedOperation {
   moodleSync('moodle_sync'),
   moodleDiarioPlanProbe('moodle_diario_plan_probe'),
   moodleTeachingPlanImport('moodle_teaching_plan_import'),
+  moodleTeachingPlanReconciliation('moodle_teaching_plan_reconciliation'),
   moodleMaterialOpen('moodle_material_open'),
   moodleMaterialCacheList('moodle_material_cache_list'),
   moodleMaterialCacheSave('moodle_material_cache_save'),

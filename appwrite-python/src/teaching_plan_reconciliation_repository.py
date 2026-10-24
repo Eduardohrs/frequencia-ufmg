@@ -30,21 +30,25 @@ class TeachingPlanReconciliationRepository:
             )
         ]
         preview = reconcile_teaching_plan_schedule(
-            plan.get("schedule"), sessions, now=self._now()
+            plan.get("schedule"),
+            sessions,
+            assessments=plan.get("assessments"),
+            now=self._now(),
         )
         applied = 0
-        if apply and preview.creates:
+        writes = (*preview.creates, *preview.updates)
+        if apply and writes:
             self._firestore.commit_user_documents(
                 updates=[
                     (
                         ("courses", identifier, "sessions", str(item["id"])),
                         _session_to_firestore(item),
                     )
-                    for item in preview.creates
+                    for item in writes
                 ],
                 deletes=[],
             )
-            applied = len(preview.creates)
+            applied = len(writes)
         return {
             "course_id": identifier,
             "mode": "applied" if apply else "preview",

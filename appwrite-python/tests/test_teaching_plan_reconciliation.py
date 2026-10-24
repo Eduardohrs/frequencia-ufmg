@@ -55,7 +55,9 @@ def test_preview_matches_exact_occurrence_without_writes() -> None:
         now=NOW,
     )
 
-    assert result.counts == {"matched": 1, "missing": 0, "conflicting": 0}
+    assert result.counts["matched"] == 1
+    assert result.counts["missing"] == 0
+    assert result.counts["conflicting"] == 0
     assert result.creates == ()
     assert result.conflicts == ()
 
@@ -63,7 +65,9 @@ def test_preview_matches_exact_occurrence_without_writes() -> None:
 def test_preview_creates_only_a_truly_missing_occurrence() -> None:
     result = reconcile_teaching_plan_schedule([_row("2026-08-10")], [], now=NOW)
 
-    assert result.counts == {"matched": 0, "missing": 1, "conflicting": 0}
+    assert result.counts["matched"] == 0
+    assert result.counts["missing"] == 1
+    assert result.counts["conflicting"] == 0
     assert result.creates[0]["id"] == "2026-08-10--diario-1900-2040"
     assert result.creates[0]["starts_at"] == "2026-08-10T22:00:00Z"
     assert result.creates[0]["ends_at"] == "2026-08-10T23:40:00Z"
@@ -80,7 +84,9 @@ def test_preview_reports_overlap_and_never_overwrites_attendance() -> None:
 
     result = reconcile_teaching_plan_schedule([_row("2026-08-10")], [existing], now=NOW)
 
-    assert result.counts == {"matched": 0, "missing": 0, "conflicting": 1}
+    assert result.counts["matched"] == 0
+    assert result.counts["missing"] == 0
+    assert result.counts["conflicting"] == 1
     assert result.creates == ()
     assert result.conflicts == (
         {
@@ -98,8 +104,102 @@ def test_preview_is_idempotent_after_applying_its_create() -> None:
         [_row("2026-08-10")], list(first.creates), now=NOW
     )
 
-    assert second.counts == {"matched": 1, "missing": 0, "conflicting": 0}
+    assert second.counts["matched"] == 1
+    assert second.counts["missing"] == 0
+    assert second.counts["conflicting"] == 0
     assert second.creates == ()
+
+
+def test_reconciliation_links_assessment_to_matching_existing_session() -> None:
+    existing = _session("existing", "2026-08-10T22:00:00Z", "2026-08-10T23:40:00Z")
+    result = reconcile_teaching_plan_schedule(
+        [_row("2026-08-10")],
+        [existing],
+        assessments=[{
+            "code": "AV1",
+            "kind": "PROVA",
+            "title": "Primeira prova",
+            "scheduled_at": "2026-08-10T19:30:00-03:00",
+            "location": "Sala 1",
+            "value": "30.00",
+            "weight": "1.00",
+        }],
+        now=NOW,
+    )
+
+    assert result.updates[0]["id"] == "existing"
+    assert result.updates[0]["assessment_title"] == "Primeira prova"
+    assert result.updates[0]["attendance_status"] is None
+    assert result.counts["assessments_linked"] == 1
+
+
+def test_reconciliation_preserves_divergent_manual_assessment() -> None:
+    existing = _session("existing", "2026-08-10T22:00:00Z", "2026-08-10T23:40:00Z")
+    existing["assessment_title"] = "Título corrigido"
+    result = reconcile_teaching_plan_schedule(
+        [_row("2026-08-10")],
+        [existing],
+        assessments=[{
+            "code": "AV1",
+            "kind": "PROVA",
+            "title": "Primeira prova",
+            "scheduled_at": "2026-08-10T19:30:00-03:00",
+            "location": "Sala 1",
+            "value": "30.00",
+            "weight": "1.00",
+        }],
+        now=NOW,
+    )
+
+    assert result.updates == ()
+    assert result.counts["assessment_conflicts"] == 1
+    assert result.conflicts[-1]["reason"] == "assessment_title_mismatch"
+
+
+def test_reconciliation_keeps_equal_assessment_and_links_new_session() -> None:
+    assessment = {
+        "title": "Primeira prova",
+        "scheduled_at": "2026-08-10T19:30:00-03:00",
+    }
+    existing = _session("existing", "2026-08-10T22:00:00Z", "2026-08-10T23:40:00Z")
+    existing["assessment_title"] = "Primeira prova"
+    equal = reconcile_teaching_plan_schedule(
+        [_row("2026-08-10")], [existing], assessments=[assessment], now=NOW
+    )
+    created = reconcile_teaching_plan_schedule(
+        [_row("2026-08-10")], [], assessments=[assessment], now=NOW
+    )
+
+    assert equal.updates == ()
+    assert equal.counts["assessment_conflicts"] == 0
+    assert created.creates[0]["assessment_title"] == "Primeira prova"
+    assert created.counts["assessments_linked"] == 1
+
+
+@pytest.mark.parametrize(
+    "assessments",
+    ["invalid", [1], [{}], [{"title": "Prova", "scheduled_at": "invalid"}]],
+)
+def test_reconciliation_rejects_invalid_assessments(assessments: object) -> None:
+    with pytest.raises(InvalidTeachingPlanReconciliation, match="assessment"):
+        reconcile_teaching_plan_schedule(
+            [_row("2026-08-10")], [], assessments=assessments, now=NOW
+        )
+
+
+def test_reconciliation_leaves_assessment_outside_class_as_standalone() -> None:
+    result = reconcile_teaching_plan_schedule(
+        [_row("2026-08-10")],
+        [],
+        assessments=[{
+            "title": "Trabalho",
+            "scheduled_at": "2026-08-11T19:30:00-03:00",
+        }],
+        now=NOW,
+    )
+
+    assert result.creates[0]["assessment_title"] is None
+    assert result.counts["assessments_linked"] == 0
 
 
 def test_reconciliation_rejects_invalid_saved_sessions_and_clock() -> None:

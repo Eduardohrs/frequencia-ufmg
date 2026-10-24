@@ -152,6 +152,18 @@ final class _FirebasePythonBackendVerifier
   }
 
   @override
+  Future<PythonTeachingPlanReconciliation> reconcileMoodleTeachingPlan({
+    required String courseId,
+    required bool apply,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.reconcileMoodleTeachingPlan(
+      courseId: courseId,
+      apply: apply,
+    );
+  }
+
+  @override
   Future<List<PythonMoodleMaterialFile>> listMoodleMaterialFiles({
     required String term,
     required String courseId,
