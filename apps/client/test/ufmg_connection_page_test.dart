@@ -1087,6 +1087,100 @@ void main() {
     expect(logger.events, contains('moodle_teaching_plan_import_succeeded'));
   });
 
+  testWidgets(
+    'explains outside-grade plan items when there is nothing to apply',
+    (tester) async {
+      final gateway =
+          _Gateway(
+              status: const PythonUFMGSessionStatus(
+                connected: true,
+                reauthenticationRequired: false,
+              ),
+            )
+            ..reconciliationOutsideSchedule = 18
+            ..reconciliationConflicting = 1
+            ..materialCatalog = PythonMoodleContentDiscovery(
+              candidateTotal: 1,
+              metaturmaCandidateTotal: 0,
+              courses: [
+                PythonMoodleCourseContent(
+                  courseId: 'dcc203',
+                  courseCode: 'DCC203',
+                  term: '2026-2',
+                  moodleCourseId: '3701',
+                  status: PythonMoodleContentStatus.found,
+                  candidates: [
+                    PythonMoodleContentCandidate(
+                      sourceId: '701',
+                      moodleCourseId: '3701',
+                      kind: 'link',
+                      title: 'Plano de ensino',
+                      url: Uri.parse(
+                        'https://virtual.ufmg.br/20262/mod/url/view.php?id=701',
+                      ),
+                      relevance: 'teaching_plan',
+                      origin: PythonMoodleContentOrigin.canonical,
+                    ),
+                  ],
+                ),
+              ],
+            );
+      final logger = _Logger();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(gateway: gateway, logger: logger),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('moodle-content-dcc203')),
+      );
+      await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+      await tester.pumpAndSettle();
+      final probeButton = find.byKey(const Key('moodle-diario-probe-701'));
+      await tester.ensureVisible(probeButton);
+      await tester.tap(probeButton);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.byKey(const Key('teaching-plan-no-change-notice')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Plano importado sem alterações automáticas'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('18 itens estão fora da grade'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('1 conflito precisa de revisão manual'),
+        findsOneWidget,
+      );
+      expect(gateway.reconciliationRequests, [('dcc203', false)]);
+      expect(
+        logger.actions,
+        contains('moodle_teaching_plan_review_notice_shown'),
+      );
+
+      await tester.tap(
+        find.byKey(const Key('teaching-plan-no-change-notice-close')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        logger.actions,
+        contains('moodle_teaching_plan_review_notice_acknowledged'),
+      );
+      expect(
+        find.textContaining('18 itens fora da grade foram mantidos'),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('explains expired Diario validation', (tester) async {
     final gateway =
         _Gateway(
@@ -2719,6 +2813,7 @@ final class _Gateway
   int reconciliationConflicting = 0;
   int reconciliationAssessmentsLinked = 0;
   int reconciliationOutsideSchedule = 0;
+  String reconciliationWorkloadStatus = 'below_expected';
   PythonMoodleContentDiscovery materialCatalog =
       const PythonMoodleContentDiscovery(
         courses: [],
@@ -2823,8 +2918,8 @@ final class _Gateway
         ),
       ),
       excluded: const [],
-      workloadValidation: const PythonWorkloadValidation(
-        status: 'below_expected',
+      workloadValidation: PythonWorkloadValidation(
+        status: reconciliationWorkloadStatus,
         expectedLessonUnits: 60,
         actualLessonUnits: 58,
         differenceLessonUnits: -2,
@@ -3069,6 +3164,9 @@ final class _Gateway
 final class _Logger implements AppLogger {
   final events = <String>[];
   final parameters = <Map<String, Object>?>[];
+
+  Iterable<Object?> get actions =>
+      parameters.map((parameters) => parameters?['action']);
 
   @override
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
