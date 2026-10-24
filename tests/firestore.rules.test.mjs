@@ -148,6 +148,9 @@ const operationalLog = (overrides = {}) => ({
   operation: "firestore_course_save",
   outcome: "failed",
   durationMs: 125,
+  screen: null,
+  action: null,
+  failureCode: null,
   errorType: "FirebaseException",
   errorCode: "permission-denied",
   errorMessage: "The caller does not have permission.",
@@ -272,6 +275,29 @@ describe("operational logs", () => {
     await assertFails(deleteDoc(reference));
   });
 
+  test("accepts bounded client interaction diagnostics", async () => {
+    const reference = doc(dbFor("alice"), logPath("alice", "interaction"));
+
+    await assertSucceeds(
+      setDoc(
+        reference,
+        operationalLog({
+          level: "info",
+          event: "ui_interaction",
+          operation: null,
+          outcome: null,
+          durationMs: null,
+          screen: "ufmg_connection",
+          action: "moodle_teaching_plan_review_notice_shown",
+          failureCode: null,
+          errorType: null,
+          errorCode: null,
+          errorMessage: null,
+        }),
+      ),
+    );
+  });
+
   test("owner can delete only an expired log", async () => {
     const expiredPath = logPath("alice", "expired");
     const expiredAt = Timestamp.fromDate(new Date(Date.now() - 60 * 1000));
@@ -303,6 +329,9 @@ describe("operational logs", () => {
       operationalLog({ platform: "ios" }),
       operationalLog({ correlationId: "" }),
       operationalLog({ durationMs: -1 }),
+      operationalLog({ screen: "x".repeat(81) }),
+      operationalLog({ action: "x".repeat(81) }),
+      operationalLog({ failureCode: "x".repeat(121) }),
       operationalLog({ errorMessage: "x".repeat(501) }),
       operationalLog({ expiresAt: Timestamp.fromDate(new Date(Date.now() + 32 * 24 * 60 * 60 * 1000)) }),
       withoutField(operationalLog(), "fatal"),

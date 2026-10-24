@@ -47,6 +47,9 @@ service cloud.firestore {
         'operation',
         'outcome',
         'durationMs',
+        'screen',
+        'action',
+        'failureCode',
         'errorType',
         'errorCode',
         'errorMessage',
@@ -73,6 +76,9 @@ service cloud.firestore {
         && isNullableString(data.outcome, 24)
         && (data.durationMs == null
           || (data.durationMs is int && data.durationMs >= 0))
+        && isNullableString(data.screen, 80)
+        && isNullableString(data.action, 80)
+        && isNullableString(data.failureCode, 120)
         && isNullableString(data.errorType, 120)
         && isNullableString(data.errorCode, 120)
         && isNullableString(data.errorMessage, 500)
