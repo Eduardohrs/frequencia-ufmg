@@ -179,6 +179,7 @@ final class PythonDiarioPlanProbe {
 final class PythonTeachingPlanImport {
   const PythonTeachingPlanImport({
     required this.assessmentTotal,
+    required this.undatedAssessmentTotal,
     required this.criteriaTotal,
     required this.scheduleTotal,
     required this.createdDates,
@@ -187,6 +188,7 @@ final class PythonTeachingPlanImport {
   });
 
   final int assessmentTotal;
+  final int undatedAssessmentTotal;
   final int criteriaTotal;
   final int scheduleTotal;
   final int createdDates;
@@ -1659,6 +1661,7 @@ final class PythonBackendTransport
         'source_id',
         'plan',
         'assessment_total',
+        'undated_assessment_total',
         'dates_created',
         'dates_updated',
         'dates_unchanged',
@@ -1688,6 +1691,7 @@ final class PythonBackendTransport
       count('dates_unchanged', 100);
       return PythonTeachingPlanImport(
         assessmentTotal: count('assessment_total', 100),
+        undatedAssessmentTotal: count('undated_assessment_total', 100),
         criteriaTotal: count('criteria_total', 100),
         scheduleTotal: count('schedule_total', 1000),
         createdDates: count('dates_created', 100),
