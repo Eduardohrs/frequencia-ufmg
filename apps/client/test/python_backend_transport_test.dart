@@ -993,6 +993,18 @@ void main() {
             'assessments_linked': 1,
             'assessment_conflicts': 0,
             'outside_schedule': 1,
+            'workload_validation': {
+              'status': 'below_expected',
+              'expected_lesson_units': 60,
+              'actual_lesson_units': 58,
+              'difference_lesson_units': -2,
+              'expected_typical_meetings': 30,
+              'active_encounters': 29,
+              'excluded_encounters': 2,
+              'scheduled_lesson_units': 54,
+              'no_call_lesson_units': 2,
+              'makeup_lesson_units': 2,
+            },
             'applied': apply ? 2 : 0,
             'changes': [
               {
@@ -1049,6 +1061,10 @@ void main() {
     expect(preview.outsideSchedule, 1);
     expect(preview.changes.single.subject, 'Polimorfismo');
     expect(preview.excluded.single.reason, 'outside_weekly_schedule');
+    expect(preview.workloadValidation.status, 'below_expected');
+    expect(preview.workloadValidation.expectedLessonUnits, 60);
+    expect(preview.workloadValidation.actualLessonUnits, 58);
+    expect(preview.workloadValidation.noCallLessonUnits, 2);
     expect(applied.applied, 2);
   });
 

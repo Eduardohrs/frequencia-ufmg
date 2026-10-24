@@ -354,6 +354,21 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                       '${reconciliation.matched} aulas já conferem com o plano. '
                       'Estas são as alterações que serão aplicadas:',
                     ),
+                    if (reconciliation.workloadValidation.status !=
+                        'aligned') ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        'O calendário resultante tem '
+                        '${reconciliation.workloadValidation.actualLessonUnits} de '
+                        '${reconciliation.workloadValidation.expectedLessonUnits} '
+                        'horas-aula de 50 minutos '
+                        '(${reconciliation.workloadValidation.activeEncounters} de '
+                        '${reconciliation.workloadValidation.expectedTypicalMeetings} '
+                        'encontros de 2 aulas como referência). '
+                        'A carga apenas sinaliza a divergência; nenhuma aula será '
+                        'criada ou removida para completar esse número.',
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     for (final change in reconciliation.changes)
                       Padding(

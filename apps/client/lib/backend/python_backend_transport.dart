@@ -213,6 +213,7 @@ final class PythonTeachingPlanReconciliation {
     required this.applied,
     required this.changes,
     required this.excluded,
+    required this.workloadValidation,
   });
 
   final String mode;
@@ -225,6 +226,86 @@ final class PythonTeachingPlanReconciliation {
   final int applied;
   final List<PythonTeachingPlanChange> changes;
   final List<PythonTeachingPlanChange> excluded;
+  final PythonWorkloadValidation workloadValidation;
+}
+
+final class PythonWorkloadValidation {
+  const PythonWorkloadValidation({
+    required this.status,
+    required this.expectedLessonUnits,
+    required this.actualLessonUnits,
+    required this.differenceLessonUnits,
+    required this.expectedTypicalMeetings,
+    required this.activeEncounters,
+    required this.excludedEncounters,
+    required this.scheduledLessonUnits,
+    required this.noCallLessonUnits,
+    required this.makeupLessonUnits,
+  });
+
+  factory PythonWorkloadValidation.fromJson(Map<String, Object?> json) {
+    const keys = {
+      'status',
+      'expected_lesson_units',
+      'actual_lesson_units',
+      'difference_lesson_units',
+      'expected_typical_meetings',
+      'active_encounters',
+      'excluded_encounters',
+      'scheduled_lesson_units',
+      'no_call_lesson_units',
+      'makeup_lesson_units',
+    };
+    if (!_hasExactKeys(json, keys)) throw const FormatException();
+    final status = json['status'];
+    int integer(String key, {bool positive = false}) {
+      final value = json[key];
+      if (value is! int || positive && value <= 0 || !positive && value < 0) {
+        throw const FormatException();
+      }
+      return value;
+    }
+
+    final difference = json['difference_lesson_units'];
+    if (status is! String ||
+        !{'aligned', 'below_expected', 'above_expected'}.contains(status) ||
+        difference is! int) {
+      throw const FormatException();
+    }
+    final expected = integer('expected_lesson_units', positive: true);
+    final actual = integer('actual_lesson_units');
+    if (actual - expected != difference ||
+        (difference == 0) != (status == 'aligned') ||
+        (difference < 0) != (status == 'below_expected')) {
+      throw const FormatException();
+    }
+    return PythonWorkloadValidation(
+      status: status,
+      expectedLessonUnits: expected,
+      actualLessonUnits: actual,
+      differenceLessonUnits: difference,
+      expectedTypicalMeetings: integer(
+        'expected_typical_meetings',
+        positive: true,
+      ),
+      activeEncounters: integer('active_encounters'),
+      excludedEncounters: integer('excluded_encounters'),
+      scheduledLessonUnits: integer('scheduled_lesson_units'),
+      noCallLessonUnits: integer('no_call_lesson_units'),
+      makeupLessonUnits: integer('makeup_lesson_units'),
+    );
+  }
+
+  final String status;
+  final int expectedLessonUnits;
+  final int actualLessonUnits;
+  final int differenceLessonUnits;
+  final int expectedTypicalMeetings;
+  final int activeEncounters;
+  final int excludedEncounters;
+  final int scheduledLessonUnits;
+  final int noCallLessonUnits;
+  final int makeupLessonUnits;
 }
 
 final class PythonTeachingPlanChange {
@@ -1818,6 +1899,7 @@ final class PythonBackendTransport
         'assessments_linked',
         'assessment_conflicts',
         'outside_schedule',
+        'workload_validation',
         'applied',
         'changes',
         'excluded',
@@ -1838,12 +1920,14 @@ final class PythonBackendTransport
       final conflicts = value['conflicts'];
       final changes = value['changes'];
       final excluded = value['excluded'];
+      final workloadValidation = value['workload_validation'];
       if (value['course_id'] != courseId ||
           mode != (apply ? 'applied' : 'preview') ||
           conflicts is! List ||
           conflicts.length != count('conflicting') ||
           changes is! List ||
           excluded is! List ||
+          workloadValidation is! Map ||
           excluded.length != count('outside_schedule')) {
         throw const FormatException();
       }
@@ -1866,6 +1950,9 @@ final class PythonBackendTransport
         applied: count('applied'),
         changes: decodeChanges(changes.cast<Object?>()),
         excluded: decodeChanges(excluded.cast<Object?>()),
+        workloadValidation: PythonWorkloadValidation.fromJson(
+          Map<String, Object?>.from(workloadValidation),
+        ),
       );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);

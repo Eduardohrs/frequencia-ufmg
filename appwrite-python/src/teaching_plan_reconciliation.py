@@ -25,6 +25,7 @@ class TeachingPlanReconciliation:
     excluded: tuple[dict[str, object], ...]
     conflicts: tuple[dict[str, object], ...]
     counts: dict[str, int]
+    workload_validation: dict[str, int | str] | None
 
 
 def reconcile_teaching_plan_schedule(
@@ -33,6 +34,7 @@ def reconcile_teaching_plan_schedule(
     *,
     assessments: object = None,
     meetings: Iterable[Mapping[str, Any]] | None = None,
+    workload: int | None = None,
     now: datetime,
 ) -> TeachingPlanReconciliation:
     """Preview additive changes; exact matches remain untouched and overlaps conflict."""
@@ -48,6 +50,8 @@ def reconcile_teaching_plan_schedule(
         weekly = None if meetings is None else [validate_saved_meeting(item) for item in meetings]
     except InvalidSchedule:
         raise InvalidTeachingPlanReconciliation("invalid saved meeting") from None
+    if workload is not None and (type(workload) is not int or workload <= 0):
+        raise InvalidTeachingPlanReconciliation("invalid workload")
     occurrences = [_occurrence(item, timestamp) for item in schedule]
     assessment_titles = _assessment_titles(assessments or [], occurrences)
     keys = [str(item["occurrence_key"]) for item in occurrences]
@@ -148,6 +152,14 @@ def reconcile_teaching_plan_schedule(
             "assessment_conflicts": assessment_conflicts,
             "outside_schedule": outside_schedule,
         },
+        workload_validation=None
+        if workload is None
+        else _validate_workload(
+            workload,
+            sessions,
+            creates=creates,
+            delete_ids=delete_ids,
+        ),
     )
 
 
@@ -263,6 +275,49 @@ def _is_unmodified_import(
         and session["calendar_status"] == "scheduled"
         and session["assessment_title"] is None
     )
+
+
+def _validate_workload(
+    expected: int,
+    existing: list[dict[str, Any]],
+    *,
+    creates: list[dict[str, Any]],
+    delete_ids: list[str],
+) -> dict[str, int | str]:
+    removed = set(delete_ids)
+    effective = [item for item in existing if item["id"] not in removed] + creates
+    counted = [
+        item for item in effective if item["calendar_status"] not in {"cancelled", "holiday"}
+    ]
+    actual = sum(int(item["lesson_count"]) for item in counted)
+    difference = actual - expected
+    status = (
+        "aligned"
+        if difference == 0
+        else "below_expected"
+        if difference < 0
+        else "above_expected"
+    )
+
+    def units(calendar_status: str) -> int:
+        return sum(
+            int(item["lesson_count"])
+            for item in counted
+            if item["calendar_status"] == calendar_status
+        )
+
+    return {
+        "status": status,
+        "expected_lesson_units": expected,
+        "actual_lesson_units": actual,
+        "difference_lesson_units": difference,
+        "expected_typical_meetings": (expected + 1) // 2,
+        "active_encounters": len(counted),
+        "excluded_encounters": len(effective) - len(counted),
+        "scheduled_lesson_units": units("scheduled"),
+        "no_call_lesson_units": units("no_call"),
+        "makeup_lesson_units": units("makeup"),
+    }
 
 
 def _assessment_titles(

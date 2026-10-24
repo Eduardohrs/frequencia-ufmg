@@ -46,6 +46,14 @@ class FakeFirestore:
             return self.courses
         return self.children[segments[-1]]
 
+    def get_user_document(self, *segments: str) -> dict[str, Any]:
+        identifier = segments[-1]
+        return next(
+            document
+            for document in self.courses
+            if str(document["name"]).endswith(f"/{identifier}")
+        )
+
     def patch_user_document(self, *segments: str, fields: dict[str, Any]) -> dict[str, Any]:
         return {"name": f"root/{segments[-1]}", "fields": fields}
 
@@ -62,6 +70,7 @@ def test_repository_lists_sorted_courses_and_saves_updates() -> None:
 
     assert [course["code"] for course in repository.list_courses()] == ["DCC203", "MAT001"]
     assert repository.save_course(_course())["id"] == "course-1"
+    assert repository.get_course("course-1")["workload"] == 1
 
 
 def test_repository_rejects_duplicate_code_for_a_different_course() -> None:

@@ -34,6 +34,10 @@ class CourseRepository:
         ]
         return sorted(courses, key=lambda course: (course["code"], course["id"]))
 
+    def get_course(self, course_id: str) -> dict[str, Any]:
+        identifier = validate_course_id(course_id)
+        return self._decode(self._firestore.get_user_document("courses", identifier))
+
     def save_course(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         course = validate_course(payload)
         existing_courses = self.list_courses()
