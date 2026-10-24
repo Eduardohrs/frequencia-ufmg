@@ -891,6 +891,7 @@ void main() {
             'source_id': '701',
             'plan': 'created',
             'assessment_total': 2,
+            'undated_assessment_total': 3,
             'dates_created': 2,
             'dates_updated': 0,
             'dates_unchanged': 0,
@@ -917,6 +918,7 @@ void main() {
       'source_id': 701,
     });
     expect(result.assessmentTotal, 2);
+    expect(result.undatedAssessmentTotal, 3);
     expect(result.criteriaTotal, 1);
     expect(result.scheduleTotal, 30);
     expect(result.createdDates, 2);
@@ -934,6 +936,7 @@ void main() {
             'source_id': '701',
             'plan': 'created',
             'assessment_total': 101,
+            'undated_assessment_total': 0,
             'dates_created': 2,
             'dates_updated': 0,
             'dates_unchanged': 0,

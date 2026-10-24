@@ -331,7 +331,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         SnackBar(
           content: Text(
             'Plano importado: ${imported.assessmentTotal} avaliações, '
-            '${imported.scheduleTotal} aulas e ${imported.criteriaTotal} critérios.',
+            '${imported.scheduleTotal} aulas e ${imported.criteriaTotal} critérios.'
+            '${imported.undatedAssessmentTotal == 0 ? '' : ' '
+                      '${imported.undatedAssessmentTotal} avaliações ainda estão sem data.'}',
           ),
         ),
       );

@@ -994,6 +994,7 @@ void main() {
               reauthenticationRequired: false,
             ),
           )
+          ..undatedAssessmentTotal = 6
           ..materialCatalog = PythonMoodleContentDiscovery(
             candidateTotal: 1,
             metaturmaCandidateTotal: 0,
@@ -1038,7 +1039,10 @@ void main() {
 
     expect(gateway.diarioImportRequests, [('dcc203', '2026-2', '701')]);
     expect(
-      find.text('Plano importado: 2 avaliações, 30 aulas e 2 critérios.'),
+      find.text(
+        'Plano importado: 2 avaliações, 30 aulas e 2 critérios. '
+        '6 avaliações ainda estão sem data.',
+      ),
       findsOneWidget,
     );
     expect(logger.events, contains('moodle_teaching_plan_import_succeeded'));
@@ -2670,6 +2674,7 @@ final class _Gateway
   final diarioProbeRequests = <(String, String)>[];
   final diarioImportRequests = <(String, String, String)>[];
   Object? diarioProbeError;
+  int undatedAssessmentTotal = 0;
   PythonMoodleContentDiscovery materialCatalog =
       const PythonMoodleContentDiscovery(
         courses: [],
@@ -2737,8 +2742,9 @@ final class _Gateway
   }) async {
     diarioImportRequests.add((courseId, term, sourceId));
     if (diarioProbeError case final error?) throw error;
-    return const PythonTeachingPlanImport(
+    return PythonTeachingPlanImport(
       assessmentTotal: 2,
+      undatedAssessmentTotal: undatedAssessmentTotal,
       criteriaTotal: 2,
       scheduleTotal: 30,
       createdDates: 2,
