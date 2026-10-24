@@ -209,7 +209,10 @@ final class PythonTeachingPlanReconciliation {
     required this.conflicting,
     required this.assessmentsLinked,
     required this.assessmentConflicts,
+    required this.outsideSchedule,
     required this.applied,
+    required this.changes,
+    required this.excluded,
   });
 
   final String mode;
@@ -218,7 +221,73 @@ final class PythonTeachingPlanReconciliation {
   final int conflicting;
   final int assessmentsLinked;
   final int assessmentConflicts;
+  final int outsideSchedule;
   final int applied;
+  final List<PythonTeachingPlanChange> changes;
+  final List<PythonTeachingPlanChange> excluded;
+}
+
+final class PythonTeachingPlanChange {
+  const PythonTeachingPlanChange({
+    required this.action,
+    required this.date,
+    required this.startsAt,
+    required this.endsAt,
+    required this.subject,
+    this.reason,
+  });
+
+  factory PythonTeachingPlanChange.fromJson(Map<String, Object?> json) {
+    const requiredKeys = {
+      'action',
+      'occurrence_key',
+      'date',
+      'starts_at',
+      'ends_at',
+      'subject',
+    };
+    final allowed = {...requiredKeys, 'reason'};
+    if (json.keys.toSet().difference(allowed).isNotEmpty ||
+        requiredKeys.difference(json.keys.toSet()).isNotEmpty) {
+      throw const FormatException();
+    }
+    final action = json['action'];
+    final date = DateTime.tryParse('${json['date']}');
+    final startsAt = json['starts_at'];
+    final endsAt = json['ends_at'];
+    final subject = json['subject'];
+    final reason = json['reason'];
+    if (action is! String ||
+        !{
+          'create_session',
+          'remove_session',
+          'link_assessment',
+          'excluded',
+        }.contains(action) ||
+        date == null ||
+        startsAt is! String ||
+        endsAt is! String ||
+        subject is! String ||
+        subject.isEmpty ||
+        reason != null && reason is! String) {
+      throw const FormatException();
+    }
+    return PythonTeachingPlanChange(
+      action: action,
+      date: date,
+      startsAt: startsAt,
+      endsAt: endsAt,
+      subject: subject,
+      reason: reason as String?,
+    );
+  }
+
+  final String action;
+  final DateTime date;
+  final String startsAt;
+  final String endsAt;
+  final String subject;
+  final String? reason;
 }
 
 final class PythonMoodleContentCandidate {
@@ -1748,7 +1817,10 @@ final class PythonBackendTransport
         'conflicting',
         'assessments_linked',
         'assessment_conflicts',
+        'outside_schedule',
         'applied',
+        'changes',
+        'excluded',
         'conflicts',
       };
       if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
@@ -1764,12 +1836,25 @@ final class PythonBackendTransport
 
       final mode = value['mode'];
       final conflicts = value['conflicts'];
+      final changes = value['changes'];
+      final excluded = value['excluded'];
       if (value['course_id'] != courseId ||
           mode != (apply ? 'applied' : 'preview') ||
           conflicts is! List ||
-          conflicts.length != count('conflicting')) {
+          conflicts.length != count('conflicting') ||
+          changes is! List ||
+          excluded is! List ||
+          excluded.length != count('outside_schedule')) {
         throw const FormatException();
       }
+      List<PythonTeachingPlanChange> decodeChanges(List<Object?> values) =>
+          values
+              .map(
+                (item) => PythonTeachingPlanChange.fromJson(
+                  Map<String, Object?>.from(item as Map),
+                ),
+              )
+              .toList(growable: false);
       return PythonTeachingPlanReconciliation(
         mode: mode as String,
         matched: count('matched'),
@@ -1777,7 +1862,10 @@ final class PythonBackendTransport
         conflicting: count('conflicting'),
         assessmentsLinked: count('assessments_linked'),
         assessmentConflicts: count('assessment_conflicts'),
+        outsideSchedule: count('outside_schedule'),
         applied: count('applied'),
+        changes: decodeChanges(changes.cast<Object?>()),
+        excluded: decodeChanges(excluded.cast<Object?>()),
       );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);

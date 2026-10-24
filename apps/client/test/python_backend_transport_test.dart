@@ -992,7 +992,29 @@ void main() {
             'conflicting': 1,
             'assessments_linked': 1,
             'assessment_conflicts': 0,
+            'outside_schedule': 1,
             'applied': apply ? 2 : 0,
+            'changes': [
+              {
+                'action': 'create_session',
+                'occurrence_key': '2026-08-10T19:00-20:40',
+                'date': '2026-08-10',
+                'starts_at': '19:00',
+                'ends_at': '20:40',
+                'subject': 'Polimorfismo',
+              },
+            ],
+            'excluded': [
+              {
+                'action': 'excluded',
+                'occurrence_key': '2026-08-11T19:00-20:40',
+                'date': '2026-08-11',
+                'starts_at': '19:00',
+                'ends_at': '20:40',
+                'subject': 'Atividade assíncrona',
+                'reason': 'outside_weekly_schedule',
+              },
+            ],
             'conflicts': [
               {
                 'occurrence_key': '2026-08-10T19:00-20:40',
@@ -1024,6 +1046,9 @@ void main() {
     expect(preview.missing, 2);
     expect(preview.conflicting, 1);
     expect(preview.assessmentsLinked, 1);
+    expect(preview.outsideSchedule, 1);
+    expect(preview.changes.single.subject, 'Polimorfismo');
+    expect(preview.excluded.single.reason, 'outside_weekly_schedule');
     expect(applied.applied, 2);
   });
 

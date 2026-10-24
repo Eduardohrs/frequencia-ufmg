@@ -6,7 +6,7 @@ from typing import cast
 
 from course_repository import validate_course_id
 from firestore_rest import FirestoreRestClient
-from schedule_repository import _decode_session, _session_to_firestore
+from schedule_repository import _decode_meeting, _decode_session, _session_to_firestore
 from teaching_plan_reconciliation import reconcile_teaching_plan_schedule
 from teaching_plan_repository import TeachingPlanRepository
 
@@ -29,15 +29,22 @@ class TeachingPlanReconciliationRepository:
                 "courses", identifier, "sessions"
             )
         ]
+        meetings = [
+            _decode_meeting(document)
+            for document in self._firestore.list_user_documents(
+                "courses", identifier, "meetings"
+            )
+        ]
         preview = reconcile_teaching_plan_schedule(
             plan.get("schedule"),
             sessions,
             assessments=plan.get("assessments"),
+            meetings=meetings,
             now=self._now(),
         )
         applied = 0
         writes = (*preview.creates, *preview.updates)
-        if apply and writes:
+        if apply and (writes or preview.delete_ids):
             self._firestore.commit_user_documents(
                 updates=[
                     (
@@ -46,13 +53,18 @@ class TeachingPlanReconciliationRepository:
                     )
                     for item in writes
                 ],
-                deletes=[],
+                deletes=[
+                    ("courses", identifier, "sessions", session_id)
+                    for session_id in preview.delete_ids
+                ],
             )
-            applied = len(writes)
+            applied = len(writes) + len(preview.delete_ids)
         return {
             "course_id": identifier,
             "mode": "applied" if apply else "preview",
             **preview.counts,
             "applied": applied,
+            "changes": list(preview.changes),
+            "excluded": list(preview.excluded),
             "conflicts": list(preview.conflicts),
         }
