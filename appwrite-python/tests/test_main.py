@@ -1290,7 +1290,22 @@ def test_teaching_plan_import_route_returns_sanitized_summary(
 
     assert result["status"] == 200
     assert result["body"]["assessment_total"] == 2
-    assert '"event":"teaching_plan_import_succeeded"' in context.logs[0]
+    assert json.loads(context.logs[0]) == {
+        "assessment_total": 2,
+        "confidence": "authoritative",
+        "course_id": "course-a",
+        "criteria_total": 2,
+        "dates_created": 2,
+        "dates_removed": 0,
+        "dates_unchanged": 0,
+        "dates_updated": 0,
+        "event": "teaching_plan_import_succeeded",
+        "plan_outcome": "created",
+        "schedule_total": 30,
+        "source_id": "701",
+        "term": "2026-2",
+        "undated_assessment_total": 0,
+    }
 
 
 def test_teaching_plan_import_returns_authentication_rejection(
@@ -2443,6 +2458,7 @@ def test_request_id_is_echoed_and_correlates_the_request_log(
         "event": "request_completed",
         "firestore_duration_ms": 0.0,
         "firestore_failures": 0,
+        "firestore_not_found": 0,
         "firestore_reads": 0,
         "firestore_writes": 0,
         "method": "OPTIONS",
@@ -2555,15 +2571,20 @@ def test_firestore_telemetry_aggregates_without_identifiers(
         )
         captured["telemetry"](
             "firestore_request_completed",
+            {"duration_ms": 1, "kind": "read", "outcome": "not_found"},
+        )
+        captured["telemetry"](
+            "firestore_request_completed",
             {"duration_ms": "invalid", "kind": "read", "outcome": "succeeded"},
         )
     finally:
         function._REQUEST_METRICS.reset(metrics_token)
 
     assert metrics.snapshot() == {
-        "firestore_duration_ms": 14.25,
+        "firestore_duration_ms": 15.25,
         "firestore_failures": 1,
-        "firestore_reads": 2,
+        "firestore_not_found": 1,
+        "firestore_reads": 3,
         "firestore_writes": 1,
     }
     assert "private-user" not in json.dumps(metrics.snapshot())

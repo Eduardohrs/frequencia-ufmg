@@ -364,6 +364,33 @@ def test_request_emits_sanitized_dependency_telemetry() -> None:
     assert "private" not in json.dumps(events)
 
 
+def test_missing_document_is_an_observable_miss_not_a_dependency_failure() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    client = FirestoreRestClient(
+        "project",
+        "user",
+        "token",
+        transport=lambda _request, _timeout: (404, b"{}"),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    )
+
+    with pytest.raises(FirestoreNotFound):
+        client.get_user_document("courses", "course", "teachingPlans", "current")
+
+    assert events == [
+        (
+            "firestore_request_completed",
+            {
+                "duration_ms": pytest.approx(0, abs=100),
+                "kind": "read",
+                "method": "GET",
+                "outcome": "not_found",
+                "status_class": "4xx",
+            },
+        )
+    ]
+
+
 def test_dependency_telemetry_failure_never_blocks_firestore() -> None:
     def fail(_event: str, _fields: Mapping[str, object]) -> None:
         raise RuntimeError("telemetry unavailable")

@@ -205,6 +205,7 @@ class FirestoreRestClient:
             if status in (401, 403):
                 raise FirestoreAccessDenied("Firestore denied the request")
             if status == 404:
+                outcome = "not_found"
                 raise FirestoreNotFound("Firestore document was not found")
             if status == 400:
                 raise FirestoreRequestRejected("Firestore rejected the request")

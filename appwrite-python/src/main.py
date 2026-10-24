@@ -132,6 +132,7 @@ class _RequestMetrics:
         self._reads = 0
         self._writes = 0
         self._failures = 0
+        self._not_found = 0
         self._duration_ms = 0.0
 
     def record(self, _event: str, fields: Mapping[str, object]) -> None:
@@ -140,7 +141,10 @@ class _RequestMetrics:
                 self._reads += 1
             else:
                 self._writes += 1
-            if fields.get("outcome") != "succeeded":
+            outcome = fields.get("outcome")
+            if outcome == "not_found":
+                self._not_found += 1
+            elif outcome != "succeeded":
                 self._failures += 1
             duration = fields.get("duration_ms")
             if isinstance(duration, int | float):
@@ -151,6 +155,7 @@ class _RequestMetrics:
             return {
                 "firestore_duration_ms": round(self._duration_ms, 3),
                 "firestore_failures": self._failures,
+                "firestore_not_found": self._not_found,
                 "firestore_reads": self._reads,
                 "firestore_writes": self._writes,
             }
@@ -958,12 +963,17 @@ def _moodle_teaching_plan_import(context: Any, origin: str | None) -> Any:
         context,
         "teaching_plan_import_succeeded",
         assessment_total=result["assessment_total"],
+        course_id=result["course_id"],
         undated_assessment_total=result["undated_assessment_total"],
         criteria_total=result["criteria_total"],
         schedule_total=result["schedule_total"],
         dates_created=result["dates_created"],
         dates_updated=result["dates_updated"],
+        dates_unchanged=result["dates_unchanged"],
         dates_removed=result["dates_removed"],
+        plan_outcome=result["plan"],
+        source_id=result["source_id"],
+        term=result["term"],
         confidence=result["confidence"],
     )
     return _respond(context, result, origin=origin)
