@@ -90,6 +90,10 @@ from session_service import (  # noqa: E402
     InactiveAttendanceSession,
     InvalidSessionMutation,
 )
+from teaching_plan_reconciliation import InvalidTeachingPlanReconciliation  # noqa: E402
+from teaching_plan_reconciliation_repository import (  # noqa: E402
+    TeachingPlanReconciliationRepository,
+)
 from teaching_plan_repository import (  # noqa: E402
     InvalidTeachingPlan,
     TeachingPlanRepository,
@@ -265,6 +269,8 @@ def _dispatch(context: Any) -> Any:
         return _moodle_diario_plan(context, allowed_origin)
     if path == "/v1/ufmg/import/teaching-plan" and method == "POST":
         return _moodle_teaching_plan_import(context, allowed_origin)
+    if path == "/v1/ufmg/reconcile/teaching-plan" and method == "POST":
+        return _teaching_plan_reconciliation(context, allowed_origin)
     if path == "/v1/ufmg/sync/moodle" and method == "POST":
         return _moodle_sync(context, allowed_origin)
     if path == "/v1/ufmg/sync" and method == "POST":
@@ -979,6 +985,67 @@ def _moodle_teaching_plan_import(context: Any, origin: str | None) -> Any:
     return _respond(context, result, origin=origin)
 
 
+def _teaching_plan_reconciliation(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(
+        context, origin, "/v1/ufmg/reconcile/teaching-plan/post"
+    )
+    if rejected is not None:
+        return rejected
+    payload = context.req.body_json
+    if (
+        not isinstance(payload, Mapping)
+        or set(payload) != {"course_id", "apply"}
+        or not isinstance(payload["course_id"], str)
+        or type(payload["apply"]) is not bool
+    ):
+        return _ufmg_session_error(
+            context, origin, "teaching_plan_reconciliation_rejected", 400
+        )
+    try:
+        result = _teaching_plan_reconciliation_repository(
+            context.req.headers, cast(str, user_id)
+        ).reconcile(payload["course_id"], apply=payload["apply"])
+    except FirestoreNotFound:
+        return _ufmg_session_error(
+            context, origin, "teaching_plan_not_found", 404,
+            course_id=payload["course_id"], mode="apply" if payload["apply"] else "preview",
+            stage="load_teaching_plan",
+        )
+    except (InvalidCourse, InvalidTeachingPlan, InvalidTeachingPlanReconciliation, TypeError):
+        return _ufmg_session_error(
+            context, origin, "teaching_plan_reconciliation_rejected", 400,
+            course_id=payload["course_id"], mode="apply" if payload["apply"] else "preview",
+            stage="validate_reconciliation",
+        )
+    except FirestoreAccessDenied:
+        return _ufmg_session_error(
+            context, origin, "teaching_plan_reconciliation_access_denied", 403,
+            course_id=payload["course_id"], mode="apply" if payload["apply"] else "preview",
+            stage="firestore_access",
+        )
+    except FirestoreUnavailable:
+        return _ufmg_session_error(
+            context, origin, "teaching_plan_reconciliation_store_unavailable", 503,
+            course_id=payload["course_id"], mode="apply" if payload["apply"] else "preview",
+            stage="firestore_transport",
+        )
+    _log(
+        context,
+        "teaching_plan_reconciliation_succeeded",
+        course_id=result["course_id"],
+        mode=result["mode"],
+        matched=result["matched"],
+        missing=result["missing"],
+        conflicting=result["conflicting"],
+        applied=result["applied"],
+        conflict_occurrence_keys=[
+            item["occurrence_key"]
+            for item in cast(list[dict[str, object]], result["conflicts"])
+        ],
+    )
+    return _respond(context, result, origin=origin)
+
+
 def _attendance(context: Any, origin: str | None) -> Any:
     _, rejected = _authentication(context, origin, "/v1/attendance/evaluate")
     if rejected is not None:
@@ -1191,6 +1258,12 @@ def _course_repository(headers: dict[str, str], user_id: str) -> CourseRepositor
 
 def _schedule_repository(headers: dict[str, str], user_id: str) -> ScheduleRepository:
     return ScheduleRepository(_firestore(headers, user_id))
+
+
+def _teaching_plan_reconciliation_repository(
+    headers: dict[str, str], user_id: str
+) -> TeachingPlanReconciliationRepository:
+    return TeachingPlanReconciliationRepository(_firestore(headers, user_id))
 
 
 def _session_repository(headers: dict[str, str], user_id: str) -> SessionMutationRepository:
@@ -1460,6 +1533,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/ufmg/moodle/material-files",
         "/v1/ufmg/moodle/diario-plan",
         "/v1/ufmg/import/teaching-plan",
+        "/v1/ufmg/reconcile/teaching-plan",
         "/v1/ufmg/sync/moodle",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
@@ -1597,6 +1671,7 @@ def _route_name(path: str) -> str:
         "/v1/ufmg/moodle/material-files",
         "/v1/ufmg/moodle/diario-plan",
         "/v1/ufmg/import/teaching-plan",
+        "/v1/ufmg/reconcile/teaching-plan",
         "/v1/ufmg/sync/moodle",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
