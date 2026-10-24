@@ -338,18 +338,58 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       );
       if (!mounted) return;
       var applied = 0;
-      if (reconciliation.missing > 0 || reconciliation.assessmentsLinked > 0) {
+      if (reconciliation.changes.isNotEmpty) {
         final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('Atualizar aulas da disciplina?'),
-            content: Text(
-              '${reconciliation.matched} aulas já correspondem ao plano. '
-              '${reconciliation.missing} aulas novas podem ser adicionadas.'
-              '${reconciliation.assessmentsLinked == 0 ? '' : ' '
-                        '${reconciliation.assessmentsLinked} avaliações serão ligadas às aulas.'}'
-              '${reconciliation.conflicting == 0 ? '' : ' '
-                        '${reconciliation.conflicting} conflitos serão preservados para revisão.'}',
+            title: Text('Aplicar alterações em ${course.courseCode}?'),
+            content: SizedBox(
+              width: 520,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${reconciliation.matched} aulas já conferem com o plano. '
+                      'Estas são as alterações que serão aplicadas:',
+                    ),
+                    const SizedBox(height: 12),
+                    for (final change in reconciliation.changes)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              change.action == 'remove_session'
+                                  ? Icons.remove_circle_outline
+                                  : Icons.add_circle_outline,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '${change.action == 'remove_session'
+                                    ? 'Remover aula'
+                                    : change.action == 'link_assessment'
+                                    ? 'Vincular avaliação'
+                                    : 'Adicionar aula'}\n'
+                                '${MaterialLocalizations.of(context).formatMediumDate(change.date)} '
+                                '• ${change.startsAt}–${change.endsAt}\n'
+                                '${change.subject}',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (reconciliation.conflicting > 0)
+                      Text(
+                        '${reconciliation.conflicting} conflitos não serão alterados automaticamente.',
+                      ),
+                  ],
+                ),
+              ),
             ),
             actions: [
               TextButton(
@@ -388,7 +428,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                       '${imported.undatedAssessmentTotal} avaliações ainda estão sem data.'}'
             '${applied == 0 ? '' : ' $applied atualizações aplicadas ao calendário.'}'
             '${reconciliation.conflicting == 0 ? '' : ' '
-                      '${reconciliation.conflicting == 1 ? '1 conflito precisa' : '${reconciliation.conflicting} conflitos precisam'} de revisão.'}',
+                      '${reconciliation.conflicting == 1 ? '1 conflito precisa' : '${reconciliation.conflicting} conflitos precisam'} de revisão.'}'
+            '${reconciliation.outsideSchedule == 0 ? '' : ' '
+                      '${reconciliation.outsideSchedule == 1 ? '1 item' : '${reconciliation.outsideSchedule} itens'} fora da grade ${reconciliation.outsideSchedule == 1 ? 'foi mantido' : 'foram mantidos'} fora da frequência.'}',
           ),
         ),
       );

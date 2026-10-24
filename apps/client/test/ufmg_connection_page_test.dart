@@ -998,6 +998,7 @@ void main() {
           ..reconciliationMissing = 2
           ..reconciliationConflicting = 1
           ..reconciliationAssessmentsLinked = 1
+          ..reconciliationOutsideSchedule = 1
           ..materialCatalog = PythonMoodleContentDiscovery(
             candidateTotal: 1,
             metaturmaCandidateTotal: 0,
@@ -1041,11 +1042,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('Atualizar aulas da disciplina?'), findsOneWidget);
-    expect(
-      find.textContaining('1 avaliações serão ligadas às aulas.'),
-      findsOneWidget,
-    );
+    expect(find.text('Aplicar alterações em DCC203?'), findsOneWidget);
+    expect(find.textContaining('Adicionar aula'), findsWidgets);
+    expect(find.textContaining('Aula 1'), findsOneWidget);
+    expect(find.textContaining('Aula 2'), findsOneWidget);
     await tester.tap(
       find.byKey(const Key('teaching-plan-reconciliation-cancel')),
     );
@@ -1075,7 +1075,8 @@ void main() {
       find.text(
         'Plano importado: 2 avaliações, 30 aulas e 2 critérios. '
         '6 avaliações ainda estão sem data. 2 atualizações aplicadas ao calendário. '
-        '1 conflito precisa de revisão.',
+        '1 conflito precisa de revisão. '
+        '1 item fora da grade foi mantido fora da frequência.',
       ),
       findsOneWidget,
     );
@@ -2713,6 +2714,7 @@ final class _Gateway
   int reconciliationMissing = 0;
   int reconciliationConflicting = 0;
   int reconciliationAssessmentsLinked = 0;
+  int reconciliationOutsideSchedule = 0;
   PythonMoodleContentDiscovery materialCatalog =
       const PythonMoodleContentDiscovery(
         courses: [],
@@ -2804,7 +2806,19 @@ final class _Gateway
       conflicting: reconciliationConflicting,
       assessmentsLinked: reconciliationAssessmentsLinked,
       assessmentConflicts: 0,
+      outsideSchedule: reconciliationOutsideSchedule,
       applied: apply ? reconciliationMissing : 0,
+      changes: List.generate(
+        reconciliationMissing,
+        (index) => PythonTeachingPlanChange(
+          action: 'create_session',
+          date: DateTime.utc(2026, 8, 10 + index),
+          startsAt: '19:00',
+          endsAt: '20:40',
+          subject: 'Aula ${index + 1}',
+        ),
+      ),
+      excluded: const [],
     );
   }
 

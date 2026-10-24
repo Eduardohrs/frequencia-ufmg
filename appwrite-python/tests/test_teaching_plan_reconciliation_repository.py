@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
+from schedule_repository import _meeting_to_firestore
 from teaching_plan_reconciliation_repository import TeachingPlanReconciliationRepository
 from teaching_plan_repository import TeachingPlanRepository
 
@@ -11,6 +12,7 @@ class Store:
     def __init__(self) -> None:
         self.documents: dict[tuple[str, ...], dict[str, Any]] = {}
         self.commits: list[list[Any]] = []
+        self.deletes: list[list[tuple[str, ...]]] = []
 
     def get_user_document(self, *segments: str) -> dict[str, Any]:
         return self.documents[segments]
@@ -27,10 +29,12 @@ class Store:
         ]
 
     def commit_user_documents(self, *, updates: list[Any], deletes: list[Any]) -> None:
-        assert deletes == []
         self.commits.append(updates)
+        self.deletes.append(deletes)
         for path, fields in updates:
             self.documents[path] = {"name": "/".join(path), "fields": fields}
+        for path in deletes:
+            self.documents.pop(path, None)
 
 
 def _plan() -> dict[str, object]:
@@ -63,6 +67,19 @@ def test_preview_never_writes_and_apply_is_idempotent() -> None:
     TeachingPlanRepository(store, now=lambda: NOW).save(
         "poo", source_id="1", plan=_plan()
     )
+    store.documents[("courses", "poo", "meetings", "monday-1900")] = {
+        "name": "courses/poo/meetings/monday-1900",
+        "fields": _meeting_to_firestore({
+            "id": "monday-1900",
+            "weekday": 1,
+            "start_minutes": 1140,
+            "end_minutes": 1240,
+            "lesson_count": 2,
+            "call_count": 1,
+            "created_at": "2026-08-01T12:00:00Z",
+            "updated_at": "2026-08-01T12:00:00Z",
+        }),
+    }
     repository = TeachingPlanReconciliationRepository(store, now=lambda: NOW)
 
     preview = repository.reconcile("poo", apply=False)
@@ -74,7 +91,17 @@ def test_preview_never_writes_and_apply_is_idempotent() -> None:
         "conflicting": 0,
         "assessments_linked": 0,
         "assessment_conflicts": 0,
+        "outside_schedule": 0,
         "applied": 0,
+        "changes": [{
+            "action": "create_session",
+            "occurrence_key": "2026-08-10T19:00-20:40",
+            "date": "2026-08-10",
+            "starts_at": "19:00",
+            "ends_at": "20:40",
+            "subject": "Polimorfismo",
+        }],
+        "excluded": [],
         "conflicts": [],
     }
     assert store.commits == []
@@ -85,4 +112,41 @@ def test_preview_never_writes_and_apply_is_idempotent() -> None:
     repeated = repository.reconcile("poo", apply=True)
     assert repeated["matched"] == 1
     assert repeated["applied"] == 0
+    assert len(store.commits) == 1
+
+
+def test_apply_removes_an_untouched_import_outside_the_saved_grade() -> None:
+    store = Store()
+    TeachingPlanRepository(store, now=lambda: NOW).save(
+        "poo", source_id="1", plan=_plan()
+    )
+    store.documents[("courses", "poo", "sessions", "2026-08-10--diario-1900-2040")] = {
+        "name": "courses/poo/sessions/2026-08-10--diario-1900-2040",
+        "fields": {
+            "schemaVersion": {"integerValue": "1"},
+            "startsAt": {"timestampValue": "2026-08-10T22:00:00Z"},
+            "endsAt": {"timestampValue": "2026-08-10T23:40:00Z"},
+            "lessonCount": {"integerValue": "2"},
+            "callCount": {"integerValue": "1"},
+            "firstPing": {"nullValue": None},
+            "secondPing": {"nullValue": None},
+            "attendanceStatus": {"nullValue": None},
+            "absences": {"nullValue": None},
+            "calendarStatus": {"stringValue": "scheduled"},
+            "assessmentTitle": {"nullValue": None},
+            "createdAt": {"timestampValue": "2026-08-01T12:00:00Z"},
+            "updatedAt": {"timestampValue": "2026-08-01T12:00:00Z"},
+        },
+    }
+    repository = TeachingPlanReconciliationRepository(store, now=lambda: NOW)
+    result = repository.reconcile("poo", apply=True)
+
+    assert result["applied"] == 1
+    assert result["changes"][0]["action"] == "remove_session"
+    assert store.deletes[-1] == [
+        ("courses", "poo", "sessions", "2026-08-10--diario-1900-2040")
+    ]
+    repeated = repository.reconcile("poo", apply=True)
+    assert repeated["applied"] == 0
+    assert repeated["outside_schedule"] == 1
     assert len(store.commits) == 1

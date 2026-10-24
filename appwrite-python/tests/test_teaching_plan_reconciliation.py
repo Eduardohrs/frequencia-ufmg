@@ -74,6 +74,91 @@ def test_preview_creates_only_a_truly_missing_occurrence() -> None:
     assert result.creates[0]["attendance_status"] is None
 
 
+def test_preview_excludes_occurrence_outside_the_weekly_schedule() -> None:
+    friday = {
+        "id": "friday-1900",
+        "weekday": 5,
+        "start_minutes": 19 * 60,
+        "end_minutes": 20 * 60 + 40,
+        "lesson_count": 2,
+        "call_count": 1,
+        "created_at": "2026-08-01T12:00:00Z",
+        "updated_at": "2026-08-01T12:00:00Z",
+    }
+    result = reconcile_teaching_plan_schedule(
+        [_row("2026-11-22"), _row("2026-11-23")],
+        [],
+        meetings=[friday],
+        now=NOW,
+    )
+
+    assert result.creates == ()
+    assert result.counts["outside_schedule"] == 2
+    assert [item["occurrence_key"] for item in result.excluded] == [
+        "2026-11-22T19:00-20:40",
+        "2026-11-23T19:00-20:40",
+    ]
+    assert result.excluded[0]["subject"] == "Polimorfismo"
+    assert result.excluded[0]["reason"] == "outside_weekly_schedule"
+
+
+def test_preview_removes_only_untouched_import_outside_weekly_schedule() -> None:
+    friday = {
+        "id": "friday-1900",
+        "weekday": 5,
+        "start_minutes": 1140,
+        "end_minutes": 1240,
+        "lesson_count": 2,
+        "call_count": 1,
+        "created_at": "2026-08-01T12:00:00Z",
+        "updated_at": "2026-08-01T12:00:00Z",
+    }
+    imported = _session(
+        "2026-11-23--diario-1900-2040",
+        "2026-11-23T22:00:00Z",
+        "2026-11-23T23:40:00Z",
+    )
+    result = reconcile_teaching_plan_schedule(
+        [_row("2026-11-23")], [imported], meetings=[friday], now=NOW
+    )
+
+    assert result.delete_ids == ("2026-11-23--diario-1900-2040",)
+    assert result.changes[0]["action"] == "remove_session"
+    assert result.counts["outside_schedule"] == 1
+    protected = {**imported, "attendance_status": "presente", "absences": 0}
+    preserved = reconcile_teaching_plan_schedule(
+        [_row("2026-11-23")], [protected], meetings=[friday], now=NOW
+    )
+    assert preserved.delete_ids == ()
+    assert preserved.excluded[0]["reason"] == "outside_weekly_schedule"
+
+
+def test_preview_describes_each_proposed_calendar_change() -> None:
+    monday = {
+        "id": "monday-1900",
+        "weekday": 1,
+        "start_minutes": 19 * 60,
+        "end_minutes": 20 * 60 + 40,
+        "lesson_count": 2,
+        "call_count": 2,
+        "created_at": "2026-08-01T12:00:00Z",
+        "updated_at": "2026-08-01T12:00:00Z",
+    }
+    result = reconcile_teaching_plan_schedule(
+        [_row("2026-08-10")], [], meetings=[monday], now=NOW
+    )
+
+    assert result.creates[0]["call_count"] == 2
+    assert result.changes == ({
+        "action": "create_session",
+        "occurrence_key": "2026-08-10T19:00-20:40",
+        "date": "2026-08-10",
+        "starts_at": "19:00",
+        "ends_at": "20:40",
+        "subject": "Polimorfismo",
+    },)
+
+
 def test_preview_reports_overlap_and_never_overwrites_attendance() -> None:
     existing = _session(
         "existing",
@@ -209,6 +294,8 @@ def test_reconciliation_rejects_invalid_saved_sessions_and_clock() -> None:
         reconcile_teaching_plan_schedule([], [invalid], now=NOW)
     with pytest.raises(InvalidTeachingPlanReconciliation, match="invalid clock"):
         reconcile_teaching_plan_schedule([], [], now=datetime(2026, 10, 24, 12))
+    with pytest.raises(InvalidTeachingPlanReconciliation, match="invalid saved meeting"):
+        reconcile_teaching_plan_schedule([], [], meetings=[{}], now=NOW)
 
 
 @pytest.mark.parametrize(
