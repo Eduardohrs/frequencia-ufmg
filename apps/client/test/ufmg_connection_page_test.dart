@@ -439,6 +439,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('synchronizes all sources and shows only review exceptions', (
+    tester,
+  ) async {
+    final gateway = _UnifiedGateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    );
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ufmg-sync-all')), findsOneWidget);
+    expect(find.byKey(const Key('ufmg-sync-siga')), findsNothing);
+    expect(find.byKey(const Key('ufmg-sync-moodle')), findsNothing);
+    await tester.tap(find.byKey(const Key('ufmg-sync-all')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.unifiedSyncCalls, 1);
+    expect(find.text('Revisão necessária'), findsOneWidget);
+    expect(find.text('ELE028'), findsWidgets);
+    expect(find.textContaining('24/10 · 19:00 · Circuitos'), findsOneWidget);
+    expect(logger.events, contains('academic_sync_succeeded'));
+  });
+
   testWidgets(
     'presents the connected account as independent academic sources',
     (tester) async {
@@ -2768,8 +2798,7 @@ PythonMoodleCourseContent _catalogCourse(
   ],
 );
 
-final class _Gateway
-    implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
+class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
   _Gateway({required this.status});
 
   PythonUFMGSessionStatus status;
@@ -3157,6 +3186,48 @@ final class _Gateway
     return status = const PythonUFMGSessionStatus(
       connected: false,
       reauthenticationRequired: false,
+    );
+  }
+}
+
+final class _UnifiedGateway extends _Gateway
+    implements BackendUnifiedAcademicSyncGateway {
+  _UnifiedGateway({required super.status});
+
+  int unifiedSyncCalls = 0;
+
+  @override
+  Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() async {
+    unifiedSyncCalls++;
+    return PythonUnifiedAcademicSyncResult(
+      siga: await syncSiga(),
+      moodle: await syncMoodle(),
+      teachingPlans: const PythonTeachingPlanSyncSummary(
+        available: 1,
+        imported: 1,
+        applied: 0,
+        unchanged: 0,
+        reviewRequired: 1,
+      ),
+      exceptions: [
+        PythonAcademicSyncException(
+          courseId: 'ele028',
+          courseCode: 'ELE028',
+          reason: 'reconciliation_conflict',
+          candidateCount: 1,
+          changes: [
+            PythonTeachingPlanChange(
+              action: 'create_session',
+              date: DateTime.utc(2026, 10, 24),
+              startsAt: '19:00',
+              endsAt: '20:40',
+              subject: 'Circuitos',
+            ),
+          ],
+          conflicting: 1,
+          assessmentConflicts: 0,
+        ),
+      ],
     );
   }
 }

@@ -135,6 +135,10 @@ abstract interface class BackendDiarioPlanGateway {
   });
 }
 
+abstract interface class BackendUnifiedAcademicSyncGateway {
+  Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData();
+}
+
 enum PythonMoodleContentStatus { found, empty, unmatched, ambiguous }
 
 enum PythonMoodleContentOrigin { canonical, metaturma }
@@ -165,6 +169,56 @@ final class PythonMoodleSyncResult {
   final PythonMoodleDateImportResult dates;
   final int candidateTotal;
   final PythonMoodleMobileCapabilities? capabilities;
+}
+
+final class PythonTeachingPlanSyncSummary {
+  const PythonTeachingPlanSyncSummary({
+    required this.available,
+    required this.imported,
+    required this.applied,
+    required this.unchanged,
+    required this.reviewRequired,
+  });
+
+  final int available;
+  final int imported;
+  final int applied;
+  final int unchanged;
+  final int reviewRequired;
+}
+
+final class PythonAcademicSyncException {
+  const PythonAcademicSyncException({
+    required this.courseId,
+    required this.courseCode,
+    required this.reason,
+    required this.candidateCount,
+    required this.changes,
+    required this.conflicting,
+    required this.assessmentConflicts,
+  });
+
+  final String courseId;
+  final String courseCode;
+  final String reason;
+  final int candidateCount;
+  final List<PythonTeachingPlanChange> changes;
+  final int conflicting;
+  final int assessmentConflicts;
+}
+
+final class PythonUnifiedAcademicSyncResult {
+  const PythonUnifiedAcademicSyncResult({
+    required this.siga,
+    required this.moodle,
+    required this.teachingPlans,
+    required this.exceptions,
+  });
+
+  final PythonUFMGSigaSyncResult siga;
+  final PythonMoodleSyncResult moodle;
+  final PythonTeachingPlanSyncSummary teachingPlans;
+  final List<PythonAcademicSyncException> exceptions;
 }
 
 final class PythonDiarioPlanProbe {
@@ -1330,6 +1384,7 @@ final class PythonBackendTransport
         BackendScheduleGateway,
         BackendSessionGateway,
         BackendUFMGSessionGateway,
+        BackendUnifiedAcademicSyncGateway,
         BackendOverviewGateway {
   PythonBackendTransport({
     required Uri endpoint,
@@ -1619,59 +1674,63 @@ final class PythonBackendTransport
       body: const {},
     );
     try {
-      final value = jsonDecode(response.body);
-      if (value is! Map<String, dynamic> ||
-          !_hasExactKeys(value, const {'dates', 'content', 'capabilities'})) {
-        throw const FormatException();
-      }
-      final dates = _moodleDateImportResult(value['dates']);
-      final content = Map<String, Object?>.from(value['content'] as Map);
-      if (!_hasExactKeys(content, const {
-        'course_total',
-        'candidate_total',
-        'metaturma_candidate_total',
-        'found',
-        'empty',
-        'unmatched',
-        'ambiguous',
-      })) {
-        throw const FormatException();
-      }
-      final courseTotal = content['course_total'];
-      final candidateTotal = content['candidate_total'];
-      final metaturmaTotal = content['metaturma_candidate_total'];
-      final statuses = [
-        content['found'],
-        content['empty'],
-        content['unmatched'],
-        content['ambiguous'],
-      ];
-      if (courseTotal is! int ||
-          courseTotal < 0 ||
-          courseTotal > 50 ||
-          candidateTotal is! int ||
-          candidateTotal < 0 ||
-          candidateTotal > 500 ||
-          metaturmaTotal is! int ||
-          metaturmaTotal < 0 ||
-          metaturmaTotal > candidateTotal ||
-          statuses.any((count) => count is! int || count < 0) ||
-          statuses.cast<int>().fold<int>(0, (sum, count) => sum + count) !=
-              courseTotal) {
-        throw const FormatException();
-      }
-      final rawCapabilities = value['capabilities'];
-      final capabilities = rawCapabilities == null
-          ? null
-          : _moodleMobileCapabilities(rawCapabilities);
-      return PythonMoodleSyncResult(
-        dates: dates,
-        candidateTotal: candidateTotal,
-        capabilities: capabilities,
-      );
+      return _moodleSyncResult(jsonDecode(response.body));
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
     }
+  }
+
+  PythonMoodleSyncResult _moodleSyncResult(Object? raw) {
+    final value = raw;
+    if (value is! Map<String, dynamic> ||
+        !_hasExactKeys(value, const {'dates', 'content', 'capabilities'})) {
+      throw const FormatException();
+    }
+    final dates = _moodleDateImportResult(value['dates']);
+    final content = Map<String, Object?>.from(value['content'] as Map);
+    if (!_hasExactKeys(content, const {
+      'course_total',
+      'candidate_total',
+      'metaturma_candidate_total',
+      'found',
+      'empty',
+      'unmatched',
+      'ambiguous',
+    })) {
+      throw const FormatException();
+    }
+    final courseTotal = content['course_total'];
+    final candidateTotal = content['candidate_total'];
+    final metaturmaTotal = content['metaturma_candidate_total'];
+    final statuses = [
+      content['found'],
+      content['empty'],
+      content['unmatched'],
+      content['ambiguous'],
+    ];
+    if (courseTotal is! int ||
+        courseTotal < 0 ||
+        courseTotal > 50 ||
+        candidateTotal is! int ||
+        candidateTotal < 0 ||
+        candidateTotal > 500 ||
+        metaturmaTotal is! int ||
+        metaturmaTotal < 0 ||
+        metaturmaTotal > candidateTotal ||
+        statuses.any((count) => count is! int || count < 0) ||
+        statuses.cast<int>().fold<int>(0, (sum, count) => sum + count) !=
+            courseTotal) {
+      throw const FormatException();
+    }
+    final rawCapabilities = value['capabilities'];
+    final capabilities = rawCapabilities == null
+        ? null
+        : _moodleMobileCapabilities(rawCapabilities);
+    return PythonMoodleSyncResult(
+      dates: dates,
+      candidateTotal: candidateTotal,
+      capabilities: capabilities,
+    );
   }
 
   PythonMoodleMobileCapabilities _moodleMobileCapabilities(Object? raw) {
@@ -2002,28 +2061,173 @@ final class PythonBackendTransport
       body: const {},
     );
     try {
-      final value = jsonDecode(response.body);
-      const keys = {
-        'courses',
-        'schedules',
-        'checked_at',
-        'next_automatic_sync_at',
-      };
-      if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
+      return _sigaSyncResult(jsonDecode(response.body));
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  PythonUFMGSigaSyncResult _sigaSyncResult(Object? raw) {
+    final value = raw;
+    const keys = {
+      'courses',
+      'schedules',
+      'checked_at',
+      'next_automatic_sync_at',
+    };
+    if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
+      throw const FormatException();
+    }
+    final courses = _courseImportResult(value['courses']);
+    final schedules = _scheduleImportResult(value['schedules']);
+    final checkedAt = _utcDate(value['checked_at']);
+    final nextAutomaticSyncAt = _utcDate(value['next_automatic_sync_at']);
+    if (!nextAutomaticSyncAt.isAfter(checkedAt)) {
+      throw const FormatException();
+    }
+    return PythonUFMGSigaSyncResult(
+      courses: courses,
+      schedules: schedules,
+      checkedAt: checkedAt,
+      nextAutomaticSyncAt: nextAutomaticSyncAt,
+    );
+  }
+
+  @override
+  Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() async {
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/sync/all',
+      method: _BackendMethod.post,
+      body: const {},
+    );
+    try {
+      final value = Map<String, Object?>.from(jsonDecode(response.body) as Map);
+      if (!_hasExactKeys(value, const {
+        'siga',
+        'moodle',
+        'teaching_plans',
+        'exceptions',
+      })) {
         throw const FormatException();
       }
-      final courses = _courseImportResult(value['courses']);
-      final schedules = _scheduleImportResult(value['schedules']);
-      final checkedAt = _utcDate(value['checked_at']);
-      final nextAutomaticSyncAt = _utcDate(value['next_automatic_sync_at']);
-      if (!nextAutomaticSyncAt.isAfter(checkedAt)) {
+      final summary = Map<String, Object?>.from(
+        value['teaching_plans']! as Map,
+      );
+      if (!_hasExactKeys(summary, const {
+        'available',
+        'imported',
+        'applied',
+        'unchanged',
+        'review_required',
+      })) {
         throw const FormatException();
       }
-      return PythonUFMGSigaSyncResult(
-        courses: courses,
-        schedules: schedules,
-        checkedAt: checkedAt,
-        nextAutomaticSyncAt: nextAutomaticSyncAt,
+      int count(String key, {int maximum = 500}) {
+        final result = summary[key];
+        if (result is! int || result < 0 || result > maximum) {
+          throw const FormatException();
+        }
+        return result;
+      }
+
+      final available = count('available', maximum: 50);
+      final imported = count('imported', maximum: 50);
+      final applied = count('applied');
+      final unchanged = count('unchanged', maximum: 50);
+      final reviewRequired = count('review_required', maximum: 50);
+      if (imported > available ||
+          unchanged + reviewRequired > available ||
+          reviewRequired > imported + (available - imported)) {
+        throw const FormatException();
+      }
+      final rawExceptions = value['exceptions'];
+      if (rawExceptions is! List ||
+          rawExceptions.length > 50 ||
+          rawExceptions.length != reviewRequired) {
+        throw const FormatException();
+      }
+      final exceptions = rawExceptions
+          .map((rawException) {
+            final item = Map<String, Object?>.from(rawException as Map);
+            if (!_hasExactKeys(item, const {
+              'course_id',
+              'course_code',
+              'reason',
+              'candidate_count',
+              'changes',
+              'conflicting',
+              'assessment_conflicts',
+            })) {
+              throw const FormatException();
+            }
+            final courseId = item['course_id'];
+            final courseCode = item['course_code'];
+            final reason = item['reason'];
+            final candidateCount = item['candidate_count'];
+            final conflicting = item['conflicting'];
+            final assessmentConflicts = item['assessment_conflicts'];
+            final rawChanges = item['changes'];
+            if (courseId is! String ||
+                courseId.isEmpty ||
+                courseCode is! String ||
+                courseCode.isEmpty ||
+                reason is! String ||
+                !{
+                  'ambiguous_teaching_plan',
+                  'reconciliation_conflict',
+                }.contains(reason) ||
+                candidateCount is! int ||
+                candidateCount < 1 ||
+                candidateCount > 20 ||
+                conflicting is! int ||
+                conflicting < 0 ||
+                conflicting > 500 ||
+                assessmentConflicts is! int ||
+                assessmentConflicts < 0 ||
+                assessmentConflicts > 500 ||
+                rawChanges is! List ||
+                rawChanges.length > 20) {
+              throw const FormatException();
+            }
+            final changes = rawChanges
+                .map(
+                  (change) => PythonTeachingPlanChange.fromJson(
+                    Map<String, Object?>.from(change as Map),
+                  ),
+                )
+                .toList(growable: false);
+            if (reason == 'ambiguous_teaching_plan' &&
+                    (candidateCount < 2 ||
+                        conflicting != 0 ||
+                        assessmentConflicts != 0 ||
+                        changes.isNotEmpty) ||
+                reason == 'reconciliation_conflict' &&
+                    (candidateCount != 1 ||
+                        conflicting + assessmentConflicts == 0)) {
+              throw const FormatException();
+            }
+            return PythonAcademicSyncException(
+              courseId: courseId,
+              courseCode: courseCode,
+              reason: reason,
+              candidateCount: candidateCount,
+              changes: changes,
+              conflicting: conflicting,
+              assessmentConflicts: assessmentConflicts,
+            );
+          })
+          .toList(growable: false);
+      return PythonUnifiedAcademicSyncResult(
+        siga: _sigaSyncResult(value['siga']),
+        moodle: _moodleSyncResult(value['moodle']),
+        teachingPlans: PythonTeachingPlanSyncSummary(
+          available: available,
+          imported: imported,
+          applied: applied,
+          unchanged: unchanged,
+          reviewRequired: reviewRequired,
+        ),
+        exceptions: exceptions,
       );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);

@@ -1102,6 +1102,122 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
+  Future<void> _syncAll() async {
+    final gateway = widget.gateway;
+    if (gateway is! BackendUnifiedAcademicSyncGateway) return;
+    final unifiedGateway = gateway as BackendUnifiedAcademicSyncGateway;
+    _logInteraction('ufmg_sync_all');
+    setState(() {
+      _sigaBusy = true;
+      _moodleBusy = true;
+      _error = null;
+      _sigaError = null;
+      _sigaSummary = null;
+    });
+    try {
+      final result = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.academicSync,
+        action: unifiedGateway.syncAllAcademicData,
+      );
+      final supplementary = await Future.wait<Object>([
+        widget.gateway.listMoodleDates(),
+        widget.gateway.listMoodleMaterialCatalog(),
+      ]);
+      final userId = widget.userId;
+      final schedule = widget.syncSchedule;
+      if (userId != null && schedule != null) {
+        await schedule.record(userId, result.siga.nextAutomaticSyncAt);
+      }
+      if (!mounted) return;
+      setState(() {
+        _dates = supplementary[0] as List<PythonMoodleDate>;
+        _contentDiscovery = supplementary[1] as PythonMoodleContentDiscovery;
+        _sigaSummary =
+            '${result.siga.courses.created} ${_plural(result.siga.courses.created, 'disciplina importada', 'disciplinas importadas')}. '
+            '${result.siga.schedules.updated} ${_plural(result.siga.schedules.updated, 'grade atualizada', 'grades atualizadas')}. '
+            '${result.moodle.dates.created} ${_plural(result.moodle.dates.created, 'data importada', 'datas importadas')}. '
+            '${result.teachingPlans.applied} ${_plural(result.teachingPlans.applied, 'alteração de plano aplicada', 'alterações de plano aplicadas')}. '
+            '${result.teachingPlans.reviewRequired} ${_plural(result.teachingPlans.reviewRequired, 'exceção para revisar', 'exceções para revisar')}.';
+        _sigaBusy = false;
+        _moodleBusy = false;
+      });
+      if (result.exceptions.isNotEmpty) {
+        await _showAcademicSyncExceptions(result.exceptions);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PythonBackendException &&
+          error.code == PythonBackendError.ufmgReauthenticationRequired) {
+        setState(() {
+          _status = const PythonUFMGSessionStatus(
+            connected: false,
+            reauthenticationRequired: true,
+          );
+          _error = 'Sua sessão expirou. Reconecte para sincronizar.';
+          _sigaError = _error;
+        });
+      } else {
+        setState(() => _sigaError = _syncMessageFor(error));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sigaBusy = false;
+          _moodleBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _showAcademicSyncExceptions(
+    List<PythonAcademicSyncException> exceptions,
+  ) => showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Revisão necessária'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'A sincronização automática terminou. Estas exceções não foram aplicadas:',
+              ),
+              const SizedBox(height: 12),
+              for (final exception in exceptions) ...[
+                Text(
+                  exception.courseCode,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                Text(
+                  exception.reason == 'ambiguous_teaching_plan'
+                      ? '${exception.candidateCount} planos de ensino possíveis.'
+                      : '${exception.conflicting + exception.assessmentConflicts} conflito(s) com dados existentes.',
+                ),
+                for (final change in exception.changes)
+                  Text(
+                    '${change.date.day.toString().padLeft(2, '0')}/'
+                    '${change.date.month.toString().padLeft(2, '0')} · '
+                    '${change.startsAt} · ${change.subject}',
+                  ),
+                const SizedBox(height: 12),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Entendi'),
+        ),
+      ],
+    ),
+  );
+
   Future<void> _syncMoodle() async {
     _logInteraction('ufmg_sync_moodle');
     setState(() {
@@ -1595,6 +1711,41 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   ];
 
   Widget _syncActions() {
+    if (widget.gateway is BackendUnifiedAcademicSyncGateway) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Dados acadêmicos',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          _academicSourceCard(
+            key: const Key('ufmg-source-all'),
+            icon: Icons.sync_outlined,
+            title: 'UFMG e Moodle',
+            description: 'Disciplinas, horários, datas e planos de ensino',
+            actionKey: const Key('ufmg-sync-all'),
+            actionLabel: 'Sincronizar tudo',
+            busy: _sigaBusy || _moodleBusy,
+            onSync: _syncAll,
+            errorKey: const Key('ufmg-source-all-error'),
+            error: _sigaError,
+            summary: _sigaSummary,
+            resultActionKey: const Key('ufmg-open-calendar'),
+            resultActionLabel: 'Ver calendário',
+            onOpenResult: widget.onOpenCalendar == null
+                ? null
+                : () async {
+                    _logInteraction('ufmg_open_calendar');
+                    await widget.onOpenCalendar!();
+                  },
+          ),
+          const SizedBox(height: 12),
+          _connectionManagementCard(),
+        ],
+      );
+    }
     final sources = [
       _academicSourceCard(
         key: const Key('ufmg-source-siga'),
@@ -1668,55 +1819,57 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           },
         ),
         const SizedBox(height: 12),
-        Card(
-          margin: EdgeInsets.zero,
-          child: ExpansionTile(
-            key: const Key('ufmg-manage-connection'),
-            onExpansionChanged: (expanded) => _logInteraction(
-              expanded ? 'ufmg_manage_expand' : 'ufmg_manage_collapse',
-            ),
-            leading: const Icon(Icons.settings_outlined),
-            title: const Text('Gerenciar conexão'),
-            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            children: [
-              const ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.shield_outlined),
-                title: Text('Seus dados manuais são preservados'),
-                subtitle: Text(
-                  'Sincronizações complementam seus registros. Sua senha não '
-                  'é armazenada e os arquivos vêm direto da UFMG.',
-                ),
-              ),
-              SizedBox(
-                width: double.infinity,
-                child: TextButton.icon(
-                  key: const Key('ufmg-reconnect'),
-                  onPressed: _busy
-                      ? null
-                      : () {
-                          _logInteraction('ufmg_reconnect_show');
-                          setState(() => _showReconnectForm = true);
-                        },
-                  icon: const Icon(Icons.sync),
-                  label: const Text('Reconectar'),
-                ),
-              ),
-              SizedBox(
-                width: double.infinity,
-                child: TextButton.icon(
-                  key: const Key('ufmg-disconnect'),
-                  onPressed: _busy ? null : _confirmDisconnect,
-                  icon: const Icon(Icons.link_off),
-                  label: const Text('Desconectar'),
-                ),
-              ),
-            ],
-          ),
-        ),
+        _connectionManagementCard(),
       ],
     );
   }
+
+  Widget _connectionManagementCard() => Card(
+    margin: EdgeInsets.zero,
+    child: ExpansionTile(
+      key: const Key('ufmg-manage-connection'),
+      onExpansionChanged: (expanded) => _logInteraction(
+        expanded ? 'ufmg_manage_expand' : 'ufmg_manage_collapse',
+      ),
+      leading: const Icon(Icons.settings_outlined),
+      title: const Text('Gerenciar conexão'),
+      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      children: [
+        const ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.shield_outlined),
+          title: Text('Seus dados manuais são preservados'),
+          subtitle: Text(
+            'Sincronizações complementam seus registros. Sua senha não '
+            'é armazenada e os arquivos vêm direto da UFMG.',
+          ),
+        ),
+        SizedBox(
+          width: double.infinity,
+          child: TextButton.icon(
+            key: const Key('ufmg-reconnect'),
+            onPressed: _busy
+                ? null
+                : () {
+                    _logInteraction('ufmg_reconnect_show');
+                    setState(() => _showReconnectForm = true);
+                  },
+            icon: const Icon(Icons.sync),
+            label: const Text('Reconectar'),
+          ),
+        ),
+        SizedBox(
+          width: double.infinity,
+          child: TextButton.icon(
+            key: const Key('ufmg-disconnect'),
+            onPressed: _busy ? null : _confirmDisconnect,
+            icon: const Icon(Icons.link_off),
+            label: const Text('Desconectar'),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _academicSourceCard({
     required Key key,

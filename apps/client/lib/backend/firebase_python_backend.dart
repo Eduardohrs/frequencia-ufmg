@@ -41,6 +41,7 @@ final class _FirebasePythonBackendVerifier
         BackendScheduleGateway,
         BackendSessionGateway,
         BackendUFMGSessionGateway,
+        BackendUnifiedAcademicSyncGateway,
         BackendDiarioPlanGateway,
         BackendOverviewGateway {
   _FirebasePythonBackendVerifier(Uri endpoint)
@@ -126,6 +127,12 @@ final class _FirebasePythonBackendVerifier
   Future<PythonMoodleSyncResult> syncMoodle() async {
     await (_activation ??= _activateAppCheck());
     return _transport.syncMoodle();
+  }
+
+  @override
+  Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.syncAllAcademicData();
   }
 
   @override

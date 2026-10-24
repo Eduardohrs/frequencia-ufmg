@@ -267,6 +267,82 @@ def test_moodle_sync_route_maps_safe_failures(
     assert result["body"]["error"] == error
 
 
+def test_unified_academic_sync_returns_summary_exceptions_and_diagnostic_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENABLE_SCHEDULE_WRITES", "true")
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    class Service:
+        def sync(self, user_id: str, *, now: int) -> dict[str, object]:
+            assert user_id == "user-1"
+            assert now > 0
+            return {
+                "siga": {
+                    "courses": {"created": 1},
+                    "schedules": {"updated": 1},
+                },
+                "moodle": {
+                    "dates": {"created": 2},
+                    "content": {"candidate_total": 3},
+                    "capabilities": None,
+                },
+                "teaching_plans": {
+                    "available": 2,
+                    "imported": 2,
+                    "applied": 1,
+                    "unchanged": 0,
+                    "review_required": 1,
+                },
+                "exceptions": [
+                    {
+                        "course_id": "course-a",
+                        "course_code": "ELE028",
+                        "reason": "reconciliation_conflict",
+                        "candidate_count": 1,
+                        "changes": [],
+                        "conflicting": 1,
+                        "assessment_conflicts": 0,
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(function, "_unified_academic_sync_service", lambda *_: Service())
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/sync/all", body_json={}))
+
+    result = function.main(context)
+
+    assert result["status"] == 200
+    assert result["body"]["teaching_plans"]["applied"] == 1
+    assert result["body"]["exceptions"][0]["course_code"] == "ELE028"
+    assert json.loads(context.logs[0]) == {
+        "event": "academic_sync_succeeded",
+        "exception_course_codes": ["ELE028"],
+        "exception_reasons": ["reconciliation_conflict"],
+        "plan_applied": 1,
+        "plan_available": 2,
+        "plan_imported": 2,
+        "plan_unchanged": 0,
+        "review_required": 1,
+    }
+
+
+def test_unified_academic_sync_rejects_nonempty_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENABLE_SCHEDULE_WRITES", "true")
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    result = function.main(
+        FakeContext(
+            FakeRequest("POST", "/v1/ufmg/sync/all", body_json={"apply": True})
+        )
+    )
+
+    assert result["status"] == 400
+    assert result["body"] == {"error": "academic_sync_rejected"}
+
+
 def test_ufmg_session_routes_are_authenticated_and_sanitized(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
