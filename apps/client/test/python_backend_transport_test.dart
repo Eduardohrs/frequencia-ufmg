@@ -1061,12 +1061,66 @@ void main() {
     expect(preview.outsideSchedule, 1);
     expect(preview.changes.single.subject, 'Polimorfismo');
     expect(preview.excluded.single.reason, 'outside_weekly_schedule');
-    expect(preview.workloadValidation.status, 'below_expected');
-    expect(preview.workloadValidation.expectedLessonUnits, 60);
-    expect(preview.workloadValidation.actualLessonUnits, 58);
-    expect(preview.workloadValidation.noCallLessonUnits, 2);
+    final workload = preview.workloadValidation!;
+    expect(workload.status, 'below_expected');
+    expect(workload.expectedLessonUnits, 60);
+    expect(workload.actualLessonUnits, 58);
+    expect(workload.noCallLessonUnits, 2);
     expect(applied.applied, 2);
   });
+
+  test(
+    'accepts outside-grade removals and an unknown legacy workload',
+    () async {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'course_id': 'ele065',
+              'mode': 'preview',
+              'matched': 16,
+              'missing': 0,
+              'conflicting': 0,
+              'assessments_linked': 0,
+              'assessment_conflicts': 0,
+              'outside_schedule': 2,
+              'applied': 0,
+              'changes': [
+                for (final day in ['2026-11-22', '2026-11-23'])
+                  {
+                    'action': 'remove_session',
+                    'occurrence_key': '${day}T19:00-20:40',
+                    'date': day,
+                    'starts_at': '19:00',
+                    'ends_at': '20:40',
+                    'subject': 'Atividade assíncrona',
+                  },
+              ],
+              'excluded': const [],
+              'conflicts': const [],
+              'workload_validation': null,
+            }),
+            200,
+          ),
+        ),
+      );
+
+      final preview = await transport.reconcileMoodleTeachingPlan(
+        courseId: 'ele065',
+        apply: false,
+      );
+
+      expect(preview.outsideSchedule, 2);
+      expect(
+        preview.changes.map((change) => change.action),
+        everyElement('remove_session'),
+      );
+      expect(preview.excluded, isEmpty);
+      expect(preview.workloadValidation, isNull);
+    },
+  );
 
   test('resolves bounded direct Moodle material files', () async {
     late http.Request captured;

@@ -147,11 +147,20 @@ class UFMGCourseImportService:
         """Reconcile one already validated enrollment snapshot."""
 
         unique = {str(course["code"]): course for course in imported}
-        existing_codes = {str(course["code"]) for course in self._courses.list_courses()}
+        existing_by_code = {
+            str(course["code"]): course for course in self._courses.list_courses()
+        }
         timestamp = self._clock().astimezone(UTC).isoformat().replace("+00:00", "Z")
         created = 0
         for code, course in sorted(unique.items()):
-            if code in existing_codes:
+            existing = existing_by_code.get(code)
+            if existing is not None:
+                if existing["workload"] == 1 and course["workload"] != 1:
+                    self._courses.save_course({
+                        **existing,
+                        "workload": course["workload"],
+                        "updated_at": timestamp,
+                    })
                 continue
             term = str(course["term"])
             self._courses.save_course(

@@ -501,7 +501,17 @@ class _Courses:
         self.saved: list[dict[str, object]] = []
 
     def list_courses(self) -> list[dict[str, object]]:
-        return [{"id": "manual", "code": "ELE028", "name": "Nome manual"}]
+        return [{
+            "id": "manual",
+            "code": "ELE028",
+            "name": "Nome manual",
+            "workload": 30,
+            "term": "2026-2",
+            "starts_on": None,
+            "ends_on": None,
+            "created_at": "2026-08-01T12:00:00Z",
+            "updated_at": "2026-08-01T12:00:00Z",
+        }]
 
     def save_course(self, payload: dict[str, object]) -> dict[str, object]:
         self.saved.append(payload)
@@ -533,6 +543,27 @@ def test_import_creates_only_missing_courses_and_preserves_existing_data() -> No
             "updated_at": "2026-10-12T12:00:00Z",
         }
     ]
+
+
+def test_import_replaces_only_the_legacy_placeholder_workload() -> None:
+    courses = _Courses()
+    original = courses.list_courses
+    courses.list_courses = lambda: [{**original()[0], "workload": 1}]  # type: ignore[method-assign]
+    service = UFMGCourseImportService(
+        _Store(UFMGSession("private-token", 1_759_990_000, 1_760_022_400)),
+        _Client(),
+        courses,
+        clock=lambda: datetime(2026, 10, 12, 12, tzinfo=UTC),
+    )
+
+    result = service.import_courses("firebase-user", now=1_760_000_000)
+
+    assert result == {"created": 1, "existing": 1, "total": 2}
+    assert courses.saved[0] == {
+        **original()[0],
+        "workload": 30,
+        "updated_at": "2026-10-12T12:00:00Z",
+    }
 
 
 def test_import_requires_a_live_saved_session() -> None:

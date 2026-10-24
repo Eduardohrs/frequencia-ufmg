@@ -185,3 +185,20 @@ def test_apply_removes_an_untouched_import_outside_the_saved_grade() -> None:
     assert repeated["applied"] == 0
     assert repeated["outside_schedule"] == 1
     assert len(store.commits) == 1
+
+
+def test_legacy_placeholder_workload_is_not_reported_as_one_hour() -> None:
+    store = Store()
+    store.documents[("courses", "poo")] = {
+        "name": "courses/poo",
+        "fields": course_to_firestore({**_course(), "workload": 1}),
+    }
+    TeachingPlanRepository(store, now=lambda: NOW).save(
+        "poo", source_id="1", plan=_plan()
+    )
+
+    result = TeachingPlanReconciliationRepository(store, now=lambda: NOW).reconcile(
+        "poo", apply=False
+    )
+
+    assert result["workload_validation"] is None
