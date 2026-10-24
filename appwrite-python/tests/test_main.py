@@ -1453,6 +1453,131 @@ def test_teaching_plan_import_factory_shares_firestore(
     assert service._dates._firestore is values["firestore"]
 
 
+def test_teaching_plan_reconciliation_route_previews_and_logs_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    class Repository:
+        def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
+            assert (course_id, apply) == ("course-a", False)
+            return {
+                "course_id": course_id,
+                "mode": "preview",
+                "matched": 3,
+                "missing": 1,
+                "conflicting": 1,
+                "applied": 0,
+                "conflicts": [{
+                    "occurrence_key": "2026-08-10T19:00-20:40",
+                    "reason": "overlapping_session",
+                    "existing_session_ids": ["manual"],
+                }],
+            }
+
+    monkeypatch.setattr(
+        function, "_teaching_plan_reconciliation_repository", lambda *_: Repository()
+    )
+    context = FakeContext(FakeRequest(
+        "POST",
+        "/v1/ufmg/reconcile/teaching-plan",
+        body_json={"course_id": "course-a", "apply": False},
+    ))
+
+    result = function.main(context)
+
+    assert result["status"] == 200
+    assert result["body"]["missing"] == 1
+    assert json.loads(context.logs[0]) == {
+        "applied": 0,
+        "conflict_occurrence_keys": ["2026-08-10T19:00-20:40"],
+        "conflicting": 1,
+        "course_id": "course-a",
+        "event": "teaching_plan_reconciliation_succeeded",
+        "matched": 3,
+        "missing": 1,
+        "mode": "preview",
+    }
+
+
+@pytest.mark.parametrize("body", [{}, {"course_id": "course-a", "apply": 1}])
+def test_teaching_plan_reconciliation_rejects_invalid_body(
+    monkeypatch: pytest.MonkeyPatch, body: dict[str, object]
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+    result = function.main(FakeContext(FakeRequest(
+        "POST", "/v1/ufmg/reconcile/teaching-plan", body_json=body
+    )))
+    assert result["status"] == 400
+
+
+def test_teaching_plan_reconciliation_factory_uses_user_firestore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    firestore = object()
+    monkeypatch.setattr(function, "_firestore", lambda *_: firestore)
+
+    repository = function._teaching_plan_reconciliation_repository({}, "user-1")
+
+    assert repository._firestore is firestore
+
+
+def test_teaching_plan_reconciliation_returns_authentication_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejected = {"status": 401, "body": {"error": "identity_invalid"}}
+    monkeypatch.setattr(function, "_authentication", lambda *_: (None, rejected))
+    result = function._teaching_plan_reconciliation(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/reconcile/teaching-plan")), None
+    )
+    assert result is rejected
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (FirestoreNotFound(), 404, "teaching_plan_not_found"),
+        (InvalidTeachingPlan(), 400, "teaching_plan_reconciliation_rejected"),
+        (FirestoreAccessDenied(), 403, "teaching_plan_reconciliation_access_denied"),
+        (FirestoreUnavailable(), 503, "teaching_plan_reconciliation_store_unavailable"),
+    ],
+)
+def test_teaching_plan_reconciliation_reports_actionable_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    status: int,
+    code: str,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    class Repository:
+        def reconcile(self, *_args: object, **_kwargs: object) -> None:
+            raise error
+
+    monkeypatch.setattr(
+        function, "_teaching_plan_reconciliation_repository", lambda *_: Repository()
+    )
+    context = FakeContext(FakeRequest(
+        "POST",
+        "/v1/ufmg/reconcile/teaching-plan",
+        body_json={"course_id": "course-a", "apply": True},
+    ))
+    result = function.main(context)
+    assert result["status"] == status
+    assert result["body"] == {"error": code}
+    assert json.loads(context.errors[0]) == {
+        "course_id": "course-a",
+        "event": code,
+        "mode": "apply",
+        "stage": {
+            "teaching_plan_not_found": "load_teaching_plan",
+            "teaching_plan_reconciliation_rejected": "validate_reconciliation",
+            "teaching_plan_reconciliation_access_denied": "firestore_access",
+            "teaching_plan_reconciliation_store_unavailable": "firestore_transport",
+        }[code],
+    }
+
+
 @pytest.mark.parametrize(
     "body",
     [
