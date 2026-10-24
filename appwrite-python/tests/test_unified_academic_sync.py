@@ -186,3 +186,42 @@ def test_sync_ignores_metaturma_and_reports_multiple_canonical_plans() -> None:
             "assessment_conflicts": 0,
         }
     ]
+
+
+def test_sync_ignores_courses_without_a_canonical_teaching_plan() -> None:
+    result = UnifiedAcademicSyncService(
+        _Siga(),
+        _Moodle([_course(candidates=[])]),
+        _Plans(),
+        _Reconciler({}),
+    ).sync("user", now=42)
+
+    assert result["teaching_plans"] == {
+        "available": 0,
+        "imported": 0,
+        "applied": 0,
+        "unchanged": 0,
+        "review_required": 0,
+    }
+
+
+def test_sync_rejects_more_exceptions_than_the_bounded_contract() -> None:
+    plan = {
+        "source_id": "101",
+        "kind": "link",
+        "relevance": "teaching_plan",
+        "origin": "canonical",
+    }
+    courses = [
+        _course(f"MAT{index:03}", candidates=[plan, {**plan, "source_id": "102"}])
+        for index in range(51)
+    ]
+
+    try:
+        UnifiedAcademicSyncService(
+            _Siga(), _Moodle(courses), _Plans(), _Reconciler({})
+        ).sync("user", now=42)
+    except ValueError as error:
+        assert str(error) == "too many academic sync exceptions"
+    else:
+        raise AssertionError("the bounded exception contract must be enforced")

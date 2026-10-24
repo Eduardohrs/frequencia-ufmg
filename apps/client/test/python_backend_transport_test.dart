@@ -1457,11 +1457,11 @@ void main() {
                 'capabilities': null,
               },
               'teaching_plans': {
-                'available': 2,
+                'available': 3,
                 'imported': 2,
                 'applied': 1,
                 'unchanged': 0,
-                'review_required': 1,
+                'review_required': 2,
               },
               'exceptions': [
                 {
@@ -1482,6 +1482,15 @@ void main() {
                   'conflicting': 1,
                   'assessment_conflicts': 0,
                 },
+                {
+                  'course_id': 'course-b',
+                  'course_code': 'MAT001',
+                  'reason': 'ambiguous_teaching_plan',
+                  'candidate_count': 2,
+                  'changes': [],
+                  'conflicting': 0,
+                  'assessment_conflicts': 0,
+                },
               ],
             }),
             200,
@@ -1494,8 +1503,9 @@ void main() {
       expect(result.siga.courses.created, 1);
       expect(result.moodle.dates.created, 1);
       expect(result.teachingPlans.applied, 1);
-      expect(result.exceptions.single.courseCode, 'ELE028');
-      expect(result.exceptions.single.changes.single.subject, 'Circuitos');
+      expect(result.exceptions.first.courseCode, 'ELE028');
+      expect(result.exceptions.first.changes.single.subject, 'Circuitos');
+      expect(result.exceptions.last.courseCode, 'MAT001');
       expect(captured.method, 'POST');
       expect(captured.url.path, '/v1/ufmg/sync/all');
       expect(captured.body, '{}');

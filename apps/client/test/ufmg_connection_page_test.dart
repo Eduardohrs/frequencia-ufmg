@@ -449,9 +449,17 @@ void main() {
       ),
     );
     final logger = _Logger();
+    final schedule = UFMGSyncSchedule(now: () => DateTime.utc(2026, 10, 24));
+    var calendarOpened = 0;
     await tester.pumpWidget(
       MaterialApp(
-        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+        home: UFMGConnectionPage(
+          gateway: gateway,
+          logger: logger,
+          userId: 'user-1',
+          syncSchedule: schedule,
+          onOpenCalendar: () async => calendarOpened++,
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -466,7 +474,51 @@ void main() {
     expect(find.text('Revisão necessária'), findsOneWidget);
     expect(find.text('ELE028'), findsWidgets);
     expect(find.textContaining('24/10 · 19:00 · Circuitos'), findsOneWidget);
+    expect(find.text('MAT001'), findsWidgets);
+    expect(find.text('2 planos de ensino possíveis.'), findsOneWidget);
     expect(logger.events, contains('academic_sync_succeeded'));
+    expect(await schedule.isDue('user-1'), isFalse);
+    await tester.tap(find.text('Entendi'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-open-calendar')));
+    expect(calendarOpened, 1);
+  });
+
+  testWidgets('reports unified synchronization failures and expired sessions', (
+    tester,
+  ) async {
+    for (final failure in [
+      const PythonBackendException(PythonBackendError.unavailable),
+      const PythonBackendException(
+        PythonBackendError.ufmgReauthenticationRequired,
+      ),
+    ]) {
+      final gateway = _UnifiedGateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      )..unifiedSyncError = failure;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('ufmg-sync-all')));
+      await tester.pumpAndSettle();
+
+      if (failure.code == PythonBackendError.ufmgReauthenticationRequired) {
+        expect(
+          find.text('Sua sessão expirou. Reconecte para sincronizar.'),
+          findsOneWidget,
+        );
+      } else {
+        expect(find.byKey(const Key('ufmg-source-all-error')), findsOneWidget);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
   });
 
   testWidgets(
@@ -3195,10 +3247,12 @@ final class _UnifiedGateway extends _Gateway
   _UnifiedGateway({required super.status});
 
   int unifiedSyncCalls = 0;
+  Object? unifiedSyncError;
 
   @override
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() async {
     unifiedSyncCalls++;
+    if (unifiedSyncError case final error?) throw error;
     return PythonUnifiedAcademicSyncResult(
       siga: await syncSiga(),
       moodle: await syncMoodle(),
@@ -3207,7 +3261,7 @@ final class _UnifiedGateway extends _Gateway
         imported: 1,
         applied: 0,
         unchanged: 0,
-        reviewRequired: 1,
+        reviewRequired: 2,
       ),
       exceptions: [
         PythonAcademicSyncException(
@@ -3225,6 +3279,15 @@ final class _UnifiedGateway extends _Gateway
             ),
           ],
           conflicting: 1,
+          assessmentConflicts: 0,
+        ),
+        const PythonAcademicSyncException(
+          courseId: 'mat001',
+          courseCode: 'MAT001',
+          reason: 'ambiguous_teaching_plan',
+          candidateCount: 2,
+          changes: [],
+          conflicting: 0,
           assessmentConflicts: 0,
         ),
       ],
