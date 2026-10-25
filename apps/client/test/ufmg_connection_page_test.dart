@@ -529,6 +529,97 @@ void main() {
   });
 
   testWidgets(
+    'shows official holiday details and applies only after confirmation',
+    (tester) async {
+      final gateway =
+          _UnifiedGateway(
+              status: const PythonUFMGSessionStatus(
+                connected: true,
+                reauthenticationRequired: false,
+              ),
+            )
+            ..officialCalendarChanges = [
+              PythonOfficialCalendarChange(
+                courseId: 'ele028',
+                courseCode: 'ELE028',
+                sessionId: 'session-1',
+                date: DateTime(2026, 10, 12),
+                startsAt: DateTime.utc(2026, 10, 12, 22),
+                endsAt: DateTime.utc(2026, 10, 12, 23, 40),
+                eventTitle: 'Feriado: Nossa Senhora Aparecida',
+              ),
+            ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('ufmg-sync-all')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Entendi'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Atualizar feriados oficiais?'), findsOneWidget);
+      expect(find.text('ELE028'), findsWidgets);
+      expect(find.textContaining('12/10'), findsOneWidget);
+      expect(find.textContaining('Nossa Senhora Aparecida'), findsOneWidget);
+      expect(gateway.officialCalendarApplyCalls, 0);
+    await tester.tap(find.text('Aplicar 1 alteração'));
+      await tester.pumpAndSettle();
+      expect(gateway.officialCalendarApplyCalls, 1);
+      expect(find.textContaining('1 aula atualizada'), findsOneWidget);
+    },
+  );
+
+  testWidgets('keeps official calendar preview optional and non-blocking', (
+    tester,
+  ) async {
+    final gateway =
+        _UnifiedGateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..officialCalendarChanges = [
+            PythonOfficialCalendarChange(
+              courseId: 'ele028',
+              courseCode: 'ELE028',
+              sessionId: 'session-1',
+              date: DateTime(2026, 10, 12),
+              startsAt: DateTime.utc(2026, 10, 12, 22),
+              endsAt: DateTime.utc(2026, 10, 12, 23, 40),
+              eventTitle: 'Feriado oficial',
+            ),
+          ];
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-all')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Entendi'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Agora não'));
+    await tester.pumpAndSettle();
+    expect(gateway.officialCalendarApplyCalls, 0);
+
+    gateway.officialCalendarError = const PythonBackendException(
+      PythonBackendError.unavailable,
+    );
+    await tester.tap(find.byKey(const Key('ufmg-sync-all')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Entendi'));
+    await tester.pumpAndSettle();
+    expect(logger.errorContexts, contains('official_calendar_sync'));
+  });
+
+  testWidgets(
     'presents the connected account as independent academic sources',
     (tester) async {
       final gateway = _Gateway(
@@ -3250,11 +3341,33 @@ class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
 }
 
 final class _UnifiedGateway extends _Gateway
-    implements BackendUnifiedAcademicSyncGateway {
+    implements
+        BackendUnifiedAcademicSyncGateway,
+        BackendOfficialCalendarGateway {
   _UnifiedGateway({required super.status});
 
   int unifiedSyncCalls = 0;
   Object? unifiedSyncError;
+  List<PythonOfficialCalendarChange> officialCalendarChanges = const [];
+  int officialCalendarApplyCalls = 0;
+  Object? officialCalendarError;
+
+  @override
+  Future<PythonOfficialCalendarPreview> previewOfficialCalendar() async {
+    if (officialCalendarError case final error?) throw error;
+    return PythonOfficialCalendarPreview(candidates: officialCalendarChanges);
+  }
+
+  @override
+  Future<PythonOfficialCalendarApplyResult> applyOfficialCalendar(
+    List<PythonOfficialCalendarChange> changes,
+  ) async {
+    officialCalendarApplyCalls++;
+    return PythonOfficialCalendarApplyResult(
+      applied: changes.length,
+      skipped: 0,
+    );
+  }
 
   @override
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() async {
@@ -3314,6 +3427,7 @@ final class _UnifiedGateway extends _Gateway
 final class _Logger implements AppLogger {
   final events = <String>[];
   final parameters = <Map<String, Object>?>[];
+  final errorContexts = <String>[];
 
   Iterable<Object?> get actions =>
       parameters.map((parameters) => parameters?['action']);
@@ -3331,7 +3445,9 @@ final class _Logger implements AppLogger {
     required String context,
     bool fatal = false,
     Map<String, Object>? parameters,
-  }) async {}
+  }) async {
+    errorContexts.add(context);
+  }
 }
 
 class _MaterialCache implements MaterialFileCache {

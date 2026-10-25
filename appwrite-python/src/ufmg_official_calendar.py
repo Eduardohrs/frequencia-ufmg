@@ -3,6 +3,7 @@
 from collections.abc import Callable, Mapping
 from datetime import date
 from html.parser import HTMLParser
+from time import perf_counter
 from types import TracebackType
 from typing import Protocol
 from unicodedata import combining, normalize
@@ -54,6 +55,7 @@ class OfficialCalendarClient:
         self._telemetry = telemetry
 
     def fetch_month(self, year: int, month: int) -> dict[str, object]:
+        started = perf_counter()
         if year < 2026 or year > 2099 or month < 1 or month > 12:
             raise ValueError("unsupported official calendar month")
         url = f"{_BASE_URL}?mes={month:02d}&ano={year}"
@@ -61,10 +63,24 @@ class OfficialCalendarClient:
         try:
             status, body, content_type = self._transport(request, 15)
         except (TimeoutError, URLError, OfficialCalendarUnavailable) as error:
-            self._failed(year, month, "request", "transport_error", error_type=type(error).__name__)
+            self._failed(
+                year,
+                month,
+                "request",
+                "transport_error",
+                started=started,
+                error_type=type(error).__name__,
+            )
             raise OfficialCalendarUnavailable("official calendar unavailable") from error
         if status != 200:
-            self._failed(year, month, "upstream_response", "http_status", upstream_status=status)
+            self._failed(
+                year,
+                month,
+                "upstream_response",
+                "http_status",
+                started=started,
+                upstream_status=status,
+            )
             raise OfficialCalendarUnavailable("official calendar unavailable")
         if len(body) > _MAX_RESPONSE_BYTES:
             self._failed(
@@ -72,6 +88,7 @@ class OfficialCalendarClient:
                 month,
                 "response_validation",
                 "response_too_large",
+                started=started,
                 response_bytes=len(body),
             )
             raise InvalidOfficialCalendar("invalid official calendar response")
@@ -81,6 +98,7 @@ class OfficialCalendarClient:
                 month,
                 "response_validation",
                 "content_type_invalid",
+                started=started,
                 content_type=content_type,
             )
             raise InvalidOfficialCalendar("invalid official calendar response")
@@ -95,11 +113,12 @@ class OfficialCalendarClient:
                 month,
                 "document_parse",
                 "invalid_document",
+                started=started,
                 error_type=type(error).__name__,
             )
             raise InvalidOfficialCalendar("invalid official calendar response") from error
         if not events:
-            self._failed(year, month, "document_parse", "no_events")
+            self._failed(year, month, "document_parse", "no_events", started=started)
             raise InvalidOfficialCalendar("official calendar has no events")
 
         if self._telemetry is not None:
@@ -114,6 +133,7 @@ class OfficialCalendarClient:
                     "holidays": _effect_count(events, "holiday"),
                     "class_replacements": _effect_count(events, "class_replacement"),
                     "no_assessments": _effect_count(events, "no_assessments"),
+                    "duration_ms": round((perf_counter() - started) * 1_000, 3),
                 },
             )
         return {
@@ -130,12 +150,20 @@ class OfficialCalendarClient:
         month: int,
         stage: str,
         reason: str,
+        started: float,
         **details: object,
     ) -> None:
         if self._telemetry is not None:
             self._telemetry(
                 "official_calendar_fetch_failed",
-                {"year": year, "month": month, "stage": stage, "reason": reason, **details},
+                {
+                    "year": year,
+                    "month": month,
+                    "stage": stage,
+                    "reason": reason,
+                    "duration_ms": round((perf_counter() - started) * 1_000, 3),
+                    **details,
+                },
             )
 
 

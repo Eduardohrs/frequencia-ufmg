@@ -42,6 +42,7 @@ final class _FirebasePythonBackendVerifier
         BackendSessionGateway,
         BackendUFMGSessionGateway,
         BackendUnifiedAcademicSyncGateway,
+        BackendOfficialCalendarGateway,
         BackendDiarioPlanGateway,
         BackendOverviewGateway {
   _FirebasePythonBackendVerifier(Uri endpoint)
@@ -133,6 +134,20 @@ final class _FirebasePythonBackendVerifier
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() async {
     await (_activation ??= _activateAppCheck());
     return _transport.syncAllAcademicData();
+  }
+
+  @override
+  Future<PythonOfficialCalendarPreview> previewOfficialCalendar() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.previewOfficialCalendar();
+  }
+
+  @override
+  Future<PythonOfficialCalendarApplyResult> applyOfficialCalendar(
+    List<PythonOfficialCalendarChange> changes,
+  ) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.applyOfficialCalendar(changes);
   }
 
   @override

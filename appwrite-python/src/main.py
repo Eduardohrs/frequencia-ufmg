@@ -70,6 +70,11 @@ from moodle_token_store import (  # noqa: E402
     MoodleTokenCipher,
     MoodleTokenStoreUnavailable,
 )
+from official_calendar_repository import OfficialCalendarSessionRepository  # noqa: E402
+from official_calendar_service import (  # noqa: E402
+    InvalidOfficialCalendarRequest,
+    OfficialCalendarService,
+)
 from overview_repository import (  # noqa: E402
     AcademicOverviewRepository,
     OverviewTooLarge,
@@ -108,6 +113,11 @@ from ufmg_course_import import (  # noqa: E402
     UFMGCourseImportService,
     UFMGEnrollmentClient,
     UFMGEnrollmentUnavailable,
+)
+from ufmg_official_calendar import (  # noqa: E402
+    InvalidOfficialCalendar,
+    OfficialCalendarClient,
+    OfficialCalendarUnavailable,
 )
 from ufmg_schedule_import import UFMGScheduleImportService  # noqa: E402
 from ufmg_session_service import UFMGSessionService  # noqa: E402
@@ -277,6 +287,10 @@ def _dispatch(context: Any) -> Any:
         return _moodle_sync(context, allowed_origin)
     if path == "/v1/ufmg/sync/all" and method == "POST":
         return _unified_academic_sync(context, allowed_origin)
+    if path == "/v1/calendar/official/preview" and method == "POST":
+        return _official_calendar(context, allowed_origin, apply=False)
+    if path == "/v1/calendar/official/apply" and method == "POST":
+        return _official_calendar(context, allowed_origin, apply=True)
     if path == "/v1/ufmg/sync" and method == "POST":
         return _ufmg_sync(context, allowed_origin)
     if path == "/v1/ufmg/sync/siga" and method == "POST":
@@ -354,6 +368,63 @@ def _identity(context: Any, origin: str | None) -> Any:
         return rejected
     _log(context, "request_authenticated")
     return _respond(context, {"authenticated": True}, origin=origin)
+
+
+def _official_calendar(context: Any, origin: str | None, *, apply: bool) -> Any:
+    action = "apply" if apply else "preview"
+    user_id, rejected = _authentication(context, origin, f"/v1/calendar/official/{action}/post")
+    if rejected is not None:
+        return rejected
+    payload = context.req.body_json
+    if not isinstance(payload, Mapping) or (not apply and payload):
+        return _official_calendar_error(
+            context, origin, "official_calendar_request_rejected", 400, action=action
+        )
+    try:
+        service = _official_calendar_service(
+            context.req.headers,
+            cast(str, user_id),
+            lambda event, fields: _academic_sync_telemetry(context, event, fields),
+        )
+        result = service.apply(payload) if apply else service.preview()
+    except InvalidOfficialCalendarRequest:
+        return _official_calendar_error(
+            context, origin, "official_calendar_request_rejected", 400, action=action
+        )
+    except OfficialCalendarUnavailable:
+        return _official_calendar_error(
+            context, origin, "official_calendar_unavailable", 503, action=action
+        )
+    except InvalidOfficialCalendar:
+        return _official_calendar_error(
+            context, origin, "official_calendar_response_invalid", 502, action=action
+        )
+    except FirestoreAccessDenied:
+        return _official_calendar_error(
+            context, origin, "official_calendar_access_denied", 403, action=action
+        )
+    except FirestoreUnavailable:
+        return _official_calendar_error(
+            context, origin, "official_calendar_store_unavailable", 503, action=action
+        )
+    except (
+        FirestoreNotFound,
+        FirestoreRequestRejected,
+        InvalidSchedule,
+        InvalidCourse,
+        TypeError,
+        ValueError,
+    ):
+        return _official_calendar_error(
+            context, origin, "official_calendar_reconciliation_rejected", 409, action=action
+        )
+    log_fields = result.get("counts", result)
+    _log(
+        context,
+        f"official_calendar_{action}_succeeded",
+        **cast(Mapping[str, object], log_fields),
+    )
+    return _respond(context, result, origin=origin)
 
 
 def _ufmg_session(context: Any, origin: str | None, method: str) -> Any:
@@ -458,9 +529,7 @@ def _ufmg_schedule_import(context: Any, origin: str | None) -> Any:
             context.req.headers, cast(str, user_id)
         ).import_schedules(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
-        return _ufmg_session_error(
-            context, origin, "ufmg_reauthentication_required", 401
-        )
+        return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
     except UFMGEnrollmentUnavailable as error:
         return _ufmg_session_error(
             context,
@@ -821,11 +890,7 @@ def _legacy_moodle_content_payload(result: Mapping[str, Any]) -> dict[str, Any]:
     for raw_course in cast(list[Mapping[str, Any]], result["courses"]):
         course = dict(raw_course)
         course["candidates"] = [
-            {
-                key: value
-                for key, value in candidate.items()
-                if key != "moodle_course_id"
-            }
+            {key: value for key, value in candidate.items() if key != "moodle_course_id"}
             for candidate in cast(list[Mapping[str, Any]], course["candidates"])
         ]
         courses.append(course)
@@ -1001,9 +1066,7 @@ def _moodle_diario_plan(context: Any, origin: str | None) -> Any:
 
 
 def _moodle_teaching_plan_import(context: Any, origin: str | None) -> Any:
-    user_id, rejected = _authentication(
-        context, origin, "/v1/ufmg/import/teaching-plan/post"
-    )
+    user_id, rejected = _authentication(context, origin, "/v1/ufmg/import/teaching-plan/post")
     if rejected is not None:
         return rejected
     payload = context.req.body_json
@@ -1069,9 +1132,7 @@ def _moodle_teaching_plan_import(context: Any, origin: str | None) -> Any:
 
 
 def _teaching_plan_reconciliation(context: Any, origin: str | None) -> Any:
-    user_id, rejected = _authentication(
-        context, origin, "/v1/ufmg/reconcile/teaching-plan/post"
-    )
+    user_id, rejected = _authentication(context, origin, "/v1/ufmg/reconcile/teaching-plan/post")
     if rejected is not None:
         return rejected
     payload = context.req.body_json
@@ -1081,35 +1142,49 @@ def _teaching_plan_reconciliation(context: Any, origin: str | None) -> Any:
         or not isinstance(payload["course_id"], str)
         or type(payload["apply"]) is not bool
     ):
-        return _ufmg_session_error(
-            context, origin, "teaching_plan_reconciliation_rejected", 400
-        )
+        return _ufmg_session_error(context, origin, "teaching_plan_reconciliation_rejected", 400)
     try:
         result = _teaching_plan_reconciliation_repository(
             context.req.headers, cast(str, user_id)
         ).reconcile(payload["course_id"], apply=payload["apply"])
     except FirestoreNotFound:
         return _ufmg_session_error(
-            context, origin, "teaching_plan_not_found", 404,
-            course_id=payload["course_id"], mode="apply" if payload["apply"] else "preview",
+            context,
+            origin,
+            "teaching_plan_not_found",
+            404,
+            course_id=payload["course_id"],
+            mode="apply" if payload["apply"] else "preview",
             stage="load_teaching_plan",
         )
     except (InvalidCourse, InvalidTeachingPlan, InvalidTeachingPlanReconciliation, TypeError):
         return _ufmg_session_error(
-            context, origin, "teaching_plan_reconciliation_rejected", 400,
-            course_id=payload["course_id"], mode="apply" if payload["apply"] else "preview",
+            context,
+            origin,
+            "teaching_plan_reconciliation_rejected",
+            400,
+            course_id=payload["course_id"],
+            mode="apply" if payload["apply"] else "preview",
             stage="validate_reconciliation",
         )
     except FirestoreAccessDenied:
         return _ufmg_session_error(
-            context, origin, "teaching_plan_reconciliation_access_denied", 403,
-            course_id=payload["course_id"], mode="apply" if payload["apply"] else "preview",
+            context,
+            origin,
+            "teaching_plan_reconciliation_access_denied",
+            403,
+            course_id=payload["course_id"],
+            mode="apply" if payload["apply"] else "preview",
             stage="firestore_access",
         )
     except FirestoreUnavailable:
         return _ufmg_session_error(
-            context, origin, "teaching_plan_reconciliation_store_unavailable", 503,
-            course_id=payload["course_id"], mode="apply" if payload["apply"] else "preview",
+            context,
+            origin,
+            "teaching_plan_reconciliation_store_unavailable",
+            503,
+            course_id=payload["course_id"],
+            mode="apply" if payload["apply"] else "preview",
             stage="firestore_transport",
         )
     _log(
@@ -1128,8 +1203,7 @@ def _teaching_plan_reconciliation(context: Any, origin: str | None) -> Any:
         proposed_changes=cast(list[dict[str, object]], result["changes"])[:10],
         excluded_occurrences=cast(list[dict[str, object]], result["excluded"])[:10],
         conflict_occurrence_keys=[
-            item["occurrence_key"]
-            for item in cast(list[dict[str, object]], result["conflicts"])
+            item["occurrence_key"] for item in cast(list[dict[str, object]], result["conflicts"])
         ],
     )
     return _respond(context, result, origin=origin)
@@ -1493,6 +1567,20 @@ def _unified_academic_sync_service(
     )
 
 
+def _official_calendar_service(
+    headers: dict[str, str],
+    user_id: str,
+    telemetry: Any = None,
+) -> OfficialCalendarService:
+    firestore = _firestore(headers, user_id)
+    return OfficialCalendarService(
+        CourseRepository(firestore),
+        OfficialCalendarSessionRepository(firestore),
+        OfficialCalendarClient(telemetry=telemetry),
+        telemetry=telemetry,
+    )
+
+
 def _moodle_content_discovery_service(
     headers: dict[str, str], user_id: str
 ) -> MoodleContentDiscoveryService:
@@ -1649,6 +1737,13 @@ def _session_error(context: Any, origin: str | None, error: str, status: int) ->
     return _respond(context, {"error": error}, status, origin)
 
 
+def _official_calendar_error(
+    context: Any, origin: str | None, error: str, status: int, **fields: Any
+) -> Any:
+    _error(context, error, **fields)
+    return _respond(context, {"error": error}, status, origin)
+
+
 def _session_mutation_path(path: str) -> tuple[str, str, str] | None:
     segments = path.strip("/").split("/")
     if (
@@ -1684,6 +1779,8 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/ufmg/sync/all",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
+        "/v1/calendar/official/preview",
+        "/v1/calendar/official/apply",
     } or path.startswith("/v1/courses/")
 
 
@@ -1823,6 +1920,8 @@ def _route_name(path: str) -> str:
         "/v1/ufmg/sync/all",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
+        "/v1/calendar/official/preview",
+        "/v1/calendar/official/apply",
     }:
         return path
     if _session_mutation_path(path) is not None:
