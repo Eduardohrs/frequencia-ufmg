@@ -2352,6 +2352,44 @@ void main() {
     }
   });
 
+  test('gives the complete academic sync a longer bounded timeout', () async {
+    final client = MockClient((request) async {
+      await Future<void>.delayed(const Duration(milliseconds: 15));
+      if (request.url.path == '/v1/identity') {
+        return http.Response(jsonEncode({'authenticated': true}), 200);
+      }
+      return http.Response('{}', 200);
+    });
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: client,
+      timeout: const Duration(milliseconds: 5),
+      longRunningTimeout: const Duration(milliseconds: 50),
+    );
+
+    await expectLater(
+      transport.verifyIdentity(),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'short request timeout',
+          PythonBackendError.timeout,
+        ),
+      ),
+    );
+    await expectLater(
+      transport.syncAllAcademicData(),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'response reached the parser instead of timing out',
+          PythonBackendError.invalidResponse,
+        ),
+      ),
+    );
+  });
+
   test('rejects missing credentials before the network boundary', () async {
     final client = MockClient((_) async => fail('must not call backend'));
     final transport = PythonBackendTransport(

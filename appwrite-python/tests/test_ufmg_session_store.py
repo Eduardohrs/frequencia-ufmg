@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from ufmg_session_store import (
     AppwriteUFMGSessionStore,
     InvalidUFMGSession,
+    RequestCachedUFMGSessionStore,
     UFMGReauthenticationRequired,
     UFMGSessionCipher,
     UFMGSessionSecrets,
@@ -115,6 +116,19 @@ def test_load_round_trips_and_binds_ciphertext_to_the_firebase_user() -> None:
     assert restored.token == "session-token"
     assert restored.created_at == 1_000
     assert store.load("other-user", now=1_001) is None
+
+
+def test_request_cache_loads_the_same_session_only_once() -> None:
+    tables = FakeTables()
+    persisted = _store(tables)
+    persisted.save("owner", "session-token", now=1_000)
+    cached = RequestCachedUFMGSessionStore(persisted)
+
+    assert cached.load("owner", now=1_001) == cached.load("owner", now=1_002)
+    assert [call[0] for call in tables.calls].count("get") == 1
+
+    cached.delete("owner")
+    assert persisted.load("owner", now=1_003) is None
 
 
 def test_old_key_remains_readable_during_rotation() -> None:

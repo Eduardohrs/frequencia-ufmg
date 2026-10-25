@@ -207,6 +207,27 @@ def test_sync_ignores_courses_without_a_canonical_teaching_plan() -> None:
     }
 
 
+def test_sync_is_not_blocked_when_stage_telemetry_delivery_fails() -> None:
+    def unavailable_telemetry(_event: str, _fields: object) -> None:
+        raise RuntimeError("log sink unavailable")
+
+    result = UnifiedAcademicSyncService(
+        _Siga(),
+        _Moodle([_course(candidates=[])]),
+        _Plans(),
+        _Reconciler({}),
+        telemetry=unavailable_telemetry,
+    ).sync("user", now=42)
+
+    assert result["teaching_plans"] == {
+        "available": 0,
+        "imported": 0,
+        "applied": 0,
+        "unchanged": 0,
+        "review_required": 0,
+    }
+
+
 def test_sync_rejects_more_exceptions_than_the_bounded_contract() -> None:
     plan = {
         "source_id": "101",
@@ -276,7 +297,8 @@ def test_sync_logs_one_unavailable_plan_and_continues_the_other_courses() -> Non
             "assessment_conflicts": 0,
         }
     ]
-    assert telemetry == [
+    course_failures = [item for item in telemetry if item[0] == "academic_sync_course_failed"]
+    assert course_failures == [
         (
             "academic_sync_course_failed",
             {
@@ -322,7 +344,8 @@ def test_sync_continues_after_an_isolated_reconciliation_failure() -> None:
         "review_required": 1,
     }
     assert result["exceptions"][0]["course_code"] == "ESA019"
-    assert telemetry[0][1] == {
+    course_failure = next(item for item in telemetry if item[0] == "academic_sync_course_failed")
+    assert course_failure[1] == {
         "course_id": "esa019",
         "course_code": "ESA019",
         "term": "2026-2",
@@ -391,3 +414,41 @@ def test_sync_does_not_hide_global_dependency_failures() -> None:
     for service in services:
         with pytest.raises(MoodleUnavailable):
             service.sync("user", now=42)
+
+
+def test_sync_reports_duration_and_progress_for_each_slow_stage() -> None:
+    ticks = iter([0.0, 0.4, 0.4, 1.1, 1.1, 2.0, 2.0, 2.3])
+    telemetry: list[tuple[str, dict[str, object]]] = []
+    service = UnifiedAcademicSyncService(
+        _Siga(),
+        _Moodle([_course()]),
+        _Plans(),
+        _Reconciler({"ele028": _preview()}),
+        telemetry=lambda event, fields: telemetry.append((event, dict(fields))),
+        monotonic=lambda: next(ticks),
+    )
+
+    service.sync("user", now=42)
+
+    assert telemetry == [
+        ("academic_sync_stage_completed", {"stage": "siga", "duration_ms": 400.0}),
+        ("academic_sync_stage_completed", {"stage": "moodle", "duration_ms": 700.0}),
+        (
+            "academic_sync_stage_completed",
+            {
+                "stage": "teaching_plan_import",
+                "course_id": "ele028",
+                "course_code": "ELE028",
+                "duration_ms": 900.0,
+            },
+        ),
+        (
+            "academic_sync_stage_completed",
+            {
+                "stage": "teaching_plan_reconciliation",
+                "course_id": "ele028",
+                "course_code": "ELE028",
+                "duration_ms": 300.0,
+            },
+        ),
+    ]
