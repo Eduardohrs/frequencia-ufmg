@@ -191,82 +191,85 @@ void main() {
     },
   );
 
-  test('loads, connects, and disconnects the UFMG session without echoing credentials', () async {
-    final requests = <http.Request>[];
-    final responses = <http.Response>[
-      http.Response(
-        jsonEncode({
-          'connected': true,
-          'created_at': 900,
-          'expires_at': 33300,
-          'reauthentication_required': false,
-        }),
-        200,
-      ),
-      http.Response(
-        jsonEncode({
-          'connected': true,
-          'created_at': 1000,
-          'expires_at': 33400,
-        }),
-        200,
-      ),
-      http.Response(jsonEncode({'connected': false}), 200),
-    ];
-    final transport = PythonBackendTransport(
-      endpoint: Uri.parse('https://backend.example'),
-      tokens: _Tokens(),
-      client: MockClient((request) async {
-        requests.add(request);
-        return responses.removeAt(0);
-      }),
-    );
-
-    final initial = await transport.getUFMGSessionStatus();
-    final connected = await transport.connectUFMG(
-      username: '2025019259',
-      password: 'private-password',
-    );
-    final disconnected = await transport.disconnectUFMG();
-
-    expect(initial.connected, isTrue);
-    expect(initial.reauthenticationRequired, isFalse);
-    expect(connected.connected, isTrue);
-    expect(
-      connected.expiresAt,
-      DateTime.fromMillisecondsSinceEpoch(33400000, isUtc: true),
-    );
-    expect(disconnected.connected, isFalse);
-    expect(requests.map((request) => request.method), [
-      'GET',
-      'POST',
-      'DELETE',
-    ]);
-    expect(
-      requests.map((request) => request.url.path),
-      everyElement('/v1/ufmg/session'),
-    );
-    expect(jsonDecode(requests[1].body), {
-      'username': '2025019259',
-      'password': 'private-password',
-    });
-    expect(requests[0].body, isEmpty);
-    expect(requests[2].body, isEmpty);
-
-    final expiredTransport = PythonBackendTransport(
-      endpoint: Uri.parse('https://backend.example'),
-      tokens: _Tokens(),
-      client: MockClient(
-        (_) async => http.Response(
-          jsonEncode({'connected': false, 'reauthentication_required': true}),
+  test(
+    'loads, connects, and disconnects the UFMG session without echoing credentials',
+    () async {
+      final requests = <http.Request>[];
+      final responses = <http.Response>[
+        http.Response(
+          jsonEncode({
+            'connected': true,
+            'created_at': 900,
+            'expires_at': 33300,
+            'reauthentication_required': false,
+          }),
           200,
         ),
-      ),
-    );
-    final expired = await expiredTransport.getUFMGSessionStatus();
-    expect(expired.connected, isFalse);
-    expect(expired.reauthenticationRequired, isTrue);
-  });
+        http.Response(
+          jsonEncode({
+            'connected': true,
+            'created_at': 1000,
+            'expires_at': 33400,
+          }),
+          200,
+        ),
+        http.Response(jsonEncode({'connected': false}), 200),
+      ];
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((request) async {
+          requests.add(request);
+          return responses.removeAt(0);
+        }),
+      );
+
+      final initial = await transport.getUFMGSessionStatus();
+      final connected = await transport.connectUFMG(
+        username: '2025019259',
+        password: 'private-password',
+      );
+      final disconnected = await transport.disconnectUFMG();
+
+      expect(initial.connected, isTrue);
+      expect(initial.reauthenticationRequired, isFalse);
+      expect(connected.connected, isTrue);
+      expect(
+        connected.expiresAt,
+        DateTime.fromMillisecondsSinceEpoch(33400000, isUtc: true),
+      );
+      expect(disconnected.connected, isFalse);
+      expect(requests.map((request) => request.method), [
+        'GET',
+        'POST',
+        'DELETE',
+      ]);
+      expect(
+        requests.map((request) => request.url.path),
+        everyElement('/v1/ufmg/session'),
+      );
+      expect(jsonDecode(requests[1].body), {
+        'username': '2025019259',
+        'password': 'private-password',
+      });
+      expect(requests[0].body, isEmpty);
+      expect(requests[2].body, isEmpty);
+
+      final expiredTransport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({'connected': false, 'reauthentication_required': true}),
+            200,
+          ),
+        ),
+      );
+      final expired = await expiredTransport.getUFMGSessionStatus();
+      expect(expired.connected, isFalse);
+      expect(expired.reauthenticationRequired, isTrue);
+    },
+  );
 
   test(
     'imports UFMG courses and accepts only a bounded count summary',
@@ -493,7 +496,8 @@ void main() {
                     'source_id': '101',
                     'kind': 'page',
                     'title': 'Plano de ensino',
-                    'url': 'https://virtual.ufmg.br/20262/mod/page/view.php?id=101',
+                    'url':
+                        'https://virtual.ufmg.br/20262/mod/page/view.php?id=101',
                     'relevance': 'teaching_plan',
                     'origin': 'canonical',
                   },
@@ -2411,32 +2415,35 @@ void main() {
     },
   );
 
-  test('classifies Firebase identity acquisition failures before the network boundary', () async {
-    final client = MockClient((_) async => fail('must not call backend'));
-    final transport = PythonBackendTransport(
-      endpoint: Uri.parse('https://backend.example'),
-      tokens: _FailingIdentityTokens(),
-      client: client,
-    );
+  test(
+    'classifies Firebase identity acquisition failures before the network boundary',
+    () async {
+      final client = MockClient((_) async => fail('must not call backend'));
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _FailingIdentityTokens(),
+        client: client,
+      );
 
-    await expectLater(
-      transport.verifyIdentity(),
-      throwsA(
-        isA<PythonBackendException>()
-            .having(
-              (error) => error.code,
-              'code',
-              PythonBackendError.credentialsUnavailable,
-            )
-            .having(
-              (error) => error.credential,
-              'credential',
-              PythonBackendCredential.firebaseIdentity,
-            )
-            .having((error) => error.causeType, 'safe cause', 'StateError'),
-      ),
-    );
-  });
+      await expectLater(
+        transport.verifyIdentity(),
+        throwsA(
+          isA<PythonBackendException>()
+              .having(
+                (error) => error.code,
+                'code',
+                PythonBackendError.credentialsUnavailable,
+              )
+              .having(
+                (error) => error.credential,
+                'credential',
+                PythonBackendCredential.firebaseIdentity,
+              )
+              .having((error) => error.causeType, 'safe cause', 'StateError'),
+        ),
+      );
+    },
+  );
 }
 
 final class _SilentLogger implements AppLogger {
