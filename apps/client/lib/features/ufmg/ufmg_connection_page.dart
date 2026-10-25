@@ -327,6 +327,16 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             ),
       );
       if (!mounted) return;
+      if (imported.notPublished) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'O plano de ensino ainda não foi publicado. Seus dados foram mantidos.',
+            ),
+          ),
+        );
+        return;
+      }
       final reconciliation = await runAuditedOperation(
         logger: widget.logger,
         operation: AuditedOperation.moodleTeachingPlanReconciliation,
@@ -1176,7 +1186,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   ) => showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Revisão necessária'),
+      title: const Text('Pendências da sincronização'),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520),
         child: SingleChildScrollView(
@@ -1185,7 +1195,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'A sincronização automática terminou. Estas exceções não foram aplicadas:',
+                'A sincronização terminou. Confira estas disciplinas:',
               ),
               const SizedBox(height: 12),
               for (final exception in exceptions) ...[
@@ -1196,6 +1206,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                 Text(
                   exception.reason == 'ambiguous_teaching_plan'
                       ? '${exception.candidateCount} planos de ensino possíveis.'
+                      : exception.reason == 'teaching_plan_not_published'
+                      ? 'Plano de ensino ainda não publicado. Seus dados foram mantidos.'
                       : exception.reason == 'teaching_plan_unavailable'
                       ? 'O plano não pôde ser processado; as outras disciplinas continuaram normalmente.'
                       : '${exception.conflicting + exception.assessmentConflicts} conflito(s) com dados existentes.',

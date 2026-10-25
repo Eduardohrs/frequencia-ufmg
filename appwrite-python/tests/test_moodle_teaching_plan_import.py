@@ -48,6 +48,30 @@ class _Courses:
         return [{"id": "course-a", "code": "ELE631", "term": "2026-2"}]
 
 
+def test_unpublished_plan_preserves_existing_plan_and_dates_without_writes() -> None:
+    class Client(_Client):
+        def fetch_diario_plan(self, *args: Any, **kwargs: Any) -> dict[str, object]:
+            return {**super().fetch_diario_plan(*args, **kwargs), "assessments": []}
+
+    class Plans(_Plans):
+        def save(self, *args: Any, **kwargs: Any) -> str:
+            pytest.fail("must preserve the existing saved plan")
+
+    class Dates(_Dates):
+        def import_diario_assessments(self, *args: Any, **kwargs: Any) -> dict[str, int]:
+            pytest.fail("must not remove or update existing assessments")
+
+    result = MoodleTeachingPlanImportService(
+        _Sessions(UFMGSession("private", 1, 999), []),
+        Client(),
+        _Courses(),
+        Plans(),
+        Dates(),
+    ).import_plan("user-1", course_id="course-a", term="2026-2", source_id=701, now=123)
+    assert result["plan"] == "not_published"
+    assert result["dates_created"] == result["dates_updated"] == result["dates_removed"] == 0
+
+
 class _Plans:
     def save(self, course_id: str, *, source_id: str, plan: Any) -> str:
         assert (course_id, source_id, plan["course_code"]) == ("course-a", "701", "ELE631")

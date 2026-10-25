@@ -228,6 +228,29 @@ def test_sync_is_not_blocked_when_stage_telemetry_delivery_fails() -> None:
     }
 
 
+def test_explicitly_unpublished_plan_is_informational_and_never_reconciles_stale_data() -> None:
+    class Plans(_Plans):
+        def import_plan(self, user_id: str, **values: object) -> dict[str, object]:
+            return {"plan": "not_published"}
+
+    events: list[tuple[str, dict[str, object]]] = []
+    reconciler = _Reconciler({})
+    result = UnifiedAcademicSyncService(
+        _Siga(),
+        _Moodle([_course("ESA019")]),
+        Plans(),
+        reconciler,
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    ).sync("user", now=42)
+    assert reconciler.calls == []
+    assert result["exceptions"][0]["reason"] == "teaching_plan_not_published"
+    assert result["teaching_plans"]["imported"] == 0
+    assert not any(event.endswith("_failed") for event, _ in events)
+    notice = next(fields for event, fields in events if event == "academic_sync_plan_not_published")
+    assert notice["course_code"] == "ESA019"
+    assert notice["preserved_existing_data"] is True
+
+
 def test_sync_rejects_more_exceptions_than_the_bounded_contract() -> None:
     plan = {
         "source_id": "101",

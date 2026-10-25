@@ -37,9 +37,7 @@ class TeachingPlanParseError(ValueError):
             "assessment_total": assessment_total,
             "criteria_total": criteria_total,
             "schedule_total": schedule_total,
-            "sample_rows": [
-                " | ".join(row)[:_MAX_LOG_ROW_TEXT] for row in rows[:_MAX_LOG_ROWS]
-            ],
+            "sample_rows": [" | ".join(row)[:_MAX_LOG_ROW_TEXT] for row in rows[:_MAX_LOG_ROWS]],
         }
         super().__init__(f"invalid teaching plan at {stage}")
 
@@ -128,9 +126,7 @@ def parse_teaching_plan_html(markup: str) -> dict[str, object]:
             if section == "assessments" and len(row) == 7:
                 assessments.append(_assessment(row))
             elif section == "criteria" and len(row) == 2:
-                criteria.append(
-                    {"description": _required(row[0]), "value": _decimal(row[1])}
-                )
+                criteria.append({"description": _required(row[0]), "value": _decimal(row[1])})
             elif section == "schedule" and len(row) == 7:
                 schedule.append(_schedule_entry(row))
 
@@ -145,7 +141,11 @@ def parse_teaching_plan_html(markup: str) -> dict[str, object]:
             schedule_total=len(schedule),
         ) from None
 
-    if not assessments and not criteria and not schedule:
+    unpublished = {_normalized(cell).strip("* .") for row in rows for cell in row}
+    not_published = {"plano de avaliacao nao publicado", "cronograma nao publicado"}.issubset(
+        unpublished
+    )
+    if not assessments and not criteria and not schedule and not not_published:
         raise TeachingPlanParseError(
             "required_sections",
             rows=rows,
@@ -255,9 +255,7 @@ def _row_labeled_values(row: list[str], labels: tuple[str, ...]) -> dict[str, st
             if _header_token(normalized) == label:
                 if index + 1 < len(row):
                     candidate = row[index + 1]
-                    if not any(
-                        _header_token(_normalized(candidate)) == other for other in labels
-                    ):
+                    if not any(_header_token(_normalized(candidate)) == other for other in labels):
                         result[label] = candidate
                 break
             prefix = f"{label}:"

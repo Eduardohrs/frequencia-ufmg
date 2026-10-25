@@ -471,12 +471,18 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gateway.unifiedSyncCalls, 1);
-    expect(find.text('Revisão necessária'), findsOneWidget);
+    expect(find.text('Pendências da sincronização'), findsOneWidget);
     expect(find.text('ELE028'), findsWidgets);
     expect(find.textContaining('24/10 · 19:00 · Circuitos'), findsOneWidget);
     expect(find.text('MAT001'), findsWidgets);
     expect(find.text('2 planos de ensino possíveis.'), findsOneWidget);
     expect(find.text('ESA019'), findsWidgets);
+    expect(
+      find.text(
+        'Plano de ensino ainda não publicado. Seus dados foram mantidos.',
+      ),
+      findsOneWidget,
+    );
     expect(
       find.text(
         'O plano não pôde ser processado; as outras disciplinas continuaram normalmente.',
@@ -1269,6 +1275,17 @@ void main() {
       findsOneWidget,
     );
     expect(logger.events, contains('moodle_teaching_plan_import_succeeded'));
+    gateway.diarioNotPublished = true;
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(probeButton);
+    await tester.tap(probeButton);
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('O plano de ensino ainda não foi publicado.'),
+      findsOneWidget,
+    );
+    expect(gateway.reconciliationRequests.length, 3);
   });
 
   testWidgets(
@@ -2991,6 +3008,7 @@ class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
   final diarioImportRequests = <(String, String, String)>[];
   final reconciliationRequests = <(String, bool)>[];
   Object? diarioProbeError;
+  bool diarioNotPublished = false;
   int undatedAssessmentTotal = 0;
   int reconciliationMissing = 0;
   int reconciliationConflicting = 0;
@@ -3065,6 +3083,7 @@ class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
     diarioImportRequests.add((courseId, term, sourceId));
     if (diarioProbeError case final error?) throw error;
     return PythonTeachingPlanImport(
+      notPublished: diarioNotPublished,
       assessmentTotal: 2,
       undatedAssessmentTotal: undatedAssessmentTotal,
       criteriaTotal: 2,
@@ -3381,13 +3400,22 @@ final class _UnifiedGateway extends _Gateway
       siga: await syncSiga(),
       moodle: await syncMoodle(),
       teachingPlans: const PythonTeachingPlanSyncSummary(
-        available: 3,
+        available: 4,
         imported: 1,
         applied: 0,
         unchanged: 0,
-        reviewRequired: 3,
+        reviewRequired: 4,
       ),
       exceptions: [
+        const PythonAcademicSyncException(
+          courseId: 'uni001',
+          courseCode: 'UNI001',
+          reason: 'teaching_plan_not_published',
+          candidateCount: 1,
+          changes: [],
+          conflicting: 0,
+          assessmentConflicts: 0,
+        ),
         PythonAcademicSyncException(
           courseId: 'ele028',
           courseCode: 'ELE028',
