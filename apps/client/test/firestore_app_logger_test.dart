@@ -1,10 +1,47 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/observability/firestore_app_logger.dart';
 import 'package:frequencia_ufmg/observability/operational_log_store.dart';
 
 void main() {
   final now = DateTime.utc(2026, 9, 27, 20);
+
+  test(
+    'persists actionable transport diagnostics and redacts secrets',
+    () async {
+      final store = _RecordingLogStore();
+      final logger = FirestoreAppLogger(
+        store: store,
+        currentUserId: () => 'user-1',
+        platform: 'web',
+      );
+      await logger.recordError(
+        const PythonBackendException(
+          PythonBackendError.unavailable,
+          requestContext:
+              'stage=http_response method=post '
+              'path=/v1/calendar/official/preview status=503 '
+              'backend_error=security_guard_unavailable request_id=request-123 '
+              'server_request_id=server-123 password=secret-value',
+        ),
+        StackTrace.current,
+        context: 'official_calendar_preview',
+      );
+      final document = store.documents.single;
+      expect(document['operation'], 'official_calendar_preview');
+      expect(
+        document['errorDetails'],
+        allOf(
+          contains('status=503'),
+          contains('backend_error=security_guard_unavailable'),
+          contains('request_id=request-123'),
+          contains('server_request_id=server-123'),
+          isNot(contains('secret-value')),
+        ),
+      );
+    },
+  );
 
   test(
     'persists a structured correlated event for an authenticated user',

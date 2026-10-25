@@ -617,6 +617,10 @@ void main() {
     await tester.tap(find.text('Entendi'));
     await tester.pumpAndSettle();
     expect(logger.errorContexts, contains('official_calendar_sync'));
+    expect(logger.errorContexts, contains('official_calendar_preview'));
+    expect(logger.events, contains('official_calendar_preview_started'));
+    expect(logger.events, contains('official_calendar_preview_succeeded'));
+    expect(logger.events, contains('official_calendar_preview_failed'));
   });
 
   testWidgets(

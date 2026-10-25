@@ -106,7 +106,7 @@ void main() {
         endpoint: Uri.parse('https://backend.example'),
         tokens: _Tokens(),
         client: MockClient((_) async {
-          throw http.ClientException('private transport message');
+          throw http.ClientException('connection reset password=secret-value');
         }),
       );
 
@@ -121,13 +121,44 @@ void main() {
               )
               .having(
                 (error) => error.toString(),
-                'private message',
-                isNot(contains('private transport message')),
+                'secret value',
+                isNot(contains('secret-value')),
               ),
         ),
       );
     },
   );
+
+  test('preserves backend HTTP failure and correlation diagnostics', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({'error': 'security_guard_unavailable'}),
+          503,
+          headers: {'x-request-id': 'server-123'},
+        ),
+      ),
+    );
+    await expectLater(
+      transport.previewOfficialCalendar(),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.logDetails,
+          'HTTP diagnostics',
+          allOf(
+            contains('stage=http_response'),
+            contains('method=post'),
+            contains('path=/v1/calendar/official/preview'),
+            contains('status=503'),
+            contains('backend_error=security_guard_unavailable'),
+            contains('server_request_id=server-123'),
+          ),
+        ),
+      ),
+    );
+  });
 
   test('does not retry a transient failure for a mutation', () async {
     var requests = 0;
@@ -2504,8 +2535,11 @@ void main() {
               .having(
                 (error) => error.toString(),
                 'sanitized diagnostic',
-                'PythonBackendException(credentialsUnavailable, '
-                    'credential=appCheck, cause=StateError)',
+                allOf(
+                  contains('stage=credentials'),
+                  contains('path=/v1/identity'),
+                  contains('credential=appCheck, cause=StateError'),
+                ),
               ),
         ),
       );
