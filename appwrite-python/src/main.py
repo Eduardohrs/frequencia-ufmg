@@ -1398,7 +1398,10 @@ def _course_mutation(context: Any, origin: str | None, method: str, course_id: s
         if method == "PUT":
             payload = {**context.req.body_json, "id": valid_id}
             course = repository.save_course(payload)
-            _log(context, "course_save_succeeded")
+            _log(context, "course_save_succeeded", course_id=course["id"],
+                 course_code=course["code"], modality=course.get("modality", "in_person"),
+                 attendance_policy=course.get("attendance_policy", "required"),
+                 session_history_preserved=True)
             return _respond(context, {"course": course}, origin=origin)
         repository.delete_course(valid_id)
     except DuplicateCourseCode:
@@ -1562,7 +1565,7 @@ def _unified_academic_sync_service(
         siga,
         moodle,
         plans,
-        TeachingPlanReconciliationRepository(firestore, courses=courses),
+        TeachingPlanReconciliationRepository(firestore, courses=courses, telemetry=telemetry),
         telemetry=telemetry,
     )
 

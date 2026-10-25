@@ -24,8 +24,14 @@ final class CourseAbsenceSummary {
     required DateTime now,
     required tz.Location location,
   }) {
-    final sessions = allSessions.where(_countsAcademically).toList()
-      ..sort((left, right) => left.startsAt.compareTo(right.startsAt));
+    final sessions =
+        allSessions
+            .where(
+              (session) =>
+                  course.tracksAttendance && _countsAcademically(session),
+            )
+            .toList()
+          ..sort((left, right) => left.startsAt.compareTo(right.startsAt));
     return CourseAbsenceSummary._(
       course: course,
       sessions: sessions,
@@ -85,6 +91,7 @@ final class CourseAbsenceSummary {
       eligibleLessons > 0 && presentLessons >= (eligibleLessons * .75).ceil();
 
   String get remainingMeetingsLabel {
+    if (!course.tracksAttendance) return 'Não se aplica';
     if (sessions.isEmpty) return '0 encontros restantes';
     final lessonCounts = sessions.map((item) => item.lessonCount.value).toSet();
     final callCounts = sessions.map((item) => item.callCount.value).toSet();
@@ -335,6 +342,15 @@ class _SummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final course = summary.course;
+    if (!course.tracksAttendance) {
+      return Card(
+        child: ListTile(
+          leading: CourseMark(code: course.code, size: 40),
+          title: Text('${course.code} • ${course.name}'),
+          subtitle: Text('${course.policyLabel} • Frequência: não se aplica'),
+        ),
+      );
+    }
     return Card(
       elevation: 0,
       clipBehavior: Clip.antiAlias,

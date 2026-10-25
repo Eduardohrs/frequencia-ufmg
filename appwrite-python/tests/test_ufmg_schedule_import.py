@@ -173,6 +173,15 @@ def test_imports_new_schedule_with_remote_dates_and_one_call() -> None:
     ]
 
 
+def test_online_course_keeps_manual_policy_and_never_imports_schedule() -> None:
+    course = {**_course(), "modality": "online", "attendance_policy": "no_call"}
+    schedules = _Schedules({"ele028": _state(course, [_saved_meeting("manual")])})
+    result = _service([_remote()], [course], schedules).import_schedules("user", now=10)
+    assert result["unchanged"] == 1
+    assert schedules.saved == []
+    assert course["modality"] == "online"
+
+
 def test_preserves_equivalent_manual_schedule_and_custom_dates() -> None:
     course = {
         **_course(),

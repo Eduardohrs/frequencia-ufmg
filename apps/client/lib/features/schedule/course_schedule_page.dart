@@ -554,16 +554,17 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
           tooltip: 'Ações da disciplina',
           enabled: !_syncing,
           onSelected: _selectAction,
-          itemBuilder: (_) => const [
-            PopupMenuItem(
-              value: _ScheduleAction.attendance,
-              child: Text('Registrar frequência'),
-            ),
-            PopupMenuItem(
+          itemBuilder: (_) => [
+            if (_course.tracksAttendance)
+              const PopupMenuItem(
+                value: _ScheduleAction.attendance,
+                child: Text('Registrar frequência'),
+              ),
+            const PopupMenuItem(
               value: _ScheduleAction.calendar,
               child: Text('Ver calendário'),
             ),
-            PopupMenuItem(
+            const PopupMenuItem(
               value: _ScheduleAction.exceptions,
               child: Text('Exceções de calendário'),
             ),
@@ -670,10 +671,12 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
                       '${_time(meeting.endMinutes)}',
                     ),
                     subtitle: Text(
-                      '${meeting.lessonCount.value} '
-                      '${meeting.lessonCount.value == 1 ? 'aula' : 'aulas'} • '
-                      '${meeting.callCount.value} '
-                      '${meeting.callCount.value == 1 ? 'chamada' : 'chamadas'}',
+                      !_course.tracksAttendance
+                          ? 'Sem chamada'
+                          : '${meeting.lessonCount.value} '
+                                '${meeting.lessonCount.value == 1 ? 'aula' : 'aulas'} • '
+                                '${meeting.callCount.value} '
+                                '${meeting.callCount.value == 1 ? 'chamada' : 'chamadas'}',
                     ),
                     trailing: _deletingId == meeting.id
                         ? const SizedBox.square(
@@ -717,6 +720,8 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
 }
 
 CourseRecord _courseFromPython(PythonCourse course) => CourseRecord(
+  modality: CourseModality.fromCode(course.modality),
+  attendancePolicy: CourseAttendancePolicy.fromCode(course.attendancePolicy),
   id: course.id,
   code: course.code,
   name: course.name,
@@ -1033,6 +1038,8 @@ CourseRecord _copyCourseWithRange(
   DateTimeRange range,
   DateTime now,
 ) => CourseRecord(
+  modality: course.modality,
+  attendancePolicy: course.attendancePolicy,
   id: course.id,
   code: course.code,
   name: course.name,

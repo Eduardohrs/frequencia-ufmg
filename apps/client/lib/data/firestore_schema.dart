@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
 
 import 'calendar_status.dart';
+import 'course_policy.dart';
 
 enum FirestoreFieldType {
   integer,
@@ -87,7 +88,19 @@ abstract final class FirestoreSchema {
   });
 
   static void validateCourse(Map<String, Object?> document) {
-    course.validateShape(document);
+    final modality = CourseModality.fromCode(document['modality']);
+    final policy = CourseAttendancePolicy.fromCode(
+      document['attendancePolicy'],
+    );
+    if (modality == CourseModality.online &&
+        policy != CourseAttendancePolicy.noCall) {
+      throw const FormatException('Online course cannot require attendance');
+    }
+    course.validateShape(
+      {...document}
+        ..remove('modality')
+        ..remove('attendancePolicy'),
+    );
     _validateText(document['code']! as String, 'code', 32);
     _validateText(document['name']! as String, 'name', 160);
     if (!RegExp(r'^\d{4}-[12]$').hasMatch(document['term']! as String)) {

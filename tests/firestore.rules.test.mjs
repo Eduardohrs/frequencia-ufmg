@@ -218,6 +218,20 @@ describe("tenant isolation", () => {
 });
 
 describe("course documents", () => {
+  test("accepts explicit course modes and rejects contradictory policies", async () => {
+    const db = dbFor("alice");
+    for (const modality of ["online", "in_person"]) {
+      await assertSucceeds(setDoc(doc(db, coursePath("alice", modality)),
+        course({ modality, attendancePolicy: "no_call" })));
+    }
+    for (const value of [
+      { modality: "online", attendancePolicy: "required" },
+      { modality: "unknown", attendancePolicy: "no_call" },
+      { modality: "in_person", attendancePolicy: "unknown" },
+    ]) {
+      await assertFails(setDoc(doc(db, coursePath("alice", "invalid-policy")), course(value)));
+    }
+  });
   test("reject malformed shapes, values, and audit timestamps", async () => {
     const db = dbFor("alice");
     const invalidDocuments = [

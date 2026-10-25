@@ -89,6 +89,9 @@ class UFMGScheduleImportService:
             if course is None:
                 summary["missing_courses"] += 1
                 continue
+            if course.get("modality") == "online":
+                summary["unchanged"] += 1
+                continue
             outcome, count, diagnostics = self._reconcile(course, enrollment, schedules)
             summary[outcome] += 1
             summary["meetings_imported"] += count

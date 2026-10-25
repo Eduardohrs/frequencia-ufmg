@@ -2,10 +2,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../domain/attendance.dart';
 import 'calendar_status.dart';
+import 'course_policy.dart';
+export 'course_policy.dart';
 import 'firestore_schema.dart';
 
 final class CourseRecord {
   const CourseRecord({
+    this.modality = CourseModality.inPerson,
+    this.attendancePolicy = CourseAttendancePolicy.required,
     required this.id,
     required this.code,
     required this.name,
@@ -25,6 +29,10 @@ final class CourseRecord {
     };
     FirestoreSchema.validateCourse(normalized);
     return CourseRecord(
+      modality: CourseModality.fromCode(normalized['modality']),
+      attendancePolicy: CourseAttendancePolicy.fromCode(
+        normalized['attendancePolicy'],
+      ),
       id: id,
       code: normalized['code']! as String,
       name: normalized['name']! as String,
@@ -38,6 +46,13 @@ final class CourseRecord {
   }
 
   final String id;
+  final CourseModality modality;
+  final CourseAttendancePolicy attendancePolicy;
+  bool get tracksAttendance =>
+      modality == CourseModality.inPerson &&
+      attendancePolicy == CourseAttendancePolicy.required;
+  String get policyLabel =>
+      modality == CourseModality.online ? 'Online' : attendancePolicy.label;
   final String code;
   final String name;
   final int workload;
@@ -49,6 +64,10 @@ final class CourseRecord {
 
   Map<String, Object?> toFirestore() {
     final data = <String, Object?>{
+      if (!tracksAttendance) ...{
+        'modality': modality.code,
+        'attendancePolicy': 'no_call',
+      },
       'schemaVersion': FirestoreSchema.version,
       'code': code,
       'name': name,

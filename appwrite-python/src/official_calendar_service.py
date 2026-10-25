@@ -60,6 +60,8 @@ class OfficialCalendarService:
         months: set[tuple[int, int]] = set()
         session_total = 0
         for course in courses:
+            if course.get("modality") == "online":
+                continue
             sessions = self._sessions.list_sessions(str(course["id"]))
             session_total += len(sessions)
             if session_total > MAX_SESSIONS:

@@ -33,6 +33,53 @@ void main() {
     expect(academicTermFor(DateTime(2026, 12, 31)), '2026-2');
   });
 
+  testWidgets(
+    'online courses have no attendance pendency or timetable action in the hub',
+    (tester) async {
+      final course = CourseRecord(
+        id: 'online',
+        code: 'DCC203',
+        name: 'POO',
+        workload: 60,
+        term: '2026-2',
+        modality: CourseModality.online,
+        attendancePolicy: CourseAttendancePolicy.noCall,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final repository = _FakeCourseRepository(courses: [course]);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CoursePage(
+            repository: repository,
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository({
+              'online': [
+                _session('pending', now.subtract(const Duration(days: 3))),
+              ],
+            }),
+            user: user,
+            logger: _RecordingAppLogger(),
+            onSignOut: () async {},
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('past-attendance-pending-alert')),
+        findsNothing,
+      );
+      await tester.ensureVisible(find.byKey(const Key('course-card-online')));
+      await tester.tap(find.byKey(const Key('course-card-online')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Frequência: não se aplica'), findsOneWidget);
+      expect(find.byKey(const Key('course-hub-open-attendance')), findsNothing);
+      expect(find.byKey(const Key('course-hub-schedule')), findsNothing);
+      expect(find.byKey(const Key('course-hub-agenda')), findsOneWidget);
+    },
+  );
+
   testWidgets('shows loading, empty state, and reloads after an error', (
     tester,
   ) async {

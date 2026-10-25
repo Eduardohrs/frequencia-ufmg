@@ -15,7 +15,7 @@ void main() {
       final logger = _Logger();
       final online = CachedAcademicOverviewRepository(
         remote: PythonOverviewRepository(
-          gateway: _OverviewGateway.success(),
+          gateway: _OverviewGateway.success()..online = true,
           logger: logger,
         ),
         cache: cache,
@@ -37,6 +37,8 @@ void main() {
       final restored = await offlineAfterRestart.loadOverview();
 
       expect(restored.courses.single.code, 'DCC203');
+      expect(restored.courses.single.tracksAttendance, isFalse);
+      expect(restored.courses.single.modality.code, 'online');
       expect(restored.sessionsByCourse['course-1']!.single.id, 'session-1');
       expect(restored.isLocalCopy, isTrue);
       expect(logger.events, contains('academic_overview_cache_hit'));
@@ -127,6 +129,7 @@ void main() {
 }
 
 final class _OverviewGateway implements BackendOverviewGateway {
+  bool online = false;
   _OverviewGateway.success() : _error = null;
 
   _OverviewGateway.failure() : _error = StateError('offline');
@@ -140,7 +143,9 @@ final class _OverviewGateway implements BackendOverviewGateway {
     if (_error != null) throw _error;
     return [
       PythonOverviewItem(
-        course: PythonCourse.fromJson(const {
+        course: PythonCourse.fromJson({
+          if (online) 'modality': 'online',
+          if (online) 'attendance_policy': 'no_call',
           'id': 'course-1',
           'code': 'DCC203',
           'name': 'POO',

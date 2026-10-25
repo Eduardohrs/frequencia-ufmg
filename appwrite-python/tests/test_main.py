@@ -2548,7 +2548,10 @@ def test_ufmg_course_import_sanitizes_failures(
     assert json.loads(context.errors[0]) == expected_log
 
 
-def test_course_routes_list_save_and_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("policy", [{}, {"modality": "online", "attendance_policy": "no_call"}])
+def test_course_routes_list_save_and_delete(
+    monkeypatch: pytest.MonkeyPatch, policy: dict[str, str],
+) -> None:
     monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
 
     class Repository:
@@ -2565,14 +2568,21 @@ def test_course_routes_list_save_and_delete(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(function, "_course_repository", lambda *_args: Repository())
 
     listed = FakeContext(FakeRequest("GET", "/v1/courses"))
-    saved = FakeContext(FakeRequest("PUT", "/v1/courses/course-1", body_json={"code": "DCC203"}))
+    saved = FakeContext(FakeRequest(
+        "PUT", "/v1/courses/course-1", body_json={"code": "DCC203", **policy},
+    ))
     deleted = FakeContext(FakeRequest("DELETE", "/v1/courses/course-1"))
 
     assert function.main(listed)["body"] == {"courses": [{"id": "course-1"}]}
     assert function.main(saved)["body"]["course"]["id"] == "course-1"
     assert function.main(deleted)["body"] == {"deleted": True}
     assert json.loads(listed.logs[0]) == {"count": 1, "event": "course_list_succeeded"}
-    assert json.loads(saved.logs[0]) == {"event": "course_save_succeeded"}
+    assert json.loads(saved.logs[0]) == {
+        "event": "course_save_succeeded", "course_id": "course-1", "course_code": "DCC203",
+        "modality": policy.get("modality", "in_person"),
+        "attendance_policy": policy.get("attendance_policy", "required"),
+        "session_history_preserved": True,
+    }
     assert json.loads(deleted.logs[0]) == {"event": "course_delete_succeeded"}
 
 

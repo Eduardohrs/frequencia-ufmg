@@ -202,3 +202,29 @@ def test_legacy_placeholder_workload_is_not_reported_as_one_hour() -> None:
     )
 
     assert result["workload_validation"] is None
+
+
+def test_online_reconciliation_preserves_history_without_creating_class_sessions() -> None:
+    store = Store()
+    store.documents[("courses", "poo")] = {
+        "name": "courses/poo", "fields": course_to_firestore({
+            **_course(), "modality": "online", "attendance_policy": "no_call",
+        }),
+    }
+    TeachingPlanRepository(store, now=lambda: NOW).save("poo", source_id="1", plan=_plan())
+    before = dict(store.documents)
+    events: list[tuple[str, object]] = []
+    repository = TeachingPlanReconciliationRepository(
+        store, now=lambda: NOW, telemetry=lambda event, fields: events.append((event, fields)),
+    )
+    result = repository.reconcile("poo", apply=True)
+    repository.reconcile("poo", apply=False)
+    assert result["applied"] == 0
+    assert result["changes"] == []
+    assert store.commits == []
+    assert store.documents == before
+    assert events[0] == ("teaching_plan_course_policy_preserved", {
+        "course_id": "poo", "course_code": "DCC203", "modality": "online",
+        "attendance_policy": "no_call", "existing_sessions": 0, "applied": 0,
+        "mode": "apply", "attendance_records_preserved": True,
+    })
