@@ -166,8 +166,10 @@ jobs:
             --function-id "$APPWRITE_FUNCTION_ID" --json)
           previous=$(jq -r '.deploymentId' <<< "$previous_function")
           previous_timeout=$(jq -r '.timeout' <<< "$previous_function")
+          previous_name=$(jq -r '.name' <<< "$previous_function")
           test -n "$previous"
           test -n "$previous_timeout"
+          test -n "$previous_name"
 
           created=$(npx --yes appwrite-cli@28.8.0 functions create-deployment \
             --function-id "$APPWRITE_FUNCTION_ID" \
@@ -195,6 +197,7 @@ jobs:
 
           npx --yes appwrite-cli@28.8.0 functions update \
             --function-id "$APPWRITE_FUNCTION_ID" \
+            --name "$previous_name" \
             --timeout 75 >/dev/null
 
           rollback() {
@@ -203,6 +206,7 @@ jobs:
               --deployment-id "$previous" --force
             npx --yes appwrite-cli@28.8.0 functions update \
               --function-id "$APPWRITE_FUNCTION_ID" \
+              --name "$previous_name" \
               --timeout "$previous_timeout" >/dev/null
           }
 
