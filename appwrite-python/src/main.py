@@ -680,7 +680,9 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
         return _schedule_error(context, origin, "schedule_writes_disabled", 503)
     try:
         result = _unified_academic_sync_service(
-            context.req.headers, cast(str, user_id)
+            context.req.headers,
+            cast(str, user_id),
+            lambda event, fields: _error(context, event, **fields),
         ).sync(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
         return _ufmg_session_error(
@@ -1429,7 +1431,9 @@ def _moodle_sync_service(headers: dict[str, str], user_id: str) -> MoodleSyncSer
 
 
 def _unified_academic_sync_service(
-    headers: dict[str, str], user_id: str
+    headers: dict[str, str],
+    user_id: str,
+    telemetry: Any = None,
 ) -> UnifiedAcademicSyncService:
     sessions = _ufmg_session_store(headers)
     enrollments = UFMGEnrollmentClient()
@@ -1476,6 +1480,7 @@ def _unified_academic_sync_service(
         moodle,
         plans,
         TeachingPlanReconciliationRepository(firestore),
+        telemetry=telemetry,
     )
 
 

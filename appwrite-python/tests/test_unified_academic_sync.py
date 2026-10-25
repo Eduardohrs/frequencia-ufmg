@@ -1,3 +1,6 @@
+import pytest
+
+from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
 from unified_academic_sync import UnifiedAcademicSyncService
 
 
@@ -49,8 +52,9 @@ class _Moodle:
 
 
 class _Plans:
-    def __init__(self) -> None:
+    def __init__(self, failures: dict[str, Exception] | None = None) -> None:
         self.calls: list[tuple[str, str, str, int, int]] = []
+        self.failures = failures or {}
 
     def import_plan(
         self,
@@ -62,6 +66,8 @@ class _Plans:
         now: int,
     ) -> dict[str, object]:
         self.calls.append((user_id, course_id, term, source_id, now))
+        if course_id in self.failures:
+            raise self.failures[course_id]
         return {"plan": "created"}
 
 
@@ -98,15 +104,11 @@ def test_sync_applies_only_unambiguous_changes_and_returns_a_bounded_summary() -
         {
             "ele028": _preview(changes=[{"action": "create_session"}]),
             "mat001": _preview(),
-            "eng002": _preview(
-                changes=[{"action": "create_session"}], conflicting=1
-            ),
+            "eng002": _preview(changes=[{"action": "create_session"}], conflicting=1),
         }
     )
 
-    result = UnifiedAcademicSyncService(siga, moodle, plans, reconciler).sync(
-        "user", now=42
-    )
+    result = UnifiedAcademicSyncService(siga, moodle, plans, reconciler).sync("user", now=42)
 
     assert siga.calls == moodle.calls == 1
     assert len(plans.calls) == 3
@@ -163,9 +165,9 @@ def test_sync_ignores_metaturma_and_reports_multiple_canonical_plans() -> None:
     plans = _Plans()
     reconciler = _Reconciler({"ele028": _preview()})
 
-    result = UnifiedAcademicSyncService(
-        _Siga(), _Moodle(courses), plans, reconciler
-    ).sync("user", now=42)
+    result = UnifiedAcademicSyncService(_Siga(), _Moodle(courses), plans, reconciler).sync(
+        "user", now=42
+    )
 
     assert [call[1] for call in plans.calls] == ["ele028"]
     assert result["teaching_plans"] == {
@@ -218,10 +220,174 @@ def test_sync_rejects_more_exceptions_than_the_bounded_contract() -> None:
     ]
 
     try:
-        UnifiedAcademicSyncService(
-            _Siga(), _Moodle(courses), _Plans(), _Reconciler({})
-        ).sync("user", now=42)
+        UnifiedAcademicSyncService(_Siga(), _Moodle(courses), _Plans(), _Reconciler({})).sync(
+            "user", now=42
+        )
     except ValueError as error:
         assert str(error) == "too many academic sync exceptions"
     else:
         raise AssertionError("the bounded exception contract must be enforced")
+
+
+def test_sync_logs_one_unavailable_plan_and_continues_the_other_courses() -> None:
+    telemetry: list[tuple[str, dict[str, object]]] = []
+    plans = _Plans(
+        {
+            "esa019": InvalidMoodleResponse(
+                "diario_plan_structure",
+                details={
+                    "parser_stage": "required_sections",
+                    "sample_rows": [
+                        "Atividade: | DIG ESA019 CIÊNCIAS DO AMBIENTE",
+                        "* Plano de Avaliação não publicado.",
+                        "* Cronograma não publicado.",
+                    ],
+                },
+            )
+        }
+    )
+    reconciler = _Reconciler({"ele028": _preview(changes=[{"action": "create_session"}])})
+
+    result = UnifiedAcademicSyncService(
+        _Siga(),
+        _Moodle([_course("ESA019"), _course("ELE028")]),
+        plans,
+        reconciler,
+        telemetry=lambda event, fields: telemetry.append((event, dict(fields))),
+    ).sync("user", now=42)
+
+    assert [call[1] for call in plans.calls] == ["esa019", "ele028"]
+    assert reconciler.calls == [("ele028", False), ("ele028", True)]
+    assert result["teaching_plans"] == {
+        "available": 2,
+        "imported": 1,
+        "applied": 1,
+        "unchanged": 0,
+        "review_required": 1,
+    }
+    assert result["exceptions"] == [
+        {
+            "course_id": "esa019",
+            "course_code": "ESA019",
+            "reason": "teaching_plan_unavailable",
+            "candidate_count": 1,
+            "changes": [],
+            "conflicting": 0,
+            "assessment_conflicts": 0,
+        }
+    ]
+    assert telemetry == [
+        (
+            "academic_sync_course_failed",
+            {
+                "course_id": "esa019",
+                "course_code": "ESA019",
+                "term": "2026-2",
+                "source_id": 101,
+                "stage": "teaching_plan_import",
+                "reason": "diario_plan_structure",
+                "exception_type": "InvalidMoodleResponse",
+                "parser_stage": "required_sections",
+                "sample_rows": [
+                    "Atividade: | DIG ESA019 CIÊNCIAS DO AMBIENTE",
+                    "* Plano de Avaliação não publicado.",
+                    "* Cronograma não publicado.",
+                ],
+            },
+        )
+    ]
+
+
+def test_sync_continues_after_an_isolated_reconciliation_failure() -> None:
+    class Reconciler(_Reconciler):
+        def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
+            if course_id == "esa019":
+                raise ValueError("bad saved course state")
+            return super().reconcile(course_id, apply=apply)
+
+    telemetry: list[tuple[str, dict[str, object]]] = []
+    result = UnifiedAcademicSyncService(
+        _Siga(),
+        _Moodle([_course("ESA019"), _course("ELE028")]),
+        _Plans(),
+        Reconciler({"ele028": _preview()}),
+        telemetry=lambda event, fields: telemetry.append((event, dict(fields))),
+    ).sync("user", now=42)
+
+    assert result["teaching_plans"] == {
+        "available": 2,
+        "imported": 2,
+        "applied": 0,
+        "unchanged": 1,
+        "review_required": 1,
+    }
+    assert result["exceptions"][0]["course_code"] == "ESA019"
+    assert telemetry[0][1] == {
+        "course_id": "esa019",
+        "course_code": "ESA019",
+        "term": "2026-2",
+        "source_id": 101,
+        "stage": "teaching_plan_reconciliation",
+        "reason": "ValueError",
+        "exception_type": "ValueError",
+    }
+
+
+def test_sync_continues_when_apply_fails_and_telemetry_is_optional() -> None:
+    class Reconciler(_Reconciler):
+        def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
+            if course_id == "esa019" and apply:
+                raise ValueError("apply failed")
+            return super().reconcile(course_id, apply=apply)
+
+    result = UnifiedAcademicSyncService(
+        _Siga(),
+        _Moodle([_course("ESA019"), _course("ELE028")]),
+        _Plans(),
+        Reconciler(
+            {
+                "esa019": _preview(changes=[{"action": "create_session"}]),
+                "ele028": _preview(),
+            }
+        ),
+    ).sync("user", now=42)
+
+    assert result["teaching_plans"] == {
+        "available": 2,
+        "imported": 2,
+        "applied": 0,
+        "unchanged": 1,
+        "review_required": 1,
+    }
+    assert result["exceptions"][0]["course_code"] == "ESA019"
+
+
+def test_sync_does_not_hide_global_dependency_failures() -> None:
+    class Reconciler(_Reconciler):
+        def __init__(self, *, fail_on_apply: bool) -> None:
+            super().__init__({"ele028": _preview(changes=[{"action": "create_session"}])})
+            self.fail_on_apply = fail_on_apply
+
+        def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
+            if apply == self.fail_on_apply:
+                raise MoodleUnavailable("offline")
+            return super().reconcile(course_id, apply=apply)
+
+    services = [
+        UnifiedAcademicSyncService(
+            _Siga(),
+            _Moodle([_course()]),
+            _Plans({"ele028": MoodleUnavailable("offline")}),
+            _Reconciler({}),
+        ),
+        UnifiedAcademicSyncService(
+            _Siga(), _Moodle([_course()]), _Plans(), Reconciler(fail_on_apply=False)
+        ),
+        UnifiedAcademicSyncService(
+            _Siga(), _Moodle([_course()]), _Plans(), Reconciler(fail_on_apply=True)
+        ),
+    ]
+
+    for service in services:
+        with pytest.raises(MoodleUnavailable):
+            service.sync("user", now=42)

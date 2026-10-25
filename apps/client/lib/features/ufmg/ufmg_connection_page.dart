@@ -1195,6 +1195,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                 Text(
                   exception.reason == 'ambiguous_teaching_plan'
                       ? '${exception.candidateCount} planos de ensino possíveis.'
+                      : exception.reason == 'teaching_plan_unavailable'
+                      ? 'O plano não pôde ser processado; as outras disciplinas continuaram normalmente.'
                       : '${exception.conflicting + exception.assessmentConflicts} conflito(s) com dados existentes.',
                 ),
                 for (final change in exception.changes)
