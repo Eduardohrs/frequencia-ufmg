@@ -1391,6 +1391,7 @@ final class PythonBackendTransport
     required PythonBackendTokens tokens,
     required http.Client client,
     this.timeout = const Duration(seconds: 30),
+    this.longRunningTimeout = const Duration(seconds: 90),
   }) : _endpoint = endpoint,
        _tokens = tokens,
        _client = client;
@@ -1399,6 +1400,7 @@ final class PythonBackendTransport
   final PythonBackendTokens _tokens;
   final http.Client _client;
   final Duration timeout;
+  final Duration longRunningTimeout;
   Future<String>? _regularAppCheckTokenInFlight;
 
   @override
@@ -2099,6 +2101,7 @@ final class PythonBackendTransport
       path: '/v1/ufmg/sync/all',
       method: _BackendMethod.post,
       body: const {},
+      requestTimeout: longRunningTimeout,
     );
     try {
       final value = Map<String, Object?>.from(jsonDecode(response.body) as Map);
@@ -2175,6 +2178,7 @@ final class PythonBackendTransport
                 !{
                   'ambiguous_teaching_plan',
                   'reconciliation_conflict',
+                  'teaching_plan_unavailable',
                 }.contains(reason) ||
                 candidateCount is! int ||
                 candidateCount < 1 ||
@@ -2203,7 +2207,12 @@ final class PythonBackendTransport
                         changes.isNotEmpty) ||
                 reason == 'reconciliation_conflict' &&
                     (candidateCount != 1 ||
-                        conflicting + assessmentConflicts == 0)) {
+                        conflicting + assessmentConflicts == 0) ||
+                reason == 'teaching_plan_unavailable' &&
+                    (candidateCount != 1 ||
+                        conflicting != 0 ||
+                        assessmentConflicts != 0 ||
+                        changes.isNotEmpty)) {
               throw const FormatException();
             }
             return PythonAcademicSyncException(
@@ -2444,6 +2453,7 @@ final class PythonBackendTransport
     required String path,
     _BackendMethod method = _BackendMethod.get,
     Map<String, Object?>? body,
+    Duration? requestTimeout,
   }) async {
     var forceIdentityRefresh = false;
     final requestId = currentOperationId ?? newCorrelationId('request');
@@ -2454,6 +2464,7 @@ final class PythonBackendTransport
         path: path,
         method: method,
         body: body,
+        requestTimeout: requestTimeout ?? timeout,
       );
       final error = _errorCode(response);
       if (response.statusCode == 200) return response;
@@ -2478,6 +2489,7 @@ final class PythonBackendTransport
     required String path,
     required _BackendMethod method,
     required Map<String, Object?>? body,
+    required Duration requestTimeout,
   }) async {
     try {
       return await _request(
@@ -2486,6 +2498,7 @@ final class PythonBackendTransport
         path: path,
         method: method,
         body: body,
+        requestTimeout: requestTimeout,
       );
     } on PythonBackendException catch (error) {
       if (method != _BackendMethod.get ||
@@ -2499,6 +2512,7 @@ final class PythonBackendTransport
         path: path,
         method: method,
         body: body,
+        requestTimeout: requestTimeout,
       );
     }
   }
@@ -2509,6 +2523,7 @@ final class PythonBackendTransport
     required String path,
     required _BackendMethod method,
     required Map<String, Object?>? body,
+    required Duration requestTimeout,
   }) async {
     try {
       final (idToken, appCheckToken) = await _credentials(
@@ -2535,7 +2550,7 @@ final class PythonBackendTransport
           body: jsonEncode(body),
         ),
       };
-      return await request.timeout(timeout);
+      return await request.timeout(requestTimeout);
     } on PythonBackendException {
       rethrow;
     } on TimeoutException {

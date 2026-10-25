@@ -1,8 +1,10 @@
 """Import one official Diário teaching plan into its matching local course."""
 
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol, cast
 
 from course_repository import validate_course_id
+from sync_timing import Telemetry, timed_stage
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
 
@@ -13,9 +15,7 @@ class _Sessions(Protocol):
 
 
 class _Client(Protocol):
-    def fetch_diario_plan(
-        self, token: str, *, term: str, source_id: int
-    ) -> dict[str, object]: ...
+    def fetch_diario_plan(self, token: str, *, term: str, source_id: int) -> dict[str, object]: ...
 
 
 class _Courses(Protocol):
@@ -23,9 +23,7 @@ class _Courses(Protocol):
 
 
 class _Plans(Protocol):
-    def save(
-        self, course_id: str, *, source_id: str, plan: dict[str, object]
-    ) -> str: ...
+    def save(self, course_id: str, *, source_id: str, plan: dict[str, object]) -> str: ...
 
 
 class _Dates(Protocol):
@@ -46,12 +44,17 @@ class MoodleTeachingPlanImportService:
         courses: _Courses,
         plans: _Plans,
         dates: _Dates,
+        *,
+        telemetry: Telemetry | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self._sessions = sessions
         self._client = client
         self._courses = courses
         self._plans = plans
         self._dates = dates
+        self._telemetry = telemetry
+        self._monotonic = monotonic
 
     def import_plan(
         self,
@@ -63,15 +66,30 @@ class MoodleTeachingPlanImportService:
         now: int,
     ) -> dict[str, object]:
         identifier = validate_course_id(course_id)
-        session = self._sessions.load(user_id, now=now)
+        context = {"course_id": identifier, "source_id": str(source_id)}
+        session = self._timed(
+            "teaching_plan_session_load",
+            lambda: self._sessions.load(user_id, now=now),
+            context,
+        )
         if session is None:
             raise UFMGReauthenticationRequired("UFMG reauthentication required")
-        courses = [course for course in self._courses.list_courses() if course["id"] == identifier]
+        courses = self._timed(
+            "teaching_plan_course_lookup",
+            lambda: [
+                course for course in self._courses.list_courses() if course["id"] == identifier
+            ],
+            context,
+        )
         if len(courses) != 1 or courses[0].get("term") != term:
             raise ValueError("teaching plan does not match course")
         try:
-            plan = self._client.fetch_diario_plan(
-                session.token, term=term, source_id=source_id
+            plan = self._timed(
+                "teaching_plan_fetch",
+                lambda: self._client.fetch_diario_plan(
+                    session.token, term=term, source_id=source_id
+                ),
+                context,
             )
         except UFMGReauthenticationRequired:
             self._sessions.delete(user_id)
@@ -79,13 +97,19 @@ class MoodleTeachingPlanImportService:
         if plan.get("course_code") != courses[0].get("code") or plan.get("term") != term:
             raise ValueError("teaching plan does not match course")
         assessments = cast(list[dict[str, object]], plan["assessments"])
-        dates = self._dates.import_diario_assessments(
-            identifier,
-            plan_source_id=str(source_id),
-            assessments=assessments,
+        dates = self._timed(
+            "teaching_plan_assessment_import",
+            lambda: self._dates.import_diario_assessments(
+                identifier,
+                plan_source_id=str(source_id),
+                assessments=assessments,
+            ),
+            context,
         )
-        plan_outcome = self._plans.save(
-            identifier, source_id=str(source_id), plan=plan
+        plan_outcome = self._timed(
+            "teaching_plan_save",
+            lambda: self._plans.save(identifier, source_id=str(source_id), plan=plan),
+            context,
         )
         return {
             "course_id": identifier,
@@ -102,3 +126,17 @@ class MoodleTeachingPlanImportService:
             "schedule_total": len(cast(list[object], plan["schedule"])),
             "confidence": "authoritative",
         }
+
+    def _timed[T](
+        self,
+        stage: str,
+        action: Callable[[], T],
+        fields: Mapping[str, object],
+    ) -> T:
+        options: dict[str, object] = {
+            "telemetry": self._telemetry,
+            "fields": fields,
+        }
+        if self._monotonic is not None:
+            options["clock"] = self._monotonic
+        return timed_stage(stage, action, **options)  # type: ignore[arg-type]

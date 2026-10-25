@@ -5,6 +5,7 @@ from typing import Protocol
 
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
 from moodle_token_store import MoodleTokenStoreUnavailable
+from sync_timing import Telemetry, timed_stage
 from ufmg_session_store import UFMGSessionStoreUnavailable
 
 
@@ -30,18 +31,27 @@ class MoodleSyncService:
         capabilities: _Capabilities,
         *,
         connection_count: Callable[[], int] = lambda: 0,
+        telemetry: Telemetry | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self._dates = dates
         self._content = content
         self._capabilities = capabilities
         self._connection_count = connection_count
+        self._telemetry = telemetry
+        self._monotonic = monotonic
 
     def sync(self, user_id: str, *, now: int) -> dict[str, object]:
-        dates = self._dates.import_dates(user_id, now=now)
-        content = self._content.discover(user_id, now=now)
+        dates = self._timed(
+            "moodle_date_import", lambda: self._dates.import_dates(user_id, now=now)
+        )
+        content = self._timed(
+            "moodle_content_discovery", lambda: self._content.discover(user_id, now=now)
+        )
         try:
-            capabilities: dict[str, bool | str] | None = self._capabilities.probe(
-                user_id, now=now
+            capabilities: dict[str, bool | str] | None = self._timed(
+                "moodle_capability_probe",
+                lambda: self._capabilities.probe(user_id, now=now),
             )
         except (
             InvalidMoodleResponse,
@@ -58,3 +68,9 @@ class MoodleSyncService:
             "capabilities": capabilities,
             "saml_connections": self._connection_count(),
         }
+
+    def _timed[T](self, stage: str, action: Callable[[], T]) -> T:
+        options: dict[str, object] = {"telemetry": self._telemetry}
+        if self._monotonic is not None:
+            options["clock"] = self._monotonic
+        return timed_stage(stage, action, **options)  # type: ignore[arg-type]

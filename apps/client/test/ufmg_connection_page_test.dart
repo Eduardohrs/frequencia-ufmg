@@ -476,6 +476,13 @@ void main() {
     expect(find.textContaining('24/10 · 19:00 · Circuitos'), findsOneWidget);
     expect(find.text('MAT001'), findsWidgets);
     expect(find.text('2 planos de ensino possíveis.'), findsOneWidget);
+    expect(find.text('ESA019'), findsWidgets);
+    expect(
+      find.text(
+        'O plano não pôde ser processado; as outras disciplinas continuaram normalmente.',
+      ),
+      findsOneWidget,
+    );
     expect(logger.events, contains('academic_sync_succeeded'));
     expect(await schedule.isDue('user-1'), isFalse);
     await tester.tap(find.text('Entendi'));
@@ -3257,11 +3264,11 @@ final class _UnifiedGateway extends _Gateway
       siga: await syncSiga(),
       moodle: await syncMoodle(),
       teachingPlans: const PythonTeachingPlanSyncSummary(
-        available: 1,
+        available: 3,
         imported: 1,
         applied: 0,
         unchanged: 0,
-        reviewRequired: 2,
+        reviewRequired: 3,
       ),
       exceptions: [
         PythonAcademicSyncException(
@@ -3286,6 +3293,15 @@ final class _UnifiedGateway extends _Gateway
           courseCode: 'MAT001',
           reason: 'ambiguous_teaching_plan',
           candidateCount: 2,
+          changes: [],
+          conflicting: 0,
+          assessmentConflicts: 0,
+        ),
+        const PythonAcademicSyncException(
+          courseId: 'esa019',
+          courseCode: 'ESA019',
+          reason: 'teaching_plan_unavailable',
+          candidateCount: 1,
           changes: [],
           conflicting: 0,
           assessmentConflicts: 0,

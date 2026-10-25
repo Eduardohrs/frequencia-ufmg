@@ -114,6 +114,7 @@ from ufmg_session_service import UFMGSessionService  # noqa: E402
 from ufmg_session_store import (  # noqa: E402
     AppwriteUFMGSessionStore,
     InvalidUFMGSession,
+    RequestCachedUFMGSessionStore,
     UFMGReauthenticationRequired,
     UFMGSessionCipher,
     UFMGSessionSecrets,
@@ -457,7 +458,9 @@ def _ufmg_schedule_import(context: Any, origin: str | None) -> Any:
             context.req.headers, cast(str, user_id)
         ).import_schedules(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
-        return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
+        return _ufmg_session_error(
+            context, origin, "ufmg_reauthentication_required", 401
+        )
     except UFMGEnrollmentUnavailable as error:
         return _ufmg_session_error(
             context,
@@ -680,12 +683,12 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
         return _schedule_error(context, origin, "schedule_writes_disabled", 503)
     try:
         result = _unified_academic_sync_service(
-            context.req.headers, cast(str, user_id)
+            context.req.headers,
+            cast(str, user_id),
+            lambda event, fields: _academic_sync_telemetry(context, event, fields),
         ).sync(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
-        return _ufmg_session_error(
-            context, origin, "ufmg_reauthentication_required", 401
-        )
+        return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
     except UFMGEnrollmentUnavailable as error:
         return _ufmg_session_error(
             context,
@@ -740,6 +743,11 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
         exception_course_codes=[item["course_code"] for item in exceptions],
     )
     return _respond(context, result, origin=origin)
+
+
+def _academic_sync_telemetry(context: Any, event: str, fields: Mapping[str, object]) -> None:
+    writer = _error if event.endswith("_failed") else _log
+    writer(context, event, **fields)
 
 
 def _moodle_content_discovery(context: Any, origin: str | None) -> Any:
@@ -1429,9 +1437,11 @@ def _moodle_sync_service(headers: dict[str, str], user_id: str) -> MoodleSyncSer
 
 
 def _unified_academic_sync_service(
-    headers: dict[str, str], user_id: str
+    headers: dict[str, str],
+    user_id: str,
+    telemetry: Any = None,
 ) -> UnifiedAcademicSyncService:
-    sessions = _ufmg_session_store(headers)
+    sessions = RequestCachedUFMGSessionStore(_ufmg_session_store(headers))
     enrollments = UFMGEnrollmentClient()
     client = MoodleStructuredDatesClient()
     firestore = _firestore(headers, user_id)
@@ -1448,6 +1458,7 @@ def _unified_academic_sync_service(
             ScheduleRepository(firestore),
         ),
         MoodleDateImportService(sessions, client, courses, dates),
+        telemetry=telemetry,
     )
     moodle = MoodleSyncService(
         MoodleDateImportService(sessions, client, courses, dates),
@@ -1463,6 +1474,7 @@ def _unified_academic_sync_service(
             _moodle_token_store(headers),
         ),
         connection_count=lambda: client.connection_count,
+        telemetry=telemetry,
     )
     plans = MoodleTeachingPlanImportService(
         sessions,
@@ -1470,12 +1482,14 @@ def _unified_academic_sync_service(
         courses,
         TeachingPlanRepository(firestore),
         dates,
+        telemetry=telemetry,
     )
     return UnifiedAcademicSyncService(
         siga,
         moodle,
         plans,
-        TeachingPlanReconciliationRepository(firestore),
+        TeachingPlanReconciliationRepository(firestore, courses=courses),
+        telemetry=telemetry,
     )
 
 

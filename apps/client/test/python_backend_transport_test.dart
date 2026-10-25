@@ -1461,7 +1461,7 @@ void main() {
                 'imported': 2,
                 'applied': 1,
                 'unchanged': 0,
-                'review_required': 2,
+                'review_required': 3,
               },
               'exceptions': [
                 {
@@ -1491,6 +1491,15 @@ void main() {
                   'conflicting': 0,
                   'assessment_conflicts': 0,
                 },
+                {
+                  'course_id': 'course-c',
+                  'course_code': 'ESA019',
+                  'reason': 'teaching_plan_unavailable',
+                  'candidate_count': 1,
+                  'changes': [],
+                  'conflicting': 0,
+                  'assessment_conflicts': 0,
+                },
               ],
             }),
             200,
@@ -1505,7 +1514,9 @@ void main() {
       expect(result.teachingPlans.applied, 1);
       expect(result.exceptions.first.courseCode, 'ELE028');
       expect(result.exceptions.first.changes.single.subject, 'Circuitos');
-      expect(result.exceptions.last.courseCode, 'MAT001');
+      expect(result.exceptions[1].courseCode, 'MAT001');
+      expect(result.exceptions.last.courseCode, 'ESA019');
+      expect(result.exceptions.last.reason, 'teaching_plan_unavailable');
       expect(captured.method, 'POST');
       expect(captured.url.path, '/v1/ufmg/sync/all');
       expect(captured.body, '{}');
@@ -2339,6 +2350,44 @@ void main() {
         ),
       );
     }
+  });
+
+  test('gives the complete academic sync a longer bounded timeout', () async {
+    final client = MockClient((request) async {
+      await Future<void>.delayed(const Duration(milliseconds: 15));
+      if (request.url.path == '/v1/identity') {
+        return http.Response(jsonEncode({'authenticated': true}), 200);
+      }
+      return http.Response('{}', 200);
+    });
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: client,
+      timeout: const Duration(milliseconds: 5),
+      longRunningTimeout: const Duration(milliseconds: 50),
+    );
+
+    await expectLater(
+      transport.verifyIdentity(),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'short request timeout',
+          PythonBackendError.timeout,
+        ),
+      ),
+    );
+    await expectLater(
+      transport.syncAllAcademicData(),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'response reached the parser instead of timing out',
+          PythonBackendError.invalidResponse,
+        ),
+      ),
+    );
   });
 
   test('rejects missing credentials before the network boundary', () async {
