@@ -291,6 +291,7 @@ final class PythonTeachingPlanImport {
     required this.createdDates,
     required this.updatedDates,
     required this.removedDates,
+    this.notPublished = false,
   });
 
   final int assessmentTotal;
@@ -300,6 +301,7 @@ final class PythonTeachingPlanImport {
   final int createdDates;
   final int updatedDates;
   final int removedDates;
+  final bool notPublished;
 }
 
 final class PythonTeachingPlanReconciliation {
@@ -1968,12 +1970,18 @@ final class PythonBackendTransport
       if (value['course_id'] != courseId ||
           value['term'] != term ||
           value['source_id'] != sourceId ||
-          !const {'created', 'updated', 'unchanged'}.contains(value['plan']) ||
+          !const {
+            'created',
+            'updated',
+            'unchanged',
+            'not_published',
+          }.contains(value['plan']) ||
           value['confidence'] != 'authoritative') {
         throw const FormatException();
       }
       count('dates_unchanged', 100);
       return PythonTeachingPlanImport(
+        notPublished: value['plan'] == 'not_published',
         assessmentTotal: count('assessment_total', 100),
         undatedAssessmentTotal: count('undated_assessment_total', 100),
         criteriaTotal: count('criteria_total', 100),
@@ -2227,6 +2235,7 @@ final class PythonBackendTransport
                   'ambiguous_teaching_plan',
                   'reconciliation_conflict',
                   'teaching_plan_unavailable',
+                  'teaching_plan_not_published',
                 }.contains(reason) ||
                 candidateCount is! int ||
                 candidateCount < 1 ||
@@ -2256,7 +2265,8 @@ final class PythonBackendTransport
                 reason == 'reconciliation_conflict' &&
                     (candidateCount != 1 ||
                         conflicting + assessmentConflicts == 0) ||
-                reason == 'teaching_plan_unavailable' &&
+                (reason == 'teaching_plan_unavailable' ||
+                        reason == 'teaching_plan_not_published') &&
                     (candidateCount != 1 ||
                         conflicting != 0 ||
                         assessmentConflicts != 0 ||

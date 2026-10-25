@@ -97,6 +97,25 @@ class MoodleTeachingPlanImportService:
         if plan.get("course_code") != courses[0].get("code") or plan.get("term") != term:
             raise ValueError("teaching plan does not match course")
         assessments = cast(list[dict[str, object]], plan["assessments"])
+        if not assessments and not plan["criteria"] and not plan["schedule"]:
+            # The parser only accepts an empty plan when the official report
+            # explicitly says both sections have not been published. Keep any
+            # previously imported dates and plan intact.
+            return {
+                "course_id": identifier,
+                "term": term,
+                "source_id": str(source_id),
+                "plan": "not_published",
+                "assessment_total": 0,
+                "undated_assessment_total": 0,
+                "dates_created": 0,
+                "dates_updated": 0,
+                "dates_unchanged": 0,
+                "dates_removed": 0,
+                "criteria_total": 0,
+                "schedule_total": 0,
+                "confidence": "authoritative",
+            }
         dates = self._timed(
             "teaching_plan_assessment_import",
             lambda: self._dates.import_diario_assessments(

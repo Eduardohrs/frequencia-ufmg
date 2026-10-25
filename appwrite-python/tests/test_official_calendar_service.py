@@ -138,6 +138,34 @@ def test_apply_recomputes_candidates_and_only_writes_requested_changes() -> None
     assert result == {"applied": 1, "skipped": 0}
 
 
+def test_confirmed_holiday_disappears_from_next_preview_and_preserves_other_sessions() -> None:
+    class PersistentSessions(Sessions):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rows = {
+                "ele028": [_session("a", "2026-10-12T22:00:00Z")],
+                "mat001": [_session("b", "2026-10-12T22:00:00Z", status="no_call")],
+            }
+
+        def list_sessions(self, course_id: str) -> list[dict[str, object]]:
+            return self.rows[course_id]
+
+        def apply_holidays(self, changes: list[tuple[str, str]]) -> None:
+            super().apply_holidays(changes)
+            for course_id, session_id in changes:
+                row = next(item for item in self.rows[course_id] if item["id"] == session_id)
+                row["calendar_status"] = "holiday"
+
+    sessions = PersistentSessions()
+    original_protected = dict(sessions.rows["mat001"][0])
+    service = OfficialCalendarService(Courses(), sessions, Calendar())
+    assert service.preview()["counts"]["candidates"] == 1
+    service.apply({"changes": [{"course_id": "ele028", "session_id": "a"}]})
+    assert service.preview()["candidates"] == []
+    assert sessions.rows["mat001"][0] == original_protected
+    assert sessions.rows["ele028"][0]["attendance_status"] is None
+
+
 @pytest.mark.parametrize(
     "payload",
     [

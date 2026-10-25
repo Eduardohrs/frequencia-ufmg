@@ -955,6 +955,43 @@ void main() {
     expect(result.createdDates, 2);
   });
 
+  test(
+    'accepts an explicitly unpublished plan as an informational outcome',
+    () async {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'course_id': 'dcc203',
+              'term': '2026-2',
+              'source_id': '701',
+              'plan': 'not_published',
+              'assessment_total': 0,
+              'undated_assessment_total': 0,
+              'dates_created': 0,
+              'dates_updated': 0,
+              'dates_unchanged': 0,
+              'dates_removed': 0,
+              'criteria_total': 0,
+              'schedule_total': 0,
+              'confidence': 'authoritative',
+            }),
+            200,
+          ),
+        ),
+      );
+      final result = await transport.importMoodleTeachingPlan(
+        courseId: 'dcc203',
+        term: '2026-2',
+        sourceId: '701',
+      );
+      expect(result.notPublished, isTrue);
+      expect(result.removedDates, 0);
+    },
+  );
+
   test('rejects invalid and malformed structured Diario imports', () async {
     final transport = PythonBackendTransport(
       endpoint: Uri.parse('https://backend.example'),

@@ -14,6 +14,39 @@ from diario_teaching_plan import (
 )
 
 
+@pytest.mark.parametrize("code", ["ESA019", "UNI001"])
+def test_accepts_official_explicitly_unpublished_plan_without_inventing_data(code: str) -> None:
+    markup = f"""<table>
+    <tr><td>Período:</td><td>2026/2</td></tr>
+    <tr><td>Atividade:</td><td>DIG {code} Disciplina real</td></tr>
+    <tr><td>Turma:</td><td>T1</td></tr>
+    <tr><td>* Plano de Avaliação não publicado.</td></tr>
+    <tr><td>* Cronograma não publicado.</td></tr>
+    </table>"""
+    result = parse_teaching_plan_html(markup)
+    assert result["course_code"] == code
+    assert result["assessments"] == result["criteria"] == result["schedule"] == []
+
+
+@pytest.mark.parametrize(
+    "notice",
+    [
+        "Plano de Avaliação não publicado.",
+        "Cronograma não publicado.",
+        "Relatório vazio",
+    ],
+)
+def test_does_not_treat_an_unexplained_empty_report_as_unpublished(notice: str) -> None:
+    markup = f"""<table>
+    <tr><td>Período:</td><td>2026/2</td></tr>
+    <tr><td>Atividade:</td><td>ESA019 Ciências do Ambiente</td></tr>
+    <tr><td>Turma:</td><td>T1</td></tr>
+    <tr><td>{notice}</td></tr></table>"""
+    with pytest.raises(TeachingPlanParseError) as caught:
+        parse_teaching_plan_html(markup)
+    assert caught.value.stage == "required_sections"
+
+
 def test_parses_sanitized_real_diario_tables() -> None:
     html = """
       <html><body>
@@ -323,9 +356,10 @@ def test_labeled_assessment_rejects_incomplete_records() -> None:
 
 def test_labeled_cells_support_inline_and_terminal_labels() -> None:
     labels = ("cod avl", "tipo", "nome")
-    assert _row_labeled_values(
-        ["Cód. Avl: AV1", "Tipo PROVA", "Nome:"], labels
-    ) == {"cod avl": "AV1", "tipo": "PROVA"}
+    assert _row_labeled_values(["Cód. Avl: AV1", "Tipo PROVA", "Nome:"], labels) == {
+        "cod avl": "AV1",
+        "tipo": "PROVA",
+    }
     with pytest.raises(ValueError):
         _label_value([["Período:"]], "periodo")
 
@@ -349,9 +383,7 @@ def test_schedule_rejects_invalid_identity(row: list[str]) -> None:
 
 
 def test_schedule_entry_exposes_a_stable_occurrence_key() -> None:
-    entry = _schedule_entry(
-        ["7", "14/09/2026", "Seg", "2", "19:00 - 20:40", "Teórica", "Herança"]
-    )
+    entry = _schedule_entry(["7", "14/09/2026", "Seg", "2", "19:00 - 20:40", "Teórica", "Herança"])
 
     assert entry["occurrence_key"] == "2026-09-14T19:00-20:40"
 

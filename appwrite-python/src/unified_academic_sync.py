@@ -96,7 +96,7 @@ class UnifiedAcademicSyncService:
             course_id = cast(str, course["course_id"])
             term = cast(str, course["term"])
             try:
-                self._timed(
+                imported_plan = self._timed(
                     "teaching_plan_import",
                     partial(
                         self._plans.import_plan,
@@ -118,6 +118,21 @@ class UnifiedAcademicSyncService:
                     source_id=source_id,
                     stage="teaching_plan_import",
                     error=error,
+                )
+                continue
+            if imported_plan.get("plan") == "not_published":
+                summary["review_required"] += 1
+                exceptions.append(_exception(course, "teaching_plan_not_published", 1))
+                self._emit(
+                    "academic_sync_plan_not_published",
+                    {
+                        "course_id": course_id,
+                        "course_code": course["course_code"],
+                        "term": term,
+                        "source_id": source_id,
+                        "reason": "explicitly_not_published",
+                        "preserved_existing_data": True,
+                    },
                 )
                 continue
             summary["imported"] += 1
