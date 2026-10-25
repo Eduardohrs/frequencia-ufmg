@@ -88,6 +88,70 @@ def test_import_matches_course_and_persists_plan_and_assessments() -> None:
     }
 
 
+def test_import_reports_where_each_teaching_plan_millisecond_was_spent() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    ticks = iter([0.0, 0.1, 0.1, 0.3, 0.3, 1.1, 1.1, 1.5, 1.5, 1.7])
+    service = MoodleTeachingPlanImportService(
+        _Sessions(UFMGSession("private", 1, 999), []),
+        _Client(),
+        _Courses(),
+        _Plans(),
+        _Dates(),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+        monotonic=lambda: next(ticks),
+    )
+
+    service.import_plan("user-1", course_id="course-a", term="2026-2", source_id=701, now=123)
+
+    assert events == [
+        (
+            "academic_sync_stage_completed",
+            {
+                "stage": "teaching_plan_session_load",
+                "duration_ms": 100,
+                "course_id": "course-a",
+                "source_id": "701",
+            },
+        ),
+        (
+            "academic_sync_stage_completed",
+            {
+                "stage": "teaching_plan_course_lookup",
+                "duration_ms": 200,
+                "course_id": "course-a",
+                "source_id": "701",
+            },
+        ),
+        (
+            "academic_sync_stage_completed",
+            {
+                "stage": "teaching_plan_fetch",
+                "duration_ms": 800,
+                "course_id": "course-a",
+                "source_id": "701",
+            },
+        ),
+        (
+            "academic_sync_stage_completed",
+            {
+                "stage": "teaching_plan_assessment_import",
+                "duration_ms": 400,
+                "course_id": "course-a",
+                "source_id": "701",
+            },
+        ),
+        (
+            "academic_sync_stage_completed",
+            {
+                "stage": "teaching_plan_save",
+                "duration_ms": 200,
+                "course_id": "course-a",
+                "source_id": "701",
+            },
+        ),
+    ]
+
+
 def test_import_rejects_cross_course_plan_without_writes() -> None:
     class WrongCourse(_Client):
         def fetch_diario_plan(self, token: str, *, term: str, source_id: int) -> dict[str, object]:
@@ -129,9 +193,7 @@ def test_import_rejects_missing_or_cross_term_course() -> None:
 
 def test_import_deletes_expired_session_reported_by_moodle() -> None:
     class Expired(_Client):
-        def fetch_diario_plan(
-            self, token: str, *, term: str, source_id: int
-        ) -> dict[str, object]:
+        def fetch_diario_plan(self, token: str, *, term: str, source_id: int) -> dict[str, object]:
             raise UFMGReauthenticationRequired("expired")
 
     sessions = _Sessions(UFMGSession("private", 1, 999), [])

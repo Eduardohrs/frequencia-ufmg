@@ -162,9 +162,12 @@ jobs:
       - name: Deploy Appwrite and roll back a failed activation
         id: appwrite
         run: |
-          previous=$(npx --yes appwrite-cli@28.8.0 functions get \
-            --function-id "$APPWRITE_FUNCTION_ID" --json | jq -r '.deploymentId')
+          previous_function=$(npx --yes appwrite-cli@28.8.0 functions get \
+            --function-id "$APPWRITE_FUNCTION_ID" --json)
+          previous=$(jq -r '.deploymentId' <<< "$previous_function")
+          previous_timeout=$(jq -r '.timeout' <<< "$previous_function")
           test -n "$previous"
+          test -n "$previous_timeout"
 
           created=$(npx --yes appwrite-cli@28.8.0 functions create-deployment \
             --function-id "$APPWRITE_FUNCTION_ID" \
@@ -190,10 +193,17 @@ jobs:
             --function-id "$APPWRITE_FUNCTION_ID" \
             --deployment-id "$deployment" --force
 
+          npx --yes appwrite-cli@28.8.0 functions update \
+            --function-id "$APPWRITE_FUNCTION_ID" \
+            --timeout 75 >/dev/null
+
           rollback() {
             npx --yes appwrite-cli@28.8.0 functions update-function-deployment \
               --function-id "$APPWRITE_FUNCTION_ID" \
               --deployment-id "$previous" --force
+            npx --yes appwrite-cli@28.8.0 functions update \
+              --function-id "$APPWRITE_FUNCTION_ID" \
+              --timeout "$previous_timeout" >/dev/null
           }
 
           identity_status=000

@@ -27,15 +27,25 @@ class CourseRepository:
     ) -> None:
         self._firestore = firestore
         self._now = now or (lambda: datetime.now(UTC))
+        self._course_snapshot: list[dict[str, Any]] | None = None
 
     def list_courses(self) -> list[dict[str, Any]]:
-        courses = [
-            self._decode(document) for document in self._firestore.list_user_documents("courses")
-        ]
-        return sorted(courses, key=lambda course: (course["code"], course["id"]))
+        if self._course_snapshot is None:
+            courses = [
+                self._decode(document)
+                for document in self._firestore.list_user_documents("courses")
+            ]
+            self._course_snapshot = sorted(
+                courses, key=lambda course: (course["code"], course["id"])
+            )
+        return [dict(course) for course in self._course_snapshot]
 
     def get_course(self, course_id: str) -> dict[str, Any]:
         identifier = validate_course_id(course_id)
+        if self._course_snapshot is not None:
+            for course in self._course_snapshot:
+                if course["id"] == identifier:
+                    return dict(course)
         return self._decode(self._firestore.get_user_document("courses", identifier))
 
     def save_course(self, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -54,7 +64,9 @@ class CourseRepository:
         document = self._firestore.patch_user_document(
             "courses", str(course["id"]), fields=course_to_firestore(course)
         )
-        return course_from_firestore(str(course["id"]), _fields(document))
+        saved = course_from_firestore(str(course["id"]), _fields(document))
+        self._course_snapshot = None
+        return saved
 
     def delete_course(self, course_id: str) -> None:
         validate_course_id(course_id)
@@ -72,6 +84,7 @@ class CourseRepository:
                 paths.append(("courses", course_id, collection, child_id))
         paths.append(("courses", course_id))
         self._firestore.delete_user_documents(paths)
+        self._course_snapshot = None
 
     @staticmethod
     def _decode(document: Mapping[str, Any]) -> dict[str, Any]:

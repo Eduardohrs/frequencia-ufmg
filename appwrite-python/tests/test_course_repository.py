@@ -33,6 +33,7 @@ class FakeFirestore:
         self.courses = courses or []
         self.deleted: list[tuple[str, ...]] = []
         self.deleted_batches: list[list[tuple[str, ...]]] = []
+        self.course_list_calls = 0
         self.children = {
             "meetings": [{"name": "root/meeting-1"}],
             "sessions": [{"name": "root/session-1"}],
@@ -43,6 +44,7 @@ class FakeFirestore:
 
     def list_user_documents(self, *segments: str) -> list[dict[str, Any]]:
         if segments == ("courses",):
+            self.course_list_calls += 1
             return self.courses
         return self.children[segments[-1]]
 
@@ -71,6 +73,22 @@ def test_repository_lists_sorted_courses_and_saves_updates() -> None:
     assert [course["code"] for course in repository.list_courses()] == ["DCC203", "MAT001"]
     assert repository.save_course(_course())["id"] == "course-1"
     assert repository.get_course("course-1")["workload"] == 1
+
+
+def test_repository_reuses_one_course_snapshot_until_a_write() -> None:
+    store = FakeFirestore([_document(_course())])
+    repository = CourseRepository(store)  # type: ignore[arg-type]
+
+    assert repository.list_courses() == repository.list_courses()
+    assert store.course_list_calls == 1
+    assert repository.get_course("course-1")["code"] == "DCC203"
+    store.courses.append(_document(_course("course-2", "MAT001")))
+    assert repository.get_course("course-2")["code"] == "MAT001"
+
+    repository.save_course(_course())
+    repository.list_courses()
+
+    assert store.course_list_calls == 2
 
 
 def test_repository_rejects_duplicate_code_for_a_different_course() -> None:

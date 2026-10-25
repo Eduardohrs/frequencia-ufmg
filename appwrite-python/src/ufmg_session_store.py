@@ -272,6 +272,26 @@ class AppwriteUFMGSessionStore:
         return f"u_{digest[:32]}"
 
 
+class RequestCachedUFMGSessionStore:
+    """Reuse one decrypted session snapshot inside a single function request."""
+
+    def __init__(self, store: AppwriteUFMGSessionStore) -> None:
+        self._store = store
+        self._cache: dict[str, UFMGSession | None] = {}
+
+    def load(self, user_id: str, *, now: int) -> UFMGSession | None:
+        cached = self._cache.get(user_id)
+        if user_id in self._cache and (cached is None or cached.expires_at > now):
+            return cached
+        loaded = self._store.load(user_id, now=now)
+        self._cache[user_id] = loaded
+        return loaded
+
+    def delete(self, user_id: str) -> None:
+        self._store.delete(user_id)
+        self._cache.pop(user_id, None)
+
+
 def _validate_input(user_id: str, token: object, now: int) -> None:
     if (
         _USER_ID.fullmatch(user_id) is None

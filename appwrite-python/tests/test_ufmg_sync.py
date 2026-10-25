@@ -178,6 +178,39 @@ def test_siga_sync_fetches_once_without_contacting_moodle() -> None:
     }
 
 
+def test_siga_sync_reports_the_duration_of_each_internal_stage() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    ticks = iter([0.0, 0.1, 0.1, 0.7, 0.7, 0.9, 0.9, 1.2])
+    service, sessions, client, courses, schedules, dates = _service(
+        datetime(2026, 8, 10, 12, tzinfo=UTC)
+    )
+    service = UFMGSyncService(
+        sessions,
+        client,
+        courses,
+        schedules,
+        dates,
+        clock=lambda: datetime(2026, 8, 10, 12, tzinfo=UTC),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+        monotonic=lambda: next(ticks),
+    )
+
+    service.sync_siga("user", now=10)
+
+    assert events == [
+        ("academic_sync_stage_completed", {"stage": "ufmg_session_load", "duration_ms": 100}),
+        (
+            "academic_sync_stage_completed",
+            {"stage": "siga_enrollment_fetch", "duration_ms": 600},
+        ),
+        ("academic_sync_stage_completed", {"stage": "siga_course_import", "duration_ms": 200}),
+        (
+            "academic_sync_stage_completed",
+            {"stage": "siga_schedule_import", "duration_ms": 300},
+        ),
+    ]
+
+
 @pytest.mark.parametrize(
     ("now", "expected"),
     [

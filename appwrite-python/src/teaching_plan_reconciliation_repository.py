@@ -13,28 +13,29 @@ from teaching_plan_repository import TeachingPlanRepository
 
 class TeachingPlanReconciliationRepository:
     def __init__(
-        self, firestore: FirestoreRestClient, *, now: Callable[[], datetime] | None = None
+        self,
+        firestore: FirestoreRestClient,
+        *,
+        now: Callable[[], datetime] | None = None,
+        courses: CourseRepository | None = None,
     ) -> None:
         self._firestore = firestore
         self._now = now or (lambda: datetime.now(UTC))
         self._plans = TeachingPlanRepository(firestore, now=self._now)
+        self._courses = courses or CourseRepository(firestore)
 
     def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
         identifier = validate_course_id(course_id)
-        course = CourseRepository(self._firestore).get_course(identifier)
+        course = self._courses.get_course(identifier)
         persisted = self._plans.load(identifier)
         plan = cast(dict[str, object], persisted["plan"])
         sessions = [
             _decode_session(document)
-            for document in self._firestore.list_user_documents(
-                "courses", identifier, "sessions"
-            )
+            for document in self._firestore.list_user_documents("courses", identifier, "sessions")
         ]
         meetings = [
             _decode_meeting(document)
-            for document in self._firestore.list_user_documents(
-                "courses", identifier, "meetings"
-            )
+            for document in self._firestore.list_user_documents("courses", identifier, "meetings")
         ]
         preview = reconcile_teaching_plan_schedule(
             plan.get("schedule"),
