@@ -72,6 +72,15 @@ class ManyCourses:
         return [{"id": str(index), "code": str(index)} for index in range(51)]
 
 
+def test_online_courses_do_not_generate_official_calendar_candidates() -> None:
+    class OnlineCourses:
+        def list_courses(self) -> list[dict[str, str]]:
+            return [{"id": "online", "code": "DCC203", "modality": "online"}]
+
+    result = OfficialCalendarService(OnlineCourses(), Sessions(), Calendar()).preview()
+    assert result["counts"]["candidates"] == 0
+
+
 class ManySessions:
     def list_sessions(self, _course_id: str) -> list[dict[str, object]]:
         return [_session(str(index), "2026-10-12T22:00:00Z") for index in range(501)]

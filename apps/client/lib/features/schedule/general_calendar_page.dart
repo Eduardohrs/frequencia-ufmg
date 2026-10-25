@@ -88,7 +88,9 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     final operational =
         entry.session.calendarStatus == SessionCalendarStatus.scheduled ||
         entry.session.calendarStatus == SessionCalendarStatus.makeup;
-    return operational && (_courseId == null || entry.course.id == _courseId);
+    return entry.course.modality != CourseModality.online &&
+        operational &&
+        (_courseId == null || entry.course.id == _courseId);
   }).toList();
 
   void _moveMonth(int delta) =>
@@ -362,6 +364,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
         subtitle: Text(
           [
             '${_time(local)} • ${_status(entry.session.calendarStatus)}',
+            if (!entry.course.tracksAttendance) 'Sem chamada',
             if (entry.session.assessmentTitle case final title?)
               'Avaliação: $title',
           ].join('\n'),
@@ -395,9 +398,15 @@ class _CalendarEventLabel extends StatelessWidget {
         const SizedBox(width: 4),
         Flexible(
           child: Text(
-            entry.course.code,
+            '${entry.course.code}${entry.course.tracksAttendance ? '' : ' · Sem chamada'}',
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelSmall,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color:
+                  entry.course.tracksAttendance ||
+                      entry.session.assessmentTitle != null
+                  ? null
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
         if (entry.session.assessmentTitle != null)

@@ -871,6 +871,8 @@ abstract interface class BackendOverviewGateway {
 
 final class PythonCourse {
   const PythonCourse({
+    this.modality = 'in_person',
+    this.attendancePolicy = 'required',
     required this.id,
     required this.code,
     required this.name,
@@ -894,7 +896,11 @@ final class PythonCourse {
       'created_at',
       'updated_at',
     };
-    if (json.keys.toSet().difference(keys).isNotEmpty ||
+    if (json.keys.toSet().difference({
+          ...keys,
+          'modality',
+          'attendance_policy',
+        }).isNotEmpty ||
         keys.difference(json.keys.toSet()).isNotEmpty) {
       throw const FormatException();
     }
@@ -907,6 +913,13 @@ final class PythonCourse {
     final name = json['name'];
     final workload = json['workload'];
     final term = json['term'];
+    final modality = json['modality'] ?? 'in_person';
+    final policy = json['attendance_policy'] ?? 'required';
+    if (!['in_person', 'online'].contains(modality) ||
+        !['required', 'no_call'].contains(policy) ||
+        modality == 'online' && policy != 'no_call') {
+      throw const FormatException('Invalid attendance policy');
+    }
     if (id is! String ||
         id.isEmpty ||
         id.length > 128 ||
@@ -928,6 +941,8 @@ final class PythonCourse {
       throw const FormatException();
     }
     return PythonCourse(
+      modality: modality as String,
+      attendancePolicy: policy as String,
       id: id,
       code: code,
       name: name,
@@ -941,6 +956,8 @@ final class PythonCourse {
   }
 
   final String id;
+  final String modality;
+  final String attendancePolicy;
   final String code;
   final String name;
   final int workload;
@@ -951,6 +968,10 @@ final class PythonCourse {
   final DateTime updatedAt;
 
   Map<String, Object?> toJson({bool includeId = true}) => {
+    if (modality != 'in_person' || attendancePolicy != 'required') ...{
+      'modality': modality,
+      'attendance_policy': attendancePolicy,
+    },
     if (includeId) 'id': id,
     'code': code,
     'name': name,

@@ -287,6 +287,8 @@ def _reject_external_overlap(
             other = validate_course(raw_course)
         except InvalidCourse:
             raise InvalidSchedule("invalid schedule") from None
+        if other.get("modality") == "online":
+            continue
         other_start, other_end = _effective_course_period(other)
         if starts_on.date() > other_end or other_start > ends_on.date():
             continue

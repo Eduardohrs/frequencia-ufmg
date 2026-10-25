@@ -30,6 +30,24 @@ def test_course_round_trips_through_firestore_fields() -> None:
     assert restored == course
 
 
+@pytest.mark.parametrize("modality,policy", [("online", "no_call"), ("in_person", "no_call")])
+def test_course_policy_survives_firestore_without_changing_history(
+    modality: str, policy: str,
+) -> None:
+    course = {**_course(), "modality": modality, "attendance_policy": policy}
+    assert course_from_firestore("course-1", course_to_firestore(course)) == course
+
+
+@pytest.mark.parametrize("change", [
+    {"modality": "unknown"}, {"attendance_policy": "unknown"},
+    {"modality": "online", "attendance_policy": "required"},
+    {"modality": None}, {"attendance_policy": False},
+])
+def test_course_rejects_invalid_attendance_policy(change: dict[str, object]) -> None:
+    with pytest.raises(InvalidCourse):
+        validate_course({**_course(), **change})
+
+
 @pytest.mark.parametrize(
     "change",
     [

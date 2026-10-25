@@ -36,6 +36,8 @@ final class PythonCourseRepository implements CourseRepository {
   );
 
   static PythonCourse _toPython(CourseRecord course) => PythonCourse(
+    modality: course.modality.code,
+    attendancePolicy: course.tracksAttendance ? 'required' : 'no_call',
     id: course.id,
     code: course.code,
     name: course.name,
@@ -49,6 +51,8 @@ final class PythonCourseRepository implements CourseRepository {
 }
 
 CourseRecord courseRecordFromPython(PythonCourse course) => CourseRecord(
+  modality: CourseModality.fromCode(course.modality),
+  attendancePolicy: CourseAttendancePolicy.fromCode(course.attendancePolicy),
   id: course.id,
   code: course.code,
   name: course.name,

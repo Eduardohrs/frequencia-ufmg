@@ -5,12 +5,16 @@ import '../../design/app_feedback.dart';
 
 final class CourseInput {
   const CourseInput({
+    this.modality = CourseModality.inPerson,
+    this.attendancePolicy = CourseAttendancePolicy.required,
     required this.code,
     required this.name,
     required this.term,
   });
 
   final String code;
+  final CourseModality modality;
+  final CourseAttendancePolicy attendancePolicy;
   final String name;
   final String term;
 }
@@ -41,12 +45,17 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
   late final TextEditingController _name;
   late final TextEditingController _term;
   bool _saving = false;
+  late CourseModality _modality;
+  late CourseAttendancePolicy _attendancePolicy;
   String? _error;
 
   @override
   void initState() {
     super.initState();
     final course = widget.course;
+    _modality = course?.modality ?? CourseModality.inPerson;
+    _attendancePolicy =
+        course?.attendancePolicy ?? CourseAttendancePolicy.required;
     _code = TextEditingController(text: course?.code);
     _name = TextEditingController(text: course?.name);
     _term = TextEditingController(text: widget.initialTerm);
@@ -65,12 +74,43 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
       widget.onValidationFailed();
       return;
     }
+    final previous = widget.course;
+    if (previous != null &&
+        (previous.modality != _modality ||
+            previous.attendancePolicy != _attendancePolicy)) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Alterar controle de frequência?'),
+          content: Text(
+            _attendancePolicy == CourseAttendancePolicy.noCall
+                ? 'Esta disciplina deixará de entrar nos cálculos de frequência e nas pendências. '
+                      'Os registros existentes serão preservados. Atividades e materiais continuam disponíveis.'
+                : 'A disciplina voltará aos cálculos e às pendências de frequência, '
+                      'usando seus registros e horários preservados.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Aplicar'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
     setState(() {
       _saving = true;
       _error = null;
     });
     final error = await widget.onSave(
       CourseInput(
+        modality: _modality,
+        attendancePolicy: _attendancePolicy,
         code: _code.text.trim(),
         name: _name.text.trim(),
         term: _term.text.trim(),
@@ -132,6 +172,46 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
                   validator: (value) =>
                       _required(value, 'Informe o nome.', 160),
                 ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<CourseModality>(
+                  isExpanded: true,
+                  key: const Key('course-modality'),
+                  initialValue: _modality,
+                  decoration: const InputDecoration(labelText: 'Modalidade'),
+                  items: [
+                    for (final value in CourseModality.values)
+                      DropdownMenuItem(value: value, child: Text(value.label)),
+                  ],
+                  onChanged: _saving
+                      ? null
+                      : (value) => setState(() {
+                          _modality = value!;
+                          if (_modality == CourseModality.online) {
+                            _attendancePolicy = CourseAttendancePolicy.noCall;
+                          }
+                        }),
+                ),
+                if (_modality == CourseModality.inPerson) ...[
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<CourseAttendancePolicy>(
+                    isExpanded: true,
+                    key: ValueKey(
+                      'course-attendance-${_attendancePolicy.code}',
+                    ),
+                    initialValue: _attendancePolicy,
+                    decoration: const InputDecoration(labelText: 'Frequência'),
+                    items: [
+                      for (final value in CourseAttendancePolicy.values)
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text(value.label),
+                        ),
+                    ],
+                    onChanged: _saving
+                        ? null
+                        : (value) => setState(() => _attendancePolicy = value!),
+                  ),
+                ],
                 if (widget.course != null) ...[
                   const SizedBox(height: 16),
                   TextFormField(

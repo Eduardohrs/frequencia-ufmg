@@ -99,7 +99,13 @@ service cloud.firestore {
       let datedFields = legacyFields.concat(['startsOn', 'endsOn']);
       let startsOn = data.get('startsOn', null);
       let endsOn = data.get('endsOn', null);
-      return (hasExactFields(data, legacyFields) || hasExactFields(data, datedFields))
+      let modality = data.get('modality', 'in_person');
+      let policy = data.get('attendancePolicy', 'required');
+      return (hasExactFields(data, legacyFields) || hasExactFields(data, datedFields)
+          || hasExactFields(data, datedFields.concat(['modality', 'attendancePolicy'])))
+        && modality in ['in_person', 'online']
+        && policy in ['required', 'no_call']
+        && (modality != 'online' || policy == 'no_call')
         && data.schemaVersion == 1
         && data.code is string
         && data.code.size() >= 1

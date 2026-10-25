@@ -28,6 +28,7 @@ void main() {
     final restored = await offline.getSchedule('course-1');
 
     expect(restored.course.code, 'DCC203');
+    expect(restored.course.attendancePolicy, 'no_call');
     expect(restored.meetings.single.id, 'meeting-1');
     expect(restored.isLocalCopy, isTrue);
     expect(logger.events, contains('schedule_cache_hit'));
@@ -123,6 +124,8 @@ void main() {
 
 PythonSchedule _schedule() => PythonSchedule(
   course: PythonCourse.fromJson(const {
+    'modality': 'in_person',
+    'attendance_policy': 'no_call',
     'id': 'course-1',
     'code': 'DCC203',
     'name': 'POO',

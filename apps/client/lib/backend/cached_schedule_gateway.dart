@@ -147,6 +147,8 @@ PythonSchedule _decode(String encoded) {
 }
 
 Map<String, Object?> _courseJson(PythonCourse course) => {
+  'modality': course.modality,
+  'attendance_policy': course.attendancePolicy,
   'id': course.id,
   'code': course.code,
   'name': course.name,

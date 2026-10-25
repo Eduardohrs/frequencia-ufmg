@@ -131,6 +131,8 @@ AcademicOverviewSnapshot _decode(String encoded) {
 }
 
 Map<String, Object?> _courseJson(CourseRecord course) => {
+  'modality': course.modality.code,
+  'attendance_policy': course.tracksAttendance ? 'required' : 'no_call',
   'id': course.id,
   'code': course.code,
   'name': course.name,
@@ -162,6 +164,8 @@ CourseRecord _course(Object? value) {
   final json = _map(value);
   final id = _string(json['id']);
   return CourseRecord.fromFirestore(id, {
+    'modality': json['modality'] ?? 'in_person',
+    'attendancePolicy': json['attendance_policy'] ?? 'required',
     'schemaVersion': FirestoreSchema.version,
     'code': _string(json['code']),
     'name': _string(json['name']),

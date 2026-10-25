@@ -326,7 +326,8 @@ class _CoursePageState extends State<CoursePage> {
           localSession.month,
           localSession.day,
         );
-        if (session.calendarStatus.requiresAttendance &&
+        if (courses[index].tracksAttendance &&
+            session.calendarStatus.requiresAttendance &&
             session.absences == null &&
             day.isBefore(effectiveToday)) {
           pending.add(_PendingAttendance(courses[index], session));
@@ -550,6 +551,8 @@ class _CoursePageState extends State<CoursePage> {
           existing.term != input.term &&
           _usesDefaultPeriod(existing);
       final course = CourseRecord(
+        modality: input.modality,
+        attendancePolicy: input.attendancePolicy,
         id: existing?.id ?? widget.idGenerator(),
         code: normalizedCode,
         name: input.name,
@@ -586,6 +589,7 @@ class _CoursePageState extends State<CoursePage> {
             course,
           ]..sort((left, right) => left.code.compareTo(right.code));
         });
+        unawaited(_loadPastPendingCount(_courses));
       }
       return null;
     } catch (error) {
@@ -1149,6 +1153,7 @@ class _CourseTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(course.code),
+              if (!course.tracksAttendance) Text(course.policyLabel),
               const SizedBox(height: 2),
               Text(
                 course.term,

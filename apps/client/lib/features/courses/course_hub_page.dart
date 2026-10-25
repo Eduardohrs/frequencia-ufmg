@@ -160,6 +160,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
   }
 
   SessionRecord? get _firstPending {
+    if (!widget.course.tracksAttendance) return null;
     final today = tz.TZDateTime.from(widget.now(), _location);
     for (final session in _sessions.reversed) {
       final local = tz.TZDateTime.from(session.startsAt, _location);
@@ -422,7 +423,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
     );
     final side = Column(
       children: [
-        _scheduleSection(),
+        if (widget.course.modality != CourseModality.online) _scheduleSection(),
         const SizedBox(height: 28),
         _materialsSection(),
       ],
@@ -443,6 +444,24 @@ class _CourseHubPageState extends State<CourseHubPage> {
   }
 
   Widget _frequencySection() {
+    if (!widget.course.tracksAttendance) {
+      return _Panel(
+        key: const Key('course-hub-frequency'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.course.policyLabel,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Frequência: não se aplica. Atividades e materiais continuam disponíveis.',
+            ),
+          ],
+        ),
+      );
+    }
     final summary = CourseAbsenceSummary.from(
       widget.course,
       _sessions,
@@ -516,7 +535,9 @@ class _CourseHubPageState extends State<CourseHubPage> {
   Widget _scheduleSection() => _HubSection(
     key: const Key('course-hub-schedule'),
     eyebrow: 'Organização',
-    title: 'Grade e período',
+    title: widget.course.tracksAttendance
+        ? 'Grade e período'
+        : 'Grade · Sem chamada',
     actionKey: const Key('course-hub-open-schedule'),
     actionLabel: 'Ver grade',
     onAction: _openSchedule,

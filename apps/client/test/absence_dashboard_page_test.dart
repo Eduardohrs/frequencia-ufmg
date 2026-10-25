@@ -15,6 +15,52 @@ void main() {
   final poo = _course('poo', 'DCC203', 60, now);
   final calculus = _course('calc', 'MAT001', 4, now);
 
+  testWidgets(
+    'no-call policy excludes old absences and pending sessions without deleting history',
+    (tester) async {
+      final course = CourseRecord(
+        id: 'no-call',
+        code: 'DCC203',
+        name: 'POO',
+        workload: 60,
+        term: '2026-2',
+        attendancePolicy: CourseAttendancePolicy.noCall,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final records = [
+        _session('absent', now, absences: 2),
+        _session('pending', now.subtract(const Duration(days: 2))),
+      ];
+      final summary = CourseAbsenceSummary.from(
+        course,
+        records,
+        now: now,
+        location: location,
+      );
+      expect(summary.consumedAbsences, 0);
+      expect(summary.pendingSessions, 0);
+      expect(summary.eligibleLessons, 0);
+      expect(records.first.absences, 2);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AbsenceDashboardPage(
+            courses: [course],
+            repository: _Repository({course.id: records}),
+            location: location,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Sem chamada • Frequência: não se aplica'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('attendance-bar-no-call')), findsNothing);
+    },
+  );
+
   test('separates the academic total from past attendance pendencies', () {
     final summary = CourseAbsenceSummary.from(
       poo,

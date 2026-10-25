@@ -17,6 +17,54 @@ void main() {
     _course('calc', 'MAT001', now),
   ];
 
+  testWidgets(
+    'no-call timetable stays visible with a label and online history stays hidden',
+    (tester) async {
+      final course = CourseRecord(
+        id: 'no-call',
+        code: 'DCC203',
+        name: 'POO',
+        workload: 60,
+        term: '2026-2',
+        attendancePolicy: CourseAttendancePolicy.noCall,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final online = CourseRecord(
+        id: 'online',
+        code: 'MAT001',
+        name: 'Online',
+        workload: 60,
+        term: '2026-2',
+        modality: CourseModality.online,
+        attendancePolicy: CourseAttendancePolicy.noCall,
+        createdAt: now,
+        updatedAt: now,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GeneralCalendarPage(
+            courses: [course, online],
+            repository: _Repository({}),
+            location: location,
+            now: () => now,
+            initialSessionsByCourse: {
+              course.id: [_session('class', DateTime.utc(2026, 9, 16, 11))],
+              online.id: [_session('hidden', DateTime.utc(2026, 9, 16, 12))],
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('DCC203 · Sem chamada'), findsOneWidget);
+      expect(find.text('MAT001'), findsNothing);
+      await tester.tap(find.text('Lista'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Sem chamada'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('shows month and list views and filters by course', (
     tester,
   ) async {

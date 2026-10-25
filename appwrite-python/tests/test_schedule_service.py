@@ -137,7 +137,6 @@ def test_schedule_generates_retroactive_sessions_and_is_idempotent() -> None:
     ]
     assert first.meeting_delete_ids == ()
     assert first.session_delete_ids == ()
-
     second = _plan(
         starts_on="2026-08-04T00:00:00Z",
         ends_on="2026-08-18T00:00:00Z",
@@ -149,6 +148,14 @@ def test_schedule_generates_retroactive_sessions_and_is_idempotent() -> None:
     assert second.session_upserts == ()
     assert second.session_delete_ids == ()
     assert second.destructive_delete_count == 0
+
+
+def test_online_historical_timetable_does_not_block_another_course() -> None:
+    result = _plan(other_schedules=[(
+        {**_course("online"), "modality": "online", "attendance_policy": "no_call"},
+        [_meeting()],
+    )])
+    assert result.session_upserts
 
 
 def test_schedule_preserves_evidence_exceptions_and_assessments() -> None:

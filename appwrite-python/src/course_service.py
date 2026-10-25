@@ -25,8 +25,16 @@ class InvalidCourse(Exception):
 def validate_course(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Return a canonical course or reject the entire payload."""
 
-    if set(payload) != COURSE_FIELDS:
+    if set(payload) - {"modality", "attendance_policy"} != COURSE_FIELDS:
         raise InvalidCourse("invalid course")
+    modality = payload.get("modality", "in_person")
+    policy = payload.get("attendance_policy", "no_call" if modality == "online" else "required")
+    if (
+        modality not in ("in_person", "online")
+        or policy not in ("required", "no_call")
+        or (modality == "online" and policy != "no_call")
+    ):
+        raise InvalidCourse("invalid attendance policy")
     course_id = _text(payload["id"], 128)
     if "/" in course_id or "\\" in course_id:
         raise InvalidCourse("invalid course")
@@ -49,6 +57,8 @@ def validate_course(payload: Mapping[str, Any]) -> dict[str, Any]:
     if updated_at < created_at:
         raise InvalidCourse("invalid course")
     return {
+        **({"modality": modality, "attendance_policy": policy}
+           if modality != "in_person" or policy != "required" else {}),
         "id": course_id,
         "code": code,
         "name": name,
@@ -67,6 +77,9 @@ def course_to_firestore(course: Mapping[str, Any]) -> dict[str, Any]:
     valid = validate_course(course)
     return {
         "schemaVersion": {"integerValue": "1"},
+        **({"modality": {"stringValue": valid["modality"]},
+            "attendancePolicy": {"stringValue": valid["attendance_policy"]}}
+           if "modality" in valid else {}),
         "code": {"stringValue": valid["code"]},
         "name": {"stringValue": valid["name"]},
         "workload": {"integerValue": str(valid["workload"])},
@@ -85,6 +98,10 @@ def course_from_firestore(course_id: str, fields: Mapping[str, Any]) -> dict[str
         if fields["schemaVersion"] != {"integerValue": "1"}:
             raise KeyError
         payload = {
+            **({"modality": fields["modality"]["stringValue"]}
+               if "modality" in fields else {}),
+            **({"attendance_policy": fields["attendancePolicy"]["stringValue"]}
+               if "attendancePolicy" in fields else {}),
             "id": course_id,
             "code": fields["code"]["stringValue"],
             "name": fields["name"]["stringValue"],
