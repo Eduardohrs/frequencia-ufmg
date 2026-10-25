@@ -566,7 +566,7 @@ void main() {
       expect(find.textContaining('12/10'), findsOneWidget);
       expect(find.textContaining('Nossa Senhora Aparecida'), findsOneWidget);
       expect(gateway.officialCalendarApplyCalls, 0);
-    await tester.tap(find.text('Aplicar 1 alteração'));
+      await tester.tap(find.text('Aplicar 1 alteração'));
       await tester.pumpAndSettle();
       expect(gateway.officialCalendarApplyCalls, 1);
       expect(find.textContaining('1 aula atualizada'), findsOneWidget);

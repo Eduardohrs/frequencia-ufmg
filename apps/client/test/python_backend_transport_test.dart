@@ -1595,7 +1595,8 @@ void main() {
                         'events': [
                           {
                             'title': 'Feriado: Nossa Senhora Aparecida',
-                            'source_url': 'https://www.ufmg.br/a-universidade/calendario-escolar/?mes=10&ano=2026',
+                            'source_url':
+                                'https://www.ufmg.br/a-universidade/calendario-escolar/?mes=10&ano=2026',
                             'confidence': 'official',
                           },
                         ],
