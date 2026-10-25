@@ -81,6 +81,9 @@ def test_fetches_deduplicates_and_classifies_one_official_month() -> None:
             },
         ],
     }
+    duration = telemetry[0][1].pop("duration_ms")
+    assert isinstance(duration, float)
+    assert duration >= 0
     assert telemetry == [
         (
             "official_calendar_fetch_succeeded",
@@ -162,6 +165,9 @@ def test_maps_transport_failures_without_exposing_the_request(failure: Exception
             transport=transport,
             telemetry=lambda event, fields: telemetry.append((event, dict(fields))),
         ).fetch_month(2026, 10)
+    duration = telemetry[0][1].pop("duration_ms")
+    assert isinstance(duration, float)
+    assert duration >= 0
     assert telemetry == [
         (
             "official_calendar_fetch_failed",
@@ -219,6 +225,9 @@ def test_failure_telemetry_identifies_the_exact_stage(
     fields = {"year": 2026, "month": 10, "stage": stage, "reason": reason}
     if detail is not None:
         fields[detail[0]] = detail[1]
+    duration = telemetry[0][1].pop("duration_ms")
+    assert isinstance(duration, float)
+    assert duration >= 0
     assert telemetry == [("official_calendar_fetch_failed", fields)]
 
 

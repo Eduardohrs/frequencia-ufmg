@@ -1145,6 +1145,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       if (result.exceptions.isNotEmpty) {
         await _showAcademicSyncExceptions(result.exceptions);
       }
+      await _offerOfficialCalendar();
     } catch (error) {
       if (!mounted) return;
       if (error is PythonBackendException &&
@@ -1219,6 +1220,87 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       ],
     ),
   );
+
+  Future<void> _offerOfficialCalendar() async {
+    final gateway = widget.gateway;
+    if (gateway is! BackendOfficialCalendarGateway || !mounted) return;
+    final calendarGateway = gateway as BackendOfficialCalendarGateway;
+    try {
+      final preview = await calendarGateway.previewOfficialCalendar();
+      if (!mounted || preview.candidates.isEmpty) return;
+      _logInteraction('official_calendar_preview_shown');
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Atualizar feriados oficiais?'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'O calendário oficial da UFMG indica estas alterações. Nenhuma será aplicada sem sua confirmação.',
+                  ),
+                  const SizedBox(height: 16),
+                  for (final change in preview.candidates) ...[
+                    Text(
+                      change.courseCode,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    Text(
+                      '${change.date.day.toString().padLeft(2, '0')}/'
+                      '${change.date.month.toString().padLeft(2, '0')} · '
+                      '${TimeOfDay.fromDateTime(change.startsAt.toLocal()).format(context)}–'
+                      '${TimeOfDay.fromDateTime(change.endsAt.toLocal()).format(context)}',
+                    ),
+                    Text(
+                      '${change.eventTitle} · aula será marcada como feriado',
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Agora não'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(
+                'Aplicar ${preview.candidates.length} '
+                '${_plural(preview.candidates.length, 'alteração', 'alterações')}',
+              ),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      _logInteraction('official_calendar_apply_confirmed');
+      final result = await calendarGateway.applyOfficialCalendar(
+        preview.candidates,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${result.applied} ${_plural(result.applied, 'aula atualizada', 'aulas atualizadas')} pelo calendário oficial.',
+          ),
+        ),
+      );
+    } catch (error, stackTrace) {
+      await widget.logger.recordError(
+        error,
+        stackTrace,
+        context: 'official_calendar_sync',
+        parameters: const {'action': 'official_calendar_best_effort'},
+      );
+    }
+  }
 
   Future<void> _syncMoodle() async {
     _logInteraction('ufmg_sync_moodle');

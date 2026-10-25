@@ -1571,6 +1571,66 @@ void main() {
     }
   });
 
+  test('previews and applies official UFMG calendar changes', () async {
+    late http.Request captured;
+    var request = 0;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((value) async {
+        captured = value;
+        request++;
+        return http.Response(
+          jsonEncode(
+            request == 1
+                ? {
+                    'candidates': [
+                      {
+                        'course_id': 'ele028',
+                        'course_code': 'ELE028',
+                        'session_id': 'session-1',
+                        'date': '2026-10-12',
+                        'starts_at': '2026-10-12T22:00:00Z',
+                        'ends_at': '2026-10-12T23:40:00Z',
+                        'events': [
+                          {
+                            'title': 'Feriado: Nossa Senhora Aparecida',
+                            'source_url':
+                                'https://www.ufmg.br/a-universidade/calendario-escolar/?mes=10&ano=2026',
+                            'confidence': 'official',
+                          },
+                        ],
+                        'from': 'scheduled',
+                        'to': 'holiday',
+                      },
+                    ],
+                    'counts': {
+                      'candidates': 1,
+                      'unchanged': 0,
+                      'protected': 0,
+                      'advisories': 0,
+                    },
+                  }
+                : {'applied': 1, 'skipped': 0},
+          ),
+          200,
+        );
+      }),
+    );
+
+    final preview = await transport.previewOfficialCalendar();
+    expect(preview.candidates.single.courseCode, 'ELE028');
+    expect(preview.candidates.single.eventTitle, contains('Nossa Senhora'));
+    final result = await transport.applyOfficialCalendar(preview.candidates);
+    expect(result.applied, 1);
+    expect(captured.url.path, '/v1/calendar/official/apply');
+    expect(jsonDecode(captured.body), {
+      'changes': [
+        {'course_id': 'ele028', 'session_id': 'session-1'},
+      ],
+    });
+  });
+
   test('classifies invalid UFMG credentials separately from outages', () async {
     for (final entry in [
       (

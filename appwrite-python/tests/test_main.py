@@ -20,6 +20,7 @@ from firestore_rest import (
 from moodle_material_catalog_repository import InvalidMoodleMaterialCatalog
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
 from moodle_token_store import MoodleAuthorizationRequired, MoodleTokenStoreUnavailable
+from official_calendar_service import InvalidOfficialCalendarRequest
 from quota_guard import RateLimitExceeded, ReplayDetected, SecurityStoreUnavailable
 from schedule_repository import DestructiveScheduleChange
 from schedule_service import InvalidSchedule, ScheduleOverlap
@@ -29,6 +30,7 @@ from ufmg_course_import import (
     InvalidUFMGEnrollmentResponse,
     UFMGEnrollmentUnavailable,
 )
+from ufmg_official_calendar import InvalidOfficialCalendar, OfficialCalendarUnavailable
 from ufmg_session_store import (
     InvalidUFMGSession,
     UFMGReauthenticationRequired,
@@ -67,6 +69,92 @@ class FakeContext:
 
     def error(self, message: str) -> None:
         self.errors.append(message)
+
+
+def test_official_calendar_preview_and_apply_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    class Service:
+        def preview(self) -> dict[str, object]:
+            return {"candidates": [], "counts": {"candidates": 0}}
+
+        def apply(self, payload: object) -> dict[str, int]:
+            assert payload == {"changes": [{"course_id": "c", "session_id": "s"}]}
+            return {"applied": 1, "skipped": 0}
+
+    monkeypatch.setattr(function, "_official_calendar_service", lambda *_: Service())
+    preview = FakeContext(FakeRequest("POST", "/v1/calendar/official/preview"))
+    applied = FakeContext(
+        FakeRequest(
+            "POST",
+            "/v1/calendar/official/apply",
+            body_json={"changes": [{"course_id": "c", "session_id": "s"}]},
+        )
+    )
+
+    assert function.main(preview)["body"]["counts"] == {"candidates": 0}
+    assert function.main(applied)["body"] == {"applied": 1, "skipped": 0}
+    assert json.loads(preview.logs[0])["event"] == "official_calendar_preview_succeeded"
+
+
+def test_official_calendar_route_returns_authentication_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_: (None, rejection))
+    context = FakeContext(FakeRequest("POST", "/v1/calendar/official/preview"))
+    assert function.main(context) == rejection
+
+
+@pytest.mark.parametrize(
+    "failure,status,code",
+    [
+        (InvalidOfficialCalendarRequest(), 400, "official_calendar_request_rejected"),
+        (OfficialCalendarUnavailable(), 503, "official_calendar_unavailable"),
+        (InvalidOfficialCalendar(), 502, "official_calendar_response_invalid"),
+        (FirestoreAccessDenied("denied"), 403, "official_calendar_access_denied"),
+        (FirestoreUnavailable("down"), 503, "official_calendar_store_unavailable"),
+        (FirestoreNotFound("missing"), 409, "official_calendar_reconciliation_rejected"),
+    ],
+)
+def test_official_calendar_route_maps_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    status: int,
+    code: str,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+
+    class Service:
+        def preview(self) -> dict[str, object]:
+            raise failure
+
+    monkeypatch.setattr(function, "_official_calendar_service", lambda *_: Service())
+    context = FakeContext(FakeRequest("POST", "/v1/calendar/official/preview"))
+    result = function.main(context)
+    assert result["status"] == status
+    assert result["body"] == {"error": code}
+    assert json.loads(context.errors[0]) == {"action": "preview", "event": code}
+
+
+def test_official_calendar_preview_rejects_a_nonempty_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+    context = FakeContext(
+        FakeRequest("POST", "/v1/calendar/official/preview", body_json={"unexpected": True})
+    )
+    assert function.main(context)["status"] == 400
+
+
+def test_official_calendar_factory_shares_authenticated_firestore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    firestore = object()
+    monkeypatch.setattr(function, "_firestore", lambda *_: firestore)
+    service = function._official_calendar_service({}, "user-1")
+    assert service._courses._firestore is firestore
+    assert service._sessions._firestore is firestore
 
 
 def test_unknown_route_returns_not_found() -> None:

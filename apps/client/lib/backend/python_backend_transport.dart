@@ -139,6 +139,50 @@ abstract interface class BackendUnifiedAcademicSyncGateway {
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData();
 }
 
+abstract interface class BackendOfficialCalendarGateway {
+  Future<PythonOfficialCalendarPreview> previewOfficialCalendar();
+
+  Future<PythonOfficialCalendarApplyResult> applyOfficialCalendar(
+    List<PythonOfficialCalendarChange> changes,
+  );
+}
+
+final class PythonOfficialCalendarChange {
+  const PythonOfficialCalendarChange({
+    required this.courseId,
+    required this.courseCode,
+    required this.sessionId,
+    required this.date,
+    required this.startsAt,
+    required this.endsAt,
+    required this.eventTitle,
+  });
+
+  final String courseId;
+  final String courseCode;
+  final String sessionId;
+  final DateTime date;
+  final DateTime startsAt;
+  final DateTime endsAt;
+  final String eventTitle;
+}
+
+final class PythonOfficialCalendarPreview {
+  const PythonOfficialCalendarPreview({required this.candidates});
+
+  final List<PythonOfficialCalendarChange> candidates;
+}
+
+final class PythonOfficialCalendarApplyResult {
+  const PythonOfficialCalendarApplyResult({
+    required this.applied,
+    required this.skipped,
+  });
+
+  final int applied;
+  final int skipped;
+}
+
 enum PythonMoodleContentStatus { found, empty, unmatched, ambiguous }
 
 enum PythonMoodleContentOrigin { canonical, metaturma }
@@ -1385,6 +1429,7 @@ final class PythonBackendTransport
         BackendSessionGateway,
         BackendUFMGSessionGateway,
         BackendUnifiedAcademicSyncGateway,
+        BackendOfficialCalendarGateway,
         BackendOverviewGateway {
   PythonBackendTransport({
     required Uri endpoint,
@@ -2237,6 +2282,122 @@ final class PythonBackendTransport
           reviewRequired: reviewRequired,
         ),
         exceptions: exceptions,
+      );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<PythonOfficialCalendarPreview> previewOfficialCalendar() async {
+    final response = await _authenticatedRequest(
+      path: '/v1/calendar/official/preview',
+      method: _BackendMethod.post,
+      body: const {},
+      requestTimeout: longRunningTimeout,
+    );
+    try {
+      final value = Map<String, Object?>.from(jsonDecode(response.body) as Map);
+      if (!_hasExactKeys(value, const {'candidates', 'counts'})) {
+        throw const FormatException();
+      }
+      final raw = value['candidates'];
+      if (raw is! List || raw.length > 100) throw const FormatException();
+      final candidates = raw
+          .map((entry) {
+            final item = Map<String, Object?>.from(entry as Map);
+            if (!_hasExactKeys(item, const {
+                  'course_id',
+                  'course_code',
+                  'session_id',
+                  'date',
+                  'starts_at',
+                  'ends_at',
+                  'events',
+                  'from',
+                  'to',
+                }) ||
+                item['from'] != 'scheduled' ||
+                item['to'] != 'holiday') {
+              throw const FormatException();
+            }
+            final events = item['events'];
+            if (events is! List || events.isEmpty || events.length > 10) {
+              throw const FormatException();
+            }
+            final event = Map<String, Object?>.from(events.first as Map);
+            if (!_hasExactKeys(event, const {
+                  'title',
+                  'source_url',
+                  'confidence',
+                }) ||
+                event['confidence'] != 'official') {
+              throw const FormatException();
+            }
+            final courseId = item['course_id'];
+            final courseCode = item['course_code'];
+            final sessionId = item['session_id'];
+            final title = event['title'];
+            if (courseId is! String ||
+                courseId.isEmpty ||
+                courseCode is! String ||
+                courseCode.isEmpty ||
+                sessionId is! String ||
+                sessionId.isEmpty ||
+                title is! String ||
+                title.isEmpty) {
+              throw const FormatException();
+            }
+            return PythonOfficialCalendarChange(
+              courseId: courseId,
+              courseCode: courseCode,
+              sessionId: sessionId,
+              date: DateTime.parse(item['date']! as String),
+              startsAt: _utcDate(item['starts_at']),
+              endsAt: _utcDate(item['ends_at']),
+              eventTitle: title,
+            );
+          })
+          .toList(growable: false);
+      return PythonOfficialCalendarPreview(candidates: candidates);
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<PythonOfficialCalendarApplyResult> applyOfficialCalendar(
+    List<PythonOfficialCalendarChange> changes,
+  ) async {
+    final response = await _authenticatedRequest(
+      path: '/v1/calendar/official/apply',
+      method: _BackendMethod.post,
+      body: {
+        'changes': [
+          for (final change in changes)
+            {'course_id': change.courseId, 'session_id': change.sessionId},
+        ],
+      },
+      requestTimeout: longRunningTimeout,
+    );
+    try {
+      final value = Map<String, Object?>.from(jsonDecode(response.body) as Map);
+      if (!_hasExactKeys(value, const {'applied', 'skipped'})) {
+        throw const FormatException();
+      }
+      final applied = value['applied'];
+      final skipped = value['skipped'];
+      if (applied is! int ||
+          applied < 0 ||
+          applied > 100 ||
+          skipped is! int ||
+          skipped < 0 ||
+          skipped > 100) {
+        throw const FormatException();
+      }
+      return PythonOfficialCalendarApplyResult(
+        applied: applied,
+        skipped: skipped,
       );
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
