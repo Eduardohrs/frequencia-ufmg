@@ -167,12 +167,18 @@ jobs:
           previous=$(jq -r '.deploymentId' <<< "$previous_function")
           previous_timeout=$(jq -r '.timeout' <<< "$previous_function")
           previous_name=$(jq -r '.name' <<< "$previous_function")
-          mapfile -t previous_execute < <(jq -r '.execute[]?' <<< "$previous_function")
-          mapfile -t previous_scopes < <(jq -r '.scopes[]?' <<< "$previous_function")
+          required_execute=(any)
+          required_scopes=(
+            rows.read
+            rows.write
+            documentsdb.documents.read
+            documentsdb.documents.write
+            vectorsdb.documents.read
+            vectorsdb.documents.write
+          )
           test -n "$previous"
           test -n "$previous_timeout"
           test -n "$previous_name"
-          test "${#previous_execute[@]}" -gt 0
 
           update_timeout() {
             local timeout="$1"
@@ -182,10 +188,10 @@ jobs:
               --name "$previous_name"
               --timeout "$timeout"
             )
-            for permission in "${previous_execute[@]}"; do
+            for permission in "${required_execute[@]}"; do
               update_args+=(--execute "$permission")
             done
-            for scope in "${previous_scopes[@]}"; do
+            for scope in "${required_scopes[@]}"; do
               update_args+=(--scopes "$scope")
             done
             npx --yes appwrite-cli@28.8.0 "${update_args[@]}" >/dev/null
