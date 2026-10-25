@@ -167,6 +167,7 @@ jobs:
           previous=$(jq -r '.deploymentId' <<< "$previous_function")
           previous_timeout=$(jq -r '.timeout' <<< "$previous_function")
           previous_name=$(jq -r '.name' <<< "$previous_function")
+          previous_live=$(jq -r '.live' <<< "$previous_function")
           required_execute=(any)
           required_scopes=(
             rows.read
@@ -180,7 +181,7 @@ jobs:
           test -n "$previous_timeout"
           test -n "$previous_name"
 
-          update_timeout() {
+          configure_function() {
             local timeout="$1"
             local update_args=(
               functions update
@@ -196,6 +197,13 @@ jobs:
             done
             npx --yes appwrite-cli@28.8.0 "${update_args[@]}" >/dev/null
           }
+
+          required_scopes_json=$(printf '%s\n' "${required_scopes[@]}" | jq -R . | jq -cs 'sort')
+
+          # Appwrite bakes function scopes into the deployment's execution key.
+          # Configure them before building; changing scopes after activation
+          # leaves the active deployment stale (`live: false`).
+          configure_function 75
 
           created=$(npx --yes appwrite-cli@28.8.0 functions create-deployment \
             --function-id "$APPWRITE_FUNCTION_ID" \
@@ -221,13 +229,23 @@ jobs:
             --function-id "$APPWRITE_FUNCTION_ID" \
             --deployment-id "$deployment" --force
 
-          update_timeout 75
+          active_function=$(npx --yes appwrite-cli@28.8.0 functions get \
+            --function-id "$APPWRITE_FUNCTION_ID" --json)
+          test "$(jq -r '.deploymentId' <<< "$active_function")" = "$deployment"
+          test "$(jq -r '.live' <<< "$active_function")" = "true"
+          test "$(jq -r '.timeout' <<< "$active_function")" = "75"
+          jq -e '.execute | index("any") != null' <<< "$active_function" >/dev/null
+          test "$(jq -c '.scopes | sort' <<< "$active_function")" = "$required_scopes_json"
 
           rollback() {
+            if [[ "$previous_live" != "true" ]]; then
+              echo "::error title=Appwrite rollback unavailable::The previous deployment was already stale before this release, so it is not a safe rollback target."
+              return
+            fi
+            configure_function "$previous_timeout"
             npx --yes appwrite-cli@28.8.0 functions update-function-deployment \
               --function-id "$APPWRITE_FUNCTION_ID" \
               --deployment-id "$previous" --force
-            update_timeout "$previous_timeout"
           }
 
           identity_status=000

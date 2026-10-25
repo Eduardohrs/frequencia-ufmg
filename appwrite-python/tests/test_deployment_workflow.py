@@ -19,8 +19,16 @@ def test_appwrite_timeout_updates_restore_required_access_configuration() -> Non
     assert '--name "$previous_name"' in workflow
     assert 'update_args+=(--execute "$permission")' in workflow
     assert 'update_args+=(--scopes "$scope")' in workflow
-    assert "update_timeout 75" in workflow
-    assert 'update_timeout "$previous_timeout"' in workflow
+    assert "configure_function 75" in workflow
+    assert 'configure_function "$previous_timeout"' in workflow
+    assert workflow.index("configure_function 75") < workflow.index(
+        "functions create-deployment"
+    )
+    assert workflow.index("functions create-deployment") < workflow.index(
+        "functions update-function-deployment"
+    )
+    assert 'test "$(jq -r \'.live\' <<< "$active_function")" = "true"' in workflow
+    assert "The previous deployment was already stale" in workflow
 
 
 def test_appwrite_health_checks_log_observed_status_before_rollback() -> None:
