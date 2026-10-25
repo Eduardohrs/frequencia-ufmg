@@ -1226,7 +1226,11 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     if (gateway is! BackendOfficialCalendarGateway || !mounted) return;
     final calendarGateway = gateway as BackendOfficialCalendarGateway;
     try {
-      final preview = await calendarGateway.previewOfficialCalendar();
+      final preview = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.officialCalendarPreview,
+        action: calendarGateway.previewOfficialCalendar,
+      );
       if (!mounted || preview.candidates.isEmpty) return;
       _logInteraction('official_calendar_preview_shown');
       final confirmed = await showDialog<bool>(
@@ -1281,8 +1285,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       );
       if (confirmed != true || !mounted) return;
       _logInteraction('official_calendar_apply_confirmed');
-      final result = await calendarGateway.applyOfficialCalendar(
-        preview.candidates,
+      final result = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.officialCalendarApply,
+        action: () => calendarGateway.applyOfficialCalendar(preview.candidates),
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -34,6 +34,7 @@ final class PythonBackendException implements Exception, StructuredAppError {
     this.destructiveSessions,
     this.credential,
     this.causeType,
+    this.requestContext,
   });
 
   final PythonBackendError code;
@@ -41,6 +42,7 @@ final class PythonBackendException implements Exception, StructuredAppError {
   final int? destructiveSessions;
   final PythonBackendCredential? credential;
   final String? causeType;
+  final String? requestContext;
 
   @override
   String get logCode => code.name;
@@ -51,6 +53,7 @@ final class PythonBackendException implements Exception, StructuredAppError {
   @override
   String? get logDetails {
     final values = [
+      ?requestContext,
       if (credential case final value?) 'credential=${value.name}',
       if (causeType case final value?) 'cause=$value',
     ];
@@ -2634,11 +2637,23 @@ final class PythonBackendTransport
         continue;
       }
       if (attempt == 0 && error == 'app_check_replayed') continue;
-      throw _exceptionFor(
+      final failure = _exceptionFor(
         response.statusCode,
         error,
         response.headers,
         destructiveSessions: _destructiveSessions(response),
+      );
+      throw PythonBackendException(
+        failure.code,
+        retryAfter: failure.retryAfter,
+        destructiveSessions: failure.destructiveSessions,
+        credential: failure.credential,
+        causeType: failure.causeType,
+        requestContext:
+            'stage=http_response method=${method.name} path=$path '
+            'status=${response.statusCode} backend_error=$error '
+            'request_id=$requestId server_request_id=${response.headers['x-request-id'] ?? 'absent'} '
+            'attempt=${attempt + 1}',
       );
     }
     throw const PythonBackendException(PythonBackendError.invalidResponse);
@@ -2686,6 +2701,8 @@ final class PythonBackendTransport
     required Map<String, Object?>? body,
     required Duration requestTimeout,
   }) async {
+    final elapsed = Stopwatch()..start();
+    var stage = 'credentials';
     try {
       final (idToken, appCheckToken) = await _credentials(
         forceIdentityRefresh: forceIdentityRefresh,
@@ -2697,6 +2714,7 @@ final class PythonBackendTransport
         'X-Request-ID': requestId,
       };
       final uri = _endpoint.resolve(path);
+      stage = 'transport';
       final request = switch (method) {
         _BackendMethod.get => _client.get(uri, headers: headers),
         _BackendMethod.delete => _client.delete(uri, headers: headers),
@@ -2712,17 +2730,32 @@ final class PythonBackendTransport
         ),
       };
       return await request.timeout(requestTimeout);
-    } on PythonBackendException {
-      rethrow;
+    } on PythonBackendException catch (error) {
+      throw PythonBackendException(
+        error.code,
+        credential: error.credential,
+        causeType: error.causeType,
+        requestContext:
+            'stage=$stage method=${method.name} path=$path '
+            'request_id=$requestId elapsed_ms=${elapsed.elapsedMilliseconds}',
+      );
     } on TimeoutException {
-      throw const PythonBackendException(
+      throw PythonBackendException(
         PythonBackendError.timeout,
         causeType: 'TimeoutException',
+        requestContext:
+            'stage=$stage method=${method.name} path=$path '
+            'request_id=$requestId elapsed_ms=${elapsed.elapsedMilliseconds} '
+            'timeout_ms=${requestTimeout.inMilliseconds}',
       );
     } catch (error) {
       throw PythonBackendException(
         PythonBackendError.unavailable,
         causeType: error.runtimeType.toString(),
+        requestContext:
+            'stage=$stage method=${method.name} path=$path '
+            'request_id=$requestId elapsed_ms=${elapsed.elapsedMilliseconds} '
+            'cause=${sanitizeLogText(error.toString())}',
       );
     }
   }
