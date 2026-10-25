@@ -2175,6 +2175,7 @@ final class PythonBackendTransport
                 !{
                   'ambiguous_teaching_plan',
                   'reconciliation_conflict',
+                  'teaching_plan_unavailable',
                 }.contains(reason) ||
                 candidateCount is! int ||
                 candidateCount < 1 ||
@@ -2203,7 +2204,12 @@ final class PythonBackendTransport
                         changes.isNotEmpty) ||
                 reason == 'reconciliation_conflict' &&
                     (candidateCount != 1 ||
-                        conflicting + assessmentConflicts == 0)) {
+                        conflicting + assessmentConflicts == 0) ||
+                reason == 'teaching_plan_unavailable' &&
+                    (candidateCount != 1 ||
+                        conflicting != 0 ||
+                        assessmentConflicts != 0 ||
+                        changes.isNotEmpty)) {
               throw const FormatException();
             }
             return PythonAcademicSyncException(

@@ -293,9 +293,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               error.code == PythonBackendError.moodleAuthorizationRequired
           ? 'Sincronize o Moodle novamente para baixar este material.'
           : 'Não foi possível abrir este material no Moodle.';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     } finally {
       _materialDownloadsInFlight.remove(operationId);
       if (mounted) setState(() {});
@@ -480,9 +479,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           'Reconecte a UFMG para importar este plano.',
         _ => 'Não foi possível importar este plano de ensino.',
       };
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     } finally {
       _diarioProbesInFlight.remove(operationId);
       if (mounted) setState(() {});
@@ -1195,6 +1193,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                 Text(
                   exception.reason == 'ambiguous_teaching_plan'
                       ? '${exception.candidateCount} planos de ensino possíveis.'
+                      : exception.reason == 'teaching_plan_unavailable'
+                      ? 'O plano não pôde ser processado; as outras disciplinas continuaram normalmente.'
                       : '${exception.conflicting + exception.assessmentConflicts} conflito(s) com dados existentes.',
                 ),
                 for (final change in exception.changes)
@@ -1381,9 +1381,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               children: [
                 Text(
                   widget.materialCourseCode!,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(context).textTheme.headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 Text(
                   'Materiais do Moodle',
@@ -1473,9 +1472,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             leading: const Icon(Icons.calendar_month_outlined),
             title: Text(
               'Agenda do Moodle',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              style: Theme.of(context).textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700),
             ),
             subtitle: const Text('Avaliações e entregas encontradas'),
           ),
@@ -1509,9 +1507,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: connected
-                  ? Theme.of(
-                      context,
-                    ).colorScheme.primaryContainer.withValues(alpha: .65)
+                  ? Theme.of(context).colorScheme.primaryContainer
+                        .withValues(alpha: .65)
                   : Theme.of(context).colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(16),
             ),
@@ -1535,9 +1532,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                       : status?.reauthenticationRequired == true
                       ? 'Sua sessão expirou'
                       : 'Conectar à UFMG',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                  style: Theme.of(context).textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
                 Text(

@@ -217,10 +217,7 @@ def test_moodle_sync_route_rejects_authentication_and_nonempty_payload(
 ) -> None:
     rejection = {"status": 401}
     monkeypatch.setattr(function, "_authentication", lambda *_args: (None, rejection))
-    assert (
-        function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/sync/moodle")))
-        is rejection
-    )
+    assert function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/sync/moodle"))) is rejection
 
     monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
     result = function.main(
@@ -274,9 +271,21 @@ def test_unified_academic_sync_returns_summary_exceptions_and_diagnostic_log(
     monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
 
     class Service:
+        def __init__(self, telemetry: Any) -> None:
+            self.telemetry = telemetry
+
         def sync(self, user_id: str, *, now: int) -> dict[str, object]:
             assert user_id == "user-1"
             assert now > 0
+            self.telemetry(
+                "academic_sync_course_failed",
+                {
+                    "course_id": "course-b",
+                    "course_code": "ESA019",
+                    "stage": "teaching_plan_import",
+                    "reason": "diario_plan_structure",
+                },
+            )
             return {
                 "siga": {
                     "courses": {"created": 1},
@@ -307,7 +316,11 @@ def test_unified_academic_sync_returns_summary_exceptions_and_diagnostic_log(
                 ],
             }
 
-    monkeypatch.setattr(function, "_unified_academic_sync_service", lambda *_: Service())
+    monkeypatch.setattr(
+        function,
+        "_unified_academic_sync_service",
+        lambda _headers, _user, telemetry: Service(telemetry),
+    )
     context = FakeContext(FakeRequest("POST", "/v1/ufmg/sync/all", body_json={}))
 
     result = function.main(context)
@@ -325,6 +338,13 @@ def test_unified_academic_sync_returns_summary_exceptions_and_diagnostic_log(
         "plan_unchanged": 0,
         "review_required": 1,
     }
+    assert json.loads(context.errors[0]) == {
+        "course_code": "ESA019",
+        "course_id": "course-b",
+        "event": "academic_sync_course_failed",
+        "reason": "diario_plan_structure",
+        "stage": "teaching_plan_import",
+    }
 
 
 def test_unified_academic_sync_rejects_nonempty_payload(
@@ -334,9 +354,7 @@ def test_unified_academic_sync_rejects_nonempty_payload(
     monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
 
     result = function.main(
-        FakeContext(
-            FakeRequest("POST", "/v1/ufmg/sync/all", body_json={"apply": True})
-        )
+        FakeContext(FakeRequest("POST", "/v1/ufmg/sync/all", body_json={"apply": True}))
     )
 
     assert result["status"] == 400
@@ -1160,8 +1178,7 @@ def test_moodle_mobile_capability_rejects_auth_and_nonempty_body(
     rejection = {"status": 401}
     monkeypatch.setattr(function, "_authentication", lambda *_: (None, rejection))
     assert (
-        function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/moodle/capabilities")))
-        is rejection
+        function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/moodle/capabilities"))) is rejection
     )
 
     monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
@@ -1244,9 +1261,7 @@ def test_moodle_material_files_route_returns_authentication_rejection(
     rejection = {"status": 401}
     monkeypatch.setattr(function, "_authentication", lambda *_: (None, rejection))
     assert (
-        function.main(
-            FakeContext(FakeRequest("POST", "/v1/ufmg/moodle/material-files"))
-        )
+        function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/moodle/material-files")))
         is rejection
     )
 
@@ -1637,38 +1652,46 @@ def test_teaching_plan_reconciliation_route_previews_and_logs_counts(
                     "difference_lesson_units": -2,
                 },
                 "applied": 0,
-                "changes": [{
-                    "action": "create_session",
-                    "occurrence_key": "2026-08-10T19:00-20:40",
-                    "date": "2026-08-10",
-                    "starts_at": "19:00",
-                    "ends_at": "20:40",
-                    "subject": "Polimorfismo",
-                }],
-                "excluded": [{
-                    "action": "excluded",
-                    "occurrence_key": "2026-08-11T19:00-20:40",
-                    "date": "2026-08-11",
-                    "starts_at": "19:00",
-                    "ends_at": "20:40",
-                    "subject": "Atividade assíncrona",
-                    "reason": "outside_weekly_schedule",
-                }],
-                "conflicts": [{
-                    "occurrence_key": "2026-08-10T19:00-20:40",
-                    "reason": "overlapping_session",
-                    "existing_session_ids": ["manual"],
-                }],
+                "changes": [
+                    {
+                        "action": "create_session",
+                        "occurrence_key": "2026-08-10T19:00-20:40",
+                        "date": "2026-08-10",
+                        "starts_at": "19:00",
+                        "ends_at": "20:40",
+                        "subject": "Polimorfismo",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "action": "excluded",
+                        "occurrence_key": "2026-08-11T19:00-20:40",
+                        "date": "2026-08-11",
+                        "starts_at": "19:00",
+                        "ends_at": "20:40",
+                        "subject": "Atividade assíncrona",
+                        "reason": "outside_weekly_schedule",
+                    }
+                ],
+                "conflicts": [
+                    {
+                        "occurrence_key": "2026-08-10T19:00-20:40",
+                        "reason": "overlapping_session",
+                        "existing_session_ids": ["manual"],
+                    }
+                ],
             }
 
     monkeypatch.setattr(
         function, "_teaching_plan_reconciliation_repository", lambda *_: Repository()
     )
-    context = FakeContext(FakeRequest(
-        "POST",
-        "/v1/ufmg/reconcile/teaching-plan",
-        body_json={"course_id": "course-a", "apply": False},
-    ))
+    context = FakeContext(
+        FakeRequest(
+            "POST",
+            "/v1/ufmg/reconcile/teaching-plan",
+            body_json={"course_id": "course-a", "apply": False},
+        )
+    )
 
     result = function.main(context)
 
@@ -1681,28 +1704,32 @@ def test_teaching_plan_reconciliation_route_previews_and_logs_counts(
         "conflict_occurrence_keys": ["2026-08-10T19:00-20:40"],
         "conflicting": 1,
         "course_id": "course-a",
-        "excluded_occurrences": [{
-            "action": "excluded",
-            "occurrence_key": "2026-08-11T19:00-20:40",
-            "date": "2026-08-11",
-            "starts_at": "19:00",
-            "ends_at": "20:40",
-            "subject": "Atividade assíncrona",
-            "reason": "outside_weekly_schedule",
-        }],
+        "excluded_occurrences": [
+            {
+                "action": "excluded",
+                "occurrence_key": "2026-08-11T19:00-20:40",
+                "date": "2026-08-11",
+                "starts_at": "19:00",
+                "ends_at": "20:40",
+                "subject": "Atividade assíncrona",
+                "reason": "outside_weekly_schedule",
+            }
+        ],
         "event": "teaching_plan_reconciliation_succeeded",
         "matched": 3,
         "missing": 1,
         "mode": "preview",
         "outside_schedule": 1,
-        "proposed_changes": [{
-            "action": "create_session",
-            "occurrence_key": "2026-08-10T19:00-20:40",
-            "date": "2026-08-10",
-            "starts_at": "19:00",
-            "ends_at": "20:40",
-            "subject": "Polimorfismo",
-        }],
+        "proposed_changes": [
+            {
+                "action": "create_session",
+                "occurrence_key": "2026-08-10T19:00-20:40",
+                "date": "2026-08-10",
+                "starts_at": "19:00",
+                "ends_at": "20:40",
+                "subject": "Polimorfismo",
+            }
+        ],
         "workload_validation": {
             "status": "below_expected",
             "expected_lesson_units": 60,
@@ -1717,9 +1744,9 @@ def test_teaching_plan_reconciliation_rejects_invalid_body(
     monkeypatch: pytest.MonkeyPatch, body: dict[str, object]
 ) -> None:
     monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
-    result = function.main(FakeContext(FakeRequest(
-        "POST", "/v1/ufmg/reconcile/teaching-plan", body_json=body
-    )))
+    result = function.main(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/reconcile/teaching-plan", body_json=body))
+    )
     assert result["status"] == 400
 
 
@@ -1769,11 +1796,13 @@ def test_teaching_plan_reconciliation_reports_actionable_failures(
     monkeypatch.setattr(
         function, "_teaching_plan_reconciliation_repository", lambda *_: Repository()
     )
-    context = FakeContext(FakeRequest(
-        "POST",
-        "/v1/ufmg/reconcile/teaching-plan",
-        body_json={"course_id": "course-a", "apply": True},
-    ))
+    context = FakeContext(
+        FakeRequest(
+            "POST",
+            "/v1/ufmg/reconcile/teaching-plan",
+            body_json={"course_id": "course-a", "apply": True},
+        )
+    )
     result = function.main(context)
     assert result["status"] == status
     assert result["body"] == {"error": code}
