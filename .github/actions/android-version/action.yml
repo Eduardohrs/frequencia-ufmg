@@ -1,0 +1,15 @@
+name: Shared Android version code
+description: Use one source revision counter across release and test APK builds
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        code=$(( $(git show -s --format=%ct HEAD) - 1704067200 ))
+        if (( code <= 0 || code > 2100000000 )); then
+          echo "::error::Commit timestamp is outside the supported Android version range"
+          exit 1
+        fi
+        echo "ANDROID_VERSION_CODE=$code" >> "$GITHUB_ENV"
+        echo "Android versionCode=$code"

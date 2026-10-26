@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../backend/python_backend_transport.dart';
 import '../../data/material_file_cache.dart';
+import '../../data/material_download_failure.dart';
 import '../../data/material_file_cache_factory.dart';
 import '../../data/ufmg_sync_schedule.dart';
 import '../../design/app_feedback.dart';
@@ -156,12 +157,27 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         setState(() {
           _materialDownloadProgress = progress;
           _materialDownloadsScheduled.addAll(
-            progress.map((download) => download.id),
+            progress
+                .where(
+                  (download) =>
+                      download.state == MaterialDownloadState.enqueued ||
+                      download.state == MaterialDownloadState.running,
+                )
+                .map((download) => download.id),
           );
         });
         for (final download in progress) {
           if (download.state == MaterialDownloadState.failed &&
-              _reportedMaterialDownloadFailures.add(download.id)) {
+              _reportedMaterialDownloadFailures.add(download.failureKey)) {
+            unawaited(
+              widget.logger
+                  .recordError(
+                    MaterialDownloadFailure.fromProgress(download),
+                    StackTrace.current,
+                    context: 'moodle_material_native_download',
+                  )
+                  .catchError((_) {}),
+            );
             unawaited(
               widget.logger
                   .logEvent(
@@ -753,12 +769,36 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       while (next < materials.length) {
         final material = materials[next++];
         try {
-          final files = await widget.gateway.listMoodleMaterialFiles(
-            term: material.course.term,
-            courseId: material.candidate.moodleCourseId,
-            sourceId: material.candidate.sourceId,
+          final files = await runAuditedOperation(
+            logger: widget.logger,
+            operation: AuditedOperation.moodleMaterialPrepare,
+            action: () async {
+              try {
+                final files = await widget.gateway.listMoodleMaterialFiles(
+                  term: material.course.term,
+                  courseId: material.candidate.moodleCourseId,
+                  sourceId: material.candidate.sourceId,
+                );
+                if (files.isEmpty) {
+                  throw StateError('moodle_material_has_no_files');
+                }
+                return files;
+              } catch (error, stackTrace) {
+                Error.throwWithStackTrace(
+                  MaterialPreparationFailure(
+                    materialId: _materialOperationId(
+                      material.course,
+                      material.candidate,
+                    ),
+                    materialName: material.candidate.title,
+                    courseCode: material.course.courseCode,
+                    cause: error,
+                  ),
+                  stackTrace,
+                );
+              }
+            },
           );
-          if (files.isEmpty) throw StateError('moodle_material_has_no_files');
           for (final file in files) {
             prepared.add((
               course: material.course,
@@ -880,7 +920,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       try {
         await queue.dismissDownload(progress.id);
         _materialDownloadsScheduled.remove(progress.id);
-        _reportedMaterialDownloadFailures.remove(progress.id);
+        _reportedMaterialDownloadFailures.remove(progress.failureKey);
         if (mounted) {
           setState(
             () => _materialDownloadProgress = _materialDownloadProgress

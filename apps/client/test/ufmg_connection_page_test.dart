@@ -8,6 +8,7 @@ import 'package:frequencia_ufmg/data/ufmg_sync_schedule.dart';
 import 'package:frequencia_ufmg/data/material_file_cache.dart';
 import 'package:frequencia_ufmg/features/ufmg/ufmg_connection_page.dart';
 import 'package:frequencia_ufmg/observability/app_logger.dart';
+import 'package:frequencia_ufmg/observability/error_log_details.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
@@ -2002,6 +2003,60 @@ void main() {
     expect(find.text('1 de 1 materiais preparados'), findsOneWidget);
   });
 
+  for (final fileStillExists in [false, true]) {
+    testWidgets(
+      'completed queue history only skips a real cached copy: $fileStillExists',
+      (tester) async {
+        final gateway = _Gateway(
+          status: const PythonUFMGSessionStatus(
+            connected: true,
+            reauthenticationRequired: false,
+          ),
+        );
+        const id = '2026-2/3701/102/Cronograma.pdf';
+        final cache = _BackgroundMaterialCache()
+          ..progress.add(
+            const MaterialDownloadProgress(
+              id: id,
+              name: 'Cronograma.pdf',
+              state: MaterialDownloadState.succeeded,
+              downloaded: 123,
+              total: 123,
+            ),
+          );
+        if (fileStillExists) {
+          cache.files.add(
+            const CachedMaterialFile(
+              id: id,
+              name: 'Cronograma.pdf',
+              size: 123,
+              mimeType: 'application/pdf',
+            ),
+          );
+        }
+        await tester.pumpWidget(
+          MaterialApp(
+            home: UFMGConnectionPage(
+              gateway: gateway,
+              logger: _Logger(),
+              materialFileCache: cache,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+        await tester.pumpAndSettle();
+        final global = find.byKey(const Key('moodle-download-all'));
+        await tester.ensureVisible(global);
+        await tester.tap(global);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Baixar'));
+        await tester.pumpAndSettle();
+        expect(cache.queued, hasLength(fileStillExists ? 0 : 1));
+      },
+    );
+  }
+
   testWidgets('deduplicates a repeated material batch', (tester) async {
     final gateway = _Gateway(
       status: const PythonUFMGSessionStatus(
@@ -2043,11 +2098,12 @@ void main() {
       ),
     )..materialFileFailuresRemaining = 1;
     final cache = _BackgroundMaterialCache();
+    final logger = _Logger();
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
           gateway: gateway,
-          logger: _Logger(),
+          logger: logger,
           materialFileCache: cache,
         ),
       ),
@@ -2063,12 +2119,57 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('0 de 1 materiais preparados'), findsOneWidget);
+    expect(logger.errorContexts, contains('moodle_material_prepare'));
+    final details = ErrorLogDetails.from(logger.errors.single);
+    expect(details.code, 'unavailable');
+    expect(details.message, contains('prepare_files'));
+    expect(details.message, contains('3701'));
+    expect(details.message, contains('102'));
     await tester.tap(find.byKey(const Key('moodle-download-retry-failed')));
     await tester.pumpAndSettle();
 
     expect(cache.queued, hasLength(1));
     expect(find.text('1 de 1 materiais preparados'), findsOneWidget);
     expect(gateway.materialFileRequests, hasLength(2));
+    expect(logger.events, contains('moodle_material_prepare_succeeded'));
+  });
+
+  testWidgets('reports empty file metadata as a diagnosable batch failure', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    )..materialFiles = const [];
+    final cache = _BackgroundMaterialCache();
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          gateway: gateway,
+          logger: logger,
+          materialFileCache: cache,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+    await tester.pumpAndSettle();
+    final global = find.byKey(const Key('moodle-download-all'));
+    await tester.ensureVisible(global);
+    await tester.tap(global);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Baixar'));
+    await tester.pumpAndSettle();
+    expect(cache.queued, isEmpty);
+    expect(find.text('0 de 1 materiais preparados'), findsOneWidget);
+    expect(logger.errorContexts, contains('moodle_material_prepare'));
+    expect(
+      ErrorLogDetails.from(logger.errors.single).message,
+      contains('moodle_material_has_no_files'),
+    );
   });
 
   testWidgets('cancels a material batch without enqueueing files', (
@@ -3490,6 +3591,7 @@ final class _Logger implements AppLogger {
   final events = <String>[];
   final parameters = <Map<String, Object>?>[];
   final errorContexts = <String>[];
+  final errors = <Object>[];
 
   Iterable<Object?> get actions =>
       parameters.map((parameters) => parameters?['action']);
@@ -3509,6 +3611,7 @@ final class _Logger implements AppLogger {
     Map<String, Object>? parameters,
   }) async {
     errorContexts.add(context);
+    errors.add(error);
   }
 }
 

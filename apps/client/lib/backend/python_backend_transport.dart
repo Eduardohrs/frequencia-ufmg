@@ -27,6 +27,12 @@ enum PythonBackendCredential { firebaseIdentity, appCheck }
 
 enum _BackendMethod { get, post, put, delete }
 
+String? _credentialDiagnostics(Object error) {
+  final details = ErrorLogDetails.from(error);
+  if (details.code == null) return null;
+  return 'sdk_code=${details.code} sdk_message=${details.message ?? ""}';
+}
+
 final class PythonBackendException implements Exception, StructuredAppError {
   const PythonBackendException(
     this.code, {
@@ -35,6 +41,7 @@ final class PythonBackendException implements Exception, StructuredAppError {
     this.credential,
     this.causeType,
     this.requestContext,
+    this.credentialDetails,
   });
 
   final PythonBackendError code;
@@ -43,6 +50,7 @@ final class PythonBackendException implements Exception, StructuredAppError {
   final PythonBackendCredential? credential;
   final String? causeType;
   final String? requestContext;
+  final String? credentialDetails;
 
   @override
   String get logCode => code.name;
@@ -56,6 +64,7 @@ final class PythonBackendException implements Exception, StructuredAppError {
       ?requestContext,
       if (credential case final value?) 'credential=${value.name}',
       if (causeType case final value?) 'cause=$value',
+      ?credentialDetails,
     ];
     return values.isEmpty ? null : values.join(', ');
   }
@@ -2739,7 +2748,10 @@ final class PythonBackendTransport
     try {
       final (idToken, appCheckToken) = await _credentials(
         forceIdentityRefresh: forceIdentityRefresh,
-        limitedUseAppCheck: method != _BackendMethod.get,
+        limitedUseAppCheck:
+            method != _BackendMethod.get &&
+            !(method == _BackendMethod.post &&
+                path == '/v1/ufmg/moodle/material-files'),
       );
       final headers = {
         'Authorization': 'Bearer $idToken',
@@ -2768,6 +2780,7 @@ final class PythonBackendTransport
         error.code,
         credential: error.credential,
         causeType: error.causeType,
+        credentialDetails: error.credentialDetails,
         requestContext:
             'stage=$stage method=${method.name} path=$path '
             'request_id=$requestId elapsed_ms=${elapsed.elapsedMilliseconds}',
@@ -2807,6 +2820,7 @@ final class PythonBackendTransport
         PythonBackendError.credentialsUnavailable,
         credential: PythonBackendCredential.firebaseIdentity,
         causeType: error.runtimeType.toString(),
+        credentialDetails: _credentialDiagnostics(error),
       );
     }
     if (idToken.isEmpty) {
@@ -2823,6 +2837,7 @@ final class PythonBackendTransport
         PythonBackendError.credentialsUnavailable,
         credential: PythonBackendCredential.appCheck,
         causeType: error.runtimeType.toString(),
+        credentialDetails: _credentialDiagnostics(error),
       );
     }
     if (appCheckToken.isEmpty) {

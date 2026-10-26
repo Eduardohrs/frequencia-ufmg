@@ -79,6 +79,11 @@ class MaterialDownloadBridge(private val context: Context) {
             "downloaded" to progress.getLong("downloaded", 0),
             "total" to progress.getLong("total", 0),
             "failureCode" to failureCode,
+            "stage" to (progress.getString("stage") ?: "native_worker"),
+            "workId" to info.id.toString(),
+            "attempt" to progress.getInt("attempt", 0),
+            "elapsedMs" to progress.getLong("elapsed_ms", 0),
+            "httpStatus" to progress.getInt("http_status", 0),
         )
     }
 
@@ -87,12 +92,7 @@ class MaterialDownloadBridge(private val context: Context) {
         val request = OneTimeWorkRequestBuilder<MaterialDownloadWorker>()
             .setInputData(
                 Data.Builder()
-                    .putString("id", spec.id)
-                    .putString("name", spec.name)
-                    .putString("source", spec.source)
-                    .putLong("expected_size", spec.expectedSize)
-                    .putString("mime_type", spec.mimeType)
-                    .putString("namespace", spec.namespace)
+                    .putAll(spec.workerInput())
                     .build(),
             )
             .setConstraints(

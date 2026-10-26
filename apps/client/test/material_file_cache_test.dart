@@ -59,6 +59,38 @@ void main() {
   });
 
   test(
+    'truncated replacement keeps the previous offline file and explains missing bytes',
+    () async {
+      final initial = _cache(
+        root,
+        (_) async => http.Response('valid-file', 200),
+      );
+      final saved = await initial.save(_download());
+      final cache = IoMaterialFileCache(
+        rootDirectory: () async => root,
+        client: _StreamingClient([1, 2, 3], declared: 11),
+        openFile: (_, _) async => true,
+      );
+      await expectLater(
+        cache.save(_download()),
+        throwsA(
+          predicate(
+            (error) =>
+                error is StateError &&
+                error.toString().contains('incomplete_body'),
+          ),
+        ),
+      );
+      expect((await cache.list()).single, saved);
+      final file = root.listSync().whereType<File>().singleWhere(
+        (f) => !f.path.endsWith('index.json'),
+      );
+      expect(await file.readAsString(), 'valid-file');
+      expect(root.listSync().where((f) => f.path.endsWith('.part')), isEmpty);
+    },
+  );
+
+  test(
     'replaces the same logical file without leaving duplicate bytes',
     () async {
       var body = 'first';
@@ -148,6 +180,18 @@ void main() {
     await expectLater(cache.open(saved.id), throwsA(isA<StateError>()));
   });
 
+  test(
+    'decoded body is not compared with compressed transfer length',
+    () async {
+      final cache = IoMaterialFileCache(
+        rootDirectory: () async => root,
+        client: _StreamingClient([1, 2, 3], declared: 1, encoding: 'gzip'),
+        openFile: (_, _) async => true,
+      );
+      expect((await cache.save(_download())).size, 3);
+    },
+  );
+
   test('removes a partial streamed response that exceeds the limit', () async {
     final cache = IoMaterialFileCache(
       rootDirectory: () async => root,
@@ -205,14 +249,21 @@ void main() {
 }
 
 final class _StreamingClient extends http.BaseClient {
-  _StreamingClient(this.bytes);
+  _StreamingClient(this.bytes, {this.declared, this.encoding});
 
   final List<int> bytes;
+  final int? declared;
+  final String? encoding;
   bool closed = false;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async =>
-      http.StreamedResponse(Stream.value(bytes), 200);
+      http.StreamedResponse(
+        Stream.value(bytes),
+        200,
+        contentLength: declared,
+        headers: {'content-encoding': ?encoding},
+      );
 
   @override
   void close() {

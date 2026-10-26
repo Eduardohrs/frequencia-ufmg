@@ -17,8 +17,30 @@ data class MaterialDownloadSpec(
     val itemTag: String = uniqueWorkName
     val notificationId: Int = sha256(namespace).take(7).toInt(16)
 
+    // Prerequisite output is merged into the next WorkManager request.
+    // Keep immutable request fields distinct from reported progress/output.
+    fun workerInput(): Map<String, Any> = mapOf(
+        "request_id" to id,
+        "request_name" to name,
+        "request_source" to source,
+        "request_expected_size" to expectedSize,
+        "request_mime_type" to mimeType,
+        "request_namespace" to namespace,
+    )
+
     companion object {
         const val MAX_FILE_BYTES = 100L * 1024L * 1024L
+
+        fun fromWorkerInput(input: Map<*, *>): MaterialDownloadSpec = from(
+            REQUIRED_KEYS.associateWith { key -> input["request_$key"] ?: input[key] },
+        )
+
+        fun isCompleteBody(declared: Long, received: Long, encoding: String?): Boolean =
+            received >= 0 && (
+                declared < 0 ||
+                    (!encoding.isNullOrEmpty() && encoding != "identity") ||
+                    declared == received
+                )
 
         fun uniqueWorkName(namespace: String, id: String): String =
             "moodle-material-" + sha256("$namespace/$id").take(24)

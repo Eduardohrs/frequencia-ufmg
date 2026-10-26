@@ -1352,7 +1352,12 @@ def _authentication(
             route=route,
             expires_at=app.expires_at,
             now=now,
-            enforce_replay=context.req.method.upper() != "GET",
+            # File metadata is a read, despite using POST for its structured IDs.
+            # Keep App Check verification and the budget, without one-use tokens.
+            enforce_replay=(
+                context.req.method.upper() != "GET"
+                and route != "/v1/ufmg/moodle/material-files/post"
+            ),
         )
     except ReplayDetected:
         _error(context, "app_check_replayed")

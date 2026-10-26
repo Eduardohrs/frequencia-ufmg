@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.ForegroundInfo
@@ -16,28 +17,28 @@ import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
+import org.json.JSONObject
 
 class MaterialDownloadWorker(
     context: Context,
     parameters: WorkerParameters,
 ) : Worker(context, parameters) {
+    private val startedAt = SystemClock.elapsedRealtime()
+    private var activeSpec: MaterialDownloadSpec? = null
+    private var stage = "input"
+    private var downloadedBytes = 0L
+    private var declaredBytes = -1L
+    private var httpStatus = 0
     override fun doWork(): Result {
         val spec = try {
-            MaterialDownloadSpec.from(
-                mapOf(
-                    "id" to inputData.getString("id"),
-                    "name" to inputData.getString("name"),
-                    "source" to inputData.getString("source"),
-                    "expected_size" to inputData.getLong("expected_size", -1),
-                    "mime_type" to inputData.getString("mime_type"),
-                    "namespace" to inputData.getString("namespace"),
-                ),
-            )
+            MaterialDownloadSpec.fromWorkerInput(inputData.keyValueMap)
         } catch (_: IllegalArgumentException) {
             log("invalid_input")
             return Result.failure()
         }
 
+        activeSpec = spec
+        stage = "foreground_setup"
         try {
             setProgressAsync(progressData(spec, 0, spec.expectedSize)).get()
             setForegroundAsync(foregroundInfo(spec, 0, spec.expectedSize)).get()
@@ -54,6 +55,7 @@ class MaterialDownloadWorker(
         val temporary = File(directory, "${spec.storedName}.part")
         var connection: HttpsURLConnection? = null
         try {
+            stage = "connect"
             connection = (URL(spec.source).openConnection() as HttpsURLConnection).apply {
                 instanceFollowRedirects = false
                 connectTimeout = 15_000
@@ -62,12 +64,15 @@ class MaterialDownloadWorker(
                 setRequestProperty("User-Agent", "FrequenciaUFMG-Android")
             }
             val status = connection.responseCode
+            httpStatus = status
+            stage = "response_headers"
             if (status in 500..599) return retryOrFail(spec, "upstream_$status")
             if (status != HttpURLConnection.HTTP_OK) {
                 log("upstream_$status")
                 return failure(spec, "upstream_$status")
             }
             val declared = connection.contentLengthLong
+            declaredBytes = declared
             if (declared > MaterialDownloadSpec.MAX_FILE_BYTES) {
                 log("declared_too_large")
                 return failure(spec, "declared_too_large", total = declared)
@@ -75,7 +80,8 @@ class MaterialDownloadWorker(
             var total = 0L
             var lastReportedBytes = 0L
             var lastReportedPercent = -1
-            val progressTotal = maxOf(declared, spec.expectedSize)
+            val progressTotal = if (declared >= 0) declared else spec.expectedSize
+            stage = "body_read"
             connection.inputStream.use { input ->
                 temporary.outputStream().buffered().use { output ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -84,6 +90,7 @@ class MaterialDownloadWorker(
                         val count = input.read(buffer)
                         if (count < 0) break
                         total += count
+                        downloadedBytes = total
                         if (total > MaterialDownloadSpec.MAX_FILE_BYTES) {
                             throw FileTooLarge()
                         }
@@ -105,10 +112,18 @@ class MaterialDownloadWorker(
                     }
                 }
             }
+            stage = "body_complete"
+            if (isStopped) throw DownloadCancelled()
+            if (!MaterialDownloadSpec.isCompleteBody(declared, total, connection.contentEncoding)) {
+                return retryOrFail(spec, "incomplete_body")
+            }
+            stage = "file_commit"
             if (destination.exists() && !destination.delete()) throw IOException("replace")
             if (!temporary.renameTo(destination)) temporary.copyTo(destination, overwrite = true)
             temporary.delete()
+            stage = "index_commit"
             MaterialCacheIndex.record(directory, spec, total)
+            stage = "completed"
             log("completed")
             return Result.success(progressData(spec, total, total))
         } catch (_: DownloadCancelled) {
@@ -119,7 +134,8 @@ class MaterialDownloadWorker(
             return failure(spec, "body_too_large")
         } catch (_: SocketTimeoutException) {
             return retryOrFail(spec, "timeout")
-        } catch (_: IOException) {
+        } catch (error: IOException) {
+            log("io_exception", error)
             return retryOrFail(spec, "io_failure")
         } finally {
             connection?.disconnect()
@@ -139,8 +155,8 @@ class MaterialDownloadWorker(
     private fun failure(
         spec: MaterialDownloadSpec,
         code: String,
-        total: Long = spec.expectedSize,
-    ): Result = Result.success(progressData(spec, 0, total, code))
+        total: Long = if (declaredBytes >= 0) declaredBytes else spec.expectedSize,
+    ): Result = Result.success(progressData(spec, downloadedBytes, total, code))
 
     private fun reportProgress(spec: MaterialDownloadSpec, downloaded: Long, total: Long) {
         setProgressAsync(progressData(spec, downloaded, total))
@@ -158,6 +174,10 @@ class MaterialDownloadWorker(
         .putLong("downloaded", downloaded)
         .putLong("total", total)
         .putString("failure_code", failureCode)
+        .putString("stage", stage)
+        .putInt("attempt", runAttemptCount + 1)
+        .putLong("elapsed_ms", SystemClock.elapsedRealtime() - startedAt)
+        .putInt("http_status", httpStatus)
         .build()
 
     private fun foregroundInfo(
@@ -198,8 +218,21 @@ class MaterialDownloadWorker(
         }
     }
 
-    private fun log(code: String) {
-        Log.i(TAG, "event=material_download code=$code work=${id.toString().take(8)}")
+    private fun log(code: String, error: Throwable? = null) {
+        Log.i(TAG, JSONObject()
+            .put("event", "material_download")
+            .put("code", code)
+            .put("work_id", id.toString())
+            .put("file_id", activeSpec?.id)
+            .put("file_name", activeSpec?.name)
+            .put("stage", stage)
+            .put("attempt", runAttemptCount + 1)
+            .put("elapsed_ms", SystemClock.elapsedRealtime() - startedAt)
+            .put("http_status", httpStatus)
+            .put("received_bytes", downloadedBytes)
+            .put("declared_bytes", declaredBytes)
+            .put("error_type", error?.javaClass?.simpleName)
+            .toString())
     }
 
     private class DownloadCancelled : IOException()

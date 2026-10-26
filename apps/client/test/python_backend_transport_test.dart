@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:firebase_core/firebase_core.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
@@ -9,6 +10,71 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test(
+    'parallel metadata reads reuse App Check instead of minting one-use tokens',
+    () async {
+      final tokens = _DelayedRegularAppCheckTokens();
+      final requests = <http.Request>[];
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: tokens,
+        client: MockClient((request) async {
+          requests.add(request);
+          return http.Response('{"files":[],"count":0}', 200);
+        }),
+      );
+      final reads = List.generate(
+        12,
+        (i) => transport.listMoodleMaterialFiles(
+          term: '2026-2',
+          courseId: '4953',
+          sourceId: '${100 + i}',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(tokens.regularCalls, 1);
+      tokens.regularToken.complete('cached-app-token');
+      await Future.wait(reads);
+      expect(requests, hasLength(12));
+      expect(
+        requests.every(
+          (r) => r.headers['X-Firebase-AppCheck'] == 'cached-app-token',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'credential failures retain sanitized SDK reason across request wrapping',
+    () async {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _FailingAppCheckTokens(
+          FirebaseException(
+            plugin: 'firebase_app_check',
+            code: 'unknown',
+            message: 'Too many attempts. token=secret-value',
+          ),
+        ),
+        client: MockClient((_) async => fail('must not call backend')),
+      );
+      await expectLater(
+        transport.verifyIdentity(),
+        throwsA(
+          isA<PythonBackendException>().having(
+            (error) => error.toString(),
+            'persisted SDK diagnostics',
+            allOf(
+              contains('sdk_code=unknown'),
+              contains('Too many attempts'),
+              isNot(contains('secret-value')),
+            ),
+          ),
+        ),
+      );
+    },
+  );
   group('PythonBackendSettings', () {
     test('keeps the backend disabled without requiring an endpoint', () {
       const settings = PythonBackendSettings(enabled: false, endpoint: '');
@@ -2701,6 +2767,8 @@ final class _Tokens implements PythonBackendTokens {
 }
 
 final class _FailingAppCheckTokens implements PythonBackendTokens {
+  _FailingAppCheckTokens([this.error]);
+  final Object? error;
   int calls = 0;
 
   @override
@@ -2709,7 +2777,7 @@ final class _FailingAppCheckTokens implements PythonBackendTokens {
   @override
   Future<String> appCheckToken({required bool limitedUse}) async {
     calls++;
-    throw StateError('App Check attestation failed');
+    throw error ?? StateError('App Check attestation failed');
   }
 }
 

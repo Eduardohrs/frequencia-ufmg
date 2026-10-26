@@ -2,10 +2,21 @@ package br.ufmg.frequencia.frequencia_ufmg
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class MaterialDownloadSpecTest {
+    @Test
+    fun `truncated bodies are never complete but unknown or decoded lengths are not guessed`() {
+        assertFalse(MaterialDownloadSpec.isCompleteBody(100, 99, null))
+        assertFalse(MaterialDownloadSpec.isCompleteBody(100, 101, "identity"))
+        assertFalse(MaterialDownloadSpec.isCompleteBody(-1, -1, null))
+        assertTrue(MaterialDownloadSpec.isCompleteBody(100, 100, null))
+        assertTrue(MaterialDownloadSpec.isCompleteBody(-1, 42, null))
+        assertTrue(MaterialDownloadSpec.isCompleteBody(0, 0, ""))
+        assertTrue(MaterialDownloadSpec.isCompleteBody(10, 100, "gzip"))
+    }
     private val valid = mapOf<String, Any>(
         "id" to "2026-2/3701/102/Plano.pdf",
         "name" to "Plano.pdf",
@@ -42,6 +53,25 @@ class MaterialDownloadSpecTest {
         assertEquals(first.queueWorkName, second.queueWorkName)
         assertEquals(first.notificationId, second.notificationId)
         assertFalse(first.itemTag == second.itemTag)
+    }
+
+    @Test
+    fun `predecessor output cannot rename or replace the next download`() {
+        val requested = MaterialDownloadSpec.from(valid)
+        val merged = requested.workerInput() + mapOf(
+            "id" to "previous-file",
+            "name" to "Previous.pdf",
+            "downloaded" to 309319L,
+            "failure_code" to "timeout",
+        )
+        val actual = MaterialDownloadSpec.fromWorkerInput(merged)
+        assertEquals(requested.id, actual.id)
+        assertEquals(requested.name, actual.name)
+        assertEquals(requested.source, actual.source)
+        assertEquals(requested.expectedSize, actual.expectedSize)
+        assertEquals(requested.mimeType, actual.mimeType)
+        assertEquals(requested.namespace, actual.namespace)
+        assertEquals(requested.id, MaterialDownloadSpec.fromWorkerInput(valid).id)
     }
 
     @Test

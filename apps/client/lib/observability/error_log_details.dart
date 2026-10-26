@@ -110,7 +110,7 @@ String? sanitizeLogText(String? value) {
   );
   sanitized = sanitized.replaceAllMapped(
     RegExp(
-      r'\b(access[_-]?token|id[_-]?token|refresh[_-]?token|password|passwd|authorization|cookie|client[_-]?secret|api[_-]?key)\b\s*[:=]\s*([^\s,;&]+)',
+      r'\b(token|access[_-]?token|id[_-]?token|refresh[_-]?token|app[_-]?check[_-]?token|password|passwd|authorization|cookie|client[_-]?secret|api[_-]?key)\b\s*[:=]\s*([^\s,;&]+)',
       caseSensitive: false,
     ),
     (match) => '${match.group(1)}=$_redacted',
