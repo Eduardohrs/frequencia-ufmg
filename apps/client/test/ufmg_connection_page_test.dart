@@ -497,6 +497,36 @@ void main() {
     expect(calendarOpened, 1);
   });
 
+  testWidgets(
+    'result refresh failure is distinct from synchronization failure',
+    (tester) async {
+      final gateway = _UnifiedGateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      );
+      final logger = _Logger();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(gateway: gateway, logger: logger),
+        ),
+      );
+      await tester.pumpAndSettle();
+      gateway.dateListError = StateError('dates unavailable');
+      await tester.tap(find.byKey(const Key('ufmg-sync-all')));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining(
+          'A sincronização terminou, mas não foi possível atualizar o resumo',
+        ),
+        findsOneWidget,
+      );
+      expect(gateway.unifiedSyncCalls, 1);
+      expect(logger.errorContexts, contains('academic_sync_result_refresh'));
+    },
+  );
+
   testWidgets('reports unified synchronization failures and expired sessions', (
     tester,
   ) async {

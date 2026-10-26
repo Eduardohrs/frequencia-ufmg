@@ -362,6 +362,27 @@ service cloud.firestore {
       }
     }
 
+    match /users/{userId}/syncProgress/{progressId} {
+      allow get: if owns(userId) && progressId == 'current';
+      allow create, update: if owns(userId) && progressId == 'current'
+        && hasExactFields(request.resource.data, [
+          'operationId', 'status', 'stage', 'completed', 'reviewRequired',
+          'failureCode', 'startedAt', 'updatedAt'
+        ])
+        && request.resource.data.operationId is string
+        && request.resource.data.operationId.matches('^[A-Za-z0-9_-]{8,80}$')
+        && request.resource.data.status in ['running', 'succeeded', 'partial', 'failed']
+        && request.resource.data.stage in ['siga', 'moodle', 'plans', 'completed']
+        && request.resource.data.completed is int
+        && request.resource.data.completed >= 0 && request.resource.data.completed <= 3
+        && request.resource.data.reviewRequired is int
+        && request.resource.data.reviewRequired >= 0 && request.resource.data.reviewRequired <= 50
+        && request.resource.data.failureCode is string && request.resource.data.failureCode.size() <= 80
+        && request.resource.data.startedAt is timestamp
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.updatedAt >= request.resource.data.startedAt;
+    }
+
     match /users/{userId}/logs/{logId} {
       allow read: if owns(userId);
       allow create: if owns(userId)

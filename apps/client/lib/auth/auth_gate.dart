@@ -135,6 +135,7 @@ class _AuthGateState extends State<AuthGate> {
         if (user != null) {
           _verifyBackendFor(user.id);
           return CoursePage(
+            key: ValueKey(user.id),
             repository: _repositoryFor(user.id),
             fallbackCourseRepository: _fallbackCourseRepository,
             meetingRepository: _meetingRepository!,

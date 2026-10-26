@@ -6,6 +6,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../../auth/auth_user.dart';
 import '../../backend/python_backend_transport.dart';
+import '../../backend/academic_sync_progress.dart';
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/academic_period.dart';
@@ -23,6 +24,8 @@ import '../attendance/absence_dashboard_page.dart';
 import '../attendance/attendance_page.dart';
 import '../schedule/general_calendar_page.dart';
 import '../ufmg/ufmg_connection_page.dart';
+import '../ufmg/academic_sync_controller.dart';
+import '../ufmg/academic_sync_banner.dart';
 import 'course_editor_dialog.dart';
 import 'course_hub_page.dart';
 
@@ -102,11 +105,50 @@ class _CoursePageState extends State<CoursePage> {
   bool _usingLocalCopy = false;
   bool _automaticUFMGSyncStarted = false;
   String? _ufmgSyncNotice;
+  AcademicSyncController? _academicSync;
+  OverlayEntry? _syncIndicator;
+  bool _academicSyncWasRunning = false;
 
   @override
   void initState() {
     super.initState();
+    if (widget.ufmgSessionGateway
+        case final BackendAcademicSyncProgressGateway gateway) {
+      _academicSync = AcademicSyncController(
+        gateway: gateway,
+        logger: widget.logger,
+      )..addListener(_onAcademicSyncChanged);
+    }
     _load();
+  }
+
+  void _onAcademicSyncChanged() {
+    final running = _academicSync!.isRunning;
+    if (_academicSyncWasRunning && !running) unawaited(_load());
+    _academicSyncWasRunning = running;
+    if (_syncIndicator == null && _academicSync!.visible) {
+      _syncIndicator = OverlayEntry(
+        builder: (context) => Positioned(
+          left: 0,
+          right: 0,
+          bottom: MediaQuery.sizeOf(context).width < 840 ? 80 : 12,
+          child: AcademicSyncBanner(
+            controller: _academicSync!,
+            onReview: () => unawaited(_openUFMGConnection()),
+          ),
+        ),
+      );
+      Overlay.of(context, rootOverlay: true).insert(_syncIndicator!);
+    }
+  }
+
+  @override
+  void dispose() {
+    _syncIndicator?.remove();
+    _syncIndicator?.dispose();
+    _academicSync?.removeListener(_onAcademicSyncChanged);
+    _academicSync?.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -418,6 +460,7 @@ class _CoursePageState extends State<CoursePage> {
               ? _sessionsByCourse
               : null,
           ufmgSessionGateway: widget.ufmgSessionGateway,
+          academicSync: _academicSync,
           ufmgSyncSchedule: widget.ufmgSyncSchedule,
           userId: widget.user.id,
         ),
@@ -448,6 +491,7 @@ class _CoursePageState extends State<CoursePage> {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => UFMGConnectionPage(
+          academicSync: _academicSync,
           gateway: gateway,
           logger: widget.logger,
           userId: widget.user.id,

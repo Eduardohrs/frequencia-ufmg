@@ -3,11 +3,13 @@
 // coverage:ignore-file
 
 import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'python_backend_transport.dart';
+import 'academic_sync_progress.dart';
 
 const _settings = PythonBackendSettings(
   enabled: bool.fromEnvironment('ENABLE_PYTHON_BACKEND'),
@@ -42,6 +44,7 @@ final class _FirebasePythonBackendVerifier
         BackendSessionGateway,
         BackendUFMGSessionGateway,
         BackendUnifiedAcademicSyncGateway,
+        BackendAcademicSyncProgressGateway,
         BackendOfficialCalendarGateway,
         BackendDiarioPlanGateway,
         BackendOverviewGateway {
@@ -134,6 +137,29 @@ final class _FirebasePythonBackendVerifier
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() async {
     await (_activation ??= _activateAppCheck());
     return _transport.syncAllAcademicData();
+  }
+
+  @override
+  Future<PythonUnifiedAcademicSyncResult> syncWithProgress(
+    String operationId,
+  ) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.syncAllAcademicData(progressId: operationId);
+  }
+
+  @override
+  Stream<AcademicSyncProgress> watchSyncProgress(String operationId) async* {
+    await (_activation ??= _activateAppCheck());
+    yield* FirebaseFirestore.instance
+        .doc(
+          'users/${FirebaseAuth.instance.currentUser!.uid}/syncProgress/current',
+        )
+        .snapshots()
+        .where(
+          (snapshot) =>
+              snapshot.exists && snapshot.data()?['operationId'] == operationId,
+        )
+        .map((snapshot) => AcademicSyncProgress.fromMap(snapshot.data()!));
   }
 
   @override
