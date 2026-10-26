@@ -2,10 +2,13 @@ package br.ufmg.frequencia.frequencia_ufmg
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.ActivityManager
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.SystemClock
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.ForegroundInfo
@@ -38,17 +41,25 @@ class MaterialDownloadWorker(
         }
 
         activeSpec = spec
-        stage = "foreground_setup"
+        stage = if (MaterialDownloadExecution.usesScheduledJob(Build.VERSION.SDK_INT)) {
+            "job_setup"
+        } else {
+            "foreground_setup"
+        }
         try {
             setProgressAsync(progressData(spec, 0, spec.expectedSize)).get()
-            setForegroundAsync(foregroundInfo(spec, 0, spec.expectedSize)).get()
-        } catch (_: Exception) {
-            log("foreground_failure")
-            return failure(spec, "foreground_failure")
+            updateNotification(spec, 0, spec.expectedSize)
+        } catch (error: Exception) {
+            val code = if (stage == "job_setup") "job_setup_failure" else "foreground_failure"
+            log(code, error)
+            return failure(spec, code)
         }
+        log("started")
         val directory = File(applicationContext.filesDir, "moodle_materials/${spec.namespace}")
         if (!directory.exists() && !directory.mkdirs()) {
             log("directory_failure")
+            applicationContext.getSystemService(NotificationManager::class.java)
+                .cancel(spec.notificationId)
             return failure(spec, "directory_failure")
         }
         val destination = File(directory, spec.storedName)
@@ -140,6 +151,8 @@ class MaterialDownloadWorker(
         } finally {
             connection?.disconnect()
             temporary.delete()
+            applicationContext.getSystemService(NotificationManager::class.java)
+                .cancel(spec.notificationId)
         }
     }
 
@@ -152,6 +165,15 @@ class MaterialDownloadWorker(
         }
     }
 
+    override fun onStopped() {
+        log("stopped")
+        activeSpec?.let {
+            applicationContext.getSystemService(NotificationManager::class.java)
+                .cancel(it.notificationId)
+        }
+        super.onStopped()
+    }
+
     private fun failure(
         spec: MaterialDownloadSpec,
         code: String,
@@ -160,7 +182,25 @@ class MaterialDownloadWorker(
 
     private fun reportProgress(spec: MaterialDownloadSpec, downloaded: Long, total: Long) {
         setProgressAsync(progressData(spec, downloaded, total))
-        setForegroundAsync(foregroundInfo(spec, downloaded, total))
+        updateNotification(spec, downloaded, total)
+    }
+
+    private fun updateNotification(spec: MaterialDownloadSpec, downloaded: Long, total: Long) {
+        val info = foregroundInfo(spec, downloaded, total)
+        // Android 12+ runs expedited work through JobScheduler, without a service.
+        // Starting an FGS here is illegal once the user leaves the app, including
+        // between chained files. Notifications do not require starting a service.
+        MaterialDownloadExecution.updateNotification(
+            Build.VERSION.SDK_INT,
+            notify = {
+                applicationContext.getSystemService(NotificationManager::class.java)
+                    .notify(spec.notificationId, info.notification)
+            },
+            startForeground = { setForegroundAsync(info).get() },
+            notificationDenied = { error ->
+                log("notification_denied", error)
+            },
+        )
     }
 
     private fun progressData(
@@ -219,6 +259,8 @@ class MaterialDownloadWorker(
     }
 
     private fun log(code: String, error: Throwable? = null) {
+        val process = ActivityManager.RunningAppProcessInfo()
+        ActivityManager.getMyMemoryState(process)
         Log.i(TAG, JSONObject()
             .put("event", "material_download")
             .put("code", code)
@@ -232,6 +274,13 @@ class MaterialDownloadWorker(
             .put("received_bytes", downloadedBytes)
             .put("declared_bytes", declaredBytes)
             .put("error_type", error?.javaClass?.simpleName)
+            .put("cause_type", error?.cause?.javaClass?.simpleName)
+            .put("android_sdk", Build.VERSION.SDK_INT)
+            .put("stop_reason", stopReason)
+            .put("process_importance", process.importance)
+            .put("screen_interactive", applicationContext.getSystemService(PowerManager::class.java).isInteractive)
+            .put("keyguard_locked", applicationContext.getSystemService(KeyguardManager::class.java).isKeyguardLocked)
+            .put("execution_mode", if (MaterialDownloadExecution.usesScheduledJob(Build.VERSION.SDK_INT)) "scheduled_job" else "foreground_service")
             .toString())
     }
 
