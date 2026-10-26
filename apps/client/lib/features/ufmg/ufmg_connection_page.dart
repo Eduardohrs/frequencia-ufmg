@@ -735,6 +735,51 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     >
     materials,
   ) async {
+    setState(() => _materialBatchRunning = true);
+    try {
+      await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.moodleMaterialBatchPrepare,
+        action: () async {
+          if (_materialFileCache
+              case final BackgroundMaterialPreparation preparation) {
+            await preparation.prepareInBackground(
+              () => _runMaterialBatch(materials),
+              materialCount: materials.length,
+            );
+          } else {
+            await _runMaterialBatch(materials);
+          }
+        },
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _materialBatchRunning = false;
+        _materialBatchTotal = materials.length;
+        _materialBatchCompleted = materials.length;
+        _materialBatchFailed = materials.length;
+        _materialBatchFailures = materials;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Não foi possível iniciar a preparação em segundo plano. Tente novamente.',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _runMaterialBatch(
+    List<
+      ({
+        PythonMoodleCourseContent course,
+        PythonMoodleContentCandidate candidate,
+      })
+    >
+    materials,
+  ) async {
     setState(() {
       _materialBatchRunning = true;
       _materialBatchCompleted = 0;

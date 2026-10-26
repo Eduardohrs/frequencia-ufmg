@@ -16,7 +16,7 @@ class MainActivity: FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             MaterialDownloadBridge.CHANNEL,
         ).setMethodCallHandler { call, result ->
-            if (call.method == "enqueue") requestNotificationPermissionIfNeeded()
+            if (call.method == "enqueue" || call.method == "beginPreparation") requestNotificationPermissionIfNeeded()
             bridge.handle(call.method, call.arguments, result)
         }
     }

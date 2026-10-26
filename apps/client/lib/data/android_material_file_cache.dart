@@ -1,12 +1,17 @@
 import 'package:flutter/services.dart';
 
+import '../observability/audited_operation.dart';
+
 import 'material_file_cache.dart';
 
 typedef PlatformMethodInvoker =
     Future<T?> Function<T>(String method, [Object? arguments]);
 
 final class AndroidMaterialFileCache
-    implements MaterialFileCache, BackgroundMaterialDownloadQueue {
+    implements
+        MaterialFileCache,
+        BackgroundMaterialDownloadQueue,
+        BackgroundMaterialPreparation {
   AndroidMaterialFileCache({
     required MaterialFileCache delegate,
     required String namespace,
@@ -27,6 +32,26 @@ final class AndroidMaterialFileCache
   final MaterialFileCache _delegate;
   final String _namespace;
   final PlatformMethodInvoker _invokeMethod;
+
+  @override
+  Future<T> prepareInBackground<T>(
+    Future<T> Function() action, {
+    required int materialCount,
+  }) async {
+    final session = newCorrelationId('materialPreparation');
+    final arguments = <String, Object>{
+      'namespace': _namespace,
+      'session_id': session,
+      'operation_id': currentOperationId ?? session,
+      'material_count': materialCount,
+    };
+    await _invokeMethod<void>('beginPreparation', arguments);
+    try {
+      return await action();
+    } finally {
+      await _invokeMethod<void>('endPreparation', arguments);
+    }
+  }
 
   @override
   bool get isAvailable => _delegate.isAvailable;

@@ -1957,6 +1957,7 @@ void main() {
     ]);
     await tester.pump();
     expect(cache.queued, isEmpty);
+    expect(cache.preparationActive, isTrue);
 
     gateway.materialFileCompleters['104']!.complete([
       _materialFile('Exercicios.pdf', 456),
@@ -1966,7 +1967,77 @@ void main() {
       'Cronograma.pdf',
       'Exercicios.pdf',
     ]);
+    expect(cache.preparationActive, isFalse);
+    expect(cache.preparationReleases, 1);
   });
+
+  for (final unmount in [false, true]) {
+    testWidgets(
+      'logs preparation startup denial without requests or a stuck spinner (unmount=$unmount)',
+      (tester) async {
+        final gateway = _Gateway(
+          status: const PythonUFMGSessionStatus(
+            connected: true,
+            reauthenticationRequired: false,
+          ),
+        );
+        final cache = _BackgroundMaterialCache()
+          ..preparationStart = Completer<void>();
+        final logger = _Logger();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: UFMGConnectionPage(
+              gateway: gateway,
+              logger: logger,
+              materialFileCache: cache,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+        await tester.pumpAndSettle();
+        final downloadAll = find.byKey(const Key('moodle-download-all'));
+        await tester.ensureVisible(downloadAll);
+        await tester.tap(downloadAll);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Baixar'));
+        await tester.pump();
+        if (unmount) {
+          await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+        }
+        final denial = PlatformException(
+          code: 'material_preparation_start_denied',
+          message: 'Android rejected the scope',
+          details: {
+            'stage': 'foreground_ack',
+            'cause_type': 'ForegroundServiceStartNotAllowedException',
+          },
+        );
+        cache.preparationStart!.completeError(denial);
+        await tester.pumpAndSettle();
+        expect(gateway.materialFileRequests, isEmpty);
+        expect(cache.queued, isEmpty);
+        expect(logger.events, contains('moodle_material_batch_prepare_failed'));
+        expect(logger.errors, contains(same(denial)));
+        final details = ErrorLogDetails.from(denial);
+        expect(details.code, 'material_preparation_start_denied');
+        expect(details.details, contains('foreground_ack'));
+        expect(
+          details.details,
+          contains('ForegroundServiceStartNotAllowedException'),
+        );
+        if (!unmount) {
+          expect(
+            find.text(
+              'Não foi possível iniciar a preparação em segundo plano. Tente novamente.',
+            ),
+            findsOneWidget,
+          );
+          expect(find.text('Tentar novamente (1)'), findsOneWidget);
+        }
+      },
+    );
+  }
 
   testWidgets('offers one global batch action for Moodle file materials', (
     tester,
@@ -3680,12 +3751,30 @@ class _MaterialCache implements MaterialFileCache {
 }
 
 final class _BackgroundMaterialCache extends _MaterialCache
-    implements BackgroundMaterialDownloadQueue {
+    implements BackgroundMaterialDownloadQueue, BackgroundMaterialPreparation {
   final queued = <MaterialDownload>[];
   final progress = <MaterialDownloadProgress>[];
   Object? enqueueError;
   Object? dismissError;
   int enqueueAttempts = 0;
+  bool preparationActive = false;
+  int preparationReleases = 0;
+  Completer<void>? preparationStart;
+
+  @override
+  Future<T> prepareInBackground<T>(
+    Future<T> Function() action, {
+    required int materialCount,
+  }) async {
+    await preparationStart?.future;
+    preparationActive = true;
+    try {
+      return await action();
+    } finally {
+      preparationActive = false;
+      preparationReleases++;
+    }
+  }
 
   @override
   Future<List<MaterialDownloadProgress>> listDownloads() async => progress;
