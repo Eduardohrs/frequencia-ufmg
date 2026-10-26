@@ -79,6 +79,11 @@ class MaterialDownloadBridge(private val context: Context) {
             "downloaded" to progress.getLong("downloaded", 0),
             "total" to progress.getLong("total", 0),
             "failureCode" to failureCode,
+            "stage" to (progress.getString("stage") ?: "native_worker"),
+            "workId" to info.id.toString(),
+            "attempt" to progress.getInt("attempt", 0),
+            "elapsedMs" to progress.getLong("elapsed_ms", 0),
+            "httpStatus" to progress.getInt("http_status", 0),
         )
     }
 

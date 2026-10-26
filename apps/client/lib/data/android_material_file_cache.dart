@@ -57,6 +57,11 @@ final class AndroidMaterialFileCache
             downloaded: (item['downloaded'] as num?)?.toInt() ?? 0,
             total: (item['total'] as num?)?.toInt() ?? 0,
             failureCode: item['failureCode'] as String? ?? '',
+            stage: item['stage'] as String? ?? 'native_worker',
+            attempt: (item['attempt'] as num?)?.toInt() ?? 0,
+            elapsedMs: (item['elapsedMs'] as num?)?.toInt() ?? 0,
+            httpStatus: (item['httpStatus'] as num?)?.toInt() ?? 0,
+            workId: item['workId'] as String? ?? '',
           ),
     ];
   }

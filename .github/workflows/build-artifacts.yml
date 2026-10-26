@@ -33,6 +33,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - uses: ./.github/actions/android-version
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
@@ -75,7 +76,7 @@ jobs:
       - name: Build Android debug APK
         run: |
           flutter build apk --debug \
-            --build-number="$GITHUB_RUN_NUMBER" \
+            --build-number="$ANDROID_VERSION_CODE" \
             --dart-define="ENABLE_PYTHON_BACKEND=$ENABLE_PYTHON_BACKEND" \
             --dart-define="ENABLE_PYTHON_SCHEDULE_WRITES=$ENABLE_PYTHON_SCHEDULE_WRITES" \
             --dart-define="ENABLE_PYTHON_SESSION_WRITES=$ENABLE_PYTHON_SESSION_WRITES" \
@@ -102,7 +103,7 @@ jobs:
             build/app/outputs/flutter-apk/app-debug.apk | head -n 1)
           printf '%s\n' "$package"
           [[ "$package" == *"name='br.ufmg.frequencia.frequencia_ufmg'"* ]]
-          [[ "$package" == *"versionCode='$GITHUB_RUN_NUMBER'"* ]]
+          [[ "$package" == *"versionCode='$ANDROID_VERSION_CODE'"* ]]
           sha256sum build/app/outputs/flutter-apk/app-debug.apk
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

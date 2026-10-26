@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../backend/python_backend_transport.dart';
 import '../../data/material_file_cache.dart';
+import '../../data/material_download_failure.dart';
 import '../../data/material_file_cache_factory.dart';
 import '../../data/ufmg_sync_schedule.dart';
 import '../../design/app_feedback.dart';
@@ -161,7 +162,16 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         });
         for (final download in progress) {
           if (download.state == MaterialDownloadState.failed &&
-              _reportedMaterialDownloadFailures.add(download.id)) {
+              _reportedMaterialDownloadFailures.add(download.failureKey)) {
+            unawaited(
+              widget.logger
+                  .recordError(
+                    MaterialDownloadFailure.fromProgress(download),
+                    StackTrace.current,
+                    context: 'moodle_material_native_download',
+                  )
+                  .catchError((_) {}),
+            );
             unawaited(
               widget.logger
                   .logEvent(
@@ -880,7 +890,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       try {
         await queue.dismissDownload(progress.id);
         _materialDownloadsScheduled.remove(progress.id);
-        _reportedMaterialDownloadFailures.remove(progress.id);
+        _reportedMaterialDownloadFailures.remove(progress.failureKey);
         if (mounted) {
           setState(
             () => _materialDownloadProgress = _materialDownloadProgress

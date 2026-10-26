@@ -20,6 +20,13 @@ data class MaterialDownloadSpec(
     companion object {
         const val MAX_FILE_BYTES = 100L * 1024L * 1024L
 
+        fun isCompleteBody(declared: Long, received: Long, encoding: String?): Boolean =
+            received >= 0 && (
+                declared < 0 ||
+                    (!encoding.isNullOrEmpty() && encoding != "identity") ||
+                    declared == received
+                )
+
         fun uniqueWorkName(namespace: String, id: String): String =
             "moodle-material-" + sha256("$namespace/$id").take(24)
 

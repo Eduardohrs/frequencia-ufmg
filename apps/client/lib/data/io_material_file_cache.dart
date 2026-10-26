@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 import 'material_file_cache.dart';
+import 'material_download_failure.dart';
 
 typedef MaterialCacheRoot = Future<Directory> Function();
 typedef MaterialFileOpener =
@@ -73,6 +74,20 @@ final class IoMaterialFileCache implements MaterialFileCache {
       }
       await sink.close();
       sink = null;
+      final declared = response.contentLength;
+      final encoding = response.headers['content-encoding'];
+      if (declared != null &&
+          (encoding == null || encoding == 'identity') &&
+          received != declared) {
+        throw MaterialDownloadFailure(
+          fileId: download.id,
+          fileName: download.name,
+          code: 'incomplete_body',
+          received: received,
+          total: declared,
+          httpStatus: response.statusCode,
+        );
+      }
       if (await target.exists()) await target.delete();
       await partial.rename(target.path);
       for (final existing in records) {

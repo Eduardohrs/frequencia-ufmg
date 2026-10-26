@@ -59,6 +59,7 @@ jobs:
           ref: ${{ steps.revision.outputs.sha }}
           fetch-depth: 1
           persist-credentials: false
+      - uses: ./.github/actions/android-version
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
@@ -102,12 +103,12 @@ jobs:
           )
           flutter build web \
             --build-name "$build_name" \
-            --build-number "$GITHUB_RUN_NUMBER" \
+            --build-number "$ANDROID_VERSION_CODE" \
             "${common_defines[@]}" \
             --dart-define="FIREBASE_APP_CHECK_WEB_SITE_KEY=$FIREBASE_APP_CHECK_WEB_SITE_KEY"
           flutter build apk --release \
             --build-name "$build_name" \
-            --build-number "$GITHUB_RUN_NUMBER" \
+            --build-number "$ANDROID_VERSION_CODE" \
             "${common_defines[@]}"
 
       - name: Verify Android signing certificate

@@ -35,6 +35,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: ./.github/actions/android-version
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
@@ -74,7 +75,7 @@ jobs:
           fi
           flutter build web \
             --build-name "$APP_VERSION" \
-            --build-number "$GITHUB_RUN_NUMBER" \
+            --build-number "$ANDROID_VERSION_CODE" \
             --dart-define="ENABLE_PYTHON_BACKEND=$ENABLE_PYTHON_BACKEND" \
             --dart-define="ENABLE_PYTHON_SCHEDULE_WRITES=$ENABLE_PYTHON_SCHEDULE_WRITES" \
             --dart-define="ENABLE_PYTHON_SESSION_WRITES=$ENABLE_PYTHON_SESSION_WRITES" \
@@ -83,7 +84,7 @@ jobs:
             --dart-define="FIREBASE_APP_CHECK_WEB_SITE_KEY=$FIREBASE_APP_CHECK_WEB_SITE_KEY"
           flutter build apk --release \
             --build-name "$APP_VERSION" \
-            --build-number "$GITHUB_RUN_NUMBER" \
+            --build-number "$ANDROID_VERSION_CODE" \
             --dart-define="ENABLE_PYTHON_BACKEND=$ENABLE_PYTHON_BACKEND" \
             --dart-define="ENABLE_PYTHON_SCHEDULE_WRITES=$ENABLE_PYTHON_SCHEDULE_WRITES" \
             --dart-define="ENABLE_PYTHON_SESSION_WRITES=$ENABLE_PYTHON_SESSION_WRITES" \

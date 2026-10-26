@@ -2,10 +2,21 @@ package br.ufmg.frequencia.frequencia_ufmg
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class MaterialDownloadSpecTest {
+    @Test
+    fun `truncated bodies are never complete but unknown or decoded lengths are not guessed`() {
+        assertFalse(MaterialDownloadSpec.isCompleteBody(100, 99, null))
+        assertFalse(MaterialDownloadSpec.isCompleteBody(100, 101, "identity"))
+        assertFalse(MaterialDownloadSpec.isCompleteBody(-1, -1, null))
+        assertTrue(MaterialDownloadSpec.isCompleteBody(100, 100, null))
+        assertTrue(MaterialDownloadSpec.isCompleteBody(-1, 42, null))
+        assertTrue(MaterialDownloadSpec.isCompleteBody(0, 0, ""))
+        assertTrue(MaterialDownloadSpec.isCompleteBody(10, 100, "gzip"))
+    }
     private val valid = mapOf<String, Any>(
         "id" to "2026-2/3701/102/Plano.pdf",
         "name" to "Plano.pdf",

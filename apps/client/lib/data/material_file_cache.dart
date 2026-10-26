@@ -73,6 +73,11 @@ final class MaterialDownloadProgress {
     required this.downloaded,
     required this.total,
     this.failureCode = '',
+    this.stage = 'native_worker',
+    this.attempt = 0,
+    this.elapsedMs = 0,
+    this.httpStatus = 0,
+    this.workId = '',
   });
 
   final String id;
@@ -81,6 +86,10 @@ final class MaterialDownloadProgress {
   final int downloaded;
   final int total;
   final String failureCode;
+  final String stage;
+  final int attempt, elapsedMs, httpStatus;
+  final String workId;
+  String get failureKey => workId.isEmpty ? id : workId;
 
   double? get fraction => total > 0
       ? (downloaded / total).clamp(0, 1).toDouble()
