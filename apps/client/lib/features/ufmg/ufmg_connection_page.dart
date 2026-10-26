@@ -13,6 +13,7 @@ import '../../design/course_identity.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import 'material_cache_card.dart';
+import 'academic_sync_controller.dart';
 
 class UFMGConnectionPage extends StatefulWidget {
   const UFMGConnectionPage({
@@ -20,6 +21,7 @@ class UFMGConnectionPage extends StatefulWidget {
     required this.logger,
     this.userId,
     this.syncSchedule,
+    this.academicSync,
     this.openExternalUri,
     this.materialFileCache,
     this.materialCourseId,
@@ -34,6 +36,7 @@ class UFMGConnectionPage extends StatefulWidget {
   final AppLogger logger;
   final String? userId;
   final UFMGSyncScheduleGateway? syncSchedule;
+  final AcademicSyncController? academicSync;
   final Future<bool> Function(Uri uri)? openExternalUri;
   final MaterialFileCache? materialFileCache;
   final String? materialCourseId;
@@ -55,6 +58,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   PythonUFMGSessionStatus? _status;
   bool _loading = true;
   bool _busy = false;
+  bool _reviewingSyncResult = false;
   bool _showReconnectForm = false;
   String? _error;
   String? _sigaSummary;
@@ -97,6 +101,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   @override
   void initState() {
     super.initState();
+    widget.academicSync?.addListener(_onAcademicSyncChanged);
     _ownsMaterialFileCache = widget.materialFileCache == null;
     _materialFileCache =
         widget.materialFileCache ?? createMaterialFileCache(widget.userId);
@@ -105,12 +110,15 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
 
   @override
   void dispose() {
+    widget.academicSync?.removeListener(_onAcademicSyncChanged);
     _username.dispose();
     _password.dispose();
     _materialProgressTimer?.cancel();
     if (_ownsMaterialFileCache) _materialFileCache.dispose();
     super.dispose();
   }
+
+  void _onAcademicSyncChanged() => setState(() {});
 
   Future<void> _load() async {
     final supplementary = _loadSupplementaryData();
@@ -1124,39 +1132,39 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       _sigaError = null;
       _sigaSummary = null;
     });
+    var synchronized = false;
     try {
-      final result = await runAuditedOperation(
-        logger: widget.logger,
-        operation: AuditedOperation.academicSync,
-        action: unifiedGateway.syncAllAcademicData,
+      final result = widget.academicSync != null
+          ? await widget.academicSync!.start()
+          : await runAuditedOperation(
+              logger: widget.logger,
+              operation: AuditedOperation.academicSync,
+              action: unifiedGateway.syncAllAcademicData,
+            );
+      synchronized = true;
+      await _presentAcademicSyncResult(
+        result,
+        review: widget.academicSync == null,
       );
-      final supplementary = await Future.wait<Object>([
-        widget.gateway.listMoodleDates(),
-        widget.gateway.listMoodleMaterialCatalog(),
-      ]);
-      final userId = widget.userId;
-      final schedule = widget.syncSchedule;
-      if (userId != null && schedule != null) {
-        await schedule.record(userId, result.siga.nextAutomaticSyncAt);
+    } catch (error, stack) {
+      if (synchronized) {
+        unawaited(
+          widget.logger
+              .recordError(
+                error,
+                stack,
+                context: 'academic_sync_result_refresh',
+              )
+              .catchError((_) {}),
+        );
+        if (mounted) {
+          setState(
+            () => _sigaError =
+                'A sincronização terminou, mas não foi possível atualizar o resumo. Abra o resultado novamente.',
+          );
+        }
+        return;
       }
-      if (!mounted) return;
-      setState(() {
-        _dates = supplementary[0] as List<PythonMoodleDate>;
-        _contentDiscovery = supplementary[1] as PythonMoodleContentDiscovery;
-        _sigaSummary =
-            '${result.siga.courses.created} ${_plural(result.siga.courses.created, 'disciplina importada', 'disciplinas importadas')}. '
-            '${result.siga.schedules.updated} ${_plural(result.siga.schedules.updated, 'grade atualizada', 'grades atualizadas')}. '
-            '${result.moodle.dates.created} ${_plural(result.moodle.dates.created, 'data importada', 'datas importadas')}. '
-            '${result.teachingPlans.applied} ${_plural(result.teachingPlans.applied, 'alteração de plano aplicada', 'alterações de plano aplicadas')}. '
-            '${result.teachingPlans.reviewRequired} ${_plural(result.teachingPlans.reviewRequired, 'exceção para revisar', 'exceções para revisar')}.';
-        _sigaBusy = false;
-        _moodleBusy = false;
-      });
-      if (result.exceptions.isNotEmpty) {
-        await _showAcademicSyncExceptions(result.exceptions);
-      }
-      await _offerOfficialCalendar();
-    } catch (error) {
       if (!mounted) return;
       if (error is PythonBackendException &&
           error.code == PythonBackendError.ufmgReauthenticationRequired) {
@@ -1178,6 +1186,65 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           _moodleBusy = false;
         });
       }
+    }
+  }
+
+  Future<void> _presentAcademicSyncResult(
+    PythonUnifiedAcademicSyncResult result, {
+    bool review = true,
+  }) async {
+    final userId = widget.userId;
+    final schedule = widget.syncSchedule;
+    if (userId != null && schedule != null) {
+      await schedule.record(userId, result.siga.nextAutomaticSyncAt);
+    }
+    if (!mounted) return;
+    final supplementary = await Future.wait<Object>([
+      widget.gateway.listMoodleDates(),
+      widget.gateway.listMoodleMaterialCatalog(),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _dates = supplementary[0] as List<PythonMoodleDate>;
+      _contentDiscovery = supplementary[1] as PythonMoodleContentDiscovery;
+      _sigaSummary =
+          '${result.siga.courses.created} ${_plural(result.siga.courses.created, 'disciplina importada', 'disciplinas importadas')}. '
+          '${result.siga.schedules.updated} ${_plural(result.siga.schedules.updated, 'grade atualizada', 'grades atualizadas')}. '
+          '${result.moodle.dates.created} ${_plural(result.moodle.dates.created, 'data importada', 'datas importadas')}. '
+          '${result.teachingPlans.applied} ${_plural(result.teachingPlans.applied, 'alteração de plano aplicada', 'alterações de plano aplicadas')}. '
+          '${result.teachingPlans.reviewRequired} ${_plural(result.teachingPlans.reviewRequired, 'exceção para revisar', 'exceções para revisar')}.';
+      _sigaBusy = false;
+      _moodleBusy = false;
+    });
+    if (!review) return;
+    if (result.exceptions.isNotEmpty) {
+      await _showAcademicSyncExceptions(result.exceptions);
+    }
+    await _offerOfficialCalendar();
+  }
+
+  Future<void> _reviewAcademicSyncResult(
+    PythonUnifiedAcademicSyncResult result,
+  ) async {
+    if (_reviewingSyncResult) return;
+    _logInteraction('ufmg_review_sync_result');
+    setState(() => _reviewingSyncResult = true);
+    try {
+      await _presentAcademicSyncResult(result);
+    } catch (error, stack) {
+      unawaited(
+        widget.logger
+            .recordError(error, stack, context: 'academic_sync_result_review')
+            .catchError((_) {}),
+      );
+      if (mounted) {
+        setState(
+          () => _sigaError =
+              'A sincronização terminou, mas não foi possível carregar a revisão. Tente abrir o resultado novamente.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _reviewingSyncResult = false);
     }
   }
 
@@ -1829,7 +1896,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             description: 'Disciplinas, horários, datas e planos de ensino',
             actionKey: const Key('ufmg-sync-all'),
             actionLabel: 'Sincronizar tudo',
-            busy: _sigaBusy || _moodleBusy,
+            busy:
+                _sigaBusy ||
+                _moodleBusy ||
+                widget.academicSync?.isRunning == true,
             onSync: _syncAll,
             errorKey: const Key('ufmg-source-all-error'),
             error: _sigaError,
@@ -1844,6 +1914,14 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                   },
           ),
           const SizedBox(height: 12),
+          if (widget.academicSync?.result case final result?)
+            TextButton.icon(
+              onPressed: _reviewingSyncResult
+                  ? null
+                  : () => _reviewAcademicSyncResult(result),
+              icon: const Icon(Icons.checklist),
+              label: const Text('Revisar última sincronização'),
+            ),
           _connectionManagementCard(),
         ],
       );
@@ -1950,7 +2028,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           width: double.infinity,
           child: TextButton.icon(
             key: const Key('ufmg-reconnect'),
-            onPressed: _busy
+            onPressed: _busy || widget.academicSync?.isRunning == true
                 ? null
                 : () {
                     _logInteraction('ufmg_reconnect_show');
@@ -1964,7 +2042,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           width: double.infinity,
           child: TextButton.icon(
             key: const Key('ufmg-disconnect'),
-            onPressed: _busy ? null : _confirmDisconnect,
+            onPressed: _busy || widget.academicSync?.isRunning == true
+                ? null
+                : _confirmDisconnect,
             icon: const Icon(Icons.link_off),
             label: const Text('Desconectar'),
           ),

@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/auth/auth_user.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
+import 'package:frequencia_ufmg/backend/academic_sync_progress.dart';
+import 'fixtures/academic_sync_fixture.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/document_store.dart';
@@ -32,6 +34,77 @@ void main() {
     expect(academicTermFor(DateTime(2026, 7, 1)), '2026-2');
     expect(academicTermFor(DateTime(2026, 12, 31)), '2026-2');
   });
+
+  testWidgets(
+    'sync survives leaving the connection page and remains visible above the calendar',
+    (tester) async {
+      final gateway = _ProgressUFMGGateway();
+      final logger = _RecordingAppLogger();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CoursePage(
+            repository: _FakeCourseRepository(),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            user: user,
+            logger: logger,
+            onSignOut: () async {},
+            ufmgSessionGateway: gateway,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Perfil e configurações'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('profile-ufmg-account')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('ufmg-sync-all')));
+      await tester.tap(find.byKey(const Key('ufmg-sync-all')));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(gateway.progress.calls, 1);
+      expect(find.byKey(const Key('academic-sync-indicator')), findsOneWidget);
+      Navigator.of(tester.element(find.text('Conta acadêmica UFMG'))).pop();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('nav-general-calendar')));
+      await tester.pumpAndSettle();
+      gateway.progress.updates.add(
+        AcademicSyncProgress(
+          operationId: gateway.progress.operationId!,
+          completed: 1,
+          status: 'running',
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Datas e materiais'), findsOneWidget);
+      expect(find.text('Calendário'), findsWidgets);
+      gateway.progress.response.complete(syncResult());
+      await tester.pumpAndSettle();
+      expect(gateway.progress.calls, 1);
+      await tester.tap(find.byKey(const Key('academic-sync-indicator')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ver resultado'));
+      await tester.pumpAndSettle();
+      expect(find.text('Revisar última sincronização'), findsOneWidget);
+      await tester.ensureVisible(find.text('Revisar última sincronização'));
+      await tester.tap(find.text('Revisar última sincronização'));
+      await tester.pumpAndSettle();
+      expect(gateway.progress.calls, 1);
+      gateway.failDates = true;
+      logger.failRecording = true;
+      await tester.tap(find.text('Revisar última sincronização'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('não foi possível carregar a revisão'),
+        findsOneWidget,
+      );
+      expect(logger.errorContexts, contains('academic_sync_result_review'));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await gateway.progress.updates.close();
+    },
+  );
 
   testWidgets(
     'online courses have no attendance pendency or timetable action in the hub',
@@ -2135,6 +2208,7 @@ final class _SelectivelyBlockingLogger implements AppLogger {
 }
 
 final class _RecordingAppLogger implements AppLogger {
+  bool failRecording = false;
   final events = <String>[];
   final errorContexts = <String>[];
 
@@ -2152,10 +2226,11 @@ final class _RecordingAppLogger implements AppLogger {
     Map<String, Object>? parameters,
   }) async {
     errorContexts.add(context);
+    if (failRecording) throw StateError('logger unavailable');
   }
 }
 
-final class _UFMGGateway implements BackendUFMGSessionGateway {
+class _UFMGGateway implements BackendUFMGSessionGateway {
   _UFMGGateway({
     this.status = const PythonUFMGSessionStatus(
       connected: false,
@@ -2263,6 +2338,35 @@ final class _UFMGGateway implements BackendUFMGSessionGateway {
   @override
   Future<PythonUFMGSessionStatus> disconnectUFMG() =>
       throw UnimplementedError();
+}
+
+final class _ProgressUFMGGateway extends _UFMGGateway
+    implements BackendAcademicSyncProgressGateway {
+  _ProgressUFMGGateway()
+    : super(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      );
+  final progress = ProgressGateway();
+  bool failDates = false;
+  @override
+  Future<List<PythonMoodleDate>> listMoodleDates() {
+    if (failDates) return Future.error(StateError('dates unavailable'));
+    return super.listMoodleDates();
+  }
+
+  @override
+  Future<PythonUnifiedAcademicSyncResult> syncWithProgress(
+    String operationId,
+  ) => progress.syncWithProgress(operationId);
+  @override
+  Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() =>
+      progress.syncAllAcademicData();
+  @override
+  Stream<AcademicSyncProgress> watchSyncProgress(String operationId) =>
+      progress.watchSyncProgress(operationId);
 }
 
 final class _FakeUFMGSyncSchedule implements UFMGSyncScheduleGateway {

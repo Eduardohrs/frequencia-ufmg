@@ -1575,7 +1575,9 @@ void main() {
         }),
       );
 
-      final result = await transport.syncAllAcademicData();
+      final result = await transport.syncAllAcademicData(
+        progressId: 'sync-test123',
+      );
 
       expect(result.siga.courses.created, 1);
       expect(result.moodle.dates.created, 1);
@@ -1587,7 +1589,7 @@ void main() {
       expect(result.exceptions.last.reason, 'teaching_plan_unavailable');
       expect(captured.method, 'POST');
       expect(captured.url.path, '/v1/ufmg/sync/all');
-      expect(captured.body, '{}');
+      expect(jsonDecode(captured.body), {'progress_id': 'sync-test123'});
     },
   );
 

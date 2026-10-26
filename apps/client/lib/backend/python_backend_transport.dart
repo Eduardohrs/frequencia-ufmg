@@ -2173,11 +2173,13 @@ final class PythonBackendTransport
   }
 
   @override
-  Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() async {
+  Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData({
+    String? progressId,
+  }) async {
     final response = await _authenticatedRequest(
       path: '/v1/ufmg/sync/all',
       method: _BackendMethod.post,
-      body: const {},
+      body: {'progress_id': ?progressId},
       requestTimeout: longRunningTimeout,
     );
     try {

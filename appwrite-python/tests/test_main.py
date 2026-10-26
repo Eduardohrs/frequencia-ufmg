@@ -449,6 +449,54 @@ def test_unified_academic_sync_rejects_nonempty_payload(
     assert result["body"] == {"error": "academic_sync_rejected"}
 
 
+@pytest.mark.parametrize("failure", [False, True])
+def test_unified_sync_progress_reaches_terminal_state_and_preserves_failure_mapping(
+    monkeypatch: pytest.MonkeyPatch, failure: bool,
+) -> None:
+    monkeypatch.setenv("ENABLE_SCHEDULE_WRITES", "true")
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+    writes: list[dict[str, Any]] = []
+
+    class Store:
+        def patch_user_document(self, *args: str, fields: dict[str, Any]) -> dict[str, Any]:
+            assert args == ("syncProgress", "current")
+            writes.append(fields)
+            return {"fields": fields}
+
+    class Service:
+        def __init__(self, telemetry: Any) -> None:
+            self.telemetry = telemetry
+
+        def sync(self, _user_id: str, *, now: int) -> dict[str, object]:
+            self.telemetry("academic_sync_stage_completed", {"stage": "siga"})
+            self.telemetry("academic_sync_stage_completed", {"stage": "moodle"})
+            if failure:
+                raise MoodleUnavailable("upstream unavailable")
+            return {"exceptions": [], "teaching_plans": {
+                "available": 0, "imported": 0, "applied": 0, "unchanged": 0, "review_required": 0,
+            }}
+
+    monkeypatch.setattr(function, "_firestore", lambda *_: Store())
+    monkeypatch.setattr(function, "_unified_academic_sync_service", lambda _, __, t: Service(t))
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/sync/all",
+                                     body_json={"progress_id": "sync-test123"}))
+    result = function.main(context)
+    assert result["status"] == (503 if failure else 200)
+    assert writes[-1]["status"] == {"stringValue": "failed" if failure else "succeeded"}
+    assert writes[-1]["completed"] == {"integerValue": "2" if failure else "3"}
+    assert all(row["operationId"] == {"stringValue": "sync-test123"} for row in writes)
+
+
+@pytest.mark.parametrize("identifier", [None, 3, "../secret", "x", "x" * 81])
+def test_unified_sync_rejects_malformed_progress_identifier(
+    monkeypatch: pytest.MonkeyPatch, identifier: object,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
+    result = function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/sync/all",
+                                                body_json={"progress_id": identifier})))
+    assert result["status"] == 400
+
+
 @pytest.mark.parametrize(
     ("failure", "error", "status"),
     [

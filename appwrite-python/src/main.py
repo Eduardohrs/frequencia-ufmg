@@ -23,6 +23,7 @@ from academic_date_repository import (  # noqa: E402
     AcademicDateRepository,
     InvalidAcademicDate,
 )
+from academic_sync_progress import AcademicSyncProgress  # noqa: E402
 from attendance_service import InvalidAttendanceRequest, evaluate_attendance  # noqa: E402
 from course_repository import (  # noqa: E402
     CourseRepository,
@@ -746,16 +747,35 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
     user_id, rejected = _authentication(context, origin, "/v1/ufmg/sync/all/post")
     if rejected is not None:
         return rejected
-    if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
+    payload = context.req.body_json
+    if (
+        not isinstance(payload, Mapping)
+        or set(payload) - {"progress_id"}
+        or ("progress_id" in payload and (
+            not isinstance(payload["progress_id"], str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{8,80}", payload["progress_id"]) is None
+        ))
+    ):
         return _ufmg_session_error(context, origin, "academic_sync_rejected", 400)
     if environ.get("ENABLE_SCHEDULE_WRITES", "").lower() != "true":
         return _schedule_error(context, origin, "schedule_writes_disabled", 503)
     try:
-        result = _unified_academic_sync_service(
+        progress = _academic_sync_progress(context, cast(str, user_id), payload.get("progress_id"))
+
+        def telemetry(event: str, fields: Mapping[str, object]) -> None:
+            _academic_sync_telemetry(context, event, fields)
+            if progress is not None:
+                progress.observe(event, fields)
+
+        service = _unified_academic_sync_service(
             context.req.headers,
             cast(str, user_id),
-            lambda event, fields: _academic_sync_telemetry(context, event, fields),
-        ).sync(cast(str, user_id), now=int(time()))
+            telemetry,
+        )
+        def run() -> dict[str, object]:
+            return service.sync(cast(str, user_id), now=int(time()))
+
+        result = progress.run(run) if progress is not None else run()
     except UFMGReauthenticationRequired:
         return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
     except UFMGEnrollmentUnavailable as error:
@@ -817,6 +837,17 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
 def _academic_sync_telemetry(context: Any, event: str, fields: Mapping[str, object]) -> None:
     writer = _error if event.endswith("_failed") else _log
     writer(context, event, **fields)
+
+
+def _academic_sync_progress(
+    context: Any, user_id: str, operation_id: str | None,
+) -> AcademicSyncProgress | None:
+    if operation_id is None:
+        return None
+    return AcademicSyncProgress(
+        _firestore(context.req.headers, user_id), operation_id,
+        telemetry=lambda event, fields: _academic_sync_telemetry(context, event, fields),
+    )
 
 
 def _moodle_content_discovery(context: Any, origin: str | None) -> Any:

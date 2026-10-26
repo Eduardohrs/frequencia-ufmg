@@ -18,6 +18,7 @@ import '../attendance/attendance_page.dart';
 import '../schedule/course_schedule_page.dart';
 import '../schedule/general_calendar_page.dart';
 import '../ufmg/ufmg_connection_page.dart';
+import '../ufmg/academic_sync_controller.dart';
 
 class CourseHubPage extends StatefulWidget {
   const CourseHubPage({
@@ -35,6 +36,7 @@ class CourseHubPage extends StatefulWidget {
     this.ufmgSessionGateway,
     this.ufmgSyncSchedule,
     this.userId,
+    this.academicSync,
     this.scheduleReadsEnabled = true,
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
@@ -56,6 +58,7 @@ class CourseHubPage extends StatefulWidget {
   final BackendUFMGSessionGateway? ufmgSessionGateway;
   final UFMGSyncScheduleGateway? ufmgSyncSchedule;
   final String? userId;
+  final AcademicSyncController? academicSync;
   final bool scheduleReadsEnabled;
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
@@ -218,6 +221,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => UFMGConnectionPage(
+          academicSync: widget.academicSync,
           gateway: gateway,
           logger: widget.logger,
           userId: widget.userId,

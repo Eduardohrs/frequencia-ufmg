@@ -279,6 +279,20 @@ describe("course documents", () => {
 });
 
 describe("operational logs", () => {
+  test("sync progress is bounded and isolated by user", async () => {
+    const path = "users/alice/syncProgress/current";
+    const progress = {
+      operationId: "sync-test123", status: "running", stage: "siga", completed: 0,
+      reviewRequired: 0, failureCode: "", startedAt: createdAt, updatedAt,
+    };
+    await assertSucceeds(setDoc(doc(dbFor("alice"), path), progress));
+    await assertSucceeds(getDoc(doc(dbFor("alice"), path)));
+    await assertFails(getDoc(doc(dbFor("bob"), path)));
+    await assertFails(setDoc(doc(dbFor("bob"), path), progress));
+    await assertFails(setDoc(doc(dbFor("alice"), path), {...progress, completed: 4}));
+    await assertFails(setDoc(doc(dbFor("alice"), path), {...progress, password: "no"}));
+    await assertFails(setDoc(doc(dbFor("alice"), "users/alice/syncProgress/other"), progress));
+  });
   test("owner can create and read an immutable structured log", async () => {
     const path = logPath("alice");
     const reference = doc(dbFor("alice"), path);
