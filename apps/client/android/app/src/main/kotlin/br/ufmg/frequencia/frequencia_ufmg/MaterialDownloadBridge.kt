@@ -1,7 +1,12 @@
 package br.ufmg.frequencia.frequencia_ufmg
 
 import android.content.Context
+import android.content.Intent
 import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.ResultReceiver
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.Data
@@ -22,6 +27,11 @@ class MaterialDownloadBridge(private val context: Context) {
         try {
             val arguments = rawArguments as? Map<*, *> ?: emptyMap<Any, Any>()
             when (method) {
+                "beginPreparation" -> beginPreparation(arguments, result)
+                "endPreparation" -> {
+                    MaterialPreparationService.finish(requireString(arguments, "session_id", 96))
+                    result.success(null)
+                }
                 "enqueue" -> {
                     enqueue(MaterialDownloadSpec.from(arguments))
                     result.success(null)
@@ -46,6 +56,51 @@ class MaterialDownloadBridge(private val context: Context) {
             }
         } catch (_: IllegalArgumentException) {
             result.error("invalid_material_download", "Dados de download inválidos.", null)
+        }
+    }
+
+    private fun beginPreparation(arguments: Map<*, *>, result: MethodChannel.Result) {
+        val namespace = requireNamespace(arguments)
+        val session = requireString(arguments, "session_id", 96)
+        require(Regex("^[A-Za-z0-9-]+$").matches(session))
+        val operation = requireString(arguments, "operation_id", 128)
+        val count = (arguments["material_count"] as? Number)?.toInt() ?: 0
+        require(count in 1..1000)
+        val handler = Handler(Looper.getMainLooper())
+        var answered = false
+        val timeout = Runnable {
+            if (!answered) {
+                answered = true
+                MaterialPreparationService.finish(session)
+                result.error("material_preparation_start_timeout", "O Android não confirmou o início da preparação.",
+                    mapOf("stage" to "foreground_ack", "batch_id" to session))
+            }
+        }
+        val receiver = object : ResultReceiver(handler) {
+            override fun onReceiveResult(code: Int, data: Bundle?) {
+                if (answered) { MaterialPreparationService.finish(session); return }
+                answered = true
+                handler.removeCallbacks(timeout)
+                if (code == 0) result.success(null)
+                else result.error("material_preparation_start_denied", "O Android recusou a preparação em segundo plano.",
+                    mapOf("stage" to "foreground_ack", "batch_id" to session,
+                        "cause_type" to data?.getString("cause_type"), "cause_message" to data?.getString("cause_message")))
+            }
+        }
+        handler.postDelayed(timeout, 10_000)
+        try {
+            ContextCompat.startForegroundService(context, Intent(context, MaterialPreparationService::class.java)
+                .putExtra("namespace", namespace)
+                .putExtra("session_id", session)
+                .putExtra("operation_id", operation)
+                .putExtra("material_count", count)
+                .putExtra("ready", receiver))
+        } catch (error: Exception) {
+            answered = true
+            handler.removeCallbacks(timeout)
+            result.error("material_preparation_start_failed", "Não foi possível iniciar a preparação.",
+                mapOf("stage" to "service_launch", "batch_id" to session,
+                    "cause_type" to error.javaClass.simpleName, "cause_message" to error.message?.take(600)))
         }
     }
 

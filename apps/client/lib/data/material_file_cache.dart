@@ -63,6 +63,13 @@ abstract interface class BackgroundMaterialDownloadQueue {
   Future<void> dismissDownload(String id);
 }
 
+abstract interface class BackgroundMaterialPreparation {
+  Future<T> prepareInBackground<T>(
+    Future<T> Function() action, {
+    required int materialCount,
+  });
+}
+
 enum MaterialDownloadState { enqueued, running, succeeded, failed, cancelled }
 
 final class MaterialDownloadProgress {

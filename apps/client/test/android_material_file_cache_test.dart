@@ -4,6 +4,76 @@ import 'package:frequencia_ufmg/data/material_file_cache.dart';
 
 void main() {
   test(
+    'protects preparation before its first request and releases it on failure',
+    () async {
+      final calls = <String>[];
+      final arguments = <Object?>[];
+      final cache = AndroidMaterialFileCache(
+        delegate: _Cache(),
+        namespace: '0123456789abcdef01234567',
+        invokeMethod: <T>(method, [args]) async {
+          calls.add(method);
+          arguments.add(args);
+          return null;
+        },
+      );
+      final failure = StateError('upstream unavailable');
+      await expectLater(
+        cache.prepareInBackground<void>(() async {
+          expect(calls, ['beginPreparation']);
+          throw failure;
+        }, materialCount: 12),
+        throwsA(same(failure)),
+      );
+      expect(calls, ['beginPreparation', 'endPreparation']);
+      expect(
+        (arguments.first as Map)['session_id'],
+        (arguments.last as Map)['session_id'],
+      );
+      expect((arguments.first as Map)['material_count'], 12);
+    },
+  );
+
+  test(
+    'does not prepare anything if Android refuses the execution scope',
+    () async {
+      final cache = AndroidMaterialFileCache(
+        delegate: _Cache(),
+        namespace: '0123456789abcdef01234567',
+        invokeMethod: <T>(method, [args]) async =>
+            throw StateError('start denied'),
+      );
+      var prepared = false;
+      await expectLater(
+        cache.prepareInBackground(() async {
+          prepared = true;
+        }, materialCount: 1),
+        throwsStateError,
+      );
+      expect(prepared, isFalse);
+    },
+  );
+
+  test(
+    'returns the preparation result after releasing the Android scope',
+    () async {
+      final calls = <String>[];
+      final cache = AndroidMaterialFileCache(
+        delegate: _Cache(),
+        namespace: '0123456789abcdef01234567',
+        invokeMethod: <T>(method, [args]) async {
+          calls.add(method);
+          return null;
+        },
+      );
+      expect(
+        await cache.prepareInBackground(() async => 22, materialCount: 12),
+        22,
+      );
+      expect(calls, ['beginPreparation', 'endPreparation']);
+    },
+  );
+  test(
     'uses the production platform channel when no test invoker is given',
     () {
       final delegate = _Cache();
