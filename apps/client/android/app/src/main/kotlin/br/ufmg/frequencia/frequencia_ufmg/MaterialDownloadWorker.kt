@@ -31,16 +31,7 @@ class MaterialDownloadWorker(
     private var httpStatus = 0
     override fun doWork(): Result {
         val spec = try {
-            MaterialDownloadSpec.from(
-                mapOf(
-                    "id" to inputData.getString("id"),
-                    "name" to inputData.getString("name"),
-                    "source" to inputData.getString("source"),
-                    "expected_size" to inputData.getLong("expected_size", -1),
-                    "mime_type" to inputData.getString("mime_type"),
-                    "namespace" to inputData.getString("namespace"),
-                ),
-            )
+            MaterialDownloadSpec.fromWorkerInput(inputData.keyValueMap)
         } catch (_: IllegalArgumentException) {
             log("invalid_input")
             return Result.failure()

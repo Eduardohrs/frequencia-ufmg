@@ -56,6 +56,25 @@ class MaterialDownloadSpecTest {
     }
 
     @Test
+    fun `predecessor output cannot rename or replace the next download`() {
+        val requested = MaterialDownloadSpec.from(valid)
+        val merged = requested.workerInput() + mapOf(
+            "id" to "previous-file",
+            "name" to "Previous.pdf",
+            "downloaded" to 309319L,
+            "failure_code" to "timeout",
+        )
+        val actual = MaterialDownloadSpec.fromWorkerInput(merged)
+        assertEquals(requested.id, actual.id)
+        assertEquals(requested.name, actual.name)
+        assertEquals(requested.source, actual.source)
+        assertEquals(requested.expectedSize, actual.expectedSize)
+        assertEquals(requested.mimeType, actual.mimeType)
+        assertEquals(requested.namespace, actual.namespace)
+        assertEquals(requested.id, MaterialDownloadSpec.fromWorkerInput(valid).id)
+    }
+
+    @Test
     fun `rejects downloads outside the Moodle direct contract`() {
         val invalid = valid.toMutableMap().apply {
             this["source"] = "https://example.com/private.pdf"

@@ -43,7 +43,7 @@ class FirebaseAppLogger implements AppLogger {
     final safeParameters = _sanitizeParameters(parameters);
     await Future.wait([
       _analytics.logEvent(
-        name: 'app_exception',
+        name: 'client_error',
         parameters: {
           ...details.analyticsParameters(context: context, fatal: fatal),
           ...?safeParameters,

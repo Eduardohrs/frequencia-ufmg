@@ -92,12 +92,7 @@ class MaterialDownloadBridge(private val context: Context) {
         val request = OneTimeWorkRequestBuilder<MaterialDownloadWorker>()
             .setInputData(
                 Data.Builder()
-                    .putString("id", spec.id)
-                    .putString("name", spec.name)
-                    .putString("source", spec.source)
-                    .putLong("expected_size", spec.expectedSize)
-                    .putString("mime_type", spec.mimeType)
-                    .putString("namespace", spec.namespace)
+                    .putAll(spec.workerInput())
                     .build(),
             )
             .setConstraints(
