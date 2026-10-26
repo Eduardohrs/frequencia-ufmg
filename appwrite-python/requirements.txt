@@ -1,4 +1,4 @@
-appwrite==24.0.0
+appwrite==26.0.0
 cryptography==50.0.2
 google-auth==2.59.1
 PyJWT[crypto]==2.15.1
