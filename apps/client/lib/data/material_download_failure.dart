@@ -2,6 +2,27 @@ import 'dart:convert';
 import '../observability/error_log_details.dart';
 import 'material_file_cache.dart';
 
+final class MaterialPreparationFailure implements StructuredAppError {
+  MaterialPreparationFailure({
+    required String materialId,
+    required String materialName,
+    required String courseCode,
+    required Object cause,
+  }) : _cause = ErrorLogDetails.from(cause),
+       _context =
+           'stage=prepare_files course=$courseCode material=$materialId name=$materialName';
+
+  final ErrorLogDetails _cause;
+  final String _context;
+
+  @override
+  String get logCode => _cause.code ?? _cause.type;
+  @override
+  String get logMessage => '$_context; ${_cause.type}: ${_cause.message ?? ""}';
+  @override
+  String? get logDetails => _cause.details;
+}
+
 final class MaterialDownloadFailure extends StateError
     implements StructuredAppError {
   MaterialDownloadFailure({

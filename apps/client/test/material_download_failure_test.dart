@@ -6,6 +6,22 @@ import 'package:frequencia_ufmg/observability/error_log_details.dart';
 
 void main() {
   test(
+    'unstructured preparation errors retain the material and original cause',
+    () {
+      final failure = MaterialPreparationFailure(
+        materialId: '2026-2/4953/63628',
+        materialName: 'Orientacoes.pdf',
+        courseCode: 'ELE028',
+        cause: StateError('moodle_material_has_no_files'),
+      );
+      expect(failure.logCode, 'StateError');
+      expect(failure.logMessage, contains('stage=prepare_files course=ELE028'));
+      expect(failure.logMessage, contains('Orientacoes.pdf'));
+      expect(failure.logMessage, contains('moodle_material_has_no_files'));
+      expect(failure.logDetails, isNull);
+    },
+  );
+  test(
     'native failures preserve actionable diagnostics through the logger',
     () {
       const progress = MaterialDownloadProgress(

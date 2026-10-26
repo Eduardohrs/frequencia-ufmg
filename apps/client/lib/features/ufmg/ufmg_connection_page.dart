@@ -763,12 +763,36 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       while (next < materials.length) {
         final material = materials[next++];
         try {
-          final files = await widget.gateway.listMoodleMaterialFiles(
-            term: material.course.term,
-            courseId: material.candidate.moodleCourseId,
-            sourceId: material.candidate.sourceId,
+          final files = await runAuditedOperation(
+            logger: widget.logger,
+            operation: AuditedOperation.moodleMaterialPrepare,
+            action: () async {
+              try {
+                final files = await widget.gateway.listMoodleMaterialFiles(
+                  term: material.course.term,
+                  courseId: material.candidate.moodleCourseId,
+                  sourceId: material.candidate.sourceId,
+                );
+                if (files.isEmpty) {
+                  throw StateError('moodle_material_has_no_files');
+                }
+                return files;
+              } catch (error, stackTrace) {
+                Error.throwWithStackTrace(
+                  MaterialPreparationFailure(
+                    materialId: _materialOperationId(
+                      material.course,
+                      material.candidate,
+                    ),
+                    materialName: material.candidate.title,
+                    courseCode: material.course.courseCode,
+                    cause: error,
+                  ),
+                  stackTrace,
+                );
+              }
+            },
           );
-          if (files.isEmpty) throw StateError('moodle_material_has_no_files');
           for (final file in files) {
             prepared.add((
               course: material.course,

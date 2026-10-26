@@ -1,10 +1,61 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
+import 'package:frequencia_ufmg/data/material_download_failure.dart';
 import 'package:frequencia_ufmg/observability/firestore_app_logger.dart';
 import 'package:frequencia_ufmg/observability/operational_log_store.dart';
 
 void main() {
+  test(
+    'persists batch material identity and the underlying transport failure',
+    () async {
+      final store = _RecordingLogStore();
+      final logger = FirestoreAppLogger(
+        store: store,
+        currentUserId: () => 'user-1',
+        platform: 'android',
+      );
+      await logger.recordError(
+        MaterialPreparationFailure(
+          materialId: '2026-2/4953/63628',
+          materialName: 'Orientacoes.pdf',
+          courseCode: 'ELE028',
+          cause: const PythonBackendException(
+            PythonBackendError.unavailable,
+            requestContext:
+                'stage=http_response method=post path=/v1/ufmg/moodle/material-files '
+                'status=503 backend_error=moodle_unavailable request_id=child-123 password=secret-value',
+          ),
+        ),
+        StackTrace.current,
+        context: 'moodle_material_prepare',
+        parameters: {'operation_id': 'child-123', 'duration_ms': 4512},
+      );
+      final document = store.documents.single;
+      expect(document['correlationId'], 'child-123');
+      expect(document['durationMs'], 4512);
+      expect(document['operation'], 'moodle_material_prepare');
+      expect(document['errorCode'], 'unavailable');
+      expect(
+        document['errorMessage'],
+        allOf(
+          contains('prepare_files'),
+          contains('ELE028'),
+          contains('2026-2/4953/63628'),
+          contains('Orientacoes.pdf'),
+        ),
+      );
+      expect(
+        document['errorDetails'],
+        allOf(
+          contains('status=503'),
+          contains('backend_error=moodle_unavailable'),
+          contains('request_id=child-123'),
+          isNot(contains('secret-value')),
+        ),
+      );
+    },
+  );
   final now = DateTime.utc(2026, 9, 27, 20);
 
   test(
