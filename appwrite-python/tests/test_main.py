@@ -2862,6 +2862,50 @@ def test_schedule_repository_uses_the_shared_firestore_client(
     assert function._schedule_repository({}, "user") == ("schedule", client)
 
 
+@pytest.mark.parametrize(
+    ("method", "route", "replay"),
+    [
+        ("GET", "/v1/identity", False),
+        ("POST", "/v1/ufmg/moodle/material-files/post", False),
+        ("POST", "/v1/ufmg/session/post", True),
+        ("PUT", "/v1/courses/put", True),
+    ],
+)
+def test_metadata_reads_keep_identity_app_check_and_budget_without_consuming_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    route: str,
+    replay: bool,
+) -> None:
+    verified: list[str] = []
+
+    def identity(_headers: Any) -> str:
+        verified.append("identity")
+        return "user"
+
+    def app(_headers: Any, _now: int) -> FirebaseAppIdentity:
+        verified.append("app_check")
+        return FirebaseAppIdentity("registered", 2_000, "a" * 64)
+
+    consumed: list[dict[str, Any]] = []
+
+    class Store:
+        def consume(self, **kwargs: Any) -> None:
+            consumed.append(kwargs)
+
+    monkeypatch.setattr(function, "_firebase_identity", identity)
+    monkeypatch.setattr(function, "_firebase_app", app)
+    monkeypatch.setattr(function, "_security_store", lambda _headers: Store())
+    monkeypatch.setattr(function, "time", lambda: 1_500)
+    user, error = function._authentication(FakeContext(FakeRequest(method, route)), None, route)
+    assert user == "user" and error is None
+    assert verified == ["identity", "app_check"]
+    assert len(consumed) == 1
+    assert consumed[0]["enforce_replay"] is replay
+    assert consumed[0]["route"] == route
+    assert consumed[0]["user_id"] == "user"
+
+
 def test_identity_route_accepts_verified_firebase_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
