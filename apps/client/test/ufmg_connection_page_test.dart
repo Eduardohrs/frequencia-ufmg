@@ -2003,6 +2003,60 @@ void main() {
     expect(find.text('1 de 1 materiais preparados'), findsOneWidget);
   });
 
+  for (final fileStillExists in [false, true]) {
+    testWidgets(
+      'completed queue history only skips a real cached copy: $fileStillExists',
+      (tester) async {
+        final gateway = _Gateway(
+          status: const PythonUFMGSessionStatus(
+            connected: true,
+            reauthenticationRequired: false,
+          ),
+        );
+        const id = '2026-2/3701/102/Cronograma.pdf';
+        final cache = _BackgroundMaterialCache()
+          ..progress.add(
+            const MaterialDownloadProgress(
+              id: id,
+              name: 'Cronograma.pdf',
+              state: MaterialDownloadState.succeeded,
+              downloaded: 123,
+              total: 123,
+            ),
+          );
+        if (fileStillExists) {
+          cache.files.add(
+            const CachedMaterialFile(
+              id: id,
+              name: 'Cronograma.pdf',
+              size: 123,
+              mimeType: 'application/pdf',
+            ),
+          );
+        }
+        await tester.pumpWidget(
+          MaterialApp(
+            home: UFMGConnectionPage(
+              gateway: gateway,
+              logger: _Logger(),
+              materialFileCache: cache,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+        await tester.pumpAndSettle();
+        final global = find.byKey(const Key('moodle-download-all'));
+        await tester.ensureVisible(global);
+        await tester.tap(global);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Baixar'));
+        await tester.pumpAndSettle();
+        expect(cache.queued, hasLength(fileStillExists ? 0 : 1));
+      },
+    );
+  }
+
   testWidgets('deduplicates a repeated material batch', (tester) async {
     final gateway = _Gateway(
       status: const PythonUFMGSessionStatus(

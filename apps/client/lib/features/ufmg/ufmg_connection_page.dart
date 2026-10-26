@@ -157,7 +157,13 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         setState(() {
           _materialDownloadProgress = progress;
           _materialDownloadsScheduled.addAll(
-            progress.map((download) => download.id),
+            progress
+                .where(
+                  (download) =>
+                      download.state == MaterialDownloadState.enqueued ||
+                      download.state == MaterialDownloadState.running,
+                )
+                .map((download) => download.id),
           );
         });
         for (final download in progress) {
