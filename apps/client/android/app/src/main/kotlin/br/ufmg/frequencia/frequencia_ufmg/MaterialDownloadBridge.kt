@@ -1,12 +1,14 @@
 package br.ufmg.frequencia.frequencia_ufmg
 
 import android.content.Context
+import android.os.Build
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.core.content.ContextCompat
@@ -55,8 +57,14 @@ class MaterialDownloadBridge(private val context: Context) {
             {
                 try {
                     result.success(
-                        future.get().map(::progressMap).filter {
+                        // WorkManager retains old failures after a successful retry.
+                        // Show the latest request, not every historical attempt.
+                        future.get().sortedByDescending {
+                            MaterialDownloadExecution.queuedAt(it.tags)
+                        }.map(::progressMap).filter {
                             (it["id"] as String).isNotEmpty()
+                        }.distinctBy {
+                            it["id"]
                         }.filterNot {
                             dismissed.contains(it["id"] as String)
                         },
@@ -73,8 +81,12 @@ class MaterialDownloadBridge(private val context: Context) {
         val progress = if (info.state.isFinished) info.outputData else info.progress
         val failureCode = progress.getString("failure_code") ?: ""
         return mapOf(
-            "id" to (progress.getString("id") ?: ""),
-            "name" to (progress.getString("name") ?: "Material"),
+            "id" to (progress.getString("id") ?: info.tags.firstOrNull {
+                it.startsWith("material-id-")
+            }?.removePrefix("material-id-") ?: ""),
+            "name" to (progress.getString("name") ?: info.tags.firstOrNull {
+                it.startsWith("material-name-")
+            }?.removePrefix("material-name-") ?: "Material"),
             "state" to if (failureCode.isEmpty()) info.state.name.lowercase() else "failed",
             "downloaded" to progress.getLong("downloaded", 0),
             "total" to progress.getLong("total", 0),
@@ -101,8 +113,16 @@ class MaterialDownloadBridge(private val context: Context) {
                     .build(),
             )
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
+            .apply {
+                if (MaterialDownloadExecution.usesScheduledJob(Build.VERSION.SDK_INT)) {
+                    setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                }
+            }
             .addTag(namespaceTag(spec.namespace))
             .addTag(spec.itemTag)
+            .addTag("material-queued-at-${System.currentTimeMillis()}")
+            .addTag("material-id-${spec.id}")
+            .addTag("material-name-${spec.name}")
             .build()
         workManager.beginUniqueWork(
             spec.queueWorkName,
