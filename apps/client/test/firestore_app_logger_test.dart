@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
@@ -6,6 +7,42 @@ import 'package:frequencia_ufmg/observability/firestore_app_logger.dart';
 import 'package:frequencia_ufmg/observability/operational_log_store.dart';
 
 void main() {
+  test(
+    'persists permission diagnostic flags with correlation, without changing legacy documents',
+    () async {
+      final store = _RecordingLogStore();
+      final logger = FirestoreAppLogger(
+        store: store,
+        currentUserId: () => 'user-1',
+        platform: 'android',
+      );
+      await logger.logEvent(
+        'attendance_permission_status',
+        parameters: {
+          'operation_id': 'permission-check-1',
+          'details': jsonEncode({
+            'android_sdk': 36,
+            'foreground_location': true,
+            'precise_location': false,
+            'background_location': false,
+          }),
+        },
+      );
+      final document = store.documents.single;
+      expect(document['correlationId'], 'permission-check-1');
+      expect(
+        jsonDecode(document['details']! as String),
+        containsPair('precise_location', false),
+      );
+      await logger.logEvent('ordinary_event');
+      expect(store.documents.last.containsKey('details'), isFalse);
+      await logger.logEvent(
+        'bounded_context',
+        parameters: {'details': 'x' * 501},
+      );
+      expect((store.documents.last['details']! as String).length, 500);
+    },
+  );
   test(
     'persists batch material identity and the underlying transport failure',
     () async {

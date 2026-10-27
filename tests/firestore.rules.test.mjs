@@ -348,6 +348,14 @@ describe("operational logs", () => {
     await assertFails(setDoc(doc(dbFor("bob"), path), operationalLog()));
   });
 
+  test("owner can add bounded diagnostic details while legacy logs remain valid", async () => {
+    const db = dbFor("alice");
+    await assertSucceeds(setDoc(doc(db, logPath("alice", "permission-state")), operationalLog({
+      event: "attendance_permission_status", details: JSON.stringify({ precise_location: false, background_location: true }),
+    })));
+    await assertSucceeds(setDoc(doc(db, logPath("alice", "legacy-state")), operationalLog()));
+  });
+
   test("rejects malformed, oversized, and over-retained logs", async () => {
     const db = dbFor("alice");
     const invalidDocuments = [
@@ -360,6 +368,8 @@ describe("operational logs", () => {
       operationalLog({ screen: "x".repeat(81) }),
       operationalLog({ action: "x".repeat(81) }),
       operationalLog({ failureCode: "x".repeat(121) }),
+      operationalLog({ details: "x".repeat(501) }),
+      operationalLog({ details: { precise_location: true } }),
       operationalLog({ errorMessage: "x".repeat(501) }),
       operationalLog({ expiresAt: Timestamp.fromDate(new Date(Date.now() + 32 * 24 * 60 * 60 * 1000)) }),
       withoutField(operationalLog(), "fatal"),
