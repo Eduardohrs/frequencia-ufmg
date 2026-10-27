@@ -1,79 +1,126 @@
 import 'campus_detector.dart';
 
-/// Approximate areas for personal attendance, not official property boundaries.
-/// Rectangles are chosen here with deliberately generous margins, using public
-/// reference points from Wikidata (CC0) and UFMG's own location pages, checked
-/// 2026-10-27. These are not copied map contours or official property boundaries.
-/// No maps, geocoding services or network requests are used at runtime.
+/// Approximate ranges for personal attendance, not surveyed property boundaries.
+/// Audited 2026-10-27 against public UFMG references, Wikidata(CC0) and
+/// OpenStreetMap contributors(ODbL): https://www.openstreetmap.org/copyright .
+/// A few rectangles cover separated sites without a detailed polygon engine.
+/// The app performs only local numeric comparisons: no map, API or new dependency.
 abstract final class CampusAreas {
-  // Q132140, revision 2558195491: -19.8690878, -43.9663841.
+  // Main teaching site + ecological station + CEU. Mineirao center is excluded.
+  // UFMG reference: https://www.ufmg.br/semanadoconhecimento/2017/localizacao/
+  // OSM reference audit: relations3892557 and5462802; Wikidata Q132140.
   static final defaultArea = CampusArea(
     id: 'pampulha',
     name: 'Campus Pampulha',
-    south: -19.888,
-    north: -19.858,
-    west: -43.980,
-    east: -43.953,
+    rectangles: [
+      CampusRectangle(
+        south: -19.8745,
+        north: -19.8597,
+        west: -43.9708,
+        east: -43.9553,
+      ),
+      CampusRectangle(
+        south: -19.8866,
+        north: -19.8689,
+        west: -43.9773,
+        east: -43.9647,
+      ),
+      CampusRectangle(
+        south: -19.8704,
+        north: -19.8636,
+        west: -43.9765,
+        east: -43.9716,
+      ),
+    ],
   );
 
   static final List<CampusArea> values = List.unmodifiable([
     defaultArea,
-    // UFMG Faculty of Medicine's own location section (Alfredo Balena, 190):
-    // https://www.medicina.ufmg.br/ reference -19.9245609, -43.9313758.
-    // Q5428838 is deliberately NOT used: its coordinate incorrectly points to
-    // Pampulha rather than the school's published address in the city center.
+    // UFMG reference: https://www.medicina.ufmg.br/ (Alfredo Balena190).
+    // OSM reference audit: way314938410. Q5428838 points to Pampulha and is NOT used.
     CampusArea(
       id: 'saude',
       name: 'Campus Saúde',
-      south: -19.927,
-      north: -19.922,
-      west: -43.933,
-      east: -43.926,
+      rectangles: [
+        CampusRectangle(
+          south: -19.9262,
+          north: -19.9226,
+          west: -43.9316,
+          east: -43.927,
+        ),
+      ],
     ),
-    // UFMG publishes the campus reference -16.6853399, -43.8445957 at:
-    // https://www.ufmg.br/semanadoconhecimento/2017/localizacao/
-    // Address confirmed by https://www.ufmg.br/montesclaros/historico/ .
-    // Generous rectangle includes the teaching area and the campus farm.
+    // UFMG reference: https://www.ufmg.br/semanadoconhecimento/2017/localizacao/
+    // Two broad ranges cover the mapped teaching site and farm without a diagonal polygon.
+    // OSM reference audit: relation7824059.
     CampusArea(
       id: 'montes_claros',
       name: 'Campus Montes Claros',
-      south: -16.693,
-      north: -16.663,
-      west: -43.854,
-      east: -43.834,
+      rectangles: [
+        CampusRectangle(
+          south: -16.678,
+          north: -16.6654,
+          west: -43.8524,
+          east: -43.839,
+        ),
+        CampusRectangle(
+          south: -16.6915,
+          north: -16.6768,
+          west: -43.8483,
+          east: -43.8358,
+        ),
+      ],
     ),
-    // Q5428829, revision 2541495363: -19.925667, -43.936686.
+    // Wikidata Q5428829; OSM audit way29442348; unit plus roughly40m margins.
     CampusArea(
       id: 'direito',
       name: 'Faculdade de Direito',
-      south: -19.927,
-      north: -19.924,
-      west: -43.938,
-      east: -43.935,
+      rectangles: [
+        CampusRectangle(
+          south: -19.9265,
+          north: -19.9251,
+          west: -43.9374,
+          east: -43.9361,
+        ),
+      ],
     ),
-    // Q10274572, revision 2482336269: -19.932588438856126, -43.932262406747334.
+    // Wikidata Q10274572; OSM audit way133000266; unit plus roughly40m margins.
     CampusArea(
       id: 'arquitetura',
       name: 'Escola de Arquitetura',
-      south: -19.935,
-      north: -19.931,
-      west: -43.934,
-      east: -43.930,
+      rectangles: [
+        CampusRectangle(
+          south: -19.9341,
+          north: -19.9321,
+          west: -43.9331,
+          east: -43.9314,
+        ),
+      ],
     ),
-    // Q105062226: Casa do Padre Toledo, -21.110949, -44.176467.
-    // Broad central-area estimate, not a surveyed outline of the cultural sites.
+    // Museu + Biblioteca together, with Quatro Cantos in a separated rectangle.
+    // Official addresses: https://www.ufmg.br/campustiradentes/fale-conosco-2/
+    // Wikidata Q105062226; OSM audit ways1042400242/1042400245/1167234133.
     CampusArea(
       id: 'tiradentes',
       name: 'Campus Cultural de Tiradentes',
-      south: -21.115,
-      north: -21.107,
-      west: -44.181,
-      east: -44.172,
+      rectangles: [
+        CampusRectangle(
+          south: -21.1116,
+          north: -21.1104,
+          west: -44.1774,
+          east: -44.1759,
+        ),
+        CampusRectangle(
+          south: -21.1095,
+          north: -21.1086,
+          west: -44.1776,
+          east: -44.1766,
+        ),
+      ],
     ),
   ]);
 
-  // Unknown/unconfigured areas stay explicit; never silently use Pampulha when
-  // a caller requests another campus, which could turn an unknown into absence.
+  // Unknown area must not silently fall back to Pampulha and imply absence.
   static CampusArea? find(String id) {
     for (final area in values) {
       if (area.id == id) return area;

@@ -27,12 +27,8 @@ final class LocationReading {
   final DateTime recordedAt;
 }
 
-/// An intentionally approximate rectangle, including a margin outside campus.
-/// Personal attendance does not need building or property-line precision.
-final class CampusArea {
-  CampusArea({
-    required this.id,
-    required this.name,
+final class CampusRectangle {
+  CampusRectangle({
     required this.south,
     required this.north,
     required this.west,
@@ -40,14 +36,10 @@ final class CampusArea {
   }) {
     GeoPoint(south, west);
     GeoPoint(north, east);
-    if (id.trim().isEmpty ||
-        name.trim().isEmpty ||
-        south >= north ||
-        west >= east) {
-      throw ArgumentError('Invalid campus area');
+    if (south >= north || west >= east) {
+      throw ArgumentError('Invalid campus rectangle');
     }
   }
-  final String id, name;
   final double south, north, west, east;
 
   bool contains(GeoPoint point) =>
@@ -55,6 +47,24 @@ final class CampusArea {
       point.latitude <= north &&
       point.longitude >= west &&
       point.longitude <= east;
+}
+
+/// A campus may have separated sites. A few approximate rectangles keep those
+/// sites covered without accepting every intervening street or stadium.
+final class CampusArea {
+  CampusArea({
+    required this.id,
+    required this.name,
+    required List<CampusRectangle> rectangles,
+  }) : rectangles = List.unmodifiable(rectangles) {
+    if (id.trim().isEmpty || name.trim().isEmpty || rectangles.isEmpty) {
+      throw ArgumentError('Invalid campus area');
+    }
+  }
+  final String id, name;
+  final List<CampusRectangle> rectangles;
+
+  bool contains(GeoPoint point) => rectangles.any((r) => r.contains(point));
 }
 
 enum CampusDetectionReason { inside, outside, poorAccuracy, stale, future }
@@ -108,6 +118,7 @@ final class CampusDetector {
       Map.unmodifiable({
         'campus_id': area.id,
         'campus_name': area.name,
+        'area_rectangles': area.rectangles.length,
         'reason': reason.name,
         'ping_state': state.code,
         'accuracy_m': reading.accuracyMeters,

@@ -4,14 +4,8 @@ import 'package:frequencia_ufmg/domain/campus_detector.dart';
 
 void main() {
   final now = DateTime.utc(2026, 10, 27, 12);
-  final area = CampusArea(
-    id: 'test',
-    name: 'Test',
-    south: 0,
-    north: .01,
-    west: 0,
-    east: .01,
-  );
+  final rectangle = CampusRectangle(south: 0, north: .01, west: 0, east: .01);
+  final area = CampusArea(id: 'test', name: 'Test', rectangles: [rectangle]);
   final detector = CampusDetector(
     area: area,
     maxAge: const Duration(minutes: 2),
@@ -89,6 +83,7 @@ void main() {
   test('diagnostics identify area, decision and reading quality', () {
     final fields = classify(.005, .005).diagnostics;
     expect(fields, containsPair('campus_id', 'test'));
+    expect(fields, containsPair('area_rectangles', 1));
     expect(fields, containsPair('campus_name', 'Test'));
     expect(fields, containsPair('reason', 'inside'));
     expect(fields, containsPair('ping_state', 'no_campus'));
@@ -122,9 +117,7 @@ void main() {
       (0.0, .01, .01, 0.0),
     ]) {
       expect(
-        () => CampusArea(
-          id: 'test',
-          name: 'Test',
+        () => CampusRectangle(
           south: values.$1,
           north: values.$2,
           west: values.$3,
@@ -134,27 +127,18 @@ void main() {
       );
     }
     expect(
-      () => CampusArea(
-        id: '',
-        name: 'Test',
-        south: 0,
-        north: .01,
-        west: 0,
-        east: .01,
-      ),
+      () => CampusArea(id: '', name: 'Test', rectangles: [rectangle]),
       throwsArgumentError,
     );
     expect(
-      () => CampusArea(
-        id: 'test',
-        name: '',
-        south: 0,
-        north: .01,
-        west: 0,
-        east: .01,
-      ),
+      () => CampusArea(id: 'test', name: '', rectangles: [rectangle]),
       throwsArgumentError,
     );
+    expect(
+      () => CampusArea(id: 'empty', name: 'Empty', rectangles: []),
+      throwsArgumentError,
+    );
+    expect(() => area.rectangles.clear(), throwsUnsupportedError);
     expect(
       () => CampusDetector(
         area: area,
