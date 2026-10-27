@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'package:frequencia_ufmg/observability/firestore_app_logger.dart';
+import 'package:frequencia_ufmg/observability/operational_log_store.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
@@ -51,6 +54,92 @@ SessionRecord session({
 );
 
 void main() {
+  test(
+    'agenda diagnostics survive the actual production log serializer',
+    () async {
+      final store = _ProductionLogStore();
+      final logger = FirestoreAppLogger(
+        store: store,
+        currentUserId: () => 'owner',
+        platform: 'web',
+      );
+      // Control: unsupported top-level fields are intentionally not persisted.
+      await logger.logEvent(
+        'control',
+        parameters: {'course_id': 'poo', 'stage': 'read'},
+      );
+      expect(store.documents.single['details'], isNull);
+      final documents = _Store();
+      final repository = FirestoreAcademicDateRepository(
+        userId: 'owner',
+        store: documents,
+        logger: logger,
+      );
+      await repository.listDates('poo');
+      await Future<void>.delayed(Duration.zero);
+      final success = store.documents.singleWhere(
+        (d) => d['event'] == 'agenda_dates_read_succeeded',
+      );
+      final fields =
+          jsonDecode(success['details']! as String) as Map<String, dynamic>;
+      expect(fields, containsPair('course_id', 'poo'));
+      expect(fields, containsPair('count', 0));
+      expect(fields, containsPair('stage', 'academic_dates_read'));
+      expect(success['durationMs'], isA<int>());
+      expect(success['correlationId'], isNotEmpty);
+      documents.error = FirebaseException(
+        plugin: 'cloud_firestore',
+        code: 'permission-denied',
+        message: 'password=synthetic-secret',
+      );
+      await expectLater(
+        repository.listDates('poo'),
+        throwsA(isA<FirebaseException>()),
+      );
+      await Future<void>.delayed(Duration.zero);
+      final failed = store.documents.lastWhere(
+        (d) => d['operation'] == 'agenda_dates_read',
+      );
+      final diagnostic =
+          jsonDecode(failed['errorDetails']! as String) as Map<String, dynamic>;
+      expect(diagnostic['course_id'], 'poo');
+      expect(diagnostic['stage'], 'store_read');
+      expect(diagnostic['reason'], 'store_read_failed');
+      expect(diagnostic['cause_code'], 'permission-denied');
+      expect(failed['errorCode'], 'agenda_read_failed');
+      expect(store.documents.toString(), isNot(contains('synthetic-secret')));
+      recordAgendaPresentation(
+        logger: logger,
+        screen: 'home',
+        importedCount: 4,
+        entryCount: 5,
+        unavailableCourses: List.generate(50, (i) => 'course-$i-${'x' * 128}'),
+        isLocalCopy: true,
+      );
+      await Future<void>.delayed(Duration.zero);
+      final presentation = store.documents.last;
+      final raw = presentation['details']! as String;
+      expect(raw.length, lessThanOrEqualTo(500));
+      final counts = jsonDecode(raw) as Map<String, dynamic>;
+      expect(counts['unavailable_count'], 50);
+      expect(counts['imported_count'], 4);
+      expect(counts['is_local_copy'], isTrue);
+      expect(counts['truncated'], isTrue);
+      expect(presentation['screen'], 'home');
+      emitAgendaEvent(_SynchronousFailureLogger(), 'unavailable_logger', {
+        'stage': 'read',
+      });
+      recordAgendaFailure(
+        _SynchronousFailureLogger(),
+        StateError('store'),
+        StackTrace.current,
+        'read',
+        {'stage': 'read'},
+      );
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
   test('standalone assignments appear without creating attendance lessons', () {
     final deadline = date('Parte 2', instant.add(const Duration(days: 1)));
     final original = session();
@@ -274,5 +363,31 @@ class _Logger implements AppLogger {
     Map<String, Object>? parameters,
   }) async {
     errors.add({'context': context, ...?parameters});
+  }
+}
+
+class _ProductionLogStore implements OperationalLogStore {
+  final documents = <Map<String, Object?>>[];
+  @override
+  Future<void> add(String userId, Map<String, Object?> document) async {
+    documents.add(document);
+  }
+}
+
+class _SynchronousFailureLogger implements AppLogger {
+  @override
+  Future<void> logEvent(String name, {Map<String, Object>? parameters}) {
+    throw StateError('sync logger failure');
+  }
+
+  @override
+  Future<void> recordError(
+    Object error,
+    StackTrace stackTrace, {
+    required String context,
+    bool fatal = false,
+    Map<String, Object>? parameters,
+  }) {
+    throw StateError('sync logger failure');
   }
 }
