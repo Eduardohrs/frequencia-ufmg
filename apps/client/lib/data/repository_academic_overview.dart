@@ -1,4 +1,3 @@
-import 'dart:async';
 import '../backend/python_backend_transport.dart';
 import 'academic_agenda.dart';
 import '../observability/app_logger.dart';
@@ -80,20 +79,17 @@ final class RepositoryAcademicOverviewRepository
                 );
               } catch (error, stack) {
                 unavailable.add(course.id);
-                unawaited(
-                  logger
-                      .recordError(
-                        error,
-                        stack,
-                        context: 'agenda_course_read',
-                        parameters: {
-                          'course_id': course.id,
-                          'course_code': course.code,
-                          'stage': 'academic_dates_read',
-                          'operation_id': currentOperationId!,
-                        },
-                      )
-                      .catchError((Object _) {}),
+                recordAgendaFailure(
+                  logger,
+                  error,
+                  stack,
+                  'agenda_course_read',
+                  {
+                    'course_id': course.id,
+                    'course_code': course.code,
+                    'stage': 'academic_dates_read',
+                    'operation_id': currentOperationId!,
+                  },
                 );
               }
             }(),
@@ -106,23 +102,17 @@ final class RepositoryAcademicOverviewRepository
         throw StateError('The academic overview has too many sessions.');
       }
       await dateReads;
-      unawaited(
-        logger
-            .logEvent(
-              'agenda_overview_loaded',
-              parameters: {
-                'operation_id': currentOperationId!,
-                'stage': 'academic_dates_read',
-                'course_count': courses.length,
-                'imported_count': datesByCourse.values.fold<int>(
-                  0,
-                  (sum, dates) => sum + dates.length,
-                ),
-                'unavailable_courses': unavailable.join(','),
-              },
-            )
-            .catchError((Object _) {}),
-      );
+      emitAgendaEvent(logger, 'agenda_overview_loaded', {
+        'operation_id': currentOperationId!,
+        'stage': 'academic_dates_read',
+        'course_count': courses.length,
+        'imported_count': datesByCourse.values.fold<int>(
+          0,
+          (sum, dates) => sum + dates.length,
+        ),
+        'unavailable_count': unavailable.length,
+        'unavailable_courses': unavailable.join(','),
+      });
       return AcademicOverviewSnapshot(
         datesByCourse: datesByCourse,
         unavailableDateCourses: unavailable,

@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../backend/python_backend_transport.dart';
 import '../observability/app_logger.dart';
 import '../observability/audited_operation.dart';
+import '../observability/error_log_details.dart';
 import 'academic_records.dart';
 import 'calendar_status.dart';
 import 'document_store.dart';
@@ -69,32 +71,20 @@ final class FirestoreAcademicDateRepository implements AcademicDateRepository {
         }
         parameters.remove('document_id');
         parameters['stage'] = 'academic_dates_read';
-        _deliver(
-          logger.logEvent(
-            'agenda_dates_read_succeeded',
-            parameters: {
-              ...parameters,
-              'count': dates.length,
-              'duration_ms': timer.elapsedMilliseconds,
-            },
-          ),
-        );
+        emitAgendaEvent(logger, 'agenda_dates_read_succeeded', {
+          ...parameters,
+          'count': dates.length,
+          'duration_ms': timer.elapsedMilliseconds,
+        });
         return dates;
       } catch (error, stack) {
-        _deliver(
-          logger.recordError(
-            error,
-            stack,
-            context: 'agenda_dates_read',
-            parameters: {
-              ...parameters,
-              'duration_ms': timer.elapsedMilliseconds,
-              'reason': error is FormatException
-                  ? 'invalid_date_document'
-                  : 'store_read_failed',
-            },
-          ),
-        );
+        recordAgendaFailure(logger, error, stack, 'agenda_dates_read', {
+          ...parameters,
+          'duration_ms': timer.elapsedMilliseconds,
+          'reason': error is FormatException
+              ? 'invalid_date_document'
+              : 'store_read_failed',
+        });
         rethrow;
       }
     },
@@ -182,17 +172,85 @@ void recordAgendaPresentation({
   required int entryCount,
   required Iterable<String> unavailableCourses,
   bool isLocalCopy = false,
-}) => _deliver(
-  logger.logEvent(
-    'agenda_presented',
-    parameters: {
-      'operation_id': newCorrelationId('agenda'),
-      'stage': 'presentation',
-      'screen': screen,
-      'imported_count': importedCount,
-      'entry_count': entryCount,
-      'unavailable_courses': unavailableCourses.take(50).join(','),
-      'is_local_copy': isLocalCopy,
-    },
+}) => emitAgendaEvent(logger, 'agenda_presented', {
+  'operation_id': newCorrelationId('agenda'),
+  'stage': 'presentation',
+  'screen': screen,
+  'imported_count': importedCount,
+  'entry_count': entryCount,
+  'unavailable_count': unavailableCourses.length,
+  'unavailable_courses': unavailableCourses.take(50).join(','),
+  'is_local_copy': isLocalCopy,
+});
+
+void emitAgendaEvent(
+  AppLogger logger,
+  String event,
+  Map<String, Object> fields,
+) => _deliver(
+  Future<void>.sync(
+    () => logger.logEvent(
+      event,
+      parameters: {...fields, 'details': _agendaDetails(fields)},
+    ),
   ),
 );
+
+void recordAgendaFailure(
+  AppLogger logger,
+  Object error,
+  StackTrace stack,
+  String context,
+  Map<String, Object> fields,
+) => _deliver(
+  Future<void>.sync(
+    () => logger.recordError(
+      _AgendaReadFailure(error, fields),
+      stack,
+      context: context,
+      parameters: fields,
+    ),
+  ),
+);
+
+String _agendaDetails(Map<String, Object> fields) {
+  final details = Map<String, Object>.of(fields)
+    ..remove('operation_id')
+    ..remove('duration_ms')
+    ..remove('screen');
+  var encoded = jsonEncode(details);
+  if (encoded.length <= 500) return encoded;
+  details['truncated'] = true;
+  // Shrink values before encoding; never cut the serialized JSON in the store.
+  while ((encoded = jsonEncode(details)).length > 500) {
+    final longest = details.entries
+        .where((e) => e.value is String)
+        .reduce(
+          (a, b) =>
+              (a.value as String).length >= (b.value as String).length ? a : b,
+        );
+    final value = longest.value as String;
+    details[longest.key] = value.substring(0, value.length ~/ 2);
+  }
+  return encoded;
+}
+
+final class _AgendaReadFailure implements StructuredAppError {
+  _AgendaReadFailure(this.cause, Map<String, Object> fields)
+    : fields = Map.unmodifiable(fields);
+  final Object cause;
+  final Map<String, Object> fields;
+  @override
+  String get logCode => 'agenda_read_failed';
+  @override
+  String? get logMessage => ErrorLogDetails.from(cause).message;
+  @override
+  String get logDetails {
+    final error = ErrorLogDetails.from(cause);
+    return _agendaDetails({
+      ...fields,
+      'cause_type': error.type,
+      'cause_code': ?error.code,
+    });
+  }
+}
