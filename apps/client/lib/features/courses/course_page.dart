@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../auth/auth_user.dart';
 import '../../backend/python_backend_transport.dart';
 import '../../backend/academic_sync_progress.dart';
 import '../../data/academic_records.dart';
+import '../../data/attendance_permissions.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/academic_period.dart';
 import '../../data/calendar_status.dart';
@@ -22,6 +24,7 @@ import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import '../attendance/absence_dashboard_page.dart';
 import '../attendance/attendance_page.dart';
+import '../attendance/attendance_permissions_page.dart';
 import '../schedule/general_calendar_page.dart';
 import '../ufmg/ufmg_connection_page.dart';
 import '../ufmg/academic_sync_controller.dart';
@@ -32,7 +35,7 @@ import 'course_hub_page.dart';
 typedef CourseIdGenerator = String Function();
 typedef CurrentTime = DateTime Function();
 
-enum _ProfileAction { ufmgAccount, signOut }
+enum _ProfileAction { ufmgAccount, permissions, signOut }
 
 enum _CourseTileAction { edit, delete }
 
@@ -59,6 +62,7 @@ class CoursePage extends StatefulWidget {
     this.sessionWritesEnabled = false,
     this.overviewReadsEnabled = false,
     this.androidOfflineQueueEnabled = false,
+    this.attendancePermissions,
     CourseIdGenerator? idGenerator,
     CurrentTime? now,
     super.key,
@@ -85,6 +89,7 @@ class CoursePage extends StatefulWidget {
   final bool sessionWritesEnabled;
   final bool overviewReadsEnabled;
   final bool androidOfflineQueueEnabled;
+  final AttendancePermissionsGateway? attendancePermissions;
   final CourseIdGenerator idGenerator;
   final CurrentTime now;
 
@@ -544,6 +549,21 @@ class _CoursePageState extends State<CoursePage> {
     switch (action) {
       case _ProfileAction.ufmgAccount:
         await _openUFMGConnection();
+      case _ProfileAction.permissions:
+        await runAuditedOperation(
+          logger: widget.logger,
+          operation: AuditedOperation.attendancePermissionsOpen,
+          action: () => Navigator.of(context).push<void>(
+            MaterialPageRoute(
+              builder: (_) => AttendancePermissionsPage(
+                gateway:
+                    widget.attendancePermissions ??
+                    const AndroidAttendancePermissions(),
+                logger: widget.logger,
+              ),
+            ),
+          ),
+        );
       case _ProfileAction.signOut:
         await widget.onSignOut();
     }
@@ -735,6 +755,17 @@ class _CoursePageState extends State<CoursePage> {
         ),
       ),
       itemBuilder: (context) => [
+        if (widget.attendancePermissions != null ||
+            (!kIsWeb && defaultTargetPlatform == TargetPlatform.android))
+          const PopupMenuItem(
+            key: Key('profile-permissions'),
+            value: _ProfileAction.permissions,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.settings_outlined),
+              title: Text('Permissões do aplicativo'),
+            ),
+          ),
         if (widget.ufmgSessionGateway != null)
           const PopupMenuItem(
             key: Key('profile-ufmg-account'),

@@ -1,41 +1,31 @@
 package br.ufmg.frequencia.frequencia_ufmg
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.core.app.ActivityCompat
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity: FlutterActivity() {
+    private var attendancePermissions: AttendancePermissionsBridge? = null
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        attendancePermissions = AttendancePermissionsBridge(this)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AttendancePermissionsBridge.CHANNEL)
+            .setMethodCallHandler { call, result -> attendancePermissions!!.handle(call.method, call.arguments, result) }
         val bridge = MaterialDownloadBridge(applicationContext)
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             MaterialDownloadBridge.CHANNEL,
         ).setMethodCallHandler { call, result ->
-            if (call.method == "enqueue" || call.method == "beginPreparation") requestNotificationPermissionIfNeeded()
+            if (call.method == "beginPreparation") attendancePermissions?.requestDownloadNotificationsIfNeeded(
+                (call.arguments as? Map<*, *>)?.get("operation_id") as? String,
+            )
             bridge.handle(call.method, call.arguments, result)
         }
     }
 
-    private fun requestNotificationPermissionIfNeeded() {
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                NOTIFICATION_PERMISSION_REQUEST,
-            )
-        }
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        attendancePermissions?.onRequestPermissionsResult(requestCode, grantResults)
     }
 
-    companion object {
-        private const val NOTIFICATION_PERMISSION_REQUEST = 42091
-    }
 }

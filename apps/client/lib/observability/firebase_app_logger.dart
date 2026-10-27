@@ -9,6 +9,7 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 
 import 'app_logger.dart';
+import 'analytics_parameters.dart';
 import 'error_log_details.dart';
 
 class FirebaseAppLogger implements AppLogger {
@@ -21,7 +22,7 @@ class FirebaseAppLogger implements AppLogger {
 
   @override
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
-    final safeParameters = _sanitizeParameters(parameters);
+    final safeParameters = sanitizeAnalyticsParameters(parameters);
     await Future.wait([
       _analytics.logEvent(name: name, parameters: safeParameters),
       if (_crashlytics case final crashlytics?)
@@ -40,7 +41,7 @@ class FirebaseAppLogger implements AppLogger {
     Map<String, Object>? parameters,
   }) async {
     final details = ErrorLogDetails.from(error);
-    final safeParameters = _sanitizeParameters(parameters);
+    final safeParameters = sanitizeAnalyticsParameters(parameters);
     await Future.wait([
       _analytics.logEvent(
         name: 'client_error',
@@ -66,12 +67,4 @@ class FirebaseAppLogger implements AppLogger {
         ),
     ]);
   }
-}
-
-Map<String, Object>? _sanitizeParameters(Map<String, Object>? parameters) {
-  if (parameters == null) return null;
-  return parameters.map(
-    (key, value) =>
-        MapEntry(key, value is String ? sanitizeLogText(value) ?? '' : value),
-  );
 }

@@ -9,6 +9,8 @@ import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/backend/academic_sync_progress.dart';
 import 'fixtures/academic_sync_fixture.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
+import 'package:frequencia_ufmg/data/attendance_permissions.dart';
+import 'fixtures/attendance_permission_fixture.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/document_store.dart';
 import 'package:frequencia_ufmg/data/calendar_status.dart';
@@ -27,6 +29,52 @@ void main() {
     displayName: 'Eduardo',
   );
   final now = DateTime.utc(2026, 9, 27, 12);
+
+  for (final injected in [true, false]) {
+    testWidgets(
+      'profile opens the permission screen without touching attendance (injected=$injected)',
+      (tester) async {
+        const channel = MethodChannel(
+          'br.ufmg.frequencia.frequencia_ufmg/attendance_permissions',
+        );
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              channel,
+              (_) async => readyPermissionSnapshot,
+            );
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null),
+        );
+        final logger = _RecordingAppLogger();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: CoursePage(
+              repository: _FakeCourseRepository(),
+              meetingRepository: _FakeMeetingRepository(),
+              sessionRepository: _FakeSessionRepository(),
+              user: user,
+              logger: logger,
+              onSignOut: () async {},
+              now: () => now,
+              attendancePermissions: injected ? _PermissionGateway() : null,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Perfil e configurações'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('profile-permissions')));
+        await tester.pumpAndSettle();
+        expect(find.text('Acesso à localização pronto'), findsOneWidget);
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        expect(find.text('Minhas disciplinas'), findsOneWidget);
+      },
+    );
+  }
 
   test('derives the academic term from the calendar half-year', () {
     expect(academicTermFor(DateTime(2026, 1, 1)), '2026-1');
@@ -2367,6 +2415,14 @@ final class _ProgressUFMGGateway extends _UFMGGateway
   @override
   Stream<AcademicSyncProgress> watchSyncProgress(String operationId) =>
       progress.watchSyncProgress(operationId);
+}
+
+final class _PermissionGateway implements AttendancePermissionsGateway {
+  @override
+  Future<AttendancePermissionStatus> read() async =>
+      AttendancePermissionStatus.fromMap(readyPermissionSnapshot);
+  @override
+  Future<void> perform(AttendancePermissionAction action) async {}
 }
 
 final class _FakeUFMGSyncSchedule implements UFMGSyncScheduleGateway {

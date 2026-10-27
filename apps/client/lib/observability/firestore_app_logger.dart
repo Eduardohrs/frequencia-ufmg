@@ -47,6 +47,7 @@ final class FirestoreAppLogger implements AppLogger {
         screen: _stringParameter(parameters, 'screen'),
         action: _stringParameter(parameters, 'action'),
         failureCode: _stringParameter(parameters, 'failure_code'),
+        details: _stringParameter(parameters, 'details'),
       ),
     );
   }
@@ -102,6 +103,7 @@ final class FirestoreAppLogger implements AppLogger {
     String? screen,
     String? action,
     String? failureCode,
+    String? details,
     String? errorType,
     String? errorCode,
     String? errorMessage,
@@ -122,6 +124,7 @@ final class FirestoreAppLogger implements AppLogger {
     'screen': _safeNullable(screen, 80),
     'action': _safeNullable(action, 80),
     'failureCode': _safeNullable(failureCode, 120),
+    if (details != null) 'details': _safe(details, 500),
     'errorType': _safeNullable(errorType, 120),
     'errorCode': _safeNullable(errorCode, 120),
     'errorMessage': _safeNullable(errorMessage, 500),

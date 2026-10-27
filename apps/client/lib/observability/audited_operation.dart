@@ -16,6 +16,9 @@ String newCorrelationId(String label) {
 enum AuditedOperation {
   googleSignIn('auth_google_sign_in'),
   logout('auth_logout'),
+  attendancePermissionsOpen('attendance_permissions_open'),
+  attendancePermissionsRead('attendance_permissions_read'),
+  attendancePermissionAction('attendance_permission_action'),
   courseList('firestore_course_list'),
   courseCreate('course_create'),
   courseUpdate('course_update'),

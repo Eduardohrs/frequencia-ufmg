@@ -56,7 +56,8 @@ service cloud.firestore {
         'errorDetails',
         'fatal'
       ];
-      return hasExactFields(data, fields)
+      return data.keys().hasAll(fields)
+        && data.keys().hasOnly(fields.concat(['details']))
         && data.schemaVersion == 1
         && data.occurredAt is timestamp
         && data.occurredAt == request.time
@@ -83,6 +84,7 @@ service cloud.firestore {
         && isNullableString(data.errorCode, 120)
         && isNullableString(data.errorMessage, 500)
         && isNullableString(data.errorDetails, 500)
+        && isNullableString(data.get('details', null), 500)
         && data.fatal is bool;
     }
 
