@@ -4,10 +4,36 @@ useDefault = true
 # Firebase client API keys identify the public Android/web app and are not
 # authentication credentials. Only Google API-key findings on the two generated
 # client configuration lines are exempted; every other detector still applies.
-[[allowlists]]
+[[rules]]
+id = "generic-api-key"
+
+# Rule-scoped allowlists work with the CI's Gitleaks 8.24.3 as well as newer
+# versions; top-level [[allowlists]] is silently ignored by 8.24.3.
+[[rules.allowlists]]
 description = "Public Firebase client configuration"
 condition = "AND"
-targetRules = ["gcp-api-key", "generic-api-key"]
+regexTarget = "line"
+paths = [
+  '''^apps/client/android/app/google-services\.json$''',
+  '''^apps/client/lib/firebase_options\.dart$''',
+]
+regexes = ['''(current_key|apiKey)''']
+
+# SharedPreferences entry name, not a credential. Match only this literal in
+# this file; actual API keys in the same file must remain detectable.
+[[rules.allowlists]]
+description = "Public local campus preference identifier"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^apps/client/lib/data/campus_location\.dart$''']
+regexes = ['''^attendance\.campus\.v1$''']
+
+[[rules]]
+id = "gcp-api-key"
+
+[[rules.allowlists]]
+description = "Public Firebase client configuration"
+condition = "AND"
 regexTarget = "line"
 paths = [
   '''^apps/client/android/app/google-services\.json$''',
