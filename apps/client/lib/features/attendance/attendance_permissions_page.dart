@@ -4,8 +4,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../../data/attendance_permissions.dart';
+import '../../data/campus_location.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
+import 'campus_location_page.dart';
 
 class AttendancePermissionsPage extends StatefulWidget {
   const AttendancePermissionsPage({
@@ -195,6 +197,30 @@ class _AttendancePermissionsPageState extends State<AttendancePermissionsPage>
               const SizedBox(height: 12),
               const Text(
                 'A localização permite estimar a presença no campus. Seus registros podem ser corrigidos manualmente.',
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                key: const Key('open-campus-location'),
+                icon: const Icon(Icons.location_on_outlined),
+                label: const Text('Campus e localização'),
+                onPressed: _busy
+                    ? null
+                    : () => runAuditedOperation(
+                        logger: widget.logger,
+                        operation: AuditedOperation.campusLocationOpen,
+                        action: () => Navigator.of(context).push<void>(
+                          MaterialPageRoute(
+                            builder: (_) => CampusLocationPage(
+                              selection: LocalCampusSelection(),
+                              checker: DeviceCampusCheck(
+                                permissions: widget.gateway,
+                                logger: widget.logger,
+                              ),
+                              logger: widget.logger,
+                            ),
+                          ),
+                        ),
+                      ),
               ),
               const SizedBox(height: 20),
               if (_failed)

@@ -4,10 +4,39 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/data/attendance_permissions.dart';
 import 'package:frequencia_ufmg/features/attendance/attendance_permissions_page.dart';
+import 'package:frequencia_ufmg/features/attendance/campus_location_page.dart';
+import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:frequencia_ufmg/observability/app_logger.dart';
 import 'fixtures/attendance_permission_fixture.dart';
 
 void main() {
+  testWidgets(
+    'opens campus selection without requesting location and returns safely',
+    (tester) async {
+      SharedPreferencesAsyncPlatform.instance =
+          InMemorySharedPreferencesAsync.empty();
+      final gateway = _Gateway();
+      final logger = _Logger();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AttendancePermissionsPage(gateway: gateway, logger: logger),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('open-campus-location')));
+      await tester.pumpAndSettle();
+      expect(find.byType(CampusLocationPage), findsOneWidget);
+      expect(find.text('Campus Pampulha'), findsOneWidget);
+      expect(gateway.actions, isEmpty);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(
+        logger.events.any((e) => e.$1 == 'campus_location_open_succeeded'),
+        isTrue,
+      );
+    },
+  );
   Future<void> show(WidgetTester tester, _Gateway gateway, _Logger logger) =>
       tester.pumpWidget(
         MaterialApp(
