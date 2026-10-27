@@ -108,6 +108,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('month-calendar-grid')), findsOneWidget);
     expect(find.text('DCC203'), findsNWidgets(2));
+    expect(find.text('DCC203 · Sem chamada'), findsOneWidget);
     expect(find.text('MAT001'), findsNothing);
     expect(find.text('+1'), findsOneWidget);
     expect(find.byIcon(Icons.assignment_outlined), findsOneWidget);
@@ -119,10 +120,11 @@ void main() {
 
     await tester.tap(find.text('Lista'));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('calendar-course-mark-poo')), findsNWidgets(3));
+    expect(find.byKey(const Key('calendar-course-mark-poo')), findsNWidgets(4));
     expect(find.text('DCC203 • 16/09/2026'), findsNWidgets(3));
     expect(find.text('MAT001 • 17/09/2026'), findsNothing);
-    expect(find.text('DCC203 • 18/09/2026'), findsNothing);
+    expect(find.text('DCC203 • 18/09/2026'), findsOneWidget);
+    expect(find.textContaining('Aula sem chamada'), findsWidgets);
     expect(find.text('12:00 • Reposição'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('calendar-course-filter')));

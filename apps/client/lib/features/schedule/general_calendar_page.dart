@@ -1,3 +1,7 @@
+import 'package:flutter/foundation.dart';
+import '../../data/python_overview_repository.dart';
+import '../../backend/python_backend_transport.dart';
+import '../../data/academic_agenda.dart';
 import 'package:flutter/material.dart';
 import 'package:timezone/timezone.dart' as tz;
 
@@ -16,15 +20,21 @@ class GeneralCalendarPage extends StatefulWidget {
     required this.now,
     this.initialCourseId,
     this.initialSessionsByCourse,
+    this.overviewUpdates,
+    this.datesByCourse = const {},
+    this.unavailableDateCourses = const {},
     super.key,
   });
 
+  final ValueListenable<AcademicOverviewSnapshot?>? overviewUpdates;
   final List<CourseRecord> courses;
   final SessionRepository repository;
   final tz.Location location;
   final DateTime Function() now;
   final String? initialCourseId;
   final Map<String, List<SessionRecord>>? initialSessionsByCourse;
+  final Map<String, List<PythonMoodleDate>> datesByCourse;
+  final Set<String> unavailableDateCourses;
 
   @override
   State<GeneralCalendarPage> createState() => _GeneralCalendarPageState();
@@ -44,8 +54,25 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     _courseId = widget.initialCourseId;
     final localNow = tz.TZDateTime.from(widget.now(), widget.location);
     _month = DateTime(localNow.year, localNow.month);
+    widget.overviewUpdates?.addListener(_overviewChanged);
     _load();
   }
+
+  @override
+  void dispose() {
+    widget.overviewUpdates?.removeListener(_overviewChanged);
+    super.dispose();
+  }
+
+  void _overviewChanged() {
+    _load();
+  }
+
+  Map<String, List<PythonMoodleDate>> get _datesByCourse =>
+      widget.overviewUpdates?.value?.datesByCourse ?? widget.datesByCourse;
+  Set<String> get _unavailableDateCourses =>
+      widget.overviewUpdates?.value?.unavailableDateCourses ??
+      widget.unavailableDateCourses;
 
   Future<void> _load() async {
     setState(() {
@@ -53,27 +80,24 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
       _failed = false;
     });
     try {
-      final initial = widget.initialSessionsByCourse;
-      final loaded = initial != null
-          ? [
-              for (final course in widget.courses)
-                [
-                  for (final session
-                      in initial[course.id] ?? const <SessionRecord>[])
-                    _CalendarEntry(course, session),
-                ],
-            ]
-          : await Future.wait([
-              for (final course in widget.courses)
-                widget.repository
-                    .listSessions(course.id)
-                    .then(
-                      (sessions) => [
-                        for (final session in sessions)
-                          _CalendarEntry(course, session),
-                      ],
-                    ),
-            ]);
+      final loaded = await Future.wait([
+        for (final course in widget.courses)
+          () async {
+            final sessions =
+                (widget.overviewUpdates?.value?.sessionsByCourse ??
+                    widget.initialSessionsByCourse)?[course.id] ??
+                await widget.repository.listSessions(course.id);
+            return [
+              for (final event in courseAgenda(
+                course,
+                sessions,
+                _datesByCourse[course.id] ?? [],
+                includeLessons: true,
+              ))
+                _CalendarEntry(course, event),
+            ];
+          }(),
+      ]);
       final entries = loaded.expand((items) => items).toList()
         ..sort((a, b) => a.session.startsAt.compareTo(b.session.startsAt));
       if (mounted) setState(() => _entries = entries);
@@ -85,12 +109,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
   }
 
   List<_CalendarEntry> get _filtered => _entries.where((entry) {
-    final operational =
-        entry.session.calendarStatus == SessionCalendarStatus.scheduled ||
-        entry.session.calendarStatus == SessionCalendarStatus.makeup;
-    return entry.course.modality != CourseModality.online &&
-        operational &&
-        (_courseId == null || entry.course.id == _courseId);
+    return _courseId == null || entry.course.id == _courseId;
   }).toList();
 
   void _moveMonth(int delta) =>
@@ -185,6 +204,10 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                     ],
                   ),
                   const SizedBox(height: 16),
+                  if (_unavailableDateCourses.isNotEmpty)
+                    const Text(
+                      'Algumas datas não puderam ser atualizadas. As aulas continuam disponíveis.',
+                    ),
                   if (scrollWholePage)
                     SizedBox(height: 520, child: _content())
                   else
@@ -363,13 +386,13 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
         title: Text('${entry.course.code} • ${_date(local)}'),
         subtitle: Text(
           [
-            '${_time(local)} • ${_status(entry.session.calendarStatus)}',
-            if (!entry.course.tracksAttendance) 'Sem chamada',
-            if (entry.session.assessmentTitle case final title?)
-              'Avaliação: $title',
+            '${_time(local)} • ${(entry.session.session == null ? 'Prazo' : _status(entry.session.session!.calendarStatus))}',
+            if (entry.session.session != null && !entry.course.tracksAttendance)
+              'Sem chamada',
+            if (entry.session.title case final title?) 'Avaliação: $title',
           ].join('\n'),
         ),
-        trailing: entry.session.assessmentTitle == null
+        trailing: entry.session.title == null
             ? null
             : const Icon(Icons.assignment_outlined),
       ),
@@ -398,18 +421,16 @@ class _CalendarEventLabel extends StatelessWidget {
         const SizedBox(width: 4),
         Flexible(
           child: Text(
-            '${entry.course.code}${entry.course.tracksAttendance ? '' : ' · Sem chamada'}',
+            '${entry.course.code}${entry.isNoCall ? ' · Sem chamada' : ''}',
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color:
-                  entry.course.tracksAttendance ||
-                      entry.session.assessmentTitle != null
+              color: !entry.isNoCall || entry.session.title != null
                   ? null
                   : Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
         ),
-        if (entry.session.assessmentTitle != null)
+        if (entry.session.title != null)
           const Padding(
             padding: EdgeInsets.only(left: 2),
             child: Icon(Icons.assignment_outlined, size: 12),
@@ -422,7 +443,11 @@ class _CalendarEventLabel extends StatelessWidget {
 final class _CalendarEntry {
   const _CalendarEntry(this.course, this.session);
   final CourseRecord course;
-  final SessionRecord session;
+  final AgendaEntry session;
+  bool get isNoCall =>
+      session.session != null &&
+      (!course.tracksAttendance ||
+          session.session!.calendarStatus == SessionCalendarStatus.noCall);
 }
 
 String _date(DateTime value) =>

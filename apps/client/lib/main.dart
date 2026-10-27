@@ -11,6 +11,9 @@ import 'backend/firebase_python_backend.dart';
 import 'backend/cached_schedule_gateway.dart';
 import 'backend/python_backend_transport.dart';
 import 'data/academic_repositories.dart';
+import 'data/academic_agenda.dart';
+import 'data/document_store.dart';
+import 'data/firebase_document_store.dart';
 import 'data/cached_academic_overview_repository.dart';
 import 'data/firebase_current_user.dart';
 import 'data/firebase_course_repository.dart';
@@ -95,6 +98,13 @@ Future<void> main() async {
                 courseRepositoryFactory(userId, logger),
             sessionRepositoryFor: (userId) =>
                 sessionRepositoryFactory(userId, logger),
+            dateRepositoryFor: (userId) => FirestoreAcademicDateRepository(
+              userId: userId,
+              store: TimeoutDocumentStore(
+                FirebaseDocumentStore(FirebaseFirestore.instance),
+              ),
+              logger: logger,
+            ),
             // coverage:ignore-end
             logger: logger,
           ),

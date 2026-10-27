@@ -1,3 +1,5 @@
+import 'package:frequencia_ufmg/data/academic_agenda.dart';
+import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +10,26 @@ import 'package:frequencia_ufmg/domain/attendance.dart';
 import 'package:frequencia_ufmg/observability/app_logger.dart';
 
 void main() {
+  test(
+    'loads dates per owner and preserves other courses when one read fails',
+    () async {
+      final repository = CurrentUserAcademicOverviewRepository(
+        currentUserId: () => 'owner',
+        courseRepositoryFor: (_) => _Courses(),
+        sessionRepositoryFor: (_) => _ImmediateSessions(),
+        logger: _Logger(),
+        dateRepositoryFor: (user) {
+          expect(user, 'owner');
+          return _Dates();
+        },
+      );
+      final snapshot = await repository.loadOverview();
+      expect(snapshot.datesByCourse['course-1']!.single.title, 'Parte 2');
+      expect(snapshot.unavailableDateCourses, {'course-2'});
+      expect(snapshot.sessionsByCourse, hasLength(2));
+    },
+  );
+
   test('loads every course session collection in parallel', () async {
     final logger = _Logger();
     final sessions = _Sessions();
@@ -32,6 +54,7 @@ void main() {
     expect(snapshot.sessionsByCourse.keys, {'course-1', 'course-2'});
     expect(logger.events, [
       'academic_overview_load_started',
+      'agenda_overview_loaded',
       'academic_overview_load_succeeded',
     ]);
   });
@@ -191,4 +214,21 @@ final class _Logger implements AppLogger {
     bool fatal = false,
     Map<String, Object>? parameters,
   }) async {}
+}
+
+class _Dates implements AcademicDateRepository {
+  @override
+  Future<List<PythonMoodleDate>> listDates(String id) async {
+    if (id == 'course-2') throw StateError('one unavailable course');
+    return [
+      PythonMoodleDate(
+        id: 'moodle-1',
+        courseId: id,
+        courseCode: 'DCC203',
+        title: 'Parte 2',
+        dueAt: DateTime.utc(2026, 10, 28),
+        kind: 'assignment',
+      ),
+    ];
+  }
 }

@@ -1,3 +1,4 @@
+import 'package:frequencia_ufmg/features/courses/course_hub_page.dart';
 import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
@@ -29,6 +30,165 @@ void main() {
     displayName: 'Eduardo',
   );
   final now = DateTime.utc(2026, 9, 27, 12);
+
+  testWidgets(
+    'open hub and calendar update after sync, preserving partial results and local time',
+    (tester) async {
+      final course = CourseRecord(
+        id: 'poo',
+        code: 'DCC203',
+        name: 'POO',
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final updates = ValueNotifier<AcademicOverviewSnapshot?>(null);
+      addTearDown(updates.dispose);
+      final logger = _RecordingAppLogger();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CourseHubPage(
+            course: course,
+            allCourses: [course],
+            courseRepository: _FakeCourseRepository(),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            initialSessionsByCourse: const {'poo': []},
+            logger: logger,
+            now: () => now,
+            overviewUpdates: updates,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      updates.value = AcademicOverviewSnapshot(
+        courses: [course],
+        sessionsByCourse: {'poo': []},
+        unavailableDateCourses: {'poo'},
+        datesByCourse: {
+          'poo': [
+            PythonMoodleDate(
+              id: 'moodle-1',
+              courseId: 'poo',
+              courseCode: 'DCC203',
+              title: 'Entrega meia-noite',
+              kind: 'assignment',
+              dueAt: DateTime.utc(2026, 9, 28, 1),
+            ),
+          ],
+        },
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Entrega meia-noite'));
+      expect(find.text('Entrega meia-noite'), findsOneWidget);
+      expect(find.textContaining('Datas não atualizadas'), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const Key('course-hub-open-calendar')),
+      );
+      await tester.tap(find.byKey(const Key('course-hub-open-calendar')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lista'));
+      await tester.pumpAndSettle();
+      expect(find.text('DCC203 • 27/09/2026'), findsOneWidget);
+      expect(find.textContaining('22:00 • Prazo'), findsOneWidget);
+      expect(find.textContaining('Algumas datas'), findsOneWidget);
+      updates.value = AcademicOverviewSnapshot(
+        courses: [course],
+        sessionsByCourse: {'poo': []},
+        datesByCourse: const {},
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Entrega meia-noite'), findsNothing);
+      expect(find.textContaining('Algumas datas'), findsNothing);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      updates.value = AcademicOverviewSnapshot(
+        courses: [course],
+        sessionsByCourse: const {},
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Nenhuma avaliação'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final width in [390.0, 1200.0]) {
+    testWidgets(
+      'imported standalone deadlines reach home, course and calendar at $width',
+      (tester) async {
+        await tester.binding.setSurfaceSize(Size(width, 1000));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final course = CourseRecord(
+          id: 'online',
+          code: 'DCC203',
+          name: 'POO',
+          workload: 60,
+          term: '2026-2',
+          modality: CourseModality.online,
+          attendancePolicy: CourseAttendancePolicy.noCall,
+          createdAt: now,
+          updatedAt: now,
+        );
+        final logger = _RecordingAppLogger();
+        final dates = [
+          PythonMoodleDate(
+            id: 'moodle-1',
+            courseId: 'online',
+            courseCode: 'DCC203',
+            title: 'Entrega Parte 2',
+            dueAt: now.add(const Duration(hours: 2)),
+            kind: 'assignment',
+          ),
+        ];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: CoursePage(
+              repository: _FakeCourseRepository(),
+              meetingRepository: _FakeMeetingRepository(),
+              sessionRepository: _FakeSessionRepository(),
+              user: user,
+              logger: logger,
+              onSignOut: () async {},
+              now: () => now,
+              overviewReadsEnabled: true,
+              overviewRepository: _FakeOverviewRepository(
+                AcademicOverviewSnapshot(
+                  courses: [course],
+                  sessionsByCourse: const {},
+                  datesByCourse: {'online': dates},
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Entrega Parte 2'), findsOneWidget);
+        if (width < 900) {
+          expect(
+            tester.getTopLeft(find.text('Próximas datas')).dy,
+            lessThan(tester.getTopLeft(find.text('Minhas disciplinas')).dy),
+          );
+        }
+        expect(logger.events, contains('agenda_presented'));
+        await tester.ensureVisible(find.byKey(const Key('course-card-online')));
+        await tester.tap(find.byKey(const Key('course-card-online')));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Entrega Parte 2'));
+        expect(find.text('Entrega Parte 2'), findsOneWidget);
+        await tester.ensureVisible(
+          find.byKey(const Key('course-hub-open-calendar')),
+        );
+        await tester.tap(find.byKey(const Key('course-hub-open-calendar')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Lista'));
+        await tester.pumpAndSettle();
+        expect(find.textContaining('Entrega Parte 2'), findsOneWidget);
+        expect(find.textContaining('Prazo'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   for (final injected in [true, false]) {
     testWidgets(

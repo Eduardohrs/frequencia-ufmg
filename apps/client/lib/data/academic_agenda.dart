@@ -1,0 +1,198 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import '../backend/python_backend_transport.dart';
+import '../observability/app_logger.dart';
+import '../observability/audited_operation.dart';
+import 'academic_records.dart';
+import 'calendar_status.dart';
+import 'document_store.dart';
+import 'firestore_schema.dart';
+
+abstract interface class AcademicDateRepository {
+  Future<List<PythonMoodleDate>> listDates(String courseId);
+}
+
+final class FirestoreAcademicDateRepository implements AcademicDateRepository {
+  const FirestoreAcademicDateRepository({
+    required this.userId,
+    required this.store,
+    required this.logger,
+  });
+
+  final String userId;
+  final DocumentStore store;
+  final AppLogger logger;
+
+  @override
+  Future<List<PythonMoodleDate>> listDates(
+    String courseId,
+  ) => runAuditedOperation(
+    logger: logger,
+    operation: AuditedOperation.moodleDateList,
+    action: () async {
+      final timer = Stopwatch()..start();
+      final parameters = <String, Object>{
+        'course_id': courseId,
+        'operation_id': currentOperationId!,
+        'stage': 'store_read',
+      };
+      try {
+        final documents = await store.list(
+          '${FirestoreSchema.courseDocument(userId, courseId)}/academicDates',
+        );
+        if (documents.length > 500) {
+          throw const FormatException('Too many academic dates');
+        }
+        final dates = <PythonMoodleDate>[];
+        parameters['stage'] = 'date_document_decode';
+        for (final document in documents) {
+          parameters['document_id'] = document.id;
+          if (document.data['schemaVersion'] != 1) {
+            throw const FormatException('Invalid academic date schema version');
+          }
+          dates.add(
+            PythonMoodleDate.fromJson({
+              'id': document.id,
+              'course_id': courseId,
+              'course_code': courseId,
+              'title': document.data['title'],
+              'kind': document.data['kind'],
+              'source': document.data['source'],
+              'source_id': document.data['sourceId'],
+              'due_at': _instant(document.data['dueAt']),
+              'created_at': _instant(document.data['createdAt']),
+              'updated_at': _instant(document.data['updatedAt']),
+            }),
+          );
+        }
+        parameters.remove('document_id');
+        parameters['stage'] = 'academic_dates_read';
+        _deliver(
+          logger.logEvent(
+            'agenda_dates_read_succeeded',
+            parameters: {
+              ...parameters,
+              'count': dates.length,
+              'duration_ms': timer.elapsedMilliseconds,
+            },
+          ),
+        );
+        return dates;
+      } catch (error, stack) {
+        _deliver(
+          logger.recordError(
+            error,
+            stack,
+            context: 'agenda_dates_read',
+            parameters: {
+              ...parameters,
+              'duration_ms': timer.elapsedMilliseconds,
+              'reason': error is FormatException
+                  ? 'invalid_date_document'
+                  : 'store_read_failed',
+            },
+          ),
+        );
+        rethrow;
+      }
+    },
+  );
+}
+
+String _instant(Object? value) {
+  if (value is! Timestamp) {
+    throw const FormatException('Invalid academic date timestamp');
+  }
+  return value.toDate().toUtc().toIso8601String();
+}
+
+void _deliver(Future<void> delivery) =>
+    unawaited(delivery.catchError((Object _) {}));
+
+/// Presentation only: never creates attendance sessions for standalone deadlines.
+final class AgendaEntry {
+  const AgendaEntry({required this.startsAt, this.title, this.session});
+  final DateTime startsAt;
+  final String? title;
+  final SessionRecord? session;
+}
+
+List<AgendaEntry> courseAgenda(
+  CourseRecord course,
+  List<SessionRecord> sessions,
+  List<PythonMoodleDate> dates, {
+  bool includeLessons = false,
+}) {
+  final entries = <AgendaEntry>[];
+  final unique = <String, PythonMoodleDate>{};
+  for (final date in dates) {
+    if (date.courseId != course.id) continue;
+    unique.putIfAbsent(
+      '${date.dueAt.toUtc().microsecondsSinceEpoch}|${_title(date.title)}',
+      () => date,
+    );
+  }
+  final remaining = unique.values.toList();
+  for (final session in sessions) {
+    if (course.modality == CourseModality.online ||
+        session.calendarStatus == SessionCalendarStatus.cancelled ||
+        session.calendarStatus == SessionCalendarStatus.holiday) {
+      continue;
+    }
+    final title = session.assessmentTitle;
+    if (!includeLessons && title == null) continue;
+    final index = title == null
+        ? -1
+        : remaining.indexWhere(
+            (date) =>
+                _title(date.title) == _title(title) &&
+                !date.dueAt.isBefore(session.startsAt) &&
+                date.dueAt.isBefore(session.endsAt),
+          );
+    final linked = index < 0 ? null : remaining.removeAt(index);
+    entries.add(
+      AgendaEntry(
+        startsAt: linked?.dueAt ?? session.startsAt,
+        title: linked?.title ?? title,
+        session: session,
+      ),
+    );
+  }
+  entries.addAll(
+    remaining.map(
+      (date) => AgendaEntry(startsAt: date.dueAt, title: date.title),
+    ),
+  );
+  entries.sort((a, b) {
+    final time = a.startsAt.compareTo(b.startsAt);
+    return time != 0 ? time : (a.title ?? '').compareTo(b.title ?? '');
+  });
+  return entries;
+}
+
+String _title(String value) =>
+    value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+
+void recordAgendaPresentation({
+  required AppLogger logger,
+  required String screen,
+  required int importedCount,
+  required int entryCount,
+  required Iterable<String> unavailableCourses,
+  bool isLocalCopy = false,
+}) => _deliver(
+  logger.logEvent(
+    'agenda_presented',
+    parameters: {
+      'operation_id': newCorrelationId('agenda'),
+      'stage': 'presentation',
+      'screen': screen,
+      'imported_count': importedCount,
+      'entry_count': entryCount,
+      'unavailable_courses': unavailableCourses.take(50).join(','),
+      'is_local_copy': isLocalCopy,
+    },
+  ),
+);
