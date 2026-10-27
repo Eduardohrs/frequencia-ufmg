@@ -1,3 +1,6 @@
+import 'package:flutter/foundation.dart';
+import '../../data/python_overview_repository.dart';
+import '../../data/academic_agenda.dart';
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
@@ -30,6 +33,9 @@ class CourseHubPage extends StatefulWidget {
     required this.logger,
     required this.now,
     this.initialSessionsByCourse,
+    this.overviewUpdates,
+    this.datesByCourse = const {},
+    this.unavailableDateCourses = const {},
     this.attendanceEvaluator,
     this.scheduleGateway,
     this.sessionGateway,
@@ -44,6 +50,7 @@ class CourseHubPage extends StatefulWidget {
     super.key,
   });
 
+  final ValueListenable<AcademicOverviewSnapshot?>? overviewUpdates;
   final CourseRecord course;
   final List<CourseRecord> allCourses;
   final CourseRepository courseRepository;
@@ -52,6 +59,8 @@ class CourseHubPage extends StatefulWidget {
   final AppLogger logger;
   final DateTime Function() now;
   final Map<String, List<SessionRecord>>? initialSessionsByCourse;
+  final Map<String, List<PythonMoodleDate>> datesByCourse;
+  final Set<String> unavailableDateCourses;
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
@@ -80,8 +89,29 @@ class _CourseHubPageState extends State<CourseHubPage> {
   @override
   void initState() {
     super.initState();
+    widget.overviewUpdates?.addListener(_overviewChanged);
     _load();
   }
+
+  @override
+  void dispose() {
+    widget.overviewUpdates?.removeListener(_overviewChanged);
+    super.dispose();
+  }
+
+  void _overviewChanged() {
+    final sessions =
+        widget.overviewUpdates?.value?.sessionsByCourse[widget.course.id];
+    setState(() {
+      if (sessions != null) _sessions = List.of(sessions);
+    });
+  }
+
+  Map<String, List<PythonMoodleDate>> get _datesByCourse =>
+      widget.overviewUpdates?.value?.datesByCourse ?? widget.datesByCourse;
+  Set<String> get _unavailableDateCourses =>
+      widget.overviewUpdates?.value?.unavailableDateCourses ??
+      widget.unavailableDateCourses;
 
   Future<void> _load() async {
     final initial = widget.initialSessionsByCourse?[widget.course.id];
@@ -122,6 +152,19 @@ class _CourseHubPageState extends State<CourseHubPage> {
       final weekday = a.weekday.compareTo(b.weekday);
       return weekday != 0 ? weekday : a.startMinutes.compareTo(b.startMinutes);
     });
+    recordAgendaPresentation(
+      logger: widget.logger,
+      screen: 'course',
+      importedCount: _datesByCourse[widget.course.id]?.length ?? 0,
+      entryCount: courseAgenda(
+        widget.course,
+        _sessions,
+        _datesByCourse[widget.course.id] ?? [],
+      ).length,
+      unavailableCourses: _unavailableDateCourses.where(
+        (id) => id == widget.course.id,
+      ),
+    );
     if (mounted) setState(() => _loading = false);
   }
 
@@ -184,12 +227,18 @@ class _CourseHubPageState extends State<CourseHubPage> {
   Future<void> _openCalendar() => Navigator.of(context).push<void>(
     MaterialPageRoute(
       builder: (_) => GeneralCalendarPage(
+        overviewUpdates: widget.overviewUpdates,
         courses: widget.allCourses,
+        datesByCourse: _datesByCourse,
+        unavailableDateCourses: _unavailableDateCourses,
         repository: widget.sessionRepository,
         location: _location,
         now: widget.now,
         initialCourseId: widget.course.id,
-        initialSessionsByCourse: widget.initialSessionsByCourse,
+        initialSessionsByCourse: {
+          ...?widget.initialSessionsByCourse,
+          widget.course.id: _sessions,
+        },
       ),
     ),
   );
@@ -211,6 +260,8 @@ class _CourseHubPageState extends State<CourseHubPage> {
         androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
         initialSessionsByCourse: widget.initialSessionsByCourse,
         allCourses: widget.allCourses,
+        datesByCourse: _datesByCourse,
+        unavailableDateCourses: _unavailableDateCourses,
         allCourseIds: widget.allCourses.map((item) => item.id),
       ),
     ),
@@ -507,14 +558,11 @@ class _CourseHubPageState extends State<CourseHubPage> {
 
   Widget _agendaSection() {
     final now = widget.now();
-    final upcoming = _sessions
-        .where(
-          (session) =>
-              session.assessmentTitle != null &&
-              session.startsAt.isAfter(now.subtract(const Duration(days: 1))),
-        )
-        .take(3)
-        .toList();
+    final upcoming = courseAgenda(
+      widget.course,
+      _sessions,
+      _datesByCourse[widget.course.id] ?? [],
+    ).where((event) => !event.startsAt.isBefore(now)).take(3).toList();
     return _HubSection(
       key: const Key('course-hub-agenda'),
       eyebrow: 'Agenda',
@@ -522,17 +570,26 @@ class _CourseHubPageState extends State<CourseHubPage> {
       actionKey: const Key('course-hub-open-calendar'),
       actionLabel: 'Ver calendário',
       onAction: _openCalendar,
-      child: upcoming.isEmpty
-          ? const Text('Nenhuma avaliação ou entrega futura encontrada.')
-          : Column(
-              children: [
-                for (final session in upcoming)
-                  _EventRow(
-                    session: session,
-                    date: _shortDate(session.startsAt),
-                  ),
-              ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_unavailableDateCourses.contains(widget.course.id))
+            const Text(
+              'Datas não atualizadas. Exibindo as informações disponíveis.',
             ),
+          upcoming.isEmpty
+              ? const Text('Nenhuma avaliação ou entrega futura encontrada.')
+              : Column(
+                  children: [
+                    for (final session in upcoming)
+                      _EventRow(
+                        session: session,
+                        date: _shortDate(session.startsAt),
+                      ),
+                  ],
+                ),
+        ],
+      ),
     );
   }
 
@@ -766,7 +823,7 @@ class _FrequencyFigure extends StatelessWidget {
 
 class _EventRow extends StatelessWidget {
   const _EventRow({required this.session, required this.date});
-  final SessionRecord session;
+  final AgendaEntry session;
   final String date;
   @override
   Widget build(BuildContext context) {
@@ -797,7 +854,7 @@ class _EventRow extends StatelessWidget {
           const SizedBox(width: 13),
           Expanded(
             child: Text(
-              session.assessmentTitle!,
+              session.title!,
               style: Theme.of(
                 context,
               ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),

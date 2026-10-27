@@ -1,3 +1,4 @@
+import '../backend/python_backend_transport.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -35,7 +36,22 @@ final class CachedAcademicOverviewRepository
   @override
   Future<AcademicOverviewSnapshot> loadOverview() async {
     try {
-      final snapshot = await remote.loadOverview();
+      var snapshot = await remote.loadOverview();
+      if (snapshot.unavailableDateCourses.isNotEmpty) {
+        final cached = await loadCachedOverview();
+        snapshot = AcademicOverviewSnapshot(
+          courses: snapshot.courses,
+          sessionsByCourse: snapshot.sessionsByCourse,
+          datesByCourse: {
+            ...snapshot.datesByCourse,
+            for (final course in snapshot.courses)
+              if (snapshot.unavailableDateCourses.contains(course.id))
+                course.id: cached?.datesByCourse[course.id] ?? [],
+          },
+          unavailableDateCourses: snapshot.unavailableDateCourses,
+          isLocalCopy: snapshot.isLocalCopy,
+        );
+      }
       final userId = currentUserId();
       if (userId != null) {
         try {
@@ -96,6 +112,19 @@ final class CachedAcademicOverviewRepository
 String _encode(AcademicOverviewSnapshot snapshot) => jsonEncode({
   'version': 1,
   'courses': [for (final course in snapshot.courses) _courseJson(course)],
+  'unavailable_date_courses': snapshot.unavailableDateCourses.toList(),
+  'dates_by_course': {
+    for (final entry in snapshot.datesByCourse.entries)
+      entry.key: [
+        for (final date in entry.value)
+          {
+            'id': date.id,
+            'title': date.title,
+            'due_at': date.dueAt.toUtc().toIso8601String(),
+            'kind': date.kind,
+          },
+      ],
+  },
   'sessions_by_course': {
     for (final entry in snapshot.sessionsByCourse.entries)
       entry.key: [for (final session in entry.value) _sessionJson(session)],
@@ -108,6 +137,8 @@ AcademicOverviewSnapshot _decode(String encoded) {
         'version',
         'courses',
         'sessions_by_course',
+        'dates_by_course',
+        'unavailable_date_courses',
       }).isNotEmpty ||
       root['version'] != 1) {
     throw const FormatException();
@@ -127,6 +158,18 @@ AcademicOverviewSnapshot _decode(String encoded) {
         ).map(_session).toList(growable: false),
     },
     isLocalCopy: true,
+    unavailableDateCourses: _list(
+      root['unavailable_date_courses'] ?? [],
+    ).cast<String>().toSet(),
+    datesByCourse: {
+      for (final course in courses)
+        course.id: [
+          for (final raw in _list(
+            _map(root['dates_by_course'] ?? {})[course.id] ?? [],
+          ))
+            _cachedDate(course, _map(raw)),
+        ],
+    },
   );
 }
 
@@ -231,3 +274,21 @@ Timestamp _timestamp(Object? value) {
 
 Timestamp? _nullableTimestamp(Object? value) =>
     value == null ? null : _timestamp(value);
+
+PythonMoodleDate _cachedDate(CourseRecord course, Map<String, Object?> raw) {
+  final id = raw['id'];
+  if (id is! String ||
+      !RegExp(r'^(moodle|diario)-[A-Za-z0-9_-]{1,80}$').hasMatch(id)) {
+    throw const FormatException('Invalid cached academic date ID');
+  }
+  final split = id.indexOf('-');
+  return PythonMoodleDate.fromJson({
+    ...raw,
+    'source': id.substring(0, split),
+    'source_id': id.substring(split + 1),
+    'course_id': course.id,
+    'course_code': course.code,
+    'created_at': raw['due_at'],
+    'updated_at': raw['due_at'],
+  });
+}

@@ -38,6 +38,8 @@ class CourseSchedulePage extends StatefulWidget {
     this.sessionWritesEnabled = false,
     this.androidOfflineQueueEnabled = false,
     this.initialSessionsByCourse,
+    this.datesByCourse = const {},
+    this.unavailableDateCourses = const {},
     this.courseRepository,
     Iterable<CourseRecord>? allCourses,
     Iterable<String>? allCourseIds,
@@ -65,6 +67,8 @@ class CourseSchedulePage extends StatefulWidget {
   final bool sessionWritesEnabled;
   final bool androidOfflineQueueEnabled;
   final Map<String, List<SessionRecord>>? initialSessionsByCourse;
+  final Map<String, List<PythonMoodleDate>> datesByCourse;
+  final Set<String> unavailableDateCourses;
   final List<CourseRecord> allCourses;
   final List<String> allCourseIds;
   final SessionGenerator? generator;
@@ -530,6 +534,8 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
           MaterialPageRoute(
             builder: (_) => GeneralCalendarPage(
               courses: widget.allCourses,
+              datesByCourse: widget.datesByCourse,
+              unavailableDateCourses: widget.unavailableDateCourses,
               repository: widget.sessionRepository,
               location: _generator.location,
               initialCourseId: widget.course.id,

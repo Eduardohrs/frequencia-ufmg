@@ -197,7 +197,10 @@ void main() {
       await tester.pump();
 
       expect(verifier.calls, 1);
-      expect(logger.events, ['python_backend_identity_succeeded']);
+      expect(logger.events, [
+        'python_backend_identity_succeeded',
+        'agenda_presented',
+      ]);
 
       await tester.pump();
       expect(verifier.calls, 1);
@@ -258,6 +261,7 @@ void main() {
     expect(logger.events, [
       'auth_google_sign_in_started',
       'auth_google_sign_in_succeeded',
+      'agenda_presented',
     ]);
   });
 
@@ -314,7 +318,11 @@ void main() {
 
     expect(gateway.signOutCalls, 1);
     expect(find.text('Entrar com Google'), findsOneWidget);
-    expect(logger.events, ['auth_logout_started', 'auth_logout_succeeded']);
+    expect(logger.events, [
+      'agenda_presented',
+      'auth_logout_started',
+      'auth_logout_succeeded',
+    ]);
   });
 }
 

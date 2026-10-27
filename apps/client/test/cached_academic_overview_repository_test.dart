@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/cached_academic_overview_repository.dart';
@@ -8,6 +9,85 @@ import 'package:shared_preferences_platform_interface/in_memory_shared_preferenc
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
 void main() {
+  test(
+    'date cache survives restart, partial refresh and legacy snapshots without sharing users',
+    () async {
+      final source = await PythonOverviewRepository(
+        gateway: _OverviewGateway.success(),
+        logger: _Logger(),
+      ).loadOverview();
+      final date = PythonMoodleDate(
+        id: 'moodle-1',
+        courseId: 'course-1',
+        courseCode: 'DCC203',
+        title: 'Parte 2',
+        dueAt: DateTime.utc(2026, 10, 28, 2),
+        kind: 'assignment',
+      );
+      final remote = _SnapshotRemote(
+        AcademicOverviewSnapshot(
+          courses: source.courses,
+          sessionsByCourse: source.sessionsByCourse,
+          datesByCourse: {
+            'course-1': [date],
+          },
+        ),
+      );
+      final cache = _MemoryOverviewSnapshotCache();
+      final repository = CachedAcademicOverviewRepository(
+        remote: remote,
+        cache: cache,
+        currentUserId: () => 'user-1',
+        logger: _Logger(),
+      );
+      await repository.loadOverview();
+      final restored = await repository.loadCachedOverview();
+      expect(restored!.datesByCourse['course-1']!.single.title, 'Parte 2');
+      expect(restored.datesByCourse['course-1']!.single.dueAt, date.dueAt);
+      remote.snapshot = AcademicOverviewSnapshot(
+        courses: source.courses,
+        sessionsByCourse: source.sessionsByCourse,
+        unavailableDateCourses: {'course-1'},
+      );
+      final partial = await repository.loadOverview();
+      expect(partial.datesByCourse['course-1']!.single.title, 'Parte 2');
+      expect(partial.unavailableDateCourses, {'course-1'});
+      final freshUser = CachedAcademicOverviewRepository(
+        remote: remote,
+        cache: cache,
+        currentUserId: () => 'user-2',
+        logger: _Logger(),
+      );
+      expect(
+        (await freshUser.loadOverview()).datesByCourse['course-1'],
+        isEmpty,
+      );
+      final json = jsonDecode(cache.values['user-1']!) as Map<String, dynamic>;
+      json.remove('dates_by_course');
+      json.remove('unavailable_date_courses');
+      cache.values['user-1'] = jsonEncode(json);
+      expect(
+        (await repository.loadCachedOverview())!.datesByCourse['course-1'],
+        isEmpty,
+      );
+      for (final invalidId in ['bad', 123]) {
+        json['dates_by_course'] = {
+          'course-1': [
+            {'id': invalidId},
+          ],
+        };
+        cache.values['user-1'] = jsonEncode(json);
+        expect(await repository.loadCachedOverview(), isNull);
+      }
+      remote.snapshot = AcademicOverviewSnapshot(
+        courses: [],
+        sessionsByCourse: {},
+        unavailableDateCourses: {'course-1'},
+      );
+      expect((await repository.loadOverview()).datesByCourse, isEmpty);
+    },
+  );
+
   test(
     'restores the last successful overview after the app restarts offline',
     () async {
@@ -222,4 +302,11 @@ final class _Logger implements AppLogger {
   }) async {
     errorContexts.add(context);
   }
+}
+
+class _SnapshotRemote implements AcademicOverviewRepository {
+  _SnapshotRemote(this.snapshot);
+  AcademicOverviewSnapshot snapshot;
+  @override
+  Future<AcademicOverviewSnapshot> loadOverview() async => snapshot;
 }

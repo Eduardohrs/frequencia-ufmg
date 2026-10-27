@@ -11,7 +11,14 @@ final class AcademicOverviewSnapshot {
     required List<CourseRecord> courses,
     required Map<String, List<SessionRecord>> sessionsByCourse,
     this.isLocalCopy = false,
-  }) : courses = List.unmodifiable(courses),
+    Map<String, List<PythonMoodleDate>> datesByCourse = const {},
+    Set<String> unavailableDateCourses = const {},
+  }) : datesByCourse = Map.unmodifiable({
+         for (final e in datesByCourse.entries)
+           e.key: List<PythonMoodleDate>.unmodifiable(e.value),
+       }),
+       unavailableDateCourses = Set.unmodifiable(unavailableDateCourses),
+       courses = List.unmodifiable(courses),
        sessionsByCourse = Map<String, List<SessionRecord>>.unmodifiable({
          for (final entry in sessionsByCourse.entries)
            entry.key: List<SessionRecord>.unmodifiable(entry.value),
@@ -20,6 +27,8 @@ final class AcademicOverviewSnapshot {
   final List<CourseRecord> courses;
   final Map<String, List<SessionRecord>> sessionsByCourse;
   final bool isLocalCopy;
+  final Map<String, List<PythonMoodleDate>> datesByCourse;
+  final Set<String> unavailableDateCourses;
 }
 
 abstract interface class AcademicOverviewRepository {

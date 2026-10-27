@@ -1,3 +1,4 @@
+import '../../data/academic_agenda.dart';
 import 'dart:async';
 import 'dart:math';
 
@@ -107,12 +108,15 @@ class _CoursePageState extends State<CoursePage> {
   _PendingAttendance? _nextPastPending;
   Map<String, List<SessionRecord>> _sessionsByCourse = const {};
   bool _usingOverviewSnapshot = false;
+  Map<String, List<PythonMoodleDate>> _datesByCourse = {};
+  Set<String> _unavailableDateCourses = {};
   bool _usingLocalCopy = false;
   bool _automaticUFMGSyncStarted = false;
   String? _ufmgSyncNotice;
   AcademicSyncController? _academicSync;
   OverlayEntry? _syncIndicator;
   bool _academicSyncWasRunning = false;
+  final _overviewUpdates = ValueNotifier<AcademicOverviewSnapshot?>(null);
 
   @override
   void initState() {
@@ -153,6 +157,7 @@ class _CoursePageState extends State<CoursePage> {
     _syncIndicator?.dispose();
     _academicSync?.removeListener(_onAcademicSyncChanged);
     _academicSync?.dispose();
+    _overviewUpdates.dispose();
     super.dispose();
   }
 
@@ -212,7 +217,38 @@ class _CoursePageState extends State<CoursePage> {
         _sessionsByCourse = sessionsByCourse;
         _usingOverviewSnapshot = snapshot != null;
         _usingLocalCopy = snapshot?.isLocalCopy ?? false;
+        _datesByCourse = snapshot?.datesByCourse ?? {};
+        _unavailableDateCourses =
+            snapshot?.unavailableDateCourses ??
+            {for (final course in courses) course.id};
       });
+      _overviewUpdates.value = AcademicOverviewSnapshot(
+        courses: _courses,
+        sessionsByCourse: _sessionsByCourse,
+        datesByCourse: _datesByCourse,
+        unavailableDateCourses: _unavailableDateCourses,
+        isLocalCopy: _usingLocalCopy,
+      );
+      recordAgendaPresentation(
+        logger: widget.logger,
+        screen: 'home',
+        importedCount: _datesByCourse.values.fold(
+          0,
+          (sum, dates) => sum + dates.length,
+        ),
+        entryCount: _courses.fold(
+          0,
+          (sum, course) =>
+              sum +
+              courseAgenda(
+                course,
+                _sessionsByCourse[course.id] ?? [],
+                _datesByCourse[course.id] ?? [],
+              ).length,
+        ),
+        unavailableCourses: _unavailableDateCourses,
+        isLocalCopy: _usingLocalCopy,
+      );
       if (snapshot == null) {
         unawaited(
           _loadPastPendingCount(courses, retryOverview: !overviewFallback),
@@ -316,6 +352,8 @@ class _CoursePageState extends State<CoursePage> {
       _sessionsByCourse = sessionsByCourse;
       _usingOverviewSnapshot = true;
       _usingLocalCopy = true;
+      _datesByCourse = snapshot.datesByCourse;
+      _unavailableDateCourses = snapshot.unavailableDateCourses;
     });
     _setPastPending(courses, [
       for (final course in courses)
@@ -447,8 +485,11 @@ class _CoursePageState extends State<CoursePage> {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (context) => CourseHubPage(
+          overviewUpdates: _overviewUpdates,
           course: course,
           allCourses: _courses,
+          datesByCourse: _datesByCourse,
+          unavailableDateCourses: _unavailableDateCourses,
           courseRepository: widget.repository,
           meetingRepository: widget.meetingRepository,
           sessionRepository: widget.sessionRepository,
@@ -478,7 +519,10 @@ class _CoursePageState extends State<CoursePage> {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => GeneralCalendarPage(
+          overviewUpdates: _overviewUpdates,
           courses: _courses,
+          datesByCourse: _datesByCourse,
+          unavailableDateCourses: _unavailableDateCourses,
           repository: widget.sessionRepository,
           location: tz.getLocation('America/Sao_Paulo'),
           now: widget.now,
@@ -922,6 +966,8 @@ class _CoursePageState extends State<CoursePage> {
                 ],
               );
               final dates = _UpcomingDates(
+                datesByCourse: _datesByCourse,
+                unavailableDateCourses: _unavailableDateCourses,
                 courses: _courses,
                 sessionsByCourse: _sessionsByCourse,
                 now: widget.now(),
@@ -929,14 +975,11 @@ class _CoursePageState extends State<CoursePage> {
               );
               if (constraints.maxWidth < 900) {
                 final datesFirst = _courses.any(
-                  (course) => (_sessionsByCourse[course.id] ?? const []).any(
-                    (session) =>
-                        session.startsAt.isAfter(widget.now()) &&
-                        session.assessmentTitle != null &&
-                        session.calendarStatus !=
-                            SessionCalendarStatus.cancelled &&
-                        session.calendarStatus != SessionCalendarStatus.holiday,
-                  ),
+                  (course) => courseAgenda(
+                    course,
+                    _sessionsByCourse[course.id] ?? [],
+                    _datesByCourse[course.id] ?? [],
+                  ).any((event) => !event.startsAt.isBefore(widget.now())),
                 );
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1015,25 +1058,29 @@ class _UpcomingDates extends StatelessWidget {
   const _UpcomingDates({
     required this.courses,
     required this.sessionsByCourse,
+    required this.datesByCourse,
+    required this.unavailableDateCourses,
     required this.now,
     required this.onOpenCalendar,
   });
 
   final List<CourseRecord> courses;
   final Map<String, List<SessionRecord>> sessionsByCourse;
+  final Map<String, List<PythonMoodleDate>> datesByCourse;
+  final Set<String> unavailableDateCourses;
   final DateTime now;
   final VoidCallback onOpenCalendar;
 
   @override
   Widget build(BuildContext context) {
-    final entries = <({CourseRecord course, SessionRecord session})>[
+    final entries = <({CourseRecord course, AgendaEntry session})>[
       for (final course in courses)
-        for (final session in sessionsByCourse[course.id] ?? const [])
-          if (session.startsAt.isAfter(now) &&
-              session.assessmentTitle != null &&
-              session.calendarStatus != SessionCalendarStatus.cancelled &&
-              session.calendarStatus != SessionCalendarStatus.holiday)
-            (course: course, session: session),
+        for (final event in courseAgenda(
+          course,
+          sessionsByCourse[course.id] ?? [],
+          datesByCourse[course.id] ?? [],
+        ))
+          if (!event.startsAt.isBefore(now)) (course: course, session: event),
     ]..sort((a, b) => a.session.startsAt.compareTo(b.session.startsAt));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1054,6 +1101,10 @@ class _UpcomingDates extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
+        if (unavailableDateCourses.isNotEmpty)
+          const Text(
+            'Algumas datas não puderam ser atualizadas. Tente recarregar.',
+          ),
         if (entries.isEmpty)
           Text(
             'Nenhuma avaliação ou entrega próxima.',
@@ -1073,11 +1124,14 @@ class _UpcomingDateTile extends StatelessWidget {
   const _UpcomingDateTile({required this.course, required this.session});
 
   final CourseRecord course;
-  final SessionRecord session;
+  final AgendaEntry session;
 
   @override
   Widget build(BuildContext context) {
-    final date = session.startsAt.toLocal();
+    final date = tz.TZDateTime.from(
+      session.startsAt,
+      tz.getLocation('America/Sao_Paulo'),
+    );
     const months = [
       'JAN',
       'FEV',
@@ -1125,7 +1179,7 @@ class _UpcomingDateTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  session.assessmentTitle!,
+                  session.title!,
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 2),
