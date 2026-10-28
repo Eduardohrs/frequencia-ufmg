@@ -171,6 +171,7 @@ jobs:
           previous_live=$(jq -r '.live' <<< "$previous_function")
           required_execute=(any)
           required_scopes=(
+            executions.write
             rows.read
             rows.write
             documentsdb.documents.read
@@ -204,7 +205,7 @@ jobs:
           # Appwrite bakes function scopes into the deployment's execution key.
           # Configure them before building; changing scopes after activation
           # leaves the active deployment stale (`live: false`).
-          configure_function 75
+          configure_function 900
 
           created=$(npx --yes appwrite-cli@28.8.0 functions create-deployment \
             --function-id "$APPWRITE_FUNCTION_ID" \
@@ -234,7 +235,7 @@ jobs:
             --function-id "$APPWRITE_FUNCTION_ID" --json)
           test "$(jq -r '.deploymentId' <<< "$active_function")" = "$deployment"
           test "$(jq -r '.live' <<< "$active_function")" = "true"
-          test "$(jq -r '.timeout' <<< "$active_function")" = "75"
+          test "$(jq -r '.timeout' <<< "$active_function")" = "900"
           jq -e '.execute | index("any") != null' <<< "$active_function" >/dev/null
           test "$(jq -c '.scopes | sort' <<< "$active_function")" = "$required_scopes_json"
 

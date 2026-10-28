@@ -128,6 +128,7 @@ class _CoursePageState extends State<CoursePage> {
         gateway: gateway,
         logger: widget.logger,
       )..addListener(_onAcademicSyncChanged);
+      unawaited(_academicSync!.restore());
     }
     _load();
   }

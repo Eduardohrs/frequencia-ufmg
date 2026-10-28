@@ -1575,9 +1575,11 @@ final class PythonBackendTransport
     required http.Client client,
     this.timeout = const Duration(seconds: 30),
     this.longRunningTimeout = const Duration(seconds: 90),
+    Future<void> Function(Duration)? jobDelay,
   }) : _endpoint = endpoint,
        _tokens = tokens,
-       _client = client;
+       _client = client,
+       _jobDelay = jobDelay ?? Future<void>.delayed;
 
   BackendAcademicWorkspaceGateway get workspace =>
       _AcademicWorkspaceTransport(this);
@@ -1587,6 +1589,7 @@ final class PythonBackendTransport
   final http.Client _client;
   final Duration timeout;
   final Duration longRunningTimeout;
+  final Future<void> Function(Duration) _jobDelay;
   Future<String>? _regularAppCheckTokenInFlight;
 
   @override
@@ -2298,13 +2301,20 @@ final class PythonBackendTransport
   @override
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData({
     String? progressId,
+    bool background = false,
   }) async {
-    final response = await _authenticatedRequest(
+    var response = await _authenticatedRequest(
       path: '/v1/ufmg/sync/all',
       method: _BackendMethod.post,
-      body: {'progress_id': ?progressId},
-      requestTimeout: longRunningTimeout,
+      body: {'progress_id': ?progressId, if (background) 'background': true},
+      requestTimeout: background ? timeout : longRunningTimeout,
     );
+    if (response.statusCode == 202) {
+      final accepted = Map<String, Object?>.from(
+        jsonDecode(response.body) as Map,
+      );
+      response = await _waitForAcademicSync(accepted['operation_id'] as String);
+    }
     try {
       final value = Map<String, Object?>.from(jsonDecode(response.body) as Map);
       if (!_hasExactKeys(value, const {
@@ -2445,6 +2455,58 @@ final class PythonBackendTransport
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
     }
+  }
+
+  Future<String?> pendingAcademicSyncId() async {
+    final response = await _authenticatedRequest(path: '/v1/ufmg/sync/job');
+    final value = Map<String, Object?>.from(jsonDecode(response.body) as Map);
+    return value['status'] != 'missing'
+        ? value['operation_id'] as String
+        : null;
+  }
+
+  Future<http.Response> _waitForAcademicSync(String operation) async {
+    // Poll the saved result, never restart the job after a dropped read.
+    for (var attempt = 0; attempt < 180; attempt++) {
+      http.Response response;
+      try {
+        response = await _authenticatedRequest(path: '/v1/ufmg/sync/job');
+      } on PythonBackendException catch (failure) {
+        if (failure.code != PythonBackendError.unavailable &&
+            failure.code != PythonBackendError.timeout) {
+          rethrow;
+        }
+        await _jobDelay(const Duration(seconds: 10));
+        continue;
+      }
+      final value = Map<String, Object?>.from(jsonDecode(response.body) as Map);
+      if (value['operation_id'] != operation) {
+        throw const PythonBackendException(
+          PythonBackendError.invalidResponse,
+          requestContext: 'stage=job_result reason=operation_replaced',
+        );
+      }
+      if (value['status'] == 'succeeded') {
+        return http.Response(jsonEncode(value['result']), 200);
+      }
+      if (value['status'] == 'failed') {
+        throw PythonBackendException(
+          value['failure_code'] == 'UFMGReauthenticationRequired'
+              ? PythonBackendError.ufmgReauthenticationRequired
+              : PythonBackendError.unavailable,
+          requestContext:
+              'stage=job_result operation_id=$operation '
+              'backend_error=${value['failure_code']}',
+        );
+      }
+      await _jobDelay(const Duration(seconds: 10));
+    }
+    throw PythonBackendException(
+      PythonBackendError.timeout,
+      requestContext:
+          'stage=job_wait operation_id=$operation '
+          'reason=observation_expired server_job_not_cancelled=true',
+    );
   }
 
   @override
@@ -2787,7 +2849,10 @@ final class PythonBackendTransport
         requestTimeout: requestTimeout ?? timeout,
       );
       final error = _errorCode(response);
-      if (response.statusCode == 200) return response;
+      if (response.statusCode == 200 ||
+          response.statusCode == 202 && path == '/v1/ufmg/sync/all') {
+        return response;
+      }
       if (attempt == 0 && error == 'unauthorized') {
         forceIdentityRefresh = true;
         continue;

@@ -279,6 +279,18 @@ describe("course documents", () => {
 });
 
 describe("operational logs", () => {
+  test("sync jobs are bounded and isolated", async () => {
+    const path = 'users/alice/syncJobs/current';
+    const value = {stateJson: JSON.stringify({status:'queued',operation_id:'sync-test123'})};
+    await assertSucceeds(setDoc(doc(dbFor('alice'),path),value));
+    await assertSucceeds(getDoc(doc(dbFor('alice'),path)));
+    await assertFails(getDoc(doc(dbFor('bob'),path)));
+    await assertFails(setDoc(doc(dbFor('bob'),path),value));
+    await assertFails(setDoc(doc(dbFor('alice'),path),{...value,password:'no'}));
+    await assertFails(setDoc(doc(dbFor('alice'),path),{stateJson:'x'.repeat(750001)}));
+    await assertFails(setDoc(doc(dbFor('alice'),'users/alice/syncJobs/other'),value));
+  });
+
   test("sync progress is bounded and isolated by user", async () => {
     const path = "users/alice/syncProgress/current";
     const progress = {

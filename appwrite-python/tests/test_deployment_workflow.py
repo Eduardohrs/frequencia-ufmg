@@ -19,9 +19,9 @@ def test_appwrite_timeout_updates_restore_required_access_configuration() -> Non
     assert '--name "$previous_name"' in workflow
     assert 'update_args+=(--execute "$permission")' in workflow
     assert 'update_args+=(--scopes "$scope")' in workflow
-    assert "configure_function 75" in workflow
+    assert "configure_function 900" in workflow
     assert 'configure_function "$previous_timeout"' in workflow
-    assert workflow.index("configure_function 75") < workflow.index(
+    assert workflow.index("configure_function 900") < workflow.index(
         "functions create-deployment"
     )
     assert workflow.index("functions create-deployment") < workflow.index(

@@ -11,6 +11,223 @@ import 'package:http/testing.dart';
 
 void main() {
   test(
+    'authorization failure while watching does not become endless retries',
+    () async {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient(
+          (r) async => r.method == 'POST'
+              ? http.Response('{"operation_id":"sync-test123"}', 202)
+              : http.Response('{"error":"academic_sync_access_denied"}', 403),
+        ),
+      );
+      await expectLater(
+        transport.syncAllAcademicData(background: true),
+        throwsA(isA<PythonBackendException>()),
+      );
+    },
+  );
+
+  test(
+    'background sync survives lost reads without submitting the job twice',
+    () async {
+      var posts = 0;
+      var reads = 0;
+      var delays = 0;
+      var failedReads = 0;
+      final resultBody = {
+        'siga': {
+          'courses': {'created': 1, 'existing': 4, 'total': 5},
+          'schedules': {
+            'total': 5,
+            'updated': 1,
+            'unchanged': 3,
+            'conflicts': 1,
+            'missing_courses': 0,
+            'meetings_imported': 2,
+          },
+          'checked_at': '2026-10-24T12:00:00Z',
+          'next_automatic_sync_at': '2026-12-06T00:00:00Z',
+        },
+        'moodle': {
+          'dates': {
+            'total': 3,
+            'matched': 3,
+            'unmatched': 0,
+            'created': 1,
+            'updated': 1,
+            'unchanged': 1,
+          },
+          'content': {
+            'course_total': 5,
+            'candidate_total': 8,
+            'metaturma_candidate_total': 2,
+            'found': 4,
+            'empty': 1,
+            'unmatched': 0,
+            'ambiguous': 0,
+          },
+          'capabilities': null,
+        },
+        'teaching_plans': {
+          'available': 3,
+          'imported': 2,
+          'applied': 1,
+          'unchanged': 0,
+          'review_required': 3,
+        },
+        'exceptions': [
+          {
+            'course_id': 'course-a',
+            'course_code': 'ELE028',
+            'reason': 'reconciliation_conflict',
+            'candidate_count': 1,
+            'changes': [
+              {
+                'action': 'create_session',
+                'occurrence_key': '2026-10-24T19:00-20:40',
+                'date': '2026-10-24',
+                'starts_at': '19:00',
+                'ends_at': '20:40',
+                'subject': 'Circuitos',
+              },
+            ],
+            'conflicting': 1,
+            'assessment_conflicts': 0,
+          },
+          {
+            'course_id': 'course-b',
+            'course_code': 'MAT001',
+            'reason': 'ambiguous_teaching_plan',
+            'candidate_count': 2,
+            'changes': [],
+            'conflicting': 0,
+            'assessment_conflicts': 0,
+          },
+          {
+            'course_id': 'course-c',
+            'course_code': 'ESA019',
+            'reason': 'teaching_plan_unavailable',
+            'candidate_count': 1,
+            'changes': [],
+            'conflicting': 0,
+            'assessment_conflicts': 0,
+          },
+        ],
+      };
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        jobDelay: (_) async {
+          delays++;
+        },
+        client: MockClient((request) async {
+          if (request.method == 'POST') {
+            posts++;
+            expect(jsonDecode(request.body)['background'], true);
+            return http.Response(
+              '{"operation_id":"sync-test123","status":"queued"}',
+              202,
+            );
+          }
+          if (failedReads++ < 2) {
+            throw http.ClientException('connection temporarily lost');
+          }
+          reads++;
+          return http.Response(
+            jsonEncode({
+              'operation_id': 'sync-test123',
+              'status': reads == 1 ? 'running' : 'succeeded',
+              'result': resultBody,
+            }),
+            200,
+          );
+        }),
+      );
+      expect(
+        (await transport.syncAllAcademicData(
+          progressId: 'sync-test123',
+          background: true,
+        )).siga.courses.created,
+        1,
+      );
+      expect(posts, 1);
+      expect(reads, 2);
+      expect(delays, greaterThanOrEqualTo(1));
+      expect(await transport.pendingAcademicSyncId(), 'sync-test123');
+    },
+  );
+
+  test(
+    'saved job failures and replacement retain actionable diagnostics',
+    () async {
+      for (final state in [
+        {
+          'operation_id': 'sync-test123',
+          'status': 'failed',
+          'failure_code': 'MoodleUnavailable',
+        },
+        {'operation_id': 'other-operation', 'status': 'running'},
+        {
+          'operation_id': 'sync-test123',
+          'status': 'failed',
+          'failure_code': 'UFMGReauthenticationRequired',
+        },
+      ]) {
+        final transport = PythonBackendTransport(
+          endpoint: Uri.parse('https://backend.example'),
+          tokens: _Tokens(),
+          client: MockClient(
+            (r) async => r.method == 'POST'
+                ? http.Response('{"operation_id":"sync-test123"}', 202)
+                : http.Response(jsonEncode(state), 200),
+          ),
+        );
+        await expectLater(
+          transport.syncAllAcademicData(background: true),
+          throwsA(isA<PythonBackendException>()),
+        );
+      }
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient(
+          (_) async => http.Response('{"status":"missing"}', 200),
+        ),
+      );
+      expect(await transport.pendingAcademicSyncId(), isNull);
+    },
+  );
+
+  test(
+    'observation expiration does not cancel or restart the server job',
+    () async {
+      var posts = 0;
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        jobDelay: (_) async {},
+        client: MockClient((r) async {
+          if (r.method == 'POST') {
+            posts++;
+            return http.Response('{"operation_id":"sync-test123"}', 202);
+          }
+          return http.Response(
+            '{"operation_id":"sync-test123","status":"running"}',
+            200,
+          );
+        }),
+      );
+      await expectLater(
+        transport.syncAllAcademicData(background: true),
+        throwsA(isA<PythonBackendException>()),
+      );
+      expect(posts, 1);
+    },
+  );
+
+  test(
     'parallel metadata reads reuse App Check instead of minting one-use tokens',
     () async {
       final tokens = _DelayedRegularAppCheckTokens();

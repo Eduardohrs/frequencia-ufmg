@@ -13,6 +13,8 @@ from time import perf_counter, time
 from typing import Any, cast
 
 from appwrite.client import Client
+from appwrite.enums.execution_method import ExecutionMethod
+from appwrite.services.functions import Functions
 from appwrite.services.tables_db import TablesDB
 
 module_search_path.insert(0, str(Path(__file__).resolve().parent))
@@ -23,6 +25,7 @@ from academic_date_repository import (  # noqa: E402
     AcademicDateRepository,
     InvalidAcademicDate,
 )
+from academic_sync_job import AcademicSyncJob, InvalidJob, JobCipher  # noqa: E402
 from academic_sync_progress import AcademicSyncProgress  # noqa: E402
 from activity_snapshot_repository import (  # noqa: E402
     ActivitySnapshotMissing,
@@ -232,6 +235,8 @@ def _dispatch(context: Any) -> Any:
     method = context.req.method.upper()
     path = context.req.path.rstrip("/") or "/"
     headers = context.req.headers
+    if method == "POST" and path == "/internal/academic-sync":
+        return _academic_sync_worker(context)
     origin = _header(headers, "origin")
     allowed_origin = _allowed_origin(origin)
 
@@ -293,6 +298,8 @@ def _dispatch(context: Any) -> Any:
         return _teaching_plan_reconciliation(context, allowed_origin)
     if path == "/v1/ufmg/sync/moodle" and method == "POST":
         return _moodle_sync(context, allowed_origin)
+    if path == "/v1/ufmg/sync/job" and method == "GET":
+        return _academic_sync_job_status(context, allowed_origin)
     if path == "/v1/ufmg/sync/all" and method == "POST":
         return _unified_academic_sync(context, allowed_origin)
     if path == "/v1/calendar/official/preview" and method == "POST":
@@ -772,7 +779,8 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
     payload = context.req.body_json
     if (
         not isinstance(payload, Mapping)
-        or set(payload) - {"progress_id"}
+        or set(payload) - {"progress_id", "background"}
+        or ("background" in payload and payload["background"] is not True)
         or (
             "progress_id" in payload
             and (
@@ -784,6 +792,8 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
         return _ufmg_session_error(context, origin, "academic_sync_rejected", 400)
     if environ.get("ENABLE_SCHEDULE_WRITES", "").lower() != "true":
         return _schedule_error(context, origin, "schedule_writes_disabled", 503)
+    if payload.get("background") is True:
+        return _enqueue_academic_sync(context, origin, cast(str, user_id), payload)
     try:
         progress = _academic_sync_progress(context, cast(str, user_id), payload.get("progress_id"))
 
@@ -858,6 +868,130 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
         exception_course_codes=[item["course_code"] for item in exceptions],
     )
     return _respond(context, result, origin=origin)
+
+
+def _job_cipher() -> JobCipher:
+    secrets = UFMGSessionSecrets.from_environment(environ)
+    return JobCipher(secrets.encryption_keys, secrets.active_version)
+
+
+def _sync_job(context: Any, user_id: str, headers: dict[str, str] | None = None) -> AcademicSyncJob:
+    return AcademicSyncJob(
+        _firestore(headers if headers is not None else context.req.headers, user_id),
+        now=lambda: int(time()),
+        telemetry=lambda event, fields: _academic_sync_telemetry(context, event, fields),
+    )
+
+
+def _enqueue_academic_sync(
+    context: Any, origin: str | None, uid: str, payload: Mapping[str, Any]
+) -> Any:
+    operation = payload.get("progress_id") or "sync-" + secrets.token_hex(12)
+    job = _sync_job(context, uid)
+
+    def enqueue() -> None:
+        envelope = _job_cipher().seal(
+            uid, operation, firebase_bearer_token(context.req.headers), now=int(time())
+        )
+        client = (
+            Client()
+            .set_endpoint(environ["APPWRITE_FUNCTION_API_ENDPOINT"])
+            .set_project(environ["APPWRITE_FUNCTION_PROJECT_ID"])
+            .set_key(_header(context.req.headers, "x-appwrite-key"))
+        )
+        execution = Functions(client).create_execution(
+            function_id=environ["APPWRITE_FUNCTION_ID"],
+            body=json.dumps(envelope),
+            xasync=True,
+            path="/internal/academic-sync",
+            method=ExecutionMethod.POST,
+        )
+        _log(
+            context,
+            "academic_sync_execution_dispatched",
+            operation_id=operation,
+            execution_id=execution.id,
+        )
+
+    try:
+        value = job.start(operation, enqueue)
+    except Exception as error:
+        return _ufmg_session_error(
+            context,
+            origin,
+            "academic_sync_enqueue_failed",
+            503,
+            reason=type(error).__name__,
+            operation_id=operation,
+        )
+    return _respond(context, value, 202, origin)
+
+
+def _academic_sync_job_status(context: Any, origin: str | None) -> Any:
+    uid, rejected = _authentication(context, origin, "/v1/ufmg/sync/job/get")
+    if rejected is not None:
+        return rejected
+    try:
+        return _respond(context, _sync_job(context, cast(str, uid)).read(), origin=origin)
+    except FirestoreUnavailable:
+        return _ufmg_session_error(context, origin, "academic_sync_store_unavailable", 503)
+
+
+def _academic_sync_worker(context: Any) -> Any:
+    try:
+        uid, operation, token = _job_cipher().open(context.req.body_json, now=int(time()))
+    except InvalidJob:
+        return _ufmg_session_error(context, None, "academic_sync_worker_rejected", 403)
+    headers = {**context.req.headers, "authorization": "Bearer " + token}
+    job = _sync_job(context, uid, headers)
+    try:
+        claimed = job.claim(operation)
+    except Exception as error:
+        _error(
+            context,
+            "academic_sync_worker_claim_failed",
+            operation_id=operation,
+            reason=type(error).__name__,
+            stage="claim",
+        )
+        return _respond(context, {"completed": False}, 503)
+    if not claimed:
+        _log(context, "academic_sync_worker_duplicate_skipped", operation_id=operation)
+        return _respond(context, {"accepted": False})
+    progress = AcademicSyncProgress(
+        _firestore(headers, uid),
+        operation,
+        telemetry=lambda event, fields: _academic_sync_telemetry(context, event, fields),
+    )
+
+    def telemetry(event: str, fields: Mapping[str, object]) -> None:
+        _academic_sync_telemetry(context, event, {"operation_id": operation, **fields})
+        progress.observe(event, fields)
+
+    try:
+        service = _unified_academic_sync_service(headers, uid, telemetry)
+        result = progress.run(lambda: service.sync(uid, now=int(time())))
+        job.finish(operation, result)
+    except Exception as error:
+        try:
+            job.fail(operation, type(error).__name__)
+        except Exception as state_error:
+            _error(
+                context,
+                "academic_sync_worker_state_delivery_failed",
+                operation_id=operation,
+                reason=type(state_error).__name__,
+                original_reason=type(error).__name__,
+                stage="terminal_state",
+            )
+        _error(
+            context,
+            "academic_sync_worker_failed",
+            operation_id=operation,
+            reason=type(error).__name__,
+        )
+        return _respond(context, {"completed": False}, 500)
+    return _respond(context, {"completed": True})
 
 
 def _academic_sync_telemetry(context: Any, event: str, fields: Mapping[str, object]) -> None:
@@ -2021,6 +2155,7 @@ def _is_public_api_path(path: str) -> bool:
         "/v1/ufmg/reconcile/teaching-plan",
         "/v1/ufmg/sync/moodle",
         "/v1/ufmg/sync/all",
+        "/v1/ufmg/sync/job",
         "/v1/ufmg/sync",
         "/v1/ufmg/sync/siga",
         "/v1/calendar/official/preview",

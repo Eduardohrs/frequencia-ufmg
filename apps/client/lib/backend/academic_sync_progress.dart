@@ -6,6 +6,10 @@ abstract interface class BackendAcademicSyncProgressGateway
   Stream<AcademicSyncProgress> watchSyncProgress(String operationId);
 }
 
+abstract interface class BackendResumableAcademicSyncGateway {
+  Future<String?> pendingAcademicSyncId();
+}
+
 final class AcademicSyncProgress {
   const AcademicSyncProgress({
     required this.operationId,

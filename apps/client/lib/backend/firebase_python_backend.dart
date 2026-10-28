@@ -46,6 +46,7 @@ final class _FirebasePythonBackendVerifier
         BackendUFMGSessionGateway,
         BackendUnifiedAcademicSyncGateway,
         BackendAcademicSyncProgressGateway,
+        BackendResumableAcademicSyncGateway,
         BackendOfficialCalendarGateway,
         BackendDiarioPlanGateway,
         BackendOverviewGateway {
@@ -179,7 +180,7 @@ final class _FirebasePythonBackendVerifier
   @override
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() async {
     await (_activation ??= _activateAppCheck());
-    return _transport.syncAllAcademicData();
+    return _transport.syncAllAcademicData(background: true);
   }
 
   @override
@@ -187,7 +188,16 @@ final class _FirebasePythonBackendVerifier
     String operationId,
   ) async {
     await (_activation ??= _activateAppCheck());
-    return _transport.syncAllAcademicData(progressId: operationId);
+    return _transport.syncAllAcademicData(
+      progressId: operationId,
+      background: true,
+    );
+  }
+
+  @override
+  Future<String?> pendingAcademicSyncId() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.pendingAcademicSyncId();
   }
 
   @override
