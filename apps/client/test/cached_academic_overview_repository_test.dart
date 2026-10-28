@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
@@ -9,6 +10,81 @@ import 'package:shared_preferences_platform_interface/in_memory_shared_preferenc
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
 void main() {
+  for (final remoteFails in [false, true]) {
+    test(
+      'discards an overview after auth changes during remote read (failure=$remoteFails)',
+      () async {
+        var owner = 'alice';
+        final cache = _MemoryOverviewSnapshotCache();
+        final remote = _DeferredSnapshotRemote();
+        final repository = CachedAcademicOverviewRepository(
+          remote: remote,
+          cache: cache,
+          currentUserId: () => owner,
+          logger: _Logger(),
+        );
+        final pending = repository.loadOverview();
+        owner = 'bob';
+        if (remoteFails) {
+          remote.result.completeError(StateError('network'));
+        } else {
+          remote.result.complete(
+            AcademicOverviewSnapshot(courses: [], sessionsByCourse: {}),
+          );
+        }
+        await expectLater(pending, throwsStateError);
+        expect(cache.values, isEmpty);
+        expect(
+          cache.readUsers,
+          isEmpty,
+          reason: 'Must not fall back to the next account cache',
+        );
+      },
+    );
+  }
+  test(
+    'does not return a cached snapshot if identity changes during cache read',
+    () async {
+      var owner = 'alice';
+      final cache = _MemoryOverviewSnapshotCache();
+      final repository = CachedAcademicOverviewRepository(
+        remote: _SnapshotRemote(
+          AcademicOverviewSnapshot(courses: [], sessionsByCourse: {}),
+        ),
+        cache: cache,
+        currentUserId: () => owner,
+        logger: _Logger(),
+      );
+      await repository.loadOverview();
+      cache.onRead = () => owner = 'bob';
+      expect(await repository.loadCachedOverview(), isNull);
+      expect(
+        cache.values.containsKey('alice'),
+        isTrue,
+        reason: 'Auth change is not corruption',
+      );
+      expect(cache.values.containsKey('bob'), isFalse);
+    },
+  );
+  test(
+    'does not return old owner data after the cache write completes',
+    () async {
+      var owner = 'alice';
+      final cache = _MemoryOverviewSnapshotCache()
+        ..onWrite = () => owner = 'bob';
+      final repository = CachedAcademicOverviewRepository(
+        remote: _SnapshotRemote(
+          AcademicOverviewSnapshot(courses: [], sessionsByCourse: {}),
+        ),
+        cache: cache,
+        currentUserId: () => owner,
+        logger: _Logger(),
+      );
+      await expectLater(repository.loadOverview(), throwsStateError);
+      expect(cache.values.keys, ['alice']);
+    },
+  );
+
   test(
     'date cache survives restart, partial refresh and legacy snapshots without sharing users',
     () async {
@@ -263,9 +339,14 @@ final class _MemoryOverviewSnapshotCache implements AcademicOverviewCache {
   Object? readError;
   Object? writeError;
   Object? removeError;
+  final readUsers = <String>[];
+  void Function()? onRead;
+  void Function()? onWrite;
 
   @override
   Future<String?> read(String userId) async {
+    readUsers.add(userId);
+    onRead?.call();
     if (readError case final error?) throw error;
     return values[userId];
   }
@@ -274,6 +355,7 @@ final class _MemoryOverviewSnapshotCache implements AcademicOverviewCache {
   Future<void> write(String userId, String value) async {
     if (writeError case final error?) throw error;
     values[userId] = value;
+    onWrite?.call();
   }
 
   @override
@@ -309,4 +391,10 @@ class _SnapshotRemote implements AcademicOverviewRepository {
   AcademicOverviewSnapshot snapshot;
   @override
   Future<AcademicOverviewSnapshot> loadOverview() async => snapshot;
+}
+
+class _DeferredSnapshotRemote implements AcademicOverviewRepository {
+  final result = Completer<AcademicOverviewSnapshot>();
+  @override
+  Future<AcademicOverviewSnapshot> loadOverview() => result.future;
 }

@@ -1,3 +1,4 @@
+import 'package:frequencia_ufmg/observability/operation_diagnostics.dart';
 import 'dart:convert';
 import 'package:frequencia_ufmg/observability/firestore_app_logger.dart';
 import 'package:frequencia_ufmg/observability/operational_log_store.dart';
@@ -126,7 +127,7 @@ void main() {
       expect(counts['is_local_copy'], isTrue);
       expect(counts['truncated'], isTrue);
       expect(presentation['screen'], 'home');
-      emitAgendaEvent(_SynchronousFailureLogger(), 'unavailable_logger', {
+      emitOperationalEvent(_SynchronousFailureLogger(), 'unavailable_logger', {
         'stage': 'read',
       });
       recordAgendaFailure(

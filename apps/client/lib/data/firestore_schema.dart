@@ -182,6 +182,14 @@ abstract final class FirestoreSchema {
   static String courseDocument(String userId, String courseId) =>
       '${coursesCollection(userId)}/${_segment(courseId, 'courseId')}';
 
+  static String courseChildDocument(
+    String userId,
+    String courseId,
+    String collection,
+    String documentId,
+  ) =>
+      '${courseDocument(userId, courseId)}/${_segment(collection, 'collection')}/${_segment(documentId, 'documentId')}';
+
   static String meetingsCollection(String userId, String courseId) =>
       '${courseDocument(userId, courseId)}/meetings';
 

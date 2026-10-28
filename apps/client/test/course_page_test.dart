@@ -1,5 +1,8 @@
 import 'package:frequencia_ufmg/features/courses/course_hub_page.dart';
 import 'dart:async';
+import 'dart:convert';
+import 'package:frequencia_ufmg/observability/firestore_app_logger.dart';
+import 'package:frequencia_ufmg/observability/operational_log_store.dart';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -30,6 +33,172 @@ void main() {
     displayName: 'Eduardo',
   );
   final now = DateTime.utc(2026, 9, 27, 12);
+
+  testWidgets(
+    'hub refreshes metadata and sessions on schedule return, retaining data on failure',
+    (tester) async {
+      CourseRecord makeCourse(String name) => CourseRecord(
+        id: 'poo',
+        code: 'DCC203',
+        name: name,
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final repository = _FakeCourseRepository(courses: [makeCourse('POO')]);
+      final meetings = _FakeMeetingRepository();
+      final sessions = _FakeSessionRepository({'poo': []});
+      final updates = ValueNotifier<AcademicOverviewSnapshot?>(
+        AcademicOverviewSnapshot(
+          courses: repository.courses,
+          sessionsByCourse: const {'poo': []},
+        ),
+      );
+      addTearDown(updates.dispose);
+      final logger = _RecordingAppLogger();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CourseHubPage(
+            course: repository.courses.single,
+            allCourses: repository.courses,
+            courseRepository: repository,
+            meetingRepository: meetings,
+            sessionRepository: sessions,
+            overviewUpdates: updates,
+            initialSessionsByCourse: const {'poo': []},
+            logger: logger,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('course-hub-open-schedule')),
+      );
+      await tester.tap(find.byKey(const Key('course-hub-open-schedule')));
+      await tester.pumpAndSettle();
+      repository.courses[0] = makeCourse('POO atualizada');
+      sessions.sessions['poo'] = [
+        SessionRecord(
+          id: 'new',
+          startsAt: now.add(const Duration(days: 1)),
+          endsAt: now.add(const Duration(days: 1, hours: 2)),
+          lessonCount: QuantidadeAulas.two,
+          callCount: NumeroChamadas.one,
+          assessmentTitle: 'Prova nova',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      ];
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('POO atualizada'), findsOneWidget);
+      expect(find.text('Prova nova'), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const Key('course-hub-open-calendar')),
+      );
+      await tester.tap(find.byKey(const Key('course-hub-open-calendar')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lista'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Prova nova'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      sessions.listError = StateError('offline');
+      meetings.listError = StateError('offline');
+      repository.listError = StateError('offline');
+      await tester.ensureVisible(
+        find.byKey(const Key('course-hub-open-schedule')),
+      );
+      await tester.tap(find.byKey(const Key('course-hub-open-schedule')));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Prova nova'), findsOneWidget);
+      expect(find.byKey(const Key('course-hub-retry')), findsOneWidget);
+      sessions.listError = null;
+      meetings.listError = null;
+      repository.listError = null;
+      await tester.ensureVisible(find.byKey(const Key('course-hub-retry')));
+      await tester.tap(find.byKey(const Key('course-hub-retry')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('course-hub-retry')), findsNothing);
+      expect(
+        logger.errorContexts,
+        containsAll([
+          'course_hub_sessions_failed',
+          'course_hub_course_failed',
+          'course_hub_meetings_failed',
+        ]),
+      );
+    },
+  );
+
+  testWidgets('hub distinguishes catalog failure from empty and retries', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'poo',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final gateway = _UFMGGateway()
+      ..catalogError = StateError('catalog unavailable');
+    final logStore = _HubLogStore();
+    final logger = FirestoreAppLogger(
+      store: logStore,
+      currentUserId: () => 'owner',
+      platform: 'web',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CourseHubPage(
+          course: course,
+          allCourses: [course],
+          courseRepository: _FakeCourseRepository(),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          logger: logger,
+          now: () => now,
+          ufmgSessionGateway: gateway,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Não foi possível atualizar os materiais.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Nenhum material sincronizado para esta disciplina.'),
+      findsNothing,
+    );
+    final failed = logStore.documents.singleWhere(
+      (d) => d['operation'] == 'course_hub_catalog_failed',
+    );
+    final details =
+        jsonDecode(failed['errorDetails']! as String) as Map<String, dynamic>;
+    expect(details['stage'], 'catalog');
+    expect(details['course_id'], 'poo');
+    expect(details['cause_type'], 'StateError');
+    expect(failed['correlationId'], isNotEmpty);
+    gateway.catalogError = null;
+    await tester.ensureVisible(
+      find.byKey(const Key('course-hub-retry-materials')),
+    );
+    await tester.tap(find.byKey(const Key('course-hub-retry-materials')));
+    await tester.pumpAndSettle();
+    expect(find.text('Não foi possível atualizar os materiais.'), findsNothing);
+    expect(
+      find.text('Nenhum material sincronizado para esta disciplina.'),
+      findsOneWidget,
+    );
+  });
 
   testWidgets(
     'open hub and calendar update after sync, preserving partial results and local time',
@@ -626,6 +795,49 @@ void main() {
     expect(repository.courses.single.endsOn, DateTime.utc(2027, 6, 30));
   });
 
+  testWidgets(
+    'expiration diagnostics persist course and term on success and failure',
+    (tester) async {
+      for (final fails in [false, true]) {
+        final expired = CourseRecord(
+          id: 'expired',
+          code: 'DCC100',
+          name: 'Antiga',
+          workload: 60,
+          term: '2026-1',
+          createdAt: DateTime.utc(2026),
+          updatedAt: now,
+        );
+        final repository = _FakeCourseRepository(courses: [expired]);
+        if (fails) repository.deleteError = StateError('store unavailable');
+        final store = _HubLogStore();
+        final logger = FirestoreAppLogger(
+          store: store,
+          currentUserId: () => 'owner',
+          platform: 'web',
+        );
+        await tester.pumpWidget(_app(repository, user, now, logger: logger));
+        await tester.pumpAndSettle();
+        final row = store.documents.singleWhere(
+          (d) => fails
+              ? d['operation'] == 'course_expiration_delete'
+              : d['event'] == 'course_expiration_delete_succeeded',
+        );
+        final details =
+            jsonDecode(row[fails ? 'errorDetails' : 'details']! as String)
+                as Map<String, dynamic>;
+        expect(details['course_id'], 'expired');
+        expect(details['term'], '2026-1');
+        expect(details['stage'], 'expiration_delete');
+        expect(row['durationMs'], isA<int>());
+        expect(row['correlationId'], isNotEmpty);
+        expect(repository.courses, fails ? hasLength(1) : isEmpty);
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpAndSettle();
+      }
+    },
+  );
+
   testWidgets('deletes expired previous courses on the first load', (
     tester,
   ) async {
@@ -841,8 +1053,14 @@ void main() {
     await tester.tap(find.byKey(const Key('moodle-content-catalog-course')));
     await tester.pumpAndSettle();
     expect(find.text('Plano de ensino'), findsOneWidget);
+    ufmgGateway.catalogError = StateError('transient catalog read');
     await tester.pageBack();
     await tester.pumpAndSettle();
+    expect(find.text('1 material disponível'), findsOneWidget);
+    expect(
+      find.text('Não foi possível atualizar os materiais.'),
+      findsOneWidget,
+    );
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('course-card-course-1')), findsOneWidget);
@@ -1118,6 +1336,32 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('course-hub-frequency')), findsOneWidget);
     expect(sessionRepository.listedCourseIds, isEmpty);
+    await tester.ensureVisible(
+      find.byKey(const Key('course-hub-open-attendance')),
+    );
+    await tester.tap(find.byKey(const Key('course-hub-open-attendance')));
+    await tester.pumpAndSettle();
+    final beforeRefresh = overview.loadCalls;
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(overview.loadCalls, beforeRefresh + 1);
+    expect(sessionRepository.listedCourseIds, isEmpty);
+    overview.error = StateError('backend unavailable');
+    courseRepository.listError = StateError('fallback unavailable');
+    await tester.ensureVisible(
+      find.byKey(const Key('course-hub-open-attendance')),
+    );
+    await tester.tap(find.byKey(const Key('course-hub-open-attendance')));
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-hub-retry')), findsOneWidget);
+    overview.error = null;
+    courseRepository.listError = null;
+    await tester.ensureVisible(find.byKey(const Key('course-hub-retry')));
+    await tester.tap(find.byKey(const Key('course-hub-retry')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-hub-retry')), findsNothing);
   });
 
   testWidgets('shows the next assessment dates from the overview snapshot', (
@@ -2277,11 +2521,13 @@ final class _FakeOverviewRepository implements AcademicOverviewRepository {
   _FakeOverviewRepository(this.snapshot);
 
   final AcademicOverviewSnapshot snapshot;
+  Object? error;
   int loadCalls = 0;
 
   @override
   Future<AcademicOverviewSnapshot> loadOverview() async {
     loadCalls++;
+    if (error != null) throw error!;
     return snapshot;
   }
 }
@@ -2457,6 +2703,7 @@ class _UFMGGateway implements BackendUFMGSessionGateway {
   final int createdCourses;
   final Object? syncError;
   final PythonMoodleContentDiscovery materialCatalog;
+  Object? catalogError;
   int statusCalls = 0;
   int syncCalls = 0;
 
@@ -2465,8 +2712,10 @@ class _UFMGGateway implements BackendUFMGSessionGateway {
       Future.value(materialCatalog);
 
   @override
-  Future<PythonMoodleContentDiscovery> listMoodleMaterialCatalog() =>
-      Future.value(materialCatalog);
+  Future<PythonMoodleContentDiscovery> listMoodleMaterialCatalog() async {
+    if (catalogError != null) throw catalogError!;
+    return materialCatalog;
+  }
 
   @override
   Future<PythonMoodleMobileCapabilities> probeMoodleMobileCapabilities() =>
@@ -2598,4 +2847,11 @@ final class _FakeUFMGSyncSchedule implements UFMGSyncScheduleGateway {
   Future<void> record(String userId, DateTime nextAutomaticSyncAt) async {
     recordedUsers.add(userId);
   }
+}
+
+class _HubLogStore implements OperationalLogStore {
+  final documents = <Map<String, Object?>>[];
+  @override
+  Future<void> add(String userId, Map<String, Object?> document) async =>
+      documents.add(document);
 }

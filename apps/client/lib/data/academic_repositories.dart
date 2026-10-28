@@ -1,3 +1,4 @@
+import '../observability/operation_diagnostics.dart';
 import '../observability/app_logger.dart';
 import '../observability/audited_operation.dart';
 import '../domain/attendance.dart';
@@ -94,19 +95,81 @@ final class FirestoreCourseRepository implements CourseRepository {
     logger: _logger,
     operation: AuditedOperation.courseDelete,
     action: () async {
-      final meetings = await _store.list(
-        FirestoreSchema.meetingsCollection(_userId, courseId),
-      );
-      final sessions = await _store.list(
-        FirestoreSchema.sessionsCollection(_userId, courseId),
-      );
-      await _store.deleteAll([
-        for (final meeting in meetings)
-          FirestoreSchema.meetingDocument(_userId, courseId, meeting.id),
-        for (final session in sessions)
-          FirestoreSchema.sessionDocument(_userId, courseId, session.id),
-        FirestoreSchema.courseDocument(_userId, courseId),
-      ]);
+      final timer = Stopwatch()..start();
+      final coursePath = FirestoreSchema.courseDocument(_userId, courseId);
+      const collections = [
+        'meetings',
+        'sessions',
+        'academicDates',
+        'materialCatalog',
+        'teachingPlans',
+      ];
+      final fields = <String, Object>{
+        'operation_id': currentOperationId!,
+        'course_id': courseId,
+        'stage': 'children_read',
+      };
+      emitOperationalEvent(_logger, 'course_delete_read_started', fields);
+      var stage = 'children_read';
+      try {
+        final children = await Future.wait([
+          for (final collection in collections)
+            () async {
+              try {
+                return await _store.list('$coursePath/$collection');
+              } catch (error, stack) {
+                recordOperationalFailure(
+                  _logger,
+                  error,
+                  stack,
+                  'course_delete_children_read',
+                  {
+                    ...fields,
+                    'collection': collection,
+                    'duration_ms': timer.elapsedMilliseconds,
+                  },
+                  failureCode: 'course_delete_children_read_failed',
+                );
+                rethrow;
+              }
+            }(),
+        ]);
+        final readMs = timer.elapsedMilliseconds;
+        stage = 'batch_validation';
+        final paths = [
+          for (var i = 0; i < collections.length; i++)
+            for (final child in children[i])
+              FirestoreSchema.courseChildDocument(
+                _userId,
+                courseId,
+                collections[i],
+                child.id,
+              ),
+          coursePath,
+        ];
+        if (paths.length > 500) {
+          throw StateError('course_delete_batch_too_large');
+        }
+        stage = 'commit';
+        await _store.deleteAll(paths);
+        emitOperationalEvent(_logger, 'course_delete_commit_succeeded', {
+          ...fields,
+          'stage': stage,
+          'duration_ms': timer.elapsedMilliseconds,
+          'children_read_ms': readMs,
+          'commit_ms': timer.elapsedMilliseconds - readMs,
+          'deleted_document_count': paths.length,
+          for (var i = 0; i < collections.length; i++)
+            '${collections[i]}_count': children[i].length,
+        });
+      } catch (error, stack) {
+        recordOperationalFailure(_logger, error, stack, 'course_delete', {
+          ...fields,
+          'stage': stage,
+          'duration_ms': timer.elapsedMilliseconds,
+        }, failureCode: 'course_delete_failed');
+        rethrow;
+      }
     },
   );
 }

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'package:frequencia_ufmg/observability/firestore_app_logger.dart';
+import 'package:frequencia_ufmg/observability/operational_log_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
@@ -16,6 +19,49 @@ void main() {
     store = _FakeDocumentStore();
     logger = _FakeAppLogger();
   });
+
+  test(
+    'deletion diagnostics persist counts and the exact failed collection',
+    () async {
+      final logs = _DeletionLogStore();
+      final productionLogger = FirestoreAppLogger(
+        store: logs,
+        currentUserId: () => 'owner',
+        platform: 'web',
+      );
+      final repository = FirestoreCourseRepository(
+        userId: 'owner',
+        store: store,
+        logger: productionLogger,
+      );
+      store.documents = [const StoredDocument(id: 'child', data: {})];
+      await repository.deleteCourse('poo');
+      await Future<void>.delayed(Duration.zero);
+      final success = logs.documents.singleWhere(
+        (d) => d['event'] == 'course_delete_commit_succeeded',
+      );
+      final counts =
+          jsonDecode(success['details']! as String) as Map<String, dynamic>;
+      expect(counts['deleted_document_count'], 6);
+      expect(counts['materialCatalog_count'], 1);
+      expect(counts['teachingPlans_count'], 1);
+      expect(counts['stage'], 'commit');
+      expect(success['correlationId'], isNotEmpty);
+      store.failedCollection = 'academicDates';
+      await expectLater(repository.deleteCourse('poo'), throwsStateError);
+      await Future<void>.delayed(Duration.zero);
+      final failure = logs.documents.lastWhere(
+        (d) => d['operation'] == 'course_delete_children_read',
+      );
+      final details =
+          jsonDecode(failure['errorDetails']! as String)
+              as Map<String, dynamic>;
+      expect(details['collection'], 'academicDates');
+      expect(details['stage'], 'children_read');
+      expect(details['course_id'], 'poo');
+      expect(failure['errorCode'], 'course_delete_children_read_failed');
+    },
+  );
 
   test('course repository lists, saves, and deletes below its user', () async {
     final course = CourseRecord(
@@ -46,12 +92,18 @@ void main() {
       'users/user-1/courses',
       'users/user-1/courses/poo/meetings',
       'users/user-1/courses/poo/sessions',
+      'users/user-1/courses/poo/academicDates',
+      'users/user-1/courses/poo/materialCatalog',
+      'users/user-1/courses/poo/teachingPlans',
     ]);
     expect(store.savedPaths, ['users/user-1/courses/poo']);
     expect(store.savedData.single, course.toFirestore());
     expect(store.deletedPaths, [
       'users/user-1/courses/poo/meetings/child-1',
       'users/user-1/courses/poo/sessions/child-1',
+      'users/user-1/courses/poo/academicDates/child-1',
+      'users/user-1/courses/poo/materialCatalog/child-1',
+      'users/user-1/courses/poo/teachingPlans/child-1',
       'users/user-1/courses/poo',
     ]);
     expect(logger.events, [
@@ -60,9 +112,47 @@ void main() {
       'firestore_course_save_started',
       'firestore_course_save_succeeded',
       'firestore_course_delete_started',
+      'course_delete_read_started',
+      'course_delete_commit_succeeded',
       'firestore_course_delete_succeeded',
     ]);
   });
+
+  test(
+    'course deletion is atomic when a child read fails or the batch is too large',
+    () async {
+      final repository = FirestoreCourseRepository(
+        userId: 'user-1',
+        store: store,
+        logger: logger,
+      );
+      store.failedCollection = 'teachingPlans';
+      await expectLater(repository.deleteCourse('poo'), throwsStateError);
+      expect(store.deletedPaths, isEmpty);
+      store.failedCollection = null;
+      store.documents = List.generate(
+        100,
+        (i) => StoredDocument(id: 'child-$i', data: const {}),
+      );
+      await expectLater(repository.deleteCourse('poo'), throwsStateError);
+      expect(
+        store.deletedPaths,
+        isEmpty,
+        reason: 'Never partially delete more than a single atomic batch',
+      );
+      store.documents = [const StoredDocument(id: '../other-course', data: {})];
+      await expectLater(repository.deleteCourse('poo'), throwsArgumentError);
+      expect(store.deletedPaths, isEmpty);
+      store.documents = [];
+      store.deleteError = StateError('write unavailable');
+      await expectLater(repository.deleteCourse('poo'), throwsStateError);
+      expect(store.deletedPaths, isEmpty);
+      store.deleteError = null;
+      await repository.deleteCourse('poo');
+      expect(store.deletedPaths, ['users/user-1/courses/poo']);
+      expect(store.successfulBatches, 1);
+    },
+  );
 
   test('meeting repository uses the selected course path', () async {
     final meeting = MeetingRecord(
@@ -267,15 +357,23 @@ final class _FakeDocumentStore implements DocumentStore {
   final updatedPaths = <String>[];
   final updatedData = <Map<String, Object?>>[];
   final deletedPaths = <String>[];
+  String? failedCollection;
+  Object? deleteError;
+  int successfulBatches = 0;
 
   @override
   Future<void> deleteAll(Iterable<String> documentPaths) async {
+    if (deleteError != null) throw deleteError!;
+    successfulBatches++;
     deletedPaths.addAll(documentPaths);
   }
 
   @override
   Future<List<StoredDocument>> list(String collectionPath) async {
     listedPaths.add(collectionPath);
+    if (collectionPath.split('/').last == failedCollection) {
+      throw StateError('read unavailable');
+    }
     return documents;
   }
 
@@ -314,4 +412,11 @@ final class _FakeAppLogger implements AppLogger {
     errorContexts.add(context);
     allParameters.add(parameters);
   }
+}
+
+class _DeletionLogStore implements OperationalLogStore {
+  final documents = <Map<String, Object?>>[];
+  @override
+  Future<void> add(String userId, Map<String, Object?> document) async =>
+      documents.add(document);
 }

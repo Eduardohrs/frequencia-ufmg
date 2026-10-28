@@ -1,5 +1,6 @@
+import 'cache_request_owner.dart';
+import '../observability/operation_diagnostics.dart';
 import '../backend/python_backend_transport.dart';
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -35,10 +36,13 @@ final class CachedAcademicOverviewRepository
 
   @override
   Future<AcademicOverviewSnapshot> loadOverview() async {
+    final owner = CacheRequestOwner(currentUserId, logger, 'overviewCache');
     try {
       var snapshot = await remote.loadOverview();
+      owner.requireCurrent('overview_remote_read');
       if (snapshot.unavailableDateCourses.isNotEmpty) {
         final cached = await loadCachedOverview();
+        owner.requireCurrent('overview_partial_cache');
         snapshot = AcademicOverviewSnapshot(
           courses: snapshot.courses,
           sessionsByCourse: snapshot.sessionsByCourse,
@@ -52,18 +56,26 @@ final class CachedAcademicOverviewRepository
           isLocalCopy: snapshot.isLocalCopy,
         );
       }
-      final userId = currentUserId();
+      final userId = owner.userId;
       if (userId != null) {
         try {
           await cache.write(userId, _encode(snapshot));
+          owner.requireCurrent('overview_cache_write');
           _event('academic_overview_cache_write_succeeded');
+        } on CacheIdentityChanged {
+          rethrow;
         } catch (error, stackTrace) {
+          owner.requireCurrent('overview_cache_write_failure');
           _error(error, stackTrace, 'academic_overview_cache_write');
         }
       }
       return snapshot;
+    } on CacheIdentityChanged {
+      rethrow;
     } catch (remoteError, remoteStackTrace) {
+      owner.requireCurrent('overview_remote_failure');
       final snapshot = await loadCachedOverview();
+      owner.requireCurrent('overview_cache_fallback');
       if (snapshot != null) return snapshot;
       Error.throwWithStackTrace(remoteError, remoteStackTrace);
     }
@@ -71,7 +83,8 @@ final class CachedAcademicOverviewRepository
 
   @override
   Future<AcademicOverviewSnapshot?> loadCachedOverview() async {
-    final userId = currentUserId();
+    final owner = CacheRequestOwner(currentUserId, logger, 'overviewCacheRead');
+    final userId = owner.userId;
     if (userId == null) return null;
     late final String? encoded;
     try {
@@ -80,6 +93,7 @@ final class CachedAcademicOverviewRepository
       _error(error, stackTrace, 'academic_overview_cache_read');
       return null;
     }
+    if (!owner.accepts('overview_cache_read')) return null;
     if (encoded == null) {
       _event('academic_overview_cache_miss');
       return null;
@@ -100,13 +114,12 @@ final class CachedAcademicOverviewRepository
   }
 
   void _event(String name) =>
-      unawaited(logger.logEvent(name).catchError((Object _) {}));
+      emitOperationalEvent(logger, name, {'stage': name});
 
-  void _error(Object error, StackTrace stackTrace, String context) => unawaited(
-    logger
-        .recordError(error, stackTrace, context: context)
-        .catchError((Object _) {}),
-  );
+  void _error(Object error, StackTrace stackTrace, String context) =>
+      recordOperationalFailure(logger, error, stackTrace, context, {
+        'stage': context,
+      }, failureCode: context);
 }
 
 String _encode(AcademicOverviewSnapshot snapshot) => jsonEncode({

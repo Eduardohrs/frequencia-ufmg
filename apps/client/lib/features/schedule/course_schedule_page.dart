@@ -501,7 +501,6 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         sessionGateway: widget.sessionGateway,
         sessionWritesEnabled: widget.sessionWritesEnabled,
         androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
-        initialSessions: widget.initialSessionsByCourse?[widget.course.id],
       ),
     ),
   );
@@ -519,7 +518,6 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
         location: _generator.location,
         now: widget.now,
-        initialSessions: widget.initialSessionsByCourse?[widget.course.id],
       ),
     ),
   );
@@ -539,7 +537,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
               repository: widget.sessionRepository,
               location: _generator.location,
               initialCourseId: widget.course.id,
-              initialSessionsByCourse: widget.initialSessionsByCourse,
+
               now: widget.now,
             ),
           ),
