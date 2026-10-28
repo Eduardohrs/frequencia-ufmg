@@ -130,7 +130,8 @@ def test_cipher_rejects_malformed_and_authenticated_invalid_payloads():
             cipher.open(value, now=1000)
 
 
-def test_http_dispatch_worker_and_recovery_without_original_client(monkeypatch):
+@pytest.mark.parametrize("force", [False, True])
+def test_http_dispatch_worker_and_recovery_without_original_client(monkeypatch, force):
     from base64 import b64encode
 
     from test_main import FakeContext, FakeRequest
@@ -173,7 +174,7 @@ def test_http_dispatch_worker_and_recovery_without_original_client(monkeypatch):
         FakeRequest(
             "POST",
             "/v1/ufmg/sync/all",
-            body_json={"progress_id": "operation-123", "background": True},
+            body_json={"progress_id": "operation-123", "background": True, "force": force},
             headers={"authorization": "Bearer test-user-credential"},
         )
     )
@@ -189,7 +190,7 @@ def test_http_dispatch_worker_and_recovery_without_original_client(monkeypatch):
             self.telemetry("academic_sync_stage_completed", {"stage": "siga"})
             return {"exceptions": []}
 
-    monkeypatch.setattr(function, "_unified_academic_sync_service", lambda *a: Service(a[-1]))
+    monkeypatch.setattr(function, "_unified_academic_sync_service", lambda *a, **kw: Service(a[-1]))
     worker = FakeContext(
         FakeRequest("POST", "/internal/academic-sync", body_json=json.loads(captured[0]["body"]))
     )
@@ -208,7 +209,7 @@ def test_http_dispatch_worker_and_recovery_without_original_client(monkeypatch):
         def sync(self, *a, **k):
             raise RuntimeError("never log private credentials")
 
-    monkeypatch.setattr(function, "_unified_academic_sync_service", lambda *a: Failure())
+    monkeypatch.setattr(function, "_unified_academic_sync_service", lambda *a, **kw: Failure())
     worker.req.body_json = json.loads(captured[-1]["body"])
     assert function.main(worker)["status"] == 500
     assert function.main(status)["body"]["failure_code"] == "RuntimeError"

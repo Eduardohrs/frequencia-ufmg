@@ -78,6 +78,7 @@ class CourseRepository:
             "materialCatalog",
             "teachingPlans",
             "activitySnapshots",
+            "syncState",
         ):
             documents = self._firestore.list_user_documents("courses", course_id, collection)
             for document in documents:

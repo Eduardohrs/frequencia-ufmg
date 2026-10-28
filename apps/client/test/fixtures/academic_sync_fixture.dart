@@ -58,6 +58,7 @@ class ProgressGateway implements BackendAcademicSyncProgressGateway {
   final response = Completer<PythonUnifiedAcademicSyncResult>();
   final updates = StreamController<AcademicSyncProgress>.broadcast(sync: true);
   int calls = 0;
+  bool lastForce = false;
   String? operationId;
   bool throwsOnWatch = false;
   @override
@@ -67,8 +68,12 @@ class ProgressGateway implements BackendAcademicSyncProgressGateway {
   }
 
   @override
-  Future<PythonUnifiedAcademicSyncResult> syncWithProgress(String id) {
+  Future<PythonUnifiedAcademicSyncResult> syncWithProgress(
+    String id, {
+    bool force = false,
+  }) {
     calls++;
+    lastForce = force;
     operationId = id;
     return response.future;
   }

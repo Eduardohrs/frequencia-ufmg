@@ -84,3 +84,52 @@ def test_unlinked_ambiguous_or_expired_sources_are_explicit(activities):
     sessions.load = lambda *args, **kwargs: None
     with pytest.raises(UFMGReauthenticationRequired):
         service.list_activities("user", "poo", now=123)
+
+
+def test_adaptive_capture_reuses_complete_copy_and_can_force_or_heal_missing_copy(activities):
+    from test_course_sync_policy import Store
+
+    from activity_snapshot_repository import ActivitySnapshotMissing
+    from course_sync_policy import CourseSyncPolicy
+
+    service, _, _, client, *_ = activities
+    course = {"id": "poo", "code": "ELE631", "term": "2026-2"}
+    service._courses.list_courses = lambda: [course]
+    service._policy = CourseSyncPolicy(Store())
+    counts = {"index": 0, "detail": 0}
+    saved = {}
+    old_index = client.list_activities
+    old_detail = client.fetch_activity
+
+    def index(*a, **k):
+        counts["index"] += 1
+        return old_index(*a, **k)
+
+    def detail(*a, **k):
+        counts["detail"] += 1
+        return old_detail(*a, **k)
+
+    client.list_activities = index
+    client.fetch_activity = detail
+
+    class Snapshots:
+        def load(self, key):
+            if key not in saved:
+                raise ActivitySnapshotMissing()
+            return saved[key]
+
+        def save(self, key, value):
+            saved[key] = value
+
+    snapshots = Snapshots()
+    assert service.sync_snapshots("user", now=1000, snapshots=snapshots)["updated"] == 1
+    before = dict(counts)
+    assert service.sync_snapshots("user", now=1001, snapshots=snapshots)["reused"] == 1
+    assert counts == before
+    service._force = True
+    assert service.sync_snapshots("user", now=1002, snapshots=snapshots)["updated"] == 1
+    service._force = False
+    saved.clear()
+    assert service.sync_snapshots("user", now=1003, snapshots=snapshots)["updated"] == 1
+    saved["poo"]["term"] = "2025-2"
+    assert service.sync_snapshots("user", now=1004, snapshots=snapshots)["updated"] == 1

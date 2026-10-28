@@ -13,9 +13,14 @@ abstract interface class UFMGSyncScheduleGateway {
 final class UFMGSyncSchedule implements UFMGSyncScheduleGateway {
   UFMGSyncSchedule({SharedPreferencesAsync? preferences, UtcNow? now})
     : _preferences = preferences ?? SharedPreferencesAsync(),
-      _now = now ?? DateTime.now;
+      _now = now ?? DateTime.now,
+      _storagePrefix = 'ufmg_sync.v1.';
 
-  static const _storagePrefix = 'ufmg_sync.v1.';
+  UFMGSyncSchedule.academic({SharedPreferencesAsync? preferences, UtcNow? now})
+    : _preferences = preferences ?? SharedPreferencesAsync(),
+      _now = now ?? DateTime.now,
+      _storagePrefix = 'academic_sync.v1.';
+  final String _storagePrefix;
 
   final SharedPreferencesAsync _preferences;
   final UtcNow _now;
@@ -46,6 +51,6 @@ final class UFMGSyncSchedule implements UFMGSyncScheduleGateway {
     await _preferences.setString(_key(userId), next.toIso8601String());
   }
 
-  static String _key(String userId) =>
+  String _key(String userId) =>
       '$_storagePrefix${base64Url.encode(utf8.encode(userId)).replaceAll('=', '')}';
 }

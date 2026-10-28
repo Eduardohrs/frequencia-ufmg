@@ -40,6 +40,7 @@ from course_repository import (  # noqa: E402
     validate_course_id,
 )
 from course_service import InvalidCourse  # noqa: E402
+from course_sync_policy import AdaptiveTeachingPlanImporter, CourseSyncPolicy  # noqa: E402
 from firebase_app_check import (  # noqa: E402
     FirebaseAppIdentity,
     InvalidAppCheck,
@@ -331,6 +332,9 @@ def _dispatch(context: Any) -> Any:
     ):
         course_id = path.removeprefix("/v1/courses/").removesuffix("/schedule")
         return _schedule(context, allowed_origin, method, course_id)
+    policy_route = re.fullmatch(r"/v1/courses/([^/]+)/plan-sync", path)
+    if policy_route and method in {"GET", "PUT"}:
+        return _course_plan_sync_policy(context, allowed_origin, method, policy_route.group(1))
     workspace = re.fullmatch(r"/v1/courses/([^/]+)/(dates|plan|activities)(?:/([^/]+))?", path)
     if workspace and method in {"GET", "PUT", "DELETE"}:
         return _course_workspace(
@@ -779,7 +783,8 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
     payload = context.req.body_json
     if (
         not isinstance(payload, Mapping)
-        or set(payload) - {"progress_id", "background"}
+        or set(payload) - {"progress_id", "background", "force"}
+        or ("force" in payload and type(payload["force"]) is not bool)
         or ("background" in payload and payload["background"] is not True)
         or (
             "progress_id" in payload
@@ -802,10 +807,12 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
             if progress is not None:
                 progress.observe(event, fields)
 
-        service = _unified_academic_sync_service(
-            context.req.headers,
-            cast(str, user_id),
-            telemetry,
+        service = (
+            _unified_academic_sync_service(
+                context.req.headers, cast(str, user_id), telemetry, force=True
+            )
+            if payload.get("force") is True
+            else _unified_academic_sync_service(context.req.headers, cast(str, user_id), telemetry)
         )
 
         def run() -> dict[str, object]:
@@ -914,7 +921,7 @@ def _enqueue_academic_sync(
         )
 
     try:
-        value = job.start(operation, enqueue)
+        value = job.start(operation, enqueue, force=payload.get("force", False))
     except Exception as error:
         return _ufmg_session_error(
             context,
@@ -969,7 +976,11 @@ def _academic_sync_worker(context: Any) -> Any:
         progress.observe(event, fields)
 
     try:
-        service = _unified_academic_sync_service(headers, uid, telemetry)
+        service = (
+            _unified_academic_sync_service(headers, uid, telemetry, force=True)
+            if job.read().get("force") is True
+            else _unified_academic_sync_service(headers, uid, telemetry)
+        )
         result = progress.run(lambda: service.sync(uid, now=int(time())))
         job.finish(operation, result)
     except Exception as error:
@@ -1562,6 +1573,52 @@ def _courses_list(context: Any, origin: str | None) -> Any:
     return _respond(context, {"courses": courses}, origin=origin)
 
 
+def _course_plan_sync_policy(context: Any, origin: str | None, method: str, course_id: str) -> Any:
+    uid, rejected = _authentication(context, origin, f"/v1/courses/plan-sync/{method.lower()}")
+    if rejected is not None:
+        return rejected
+    try:
+        course = _course_repository(context.req.headers, cast(str, uid)).get_course(course_id)
+        policy = CourseSyncPolicy(
+            _firestore(context.req.headers, cast(str, uid)),
+            telemetry=lambda e, f: _academic_sync_telemetry(context, e, f),
+        )
+        if method == "PUT":
+            body = context.req.body_json
+            if (
+                not isinstance(body, dict)
+                or set(body) != {"paused"}
+                or type(body["paused"]) is not bool
+            ):
+                raise ValueError("invalid sync policy")
+            policy.confirm_plan(
+                course_id, now=int(time()), term=course["term"], paused=body["paused"]
+            )
+        return _respond(
+            context,
+            {"paused": policy.manual_paused(course_id, course["term"])},
+            origin=origin,
+        )
+    except (ValueError, InvalidCourse, FirestoreNotFound) as error:
+        _error(
+            context,
+            "course_sync_policy_rejected_details",
+            course_id=course_id,
+            method=method,
+            reason=type(error).__name__,
+        )
+        return _course_error(context, origin, "course_sync_policy_rejected", 400)
+    except (FirestoreUnavailable, FirestoreAccessDenied) as error:
+        _error(
+            context,
+            "course_sync_policy_store_failed",
+            course_id=course_id,
+            method=method,
+            reason=type(error).__name__,
+        )
+        return _course_error(context, origin, "course_sync_policy_unavailable", 503)
+
+
 def _course_workspace(
     context: Any, origin: str | None, method: str, course_id: str, section: str, item_id: str | None
 ) -> Any:
@@ -1823,6 +1880,8 @@ def _course_activity_service(
     sessions: Any = None,
     client: Any = None,
     telemetry: Any = None,
+    policy: CourseSyncPolicy | None = None,
+    force: bool = False,
 ) -> CourseActivityService:
     courses = courses or _course_repository(headers, user_id)
     sessions = sessions or _ufmg_session_store(headers)
@@ -1835,11 +1894,13 @@ def _course_activity_service(
         client,
         tokens,
         telemetry=telemetry,
+        policy=policy,
+        force=force,
     )
 
 
 def _moodle_sync_service(
-    headers: dict[str, str], user_id: str, telemetry: Any = None
+    headers: dict[str, str], user_id: str, telemetry: Any = None, *, force: bool = False
 ) -> MoodleSyncService:
     sessions = _ufmg_session_store(headers)
     client = MoodleStructuredDatesClient()
@@ -1870,6 +1931,8 @@ def _moodle_sync_service(
             sessions=sessions,
             client=client,
             telemetry=telemetry,
+            policy=CourseSyncPolicy(_firestore(headers, user_id), telemetry=telemetry),
+            force=force,
         ).sync_snapshots(
             uid, now=now, snapshots=ActivitySnapshotRepository(_firestore(headers, user_id))
         ),
@@ -1882,6 +1945,8 @@ def _unified_academic_sync_service(
     headers: dict[str, str],
     user_id: str,
     telemetry: Any = None,
+    *,
+    force: bool = False,
 ) -> UnifiedAcademicSyncService:
     sessions = RequestCachedUFMGSessionStore(_ufmg_session_store(headers))
     enrollments = UFMGEnrollmentClient()
@@ -1922,6 +1987,8 @@ def _unified_academic_sync_service(
             sessions=sessions,
             client=client,
             telemetry=telemetry,
+            policy=CourseSyncPolicy(_firestore(headers, user_id), telemetry=telemetry),
+            force=force,
         ).sync_snapshots(
             uid, now=now, snapshots=ActivitySnapshotRepository(_firestore(headers, user_id))
         ),
@@ -1939,7 +2006,12 @@ def _unified_academic_sync_service(
     return UnifiedAcademicSyncService(
         siga,
         moodle,
-        plans,
+        AdaptiveTeachingPlanImporter(
+            plans,
+            CourseSyncPolicy(firestore, telemetry=telemetry),
+            force=force,
+            created_at=lambda cid: courses.get_course(cid).get("created_at"),
+        ),
         TeachingPlanReconciliationRepository(firestore, courses=courses, telemetry=telemetry),
         telemetry=telemetry,
     )
@@ -2252,7 +2324,23 @@ def _respond(
     extra_headers: dict[str, str] | None = None,
 ) -> Any:
     _RESPONSE_STATUS.set(status)
-    if _header(context.req.headers, "x-academic-contract") != "2":
+    contract = _header(context.req.headers, "x-academic-contract")
+    if contract == "2":
+        # Installed APKs still use the strict v2 activity-summary shape.
+        def v2_summary(value: dict[str, Any]) -> dict[str, Any]:
+            output = dict(value)
+            if isinstance(output.get("activities"), dict):
+                output["activities"] = {
+                    k: v for k, v in output["activities"].items() if k != "reused"
+                }
+            if isinstance(output.get("moodle"), dict):
+                output["moodle"] = v2_summary(output["moodle"])
+            return output
+
+        body = v2_summary(body)
+        if isinstance(body.get("result"), dict):
+            body["result"] = v2_summary(body["result"])
+    if contract not in {"2", "3"}:
         body = dict(body)
         if "dates" in body:
             body.pop("activities", None)

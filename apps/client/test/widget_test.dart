@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'fixtures/academic_sync_fixture.dart';
 
 import 'package:firebase_core_platform_interface/test.dart';
 import 'package:flutter/foundation.dart';
@@ -35,6 +36,37 @@ void main() {
 
     expect(repository, isA<PythonCourseRepository>());
   });
+
+  testWidgets(
+    'bootstrap wires academic refresh without blocking signed-out startup',
+    (tester) async {
+      final gateway = _FakeAuthGateway();
+      final logger = _FakeAppLogger();
+      addTearDown(gateway.close);
+      final previousBackend = app.backendIdentityVerifierFactory;
+      final previousFlutter = FlutterError.onError;
+      final previousPlatform = PlatformDispatcher.instance.onError;
+      app.authGatewayFactory = () => gateway;
+      app.appLoggerFactory = () => logger;
+      app.courseRepositoryFactory = (_, _) => _FakeCourseRepository();
+      app.meetingRepositoryFactory = (_, _) => _FakeMeetingRepository();
+      app.sessionRepositoryFactory = (_, _) => _FakeSessionRepository();
+      app.backendIdentityVerifierFactory = () => _FakeAdaptiveBackend();
+      try {
+        await app.main();
+        await tester.pumpAndSettle();
+        final widget = tester.widget<app.FrequenciaUFMGApp>(
+          find.byType(app.FrequenciaUFMGApp),
+        );
+        expect(widget.academicSyncSchedule, isNotNull);
+        expect(find.text('Entrar com Google'), findsOneWidget);
+      } finally {
+        app.backendIdentityVerifierFactory = previousBackend;
+        FlutterError.onError = previousFlutter;
+        PlatformDispatcher.instance.onError = previousPlatform;
+      }
+    },
+  );
 
   testWidgets('bootstraps Firebase and shows the signed-out experience', (
     tester,
@@ -591,4 +623,11 @@ class _FirebaseCoreHostApi implements TestFirebaseCoreHostApi {
       messagingSenderId: 'test',
     );
   }
+}
+
+final class _FakeAdaptiveBackend extends _FakeOverviewBackend
+    implements BackendUnifiedAcademicSyncGateway {
+  @override
+  Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() async =>
+      syncResult();
 }
