@@ -210,7 +210,7 @@ jobs:
           created=$(npx --yes appwrite-cli@28.8.0 functions create-deployment \
             --function-id "$APPWRITE_FUNCTION_ID" \
             --code appwrite-python/.bundle \
-            --entrypoint src/main.py \
+            --entrypoint src/runtime.py \
             --commands 'pip install -r requirements.txt' \
             --activate=false \
             --json)

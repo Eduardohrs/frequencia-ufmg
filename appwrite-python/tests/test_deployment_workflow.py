@@ -20,6 +20,7 @@ def test_appwrite_timeout_updates_restore_required_access_configuration() -> Non
     assert 'update_args+=(--execute "$permission")' in workflow
     assert 'update_args+=(--scopes "$scope")' in workflow
     assert "configure_function 900" in workflow
+    assert "--entrypoint src/runtime.py" in workflow
     assert 'configure_function "$previous_timeout"' in workflow
     assert workflow.index("configure_function 900") < workflow.index(
         "functions create-deployment"
