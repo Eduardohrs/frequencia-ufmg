@@ -795,6 +795,49 @@ void main() {
     expect(repository.courses.single.endsOn, DateTime.utc(2027, 6, 30));
   });
 
+  testWidgets(
+    'expiration diagnostics persist course and term on success and failure',
+    (tester) async {
+      for (final fails in [false, true]) {
+        final expired = CourseRecord(
+          id: 'expired',
+          code: 'DCC100',
+          name: 'Antiga',
+          workload: 60,
+          term: '2026-1',
+          createdAt: DateTime.utc(2026),
+          updatedAt: now,
+        );
+        final repository = _FakeCourseRepository(courses: [expired]);
+        if (fails) repository.deleteError = StateError('store unavailable');
+        final store = _HubLogStore();
+        final logger = FirestoreAppLogger(
+          store: store,
+          currentUserId: () => 'owner',
+          platform: 'web',
+        );
+        await tester.pumpWidget(_app(repository, user, now, logger: logger));
+        await tester.pumpAndSettle();
+        final row = store.documents.singleWhere(
+          (d) => fails
+              ? d['operation'] == 'course_expiration_delete'
+              : d['event'] == 'course_expiration_delete_succeeded',
+        );
+        final details =
+            jsonDecode(row[fails ? 'errorDetails' : 'details']! as String)
+                as Map<String, dynamic>;
+        expect(details['course_id'], 'expired');
+        expect(details['term'], '2026-1');
+        expect(details['stage'], 'expiration_delete');
+        expect(row['durationMs'], isA<int>());
+        expect(row['correlationId'], isNotEmpty);
+        expect(repository.courses, fails ? hasLength(1) : isEmpty);
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpAndSettle();
+      }
+    },
+  );
+
   testWidgets('deletes expired previous courses on the first load', (
     tester,
   ) async {

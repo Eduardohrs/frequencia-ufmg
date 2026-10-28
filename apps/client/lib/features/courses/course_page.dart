@@ -23,6 +23,7 @@ import '../../design/course_identity.dart';
 import '../../observability/error_log_details.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
+import '../../observability/operation_diagnostics.dart';
 import '../attendance/absence_dashboard_page.dart';
 import '../attendance/attendance_page.dart';
 import '../attendance/attendance_permissions_page.dart';
@@ -434,29 +435,40 @@ class _CoursePageState extends State<CoursePage> {
     final policy = AcademicPeriodPolicy(widget.now());
     final expired = courses.where(policy.isExpired).toList(growable: false);
     for (final course in expired) {
-      unawaited(
-        widget.logger.logEvent(
-          'course_expiration_delete_started',
-          parameters: {'term': course.term},
-        ),
+      final timer = Stopwatch()..start();
+      final fields = <String, Object>{
+        'operation_id': newCorrelationId('course_expiration'),
+        'screen': 'home',
+        'course_id': course.id,
+        'course_code': course.code,
+        'term': course.term,
+        'stage': 'expiration_delete',
+      };
+      emitOperationalEvent(
+        widget.logger,
+        'course_expiration_delete_started',
+        fields,
       );
       try {
         await widget.repository.deleteCourse(course.id);
         courses.remove(course);
-        unawaited(
-          widget.logger.logEvent(
-            'course_expiration_delete_succeeded',
-            parameters: {'term': course.term},
-          ),
+        emitOperationalEvent(
+          widget.logger,
+          'course_expiration_delete_succeeded',
+          {...fields, 'duration_ms': timer.elapsedMilliseconds},
         );
       } catch (error, stackTrace) {
-        unawaited(
-          widget.logger.recordError(
-            error,
-            stackTrace,
-            context: 'course_expiration_delete',
-            parameters: {'term': course.term},
-          ),
+        recordOperationalFailure(
+          widget.logger,
+          error,
+          stackTrace,
+          'course_expiration_delete',
+          {
+            ...fields,
+            'duration_ms': timer.elapsedMilliseconds,
+            'retained_previous': true,
+          },
+          failureCode: 'course_expiration_delete_failed',
         );
       }
     }
