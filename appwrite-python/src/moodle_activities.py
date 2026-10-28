@@ -52,6 +52,7 @@ class _ActivityParser(HTMLParser):
         self.submission = ""
         self.main = False
         self.activity = False
+        self.quiz = False
 
     def _inside(self, key: str, value: str) -> bool:
         return any(attributes.get(key) == value for _, attributes in self.stack)
@@ -63,6 +64,10 @@ class _ActivityParser(HTMLParser):
             attributes.get("id") == "intro"
             or attributes.get("data-region") == "activity-dates"
             or "submissionstatustable" in (attributes.get("class", "") or "").split()
+        )
+        self.quiz |= self._inside("id", "region-main") and bool(
+            {"quizinfo", "quizattemptsummary", "quizattempt", "quizstartbuttondiv"}
+            & set((attributes.get("class", "") or "").split())
         )
         if len(self.stack) > 100:
             raise InvalidActivityPage("activity_html_depth")
@@ -124,7 +129,7 @@ def parse_activity_page(payload: bytes, *, term: str, kind: str) -> dict[str, ob
         parser.feed(payload.decode("utf-8"))
     except UnicodeDecodeError:
         raise InvalidActivityPage("activity_page_encoding") from None
-    if not parser.main or not parser.activity:
+    if not parser.main or not (parser.activity or (kind == "quiz" and parser.quiz)):
         raise InvalidActivityPage("activity_page_shape")
     status = _normalized(parser.submission)
     state = "unknown"

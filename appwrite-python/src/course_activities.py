@@ -15,6 +15,7 @@ from course_repository import CourseRepository
 from course_sync_policy import CourseSyncPolicy
 from moodle_material_catalog_repository import MoodleMaterialCatalogRepository
 from moodle_structured_dates import (
+    InvalidMoodleResponse,
     MoodleStructuredDatesClient,
     _private_file_url,
 )
@@ -104,7 +105,13 @@ class CourseActivityService:
                 else:
                     updated += 1
             except Exception as error:
-                issue = {**fields, "reason": type(error).__name__, "retained_previous": True}
+                issue = {
+                    **fields,
+                    "reason": error.reason
+                    if isinstance(error, InvalidMoodleResponse)
+                    else type(error).__name__,
+                    "retained_previous": True,
+                }
                 failed.append(issue)
                 _emit(self._telemetry, "activity_snapshot_sync_failed", issue)
         return {
@@ -133,7 +140,12 @@ class CourseActivityService:
                     kind=str(entry["kind"]),
                 ),
                 telemetry=self._telemetry,
-                fields={**fields, "source_id": entry["source_id"]},
+                fields={
+                    **fields,
+                    "source_id": entry["source_id"],
+                    "kind": entry["kind"],
+                    "title": entry["title"],
+                },
             )
             activities.append({**entry, **detail, "files": [], "term": course["term"]})
         snapshot = {

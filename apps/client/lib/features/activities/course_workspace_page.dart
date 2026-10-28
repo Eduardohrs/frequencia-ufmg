@@ -45,6 +45,7 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
   List<PythonMoodleActivity> _activities = [];
   PythonCourseActivitySnapshot? _snapshot;
   bool _localSnapshot = false;
+  bool _localPlan = false;
   bool _cacheWriteFailed = false;
   late final _snapshotCache =
       widget.snapshotCache ?? CourseActivitySnapshotCache();
@@ -210,9 +211,14 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
           );
           if (mounted) _dates = entries;
         case _Section.plan:
+          await _planCache(write: false);
           await _loadPlanPolicy();
           final plan = await widget.gateway.loadCoursePlan(widget.course.id);
-          if (mounted) _plan = plan;
+          if (mounted) {
+            _plan = plan;
+            _localPlan = false;
+          }
+          await _planCache(write: true);
       }
       emitOperationalEvent(widget.logger, 'course_workspace_read_succeeded', {
         ...fields,
@@ -247,6 +253,48 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
       if (mounted) setState(() => _failed.add(section));
     } finally {
       if (mounted) setState(() => _loading.remove(section));
+    }
+  }
+
+  Future<void> _planCache({required bool write}) async {
+    final user = widget.userId;
+    if (user == null) return;
+    final fields = _fields(write ? 'plan_cache_write' : 'plan_cache_read');
+    try {
+      if (write) {
+        await _snapshotCache.writePlan(
+          user,
+          widget.course.id,
+          widget.course.term,
+          _plan,
+        );
+      } else {
+        final plan = await _snapshotCache.readPlan(
+          user,
+          widget.course.id,
+          widget.course.term,
+        );
+        if (plan != null && mounted) {
+          setState(() {
+            _plan = plan;
+            _localPlan = true;
+            _loaded.add(_Section.plan);
+          });
+        }
+      }
+      emitOperationalEvent(widget.logger, 'course_plan_cache_succeeded', {
+        ...fields,
+        'cache_hit': _plan != null,
+      });
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        write ? 'plan_cache_write' : 'plan_cache_read',
+        fields,
+        failureCode: 'course_plan_cache_failed',
+      );
     }
   }
 
@@ -678,6 +726,8 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
                     ],
                   ),
                 ),
+              if (_section == _Section.plan && _localPlan)
+                const Text('Cópia local do plano de ensino.'),
               if (_section == _Section.plan && _planSyncPaused != null)
                 SwitchListTile(
                   key: const Key('course-plan-sync-paused'),
