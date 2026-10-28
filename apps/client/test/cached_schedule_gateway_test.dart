@@ -7,6 +7,73 @@ import 'package:shared_preferences_platform_interface/in_memory_shared_preferenc
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
 void main() {
+  for (final save in [false, true]) {
+    test(
+      'rejects a schedule result when the account changes (save=$save)',
+      () async {
+        var owner = 'alice';
+        final cache = _MemoryScheduleCache();
+        final gateway = CachedScheduleGateway(
+          remote: _Gateway(
+            schedule: _schedule(),
+            onResponse: () => owner = 'bob',
+          ),
+          cache: cache,
+          currentUserId: () => owner,
+          logger: _Logger(),
+        );
+        final pending = save
+            ? gateway.saveSchedule(
+                courseId: 'course-1',
+                startsOn: null,
+                endsOn: null,
+                meetings: [],
+                confirmDestructive: false,
+              )
+            : gateway.getSchedule('course-1');
+        await expectLater(pending, throwsStateError);
+        expect(cache.values, isEmpty);
+      },
+    );
+  }
+  test(
+    'does not use a new account cache after a failed remote schedule request',
+    () async {
+      var owner = 'alice';
+      final cache = _MemoryScheduleCache();
+      final gateway = CachedScheduleGateway(
+        remote: _Gateway(
+          error: StateError('network'),
+          onResponse: () => owner = 'bob',
+        ),
+        cache: cache,
+        currentUserId: () => owner,
+        logger: _Logger(),
+      );
+      await expectLater(gateway.getSchedule('course-1'), throwsStateError);
+      expect(cache.readUsers, isEmpty);
+    },
+  );
+  test('keeps identity scoped across schedule cache read and write', () async {
+    var owner = 'alice';
+    final cache = _MemoryScheduleCache();
+    final gateway = CachedScheduleGateway(
+      remote: _Gateway(schedule: _schedule()),
+      cache: cache,
+      currentUserId: () => owner,
+      logger: _Logger(),
+    );
+    await gateway.getSchedule('course-1');
+    cache.onRead = () => owner = 'bob';
+    expect(await gateway.getCachedSchedule('course-1'), isNull);
+    expect(cache.values.keys, ['alice/course-1']);
+    cache.onRead = null;
+    owner = 'alice';
+    cache.onWrite = () => owner = 'bob';
+    await expectLater(gateway.getSchedule('course-1'), throwsStateError);
+    expect(cache.values.keys, ['alice/course-1']);
+  });
+
   test('restores one user schedule after the app restarts offline', () async {
     final cache = _MemoryScheduleCache();
     final logger = _Logger();
@@ -158,13 +225,15 @@ PythonSchedule _schedule() => PythonSchedule(
 );
 
 final class _Gateway implements BackendScheduleGateway {
-  _Gateway({this.schedule, this.error});
+  _Gateway({this.schedule, this.error, this.onResponse});
+  final void Function()? onResponse;
 
   final PythonSchedule? schedule;
   final Object? error;
 
   @override
   Future<PythonSchedule> getSchedule(String courseId) async {
+    onResponse?.call();
     if (error case final value?) throw value;
     return schedule!;
   }
@@ -177,6 +246,7 @@ final class _Gateway implements BackendScheduleGateway {
     required List<PythonMeeting> meetings,
     required bool confirmDestructive,
   }) async {
+    onResponse?.call();
     if (error case final value?) throw value;
     return schedule!;
   }
@@ -187,11 +257,16 @@ final class _MemoryScheduleCache implements ScheduleCache {
   Object? readError;
   Object? writeError;
   Object? removeError;
+  final readUsers = <String>[];
+  void Function()? onRead;
+  void Function()? onWrite;
 
   String _key(String userId, String courseId) => '$userId/$courseId';
 
   @override
   Future<String?> read(String userId, String courseId) async {
+    readUsers.add(userId);
+    onRead?.call();
     if (readError case final error?) throw error;
     return values[_key(userId, courseId)];
   }
@@ -200,6 +275,7 @@ final class _MemoryScheduleCache implements ScheduleCache {
   Future<void> write(String userId, String courseId, String value) async {
     if (writeError case final error?) throw error;
     values[_key(userId, courseId)] = value;
+    onWrite?.call();
   }
 
   @override

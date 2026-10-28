@@ -1,3 +1,4 @@
+import '../observability/operation_diagnostics.dart';
 import '../backend/python_backend_transport.dart';
 import 'academic_agenda.dart';
 import '../observability/app_logger.dart';
@@ -102,7 +103,7 @@ final class RepositoryAcademicOverviewRepository
         throw StateError('The academic overview has too many sessions.');
       }
       await dateReads;
-      emitAgendaEvent(logger, 'agenda_overview_loaded', {
+      emitOperationalEvent(logger, 'agenda_overview_loaded', {
         'operation_id': currentOperationId!,
         'stage': 'academic_dates_read',
         'course_count': courses.length,

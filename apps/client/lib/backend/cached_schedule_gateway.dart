@@ -1,4 +1,5 @@
-import 'dart:async';
+import '../data/cache_request_owner.dart';
+import '../observability/operation_diagnostics.dart';
 import 'dart:convert';
 
 import '../observability/app_logger.dart';
@@ -29,12 +30,18 @@ final class CachedScheduleGateway implements LocalFirstScheduleGateway {
 
   @override
   Future<PythonSchedule> getSchedule(String courseId) async {
+    final owner = CacheRequestOwner(currentUserId, logger, 'scheduleCache');
     try {
       final schedule = await remote.getSchedule(courseId);
-      await _writeBestEffort(courseId, schedule);
+      owner.requireCurrent('schedule_remote_read');
+      await _writeBestEffort(courseId, schedule, owner);
       return schedule;
+    } on CacheIdentityChanged {
+      rethrow;
     } catch (remoteError, remoteStackTrace) {
+      owner.requireCurrent('schedule_remote_failure');
       final schedule = await getCachedSchedule(courseId);
+      owner.requireCurrent('schedule_cache_fallback');
       if (schedule != null) return schedule;
       Error.throwWithStackTrace(remoteError, remoteStackTrace);
     }
@@ -42,7 +49,8 @@ final class CachedScheduleGateway implements LocalFirstScheduleGateway {
 
   @override
   Future<PythonSchedule?> getCachedSchedule(String courseId) async {
-    final userId = currentUserId();
+    final owner = CacheRequestOwner(currentUserId, logger, 'scheduleCacheRead');
+    final userId = owner.userId;
     if (userId == null) return null;
     late final String? encoded;
     try {
@@ -51,6 +59,7 @@ final class CachedScheduleGateway implements LocalFirstScheduleGateway {
       _error(error, stackTrace, 'schedule_cache_read');
       return null;
     }
+    if (!owner.accepts('schedule_cache_read')) return null;
     if (encoded == null) {
       _event('schedule_cache_miss');
       return null;
@@ -74,6 +83,7 @@ final class CachedScheduleGateway implements LocalFirstScheduleGateway {
     required List<PythonMeeting> meetings,
     required bool confirmDestructive,
   }) async {
+    final owner = CacheRequestOwner(currentUserId, logger, 'scheduleCacheSave');
     final schedule = await remote.saveSchedule(
       courseId: courseId,
       startsOn: startsOn,
@@ -81,20 +91,26 @@ final class CachedScheduleGateway implements LocalFirstScheduleGateway {
       meetings: meetings,
       confirmDestructive: confirmDestructive,
     );
-    await _writeBestEffort(courseId, schedule);
+    owner.requireCurrent('schedule_remote_save');
+    await _writeBestEffort(courseId, schedule, owner);
     return schedule;
   }
 
   Future<void> _writeBestEffort(
     String courseId,
     PythonSchedule schedule,
+    CacheRequestOwner owner,
   ) async {
-    final userId = currentUserId();
+    final userId = owner.userId;
     if (userId == null) return;
     try {
       await cache.write(userId, courseId, _encode(schedule));
+      owner.requireCurrent('schedule_cache_write');
       _event('schedule_cache_write_succeeded');
+    } on CacheIdentityChanged {
+      rethrow;
     } catch (error, stackTrace) {
+      owner.requireCurrent('schedule_cache_write_failure');
       _error(error, stackTrace, 'schedule_cache_write');
     }
   }
@@ -108,13 +124,12 @@ final class CachedScheduleGateway implements LocalFirstScheduleGateway {
   }
 
   void _event(String name) =>
-      unawaited(logger.logEvent(name).catchError((Object _) {}));
+      emitOperationalEvent(logger, name, {'stage': name});
 
-  void _error(Object error, StackTrace stackTrace, String context) => unawaited(
-    logger
-        .recordError(error, stackTrace, context: context)
-        .catchError((Object _) {}),
-  );
+  void _error(Object error, StackTrace stackTrace, String context) =>
+      recordOperationalFailure(logger, error, stackTrace, context, {
+        'stage': context,
+      }, failureCode: context);
 }
 
 String _encode(PythonSchedule schedule) => jsonEncode({
