@@ -103,6 +103,7 @@ final class FirestoreCourseRepository implements CourseRepository {
         'academicDates',
         'materialCatalog',
         'teachingPlans',
+        'activitySnapshots',
       ];
       final fields = <String, Object>{
         'operation_id': currentOperationId!,

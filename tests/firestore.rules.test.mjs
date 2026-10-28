@@ -426,15 +426,16 @@ describe("academic date documents", () => {
       academicDate({ title: "x".repeat(121) }),
       academicDate({ dueAt: "2026-10-22" }),
       academicDate({ kind: "exam" }),
-      academicDate({ source: "manual" }),
+      academicDate({ source: "unsupported" }),
       academicDate({ sourceId: "bad/id" }),
+      academicDate({ manualOverride: "true" }),
       academicDate({ createdAt: updatedAt, updatedAt: createdAt }),
       withoutField(academicDate(), "dueAt"),
       { ...academicDate(), privatePayload: "secret" },
     ];
-    for (const [index, data] of invalidDocuments.entries()) {
+    for (const data of invalidDocuments) {
       await assertFails(
-        setDoc(doc(db, academicDatePath("alice", `invalid-${index}`)), data),
+        setDoc(doc(db, academicDatePath("alice")), data),
       );
     }
 
@@ -442,6 +443,18 @@ describe("academic date documents", () => {
     await assertFails(
       updateDoc(doc(db, academicDatePath("alice")), { createdAt: updatedAt }),
     );
+  });
+  test("manual deadlines and imported corrections keep tenant and identifier boundaries", async () => {
+    await seed(coursePath("alice"), course());
+    const db = dbFor("alice");
+    const manual = academicDate({source:"manual",sourceId:"personal"});
+    const path = academicDatePath("alice","manual-personal");
+    await assertSucceeds(setDoc(doc(db,path),manual));
+    await assertSucceeds(updateDoc(doc(db,path),{title:"Edited",updatedAt}));
+    await assertSucceeds(setDoc(doc(db,academicDatePath("alice")),academicDate({manualOverride:true})));
+    await assertFails(setDoc(doc(db,academicDatePath("alice","moodle-personal")),manual));
+    await assertFails(setDoc(doc(dbFor("bob"),path),manual));
+    await assertSucceeds(deleteDoc(doc(db,path)));
   });
 });
 
@@ -633,4 +646,20 @@ describe("session documents", () => {
       );
     }
   });
+});
+
+
+test("activity snapshots remain owned, bounded and cascadeable course content", async () => {
+  await seed(coursePath("alice"), course());
+  const path = `${coursePath("alice")}/activitySnapshots/current`;
+  const value={schemaVersion:1,snapshotJson:'{"activities":[]}',contentHash:"a".repeat(64),updatedAt:Timestamp.now()};
+  await assertSucceeds(setDoc(doc(dbFor("alice"),path),value));
+  await assertSucceeds(getDoc(doc(dbFor("alice"),path)));
+  await assertFails(getDoc(doc(dbFor("bob"),path)));
+  await assertFails(getDoc(doc(anonymousDb(),path)));
+  for(const invalid of [{...value,snapshotJson:"x".repeat(750001)},{...value,contentHash:"invalid"},{...value,token:"unexpected"}]) {
+    await assertFails(setDoc(doc(dbFor("alice"),path),invalid));
+  }
+  await assertFails(setDoc(doc(dbFor("alice"),`${coursePath("alice")}/activitySnapshots/wrong`),value));
+  await assertSucceeds(deleteDoc(doc(dbFor("alice"),path)));
 });

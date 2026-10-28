@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from moodle_date_import import MoodleDateImportService, _matches, _months
+from moodle_date_import import MoodleDateImportService, _matches, _term_months
 from ufmg_session_store import UFMGReauthenticationRequired
 
 
@@ -71,7 +71,12 @@ class _Dates:
         self.imports: list[tuple[str, list[dict[str, object]]]] = []
 
     def import_moodle_dates(
-        self, course_id: str, events: list[dict[str, object]]
+        self,
+        course_id: str,
+        events: list[dict[str, object]],
+        *,
+        complete: bool = False,
+        covered_months=None,
     ) -> dict[str, int]:
         self.imports.append((course_id, events))
         return {"total": len(events), "created": len(events), "updated": 0, "unchanged": 0}
@@ -119,7 +124,10 @@ def test_import_matches_local_courses_and_reports_unmatched_events() -> None:
         ("dcc203", ["910"]),
         ("la631", ["911"]),
     ]
-    assert result == {
+    assert {
+        key: result[key]
+        for key in ("total", "matched", "unmatched", "created", "updated", "unchanged")
+    } == {
         "total": 3,
         "matched": 2,
         "unmatched": 1,
@@ -140,7 +148,7 @@ def test_import_does_not_guess_when_two_codes_match() -> None:
 
     result = service.import_dates("user", now=123)
 
-    assert dates.imports == []
+    assert not any(events for _, events in dates.imports)
     assert result["unmatched"] == 1
 
 
@@ -216,22 +224,147 @@ def test_import_rejects_a_course_with_an_invalid_term() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "courses",
-    [
-        [],
-        [{"term": "bad", "starts_on": None, "ends_on": None}],
-        [
-            {
-                "term": "2026-2",
-                "starts_on": "2026-07-01T00:00:00",
-                "ends_on": "2026-12-31T00:00:00Z",
-            }
-        ],
-    ],
-)
-def test_month_builder_rejects_missing_invalid_and_timezone_free_ranges(
-    courses: list[dict[str, object]],
-) -> None:
-    with pytest.raises(ValueError):
-        _months(courses)
+def test_term_calendar_covers_all_six_months_without_the_lesson_range() -> None:
+    assert _term_months("2026-1") == [(2026, month) for month in range(1, 7)]
+    assert _term_months("2026-2") == [(2026, month) for month in range(7, 13)]
+
+
+def test_same_code_in_another_term_does_not_make_the_event_ambiguous() -> None:
+    class Courses:
+        def list_courses(self) -> list[dict[str, Any]]:
+            return [
+                dict(_Courses().list_courses()[0], id="past", term="2026-1"),
+                _Courses().list_courses()[0],
+            ]
+
+    class Client(_Client):
+        def fetch(
+            self, token: str, *, term: str, months: list[tuple[int, int]]
+        ) -> list[dict[str, str]]:
+            return [_event()] if term == "2026-2" else []
+
+    dates = _Dates()
+    result = MoodleDateImportService(_Sessions(), Client([]), Courses(), dates).import_dates(
+        "user", now=123
+    )
+    assert result["matched"] == 1
+    assert [(course, len(events)) for course, events in dates.imports if events] == [("dcc203", 1)]
+
+
+def test_persistence_failure_in_one_course_does_not_abort_the_other() -> None:
+    class Dates(_Dates):
+        def import_moodle_dates(
+            self,
+            course_id: str,
+            events: list[dict[str, object]],
+            *,
+            complete: bool = False,
+            covered_months=None,
+        ) -> dict[str, int]:
+            if course_id == "dcc203":
+                raise OSError("synthetic persistence outage")
+            return super().import_moodle_dates(course_id, events)
+
+    dates = Dates()
+    result = MoodleDateImportService(
+        _Sessions(),
+        _Client([_event(), _event(source_id="911", course_shortname="LA631")]),
+        _Courses(),
+        dates,
+    ).import_dates("user", now=123)
+    assert dates.imports[0][0] == "la631"
+    assert result["created"] == 1
+
+
+def test_failed_term_never_clears_its_courses_and_other_term_continues() -> None:
+    from moodle_structured_dates import MoodleUnavailable
+
+    class Courses:
+        def list_courses(self):
+            return [
+                dict(_Courses().list_courses()[0], id="past", term="2026-1"),
+                _Courses().list_courses()[0],
+            ]
+
+    class Client(_Client):
+        def fetch(self, token, *, term, months):
+            if term == "2026-1":
+                raise MoodleUnavailable("temporary outage")
+            return [_event()]
+
+    dates = _Dates()
+    logs = []
+    result = MoodleDateImportService(
+        _Sessions(),
+        Client([]),
+        Courses(),
+        dates,
+        telemetry=lambda event, fields: logs.append((event, fields)),
+    ).import_dates("user", now=123)
+    assert [course for course, _ in dates.imports] == ["dcc203"]
+    assert result["created"] == 1
+    assert result["failed_courses"][0]["stage"] == "calendar_fetch"
+    failed = next(fields for event, fields in logs if event == "academic_sync_stage_failed")
+    assert failed["term"] == "2026-1"
+    assert failed["stage"] == "moodle_term_calendar"
+
+
+def test_persisted_failures_report_exact_course_and_logging_failure_is_not_fatal() -> None:
+    class Dates(_Dates):
+        def import_moodle_dates(self, course_id, events, *, complete=False, covered_months=None):
+            if course_id == "dcc203":
+                raise OSError("store failed")
+            return {"created": 0, "updated": 0, "unchanged": 0, "removed": 1}
+
+    logs = []
+
+    def telemetry(event, fields):
+        logs.append((event, fields))
+        raise RuntimeError("logger offline")
+
+    result = MoodleDateImportService(
+        _Sessions(), _Client([_event()]), _Courses(), Dates(), telemetry=telemetry
+    ).import_dates("user", now=123)
+    assert result["failed"] == 1
+    assert result["removed"] == 1
+    assert result["failed_courses"][0]["course_code"] == "DCC203"
+    assert any(
+        event == "academic_sync_stage_failed" and fields["course_id"] == "dcc203"
+        for event, fields in logs
+    )
+
+
+def test_global_event_limit_is_checked_before_any_persistence() -> None:
+    from moodle_structured_dates import InvalidMoodleResponse
+
+    dates = _Dates()
+    with pytest.raises(InvalidMoodleResponse) as rejected:
+        MoodleDateImportService(
+            _Sessions(), _Client([_event(source_id=str(i)) for i in range(501)]), _Courses(), dates
+        ).import_dates("user", now=123)
+    assert rejected.value.reason == "calendar_event_limit"
+    assert not dates.imports
+
+
+def test_complete_calendar_covers_the_semester_even_when_lessons_end_earlier() -> None:
+    class Courses:
+        def list_courses(self):
+            return [
+                {
+                    "id": "x",
+                    "code": "DCC203",
+                    "term": "2026-2",
+                    "starts_on": "2026-10-01T00:00:00Z",
+                    "ends_on": "2026-10-31T00:00:00Z",
+                }
+            ]
+
+    class Dates(_Dates):
+        def import_moodle_dates(self, course_id, events, *, complete=False, covered_months=None):
+            assert complete is True
+            assert covered_months == [(2026, month) for month in range(7, 13)]
+            return super().import_moodle_dates(course_id, events)
+
+    client = _Client([])
+    MoodleDateImportService(_Sessions(), client, Courses(), Dates()).import_dates("user", now=123)
+    assert client.months == [(2026, month) for month in range(7, 13)]

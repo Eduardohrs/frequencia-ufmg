@@ -38,6 +38,7 @@ BackendIdentityVerifier? createFirebasePythonBackendVerifier() {
 final class _FirebasePythonBackendVerifier
     implements
         BackendIdentityVerifier,
+        BackendAcademicWorkspaceGateway,
         BackendAttendanceEvaluator,
         BackendCourseGateway,
         BackendScheduleGateway,
@@ -96,6 +97,48 @@ final class _FirebasePythonBackendVerifier
     await (_activation ??= _activateAppCheck());
     return _transport.importUFMGSchedules();
   }
+
+  Future<BackendAcademicWorkspaceGateway> _workspaceGateway() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.workspace;
+  }
+
+  @override
+  Future<PythonCourseActivitySnapshot> loadCourseActivitySnapshot(
+    String courseId,
+  ) async => (await _workspaceGateway()).loadCourseActivitySnapshot(courseId);
+  @override
+  Future<List<PythonMoodleDate>> listCourseDates(String courseId) async =>
+      (await _workspaceGateway()).listCourseDates(courseId);
+  @override
+  Future<void> saveCourseDate(
+    String courseId,
+    String dateId, {
+    required String title,
+    required DateTime dueAt,
+    required String kind,
+  }) async => (await _workspaceGateway()).saveCourseDate(
+    courseId,
+    dateId,
+    title: title,
+    dueAt: dueAt,
+    kind: kind,
+  );
+  @override
+  Future<void> deleteCourseDate(String courseId, String dateId) async =>
+      (await _workspaceGateway()).deleteCourseDate(courseId, dateId);
+  @override
+  Future<Map<String, Object?>?> loadCoursePlan(String courseId) async =>
+      (await _workspaceGateway()).loadCoursePlan(courseId);
+  @override
+  Future<List<PythonMoodleActivity>> listCourseActivities(
+    String courseId,
+  ) async => (await _workspaceGateway()).listCourseActivities(courseId);
+  @override
+  Future<PythonMoodleActivityDetail> loadCourseActivity(
+    String courseId,
+    String sourceId,
+  ) async => (await _workspaceGateway()).loadCourseActivity(courseId, sourceId);
 
   @override
   Future<PythonMoodleDateImportResult> importMoodleDates() async {

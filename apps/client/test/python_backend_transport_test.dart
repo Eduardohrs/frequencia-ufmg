@@ -792,6 +792,7 @@ void main() {
         captured = request;
         return http.Response(
           jsonEncode({
+            'activities': {'updated': 2, 'failed': 1, 'failed_courses': []},
             'dates': {
               'total': 3,
               'matched': 2,
@@ -824,6 +825,7 @@ void main() {
 
     final result = await transport.syncMoodle();
 
+    expect(result.activitySnapshots!.failed, 1);
     expect(result.dates.created, 1);
     expect(result.candidateTotal, 8);
     expect(result.capabilities?.directDownloadSupported, isTrue);

@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import '../observability/audited_operation.dart';
 import '../observability/error_log_details.dart';
 
+part 'academic_workspace_gateway.dart';
+
 enum PythonBackendError {
   appCheckInvalid,
   credentialsUnavailable,
@@ -215,13 +217,41 @@ final class PythonMoodleMobileCapabilities {
   final bool webserviceTokenIssued;
 }
 
+final class PythonActivitySyncSummary {
+  const PythonActivitySyncSummary({
+    required this.updated,
+    required this.failed,
+  });
+  factory PythonActivitySyncSummary.fromJson(Map<String, Object?> value) {
+    final updated = value['updated'],
+        failed = value['failed'],
+        issues = value['failed_courses'];
+    if (!_hasExactKeys(value, const {'updated', 'failed', 'failed_courses'}) ||
+        updated is! int ||
+        failed is! int ||
+        updated < 0 ||
+        failed < 0 ||
+        updated + failed > 50 ||
+        issues is! List ||
+        issues.length > 50) {
+      throw const FormatException();
+    }
+    return PythonActivitySyncSummary(updated: updated, failed: failed);
+  }
+  final int updated, failed;
+  String get message =>
+      '$updated disciplinas com atividades salvas. $failed não atualizadas; cópias anteriores preservadas.';
+}
+
 final class PythonMoodleSyncResult {
   const PythonMoodleSyncResult({
     required this.dates,
     required this.candidateTotal,
     required this.capabilities,
+    this.activitySnapshots,
   });
 
+  final PythonActivitySyncSummary? activitySnapshots;
   final PythonMoodleDateImportResult dates;
   final int candidateTotal;
   final PythonMoodleMobileCapabilities? capabilities;
@@ -730,6 +760,10 @@ final class PythonMoodleDateImportResult {
     required this.created,
     required this.updated,
     required this.unchanged,
+    this.failed = 0,
+    this.removed = 0,
+    this.unmatchedEvents = const [],
+    this.failedCourses = const [],
   });
 
   final int total;
@@ -738,6 +772,8 @@ final class PythonMoodleDateImportResult {
   final int created;
   final int updated;
   final int unchanged;
+  final int failed, removed;
+  final List<Map<String, Object>> unmatchedEvents, failedCourses;
 }
 
 final class PythonMoodleDate {
@@ -763,7 +799,12 @@ final class PythonMoodleDate {
       'created_at',
       'updated_at',
     };
-    if (!_hasExactKeys(json, keys)) {
+    if (!_hasExactKeys(
+          Map<String, Object?>.of(json)..remove('manual_override'),
+          keys,
+        ) ||
+        (json.containsKey('manual_override') &&
+            json['manual_override'] is! bool)) {
       throw const FormatException();
     }
     final id = json['id'];
@@ -783,7 +824,7 @@ final class PythonMoodleDate {
         sourceId is! String ||
         source is! String ||
         kind is! String ||
-        !const {'moodle', 'diario'}.contains(source) ||
+        !const {'moodle', 'diario', 'manual'}.contains(source) ||
         id != '$source-$sourceId' ||
         courseId.isEmpty ||
         courseCode.isEmpty ||
@@ -1233,10 +1274,24 @@ PythonMoodleDateImportResult _moodleDateImportResult(Object? value) {
     'updated',
     'unchanged',
   };
-  if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
+  if (value is! Map<String, dynamic> ||
+      !keys.every(value.containsKey) ||
+      value.keys.any(
+        (key) => !{
+          ...keys,
+          'failed',
+          'removed',
+          'unmatched_events',
+          'failed_courses',
+        }.contains(key),
+      )) {
     throw const FormatException();
   }
-  final counts = keys.map((key) => value[key]).toList();
+  final counts = [
+    ...keys.map((key) => value[key]),
+    value['failed'] ?? 0,
+    value['removed'] ?? 0,
+  ];
   if (counts.any((count) => count is! int || count < 0 || count > 500)) {
     throw const FormatException();
   }
@@ -1247,12 +1302,60 @@ PythonMoodleDateImportResult _moodleDateImportResult(Object? value) {
     created: value['created'] as int,
     updated: value['updated'] as int,
     unchanged: value['unchanged'] as int,
+    failed: (value['failed'] ?? 0) as int,
+    removed: (value['removed'] ?? 0) as int,
+    unmatchedEvents: _dateImportIssues(value['unmatched_events'], const {
+      'source_id',
+      'title',
+      'term',
+      'reason',
+      'moodle_course_id',
+      'match_count',
+    }),
+    failedCourses: _dateImportIssues(
+      value['failed_courses'],
+      const {'course_id', 'stage', 'reason', 'event_count'},
+      optionalKeys: const {'course_code'},
+    ),
   );
   if (result.total != result.matched + result.unmatched ||
-      result.matched != result.created + result.updated + result.unchanged) {
+      result.matched !=
+          result.created + result.updated + result.unchanged + result.failed) {
     throw const FormatException();
   }
   return result;
+}
+
+List<Map<String, Object>> _dateImportIssues(
+  Object? value,
+  Set<String> keys, {
+  Set<String> optionalKeys = const {},
+}) {
+  if (value == null) return const [];
+  if (value is! List || value.length > 500) throw const FormatException();
+  return List.unmodifiable(
+    value.map((raw) {
+      final issue = Map<String, Object>.from(raw as Map);
+      if (!keys.every(issue.containsKey) ||
+          issue.keys.any((key) => !{...keys, ...optionalKeys}.contains(key))) {
+        throw const FormatException();
+      }
+      for (final field in issue.entries) {
+        if (field.key.endsWith('_count')) {
+          if (field.value is! int ||
+              (field.value as int) < 0 ||
+              (field.value as int) > 500) {
+            throw const FormatException();
+          }
+        } else if (field.value is! String ||
+            (field.value as String).isEmpty ||
+            (field.value as String).length > 200) {
+          throw const FormatException();
+        }
+      }
+      return Map<String, Object>.unmodifiable(issue);
+    }),
+  );
 }
 
 DateTime _utcDate(Object? value) {
@@ -1475,6 +1578,9 @@ final class PythonBackendTransport
   }) : _endpoint = endpoint,
        _tokens = tokens,
        _client = client;
+
+  BackendAcademicWorkspaceGateway get workspace =>
+      _AcademicWorkspaceTransport(this);
 
   final Uri _endpoint;
   final PythonBackendTokens _tokens;
@@ -1765,7 +1871,10 @@ final class PythonBackendTransport
   PythonMoodleSyncResult _moodleSyncResult(Object? raw) {
     final value = raw;
     if (value is! Map<String, dynamic> ||
-        !_hasExactKeys(value, const {'dates', 'content', 'capabilities'})) {
+        !_hasExactKeys(
+          Map<String, Object?>.of(value)..remove('activities'),
+          const {'dates', 'content', 'capabilities'},
+        )) {
       throw const FormatException();
     }
     final dates = _moodleDateImportResult(value['dates']);
@@ -1810,6 +1919,11 @@ final class PythonBackendTransport
         : _moodleMobileCapabilities(rawCapabilities);
     return PythonMoodleSyncResult(
       dates: dates,
+      activitySnapshots: value.containsKey('activities')
+          ? PythonActivitySyncSummary.fromJson(
+              Map<String, Object?>.from(value['activities'] as Map),
+            )
+          : null,
       candidateTotal: candidateTotal,
       capabilities: capabilities,
     );
@@ -2757,6 +2871,7 @@ final class PythonBackendTransport
         'Authorization': 'Bearer $idToken',
         'X-Firebase-AppCheck': appCheckToken,
         'X-Request-ID': requestId,
+        'X-Academic-Contract': '2',
       };
       final uri = _endpoint.resolve(path);
       stage = 'transport';

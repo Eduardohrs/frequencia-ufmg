@@ -432,6 +432,7 @@ def test_unified_academic_sync_returns_summary_exceptions_and_diagnostic_log(
         "event": "academic_sync_course_failed",
         "reason": "diario_plan_structure",
         "stage": "teaching_plan_import",
+        "request_id":result["headers"]["X-Request-ID"],
     }
 
 
@@ -2193,7 +2194,7 @@ def test_moodle_date_import_factory_composes_only_server_side_dependencies(
     monkeypatch.setattr(function, "AcademicDateRepository", lambda value: values["dates"])
 
     class Service:
-        def __init__(self, *dependencies: object) -> None:
+        def __init__(self, *dependencies: object, telemetry: object = None) -> None:
             nonlocal captured
             captured = dependencies
 

@@ -225,7 +225,9 @@ service cloud.firestore {
         'createdAt',
         'updatedAt'
       ];
-      return hasExactFields(data, fields)
+      return data.keys().hasAll(fields)
+        && data.keys().hasOnly(fields.concat(['manualOverride']))
+        && (!('manualOverride' in data) || data.manualOverride is bool)
         && data.schemaVersion == 1
         && data.title is string
         && data.title.size() >= 1
@@ -233,7 +235,7 @@ service cloud.firestore {
         && data.title.matches('^\\S(.*\\S)?$')
         && data.dueAt is timestamp
         && data.kind in ['assignment', 'quiz', 'event', 'assessment']
-        && data.source in ['moodle', 'diario']
+        && data.source in ['moodle', 'diario', 'manual']
         && data.sourceId is string
         && data.sourceId.matches('^[A-Za-z0-9_-]{1,80}$')
         && hasValidAuditFields(data);
@@ -333,9 +335,11 @@ service cloud.firestore {
         allow read, delete: if owns(userId);
         allow create: if owns(userId)
           && exists(/databases/$(database)/documents/users/$(userId)/courses/$(courseId))
-          && isValidAcademicDate(request.resource.data);
+          && isValidAcademicDate(request.resource.data)
+          && dateId == request.resource.data.source + '-' + request.resource.data.sourceId;
         allow update: if owns(userId)
           && isValidAcademicDate(request.resource.data)
+          && dateId == request.resource.data.source + '-' + request.resource.data.sourceId
           && preservesAuditFields();
       }
 
@@ -349,6 +353,20 @@ service cloud.firestore {
           && catalogId == 'current'
           && isValidMaterialCatalog(request.resource.data)
           && preservesAuditFields();
+      }
+
+      match /activitySnapshots/{snapshotId} {
+        allow read, delete: if owns(userId);
+        allow create, update: if owns(userId)
+          && snapshotId == 'current'
+          && exists(/databases/$(database)/documents/users/$(userId)/courses/$(courseId))
+          && hasExactFields(request.resource.data, ['schemaVersion','snapshotJson','contentHash','updatedAt'])
+          && request.resource.data.schemaVersion == 1
+          && request.resource.data.snapshotJson is string
+          && request.resource.data.snapshotJson.size() <= 750000
+          && request.resource.data.contentHash is string
+          && request.resource.data.contentHash.matches('^[0-9a-f]{64}$')
+          && request.resource.data.updatedAt is timestamp;
       }
 
       match /teachingPlans/{planId} {

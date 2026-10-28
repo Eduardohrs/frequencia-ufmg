@@ -187,6 +187,7 @@ class UnifiedAcademicSyncService:
         return {
             "siga": siga,
             "moodle": {
+                **({"activities": moodle["activities"]} if "activities" in moodle else {}),
                 "dates": moodle["dates"],
                 "content": {
                     key: value

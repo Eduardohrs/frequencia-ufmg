@@ -35,6 +35,59 @@ void main() {
   final now = DateTime.utc(2026, 9, 27, 12);
 
   testWidgets(
+    'course hub opens the owned activity workspace through both gateway configurations',
+    (tester) async {
+      final course = CourseRecord(
+        id: 'poo',
+        code: 'ELE631',
+        name: 'POO',
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      for (final explicit in [true, false]) {
+        final gateway = _WorkspaceGateway();
+        await tester.pumpWidget(
+          MaterialApp(
+            key: UniqueKey(),
+            home: CourseHubPage(
+              course: course,
+              allCourses: [course],
+              courseRepository: _FakeCourseRepository(courses: [course]),
+              meetingRepository: _FakeMeetingRepository(),
+              sessionRepository: _FakeSessionRepository({'poo': []}),
+              logger: _RecordingAppLogger(),
+              now: () => now,
+              workspaceGateway: explicit ? gateway : null,
+              ufmgSessionGateway: explicit ? null : gateway,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final action = find.byKey(const Key('course-hub-workspace'));
+        await tester.ensureVisible(action);
+        await tester.tap(action);
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Nenhuma atividade disponível nesta disciplina.'),
+          findsOneWidget,
+        );
+        expect(gateway.requested, 'poo');
+        if (!explicit) {
+          await tester.tap(find.text('Sincronizar Moodle'));
+          await tester.pumpAndSettle();
+          expect(find.text('Conectar à UFMG'), findsOneWidget);
+          await tester.pageBack();
+          await tester.pumpAndSettle();
+        }
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('course-hub-workspace')), findsOneWidget);
+      }
+    },
+  );
+  testWidgets(
     'hub refreshes metadata and sessions on schedule return, retaining data on failure',
     (tester) async {
       CourseRecord makeCourse(String name) => CourseRecord(
@@ -2854,4 +2907,30 @@ class _HubLogStore implements OperationalLogStore {
   @override
   Future<void> add(String userId, Map<String, Object?> document) async =>
       documents.add(document);
+}
+
+class _WorkspaceGateway extends _UFMGGateway
+    implements BackendAcademicWorkspaceGateway {
+  @override
+  Future<PythonCourseActivitySnapshot> loadCourseActivitySnapshot(
+    String id,
+  ) async {
+    requested = id;
+    return PythonCourseActivitySnapshot.fromJson({
+      'course_id': id,
+      'term': '2026-2',
+      'synced_at': '2026-10-28T12:00:00Z',
+      'activities': [],
+    });
+  }
+
+  String? requested;
+  @override
+  Future<List<PythonMoodleActivity>> listCourseActivities(String id) async {
+    requested = id;
+    return [];
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError();
 }

@@ -18,6 +18,89 @@ void main() {
         InMemorySharedPreferencesAsync.empty();
   });
 
+  testWidgets(
+    'reviews unmatched dates and failed courses without losing successful imports',
+    (tester) async {
+      final gateway =
+          _Gateway(
+              status: const PythonUFMGSessionStatus(
+                connected: true,
+                reauthenticationRequired: false,
+              ),
+            )
+            ..importResult = const PythonMoodleDateImportResult(
+              total: 2,
+              matched: 0,
+              unmatched: 2,
+              created: 0,
+              updated: 0,
+              unchanged: 0,
+              unmatchedEvents: [
+                {
+                  'source_id': '1',
+                  'title': 'Prazo sem curso',
+                  'term': '2026-2',
+                  'reason': 'course_not_found',
+                  'moodle_course_id': '42',
+                  'match_count': 0,
+                },
+                {
+                  'source_id': '2',
+                  'title': 'Prazo ambiguo',
+                  'term': '2026-2',
+                  'reason': 'ambiguous_course',
+                  'moodle_course_id': '43',
+                  'match_count': 2,
+                },
+              ],
+              failedCourses: [
+                {
+                  'course_id': 'poo',
+                  'course_code': 'ELE631',
+                  'stage': 'dates_persistence',
+                  'reason': 'FirestoreUnavailable',
+                  'event_count': 1,
+                },
+              ],
+            );
+      final opened = <Uri>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(
+            gateway: gateway,
+            logger: _Logger(),
+            openExternalUri: (uri) async {
+              opened.add(uri);
+              return true;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final sync = find.byKey(const Key('ufmg-sync-moodle'));
+      await tester.ensureVisible(sync);
+      await tester.tap(sync);
+      await tester.pumpAndSettle();
+      final issues = find.byKey(const Key('moodle-date-import-issues'));
+      await tester.ensureVisible(issues);
+      await tester.tap(issues);
+      await tester.pumpAndSettle();
+      expect(find.text('Prazo sem curso'), findsOneWidget);
+      expect(
+        find.text('Mais de uma disciplina corresponde · 2026-2'),
+        findsOneWidget,
+      );
+      expect(find.text('Não foi possível atualizar ELE631'), findsOneWidget);
+      final link = find.text('Ver no Moodle').first;
+      await tester.ensureVisible(link);
+      await tester.tap(link);
+      await tester.pumpAndSettle();
+      expect(
+        opened.single.toString(),
+        'https://virtual.ufmg.br/20262/course/view.php?id=42',
+      );
+    },
+  );
   testWidgets('connects without displaying or retaining the password', (
     tester,
   ) async {
@@ -3175,6 +3258,7 @@ class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
   _Gateway({required this.status});
 
   PythonUFMGSessionStatus status;
+  PythonMoodleDateImportResult? importResult;
   Object? connectError;
   Object? statusError;
   Completer<PythonUFMGSessionStatus>? statusCompleter;
@@ -3493,14 +3577,15 @@ class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
         kind: 'assignment',
       ),
     ];
-    return const PythonMoodleDateImportResult(
-      total: 4,
-      matched: 3,
-      unmatched: 1,
-      created: 2,
-      updated: 1,
-      unchanged: 0,
-    );
+    return importResult ??
+        const PythonMoodleDateImportResult(
+          total: 4,
+          matched: 3,
+          unmatched: 1,
+          created: 2,
+          updated: 1,
+          unchanged: 0,
+        );
   }
 
   @override
