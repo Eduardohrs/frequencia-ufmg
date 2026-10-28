@@ -337,3 +337,21 @@ def test_manual_override_validation_and_diario_corrections_are_preserved() -> No
     fields["manualOverride"] = {"booleanValue": "not a boolean"}
     with pytest.raises(InvalidAcademicDate):
         repository.list_dates("course-a")
+
+
+def test_snapshot_removes_only_queried_months_using_the_moodle_local_timezone() -> None:
+    store = _Firestore()
+    repository = AcademicDateRepository(store, now=lambda: NOW)
+    repository.import_moodle_dates(
+        "course-a",
+        [
+            _event(source_id="october"),
+            _event(source_id="future", due_at="2027-01-15T12:00:00Z"),
+            _event(source_id="december-local", due_at="2027-01-01T02:00:00Z"),
+        ],
+    )
+    result = repository.import_moodle_dates(
+        "course-a", [], complete=True, covered_months=[(2026, m) for m in range(7, 13)]
+    )
+    assert result["removed"] == 2
+    assert [item["source_id"] for item in repository.list_dates("course-a")] == ["future"]

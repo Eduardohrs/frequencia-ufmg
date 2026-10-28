@@ -2,7 +2,7 @@
 
 import re
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from course_repository import validate_course_id
@@ -94,6 +94,7 @@ class AcademicDateRepository:
         events: list[dict[str, object]],
         *,
         complete: bool = False,
+        covered_months: list[tuple[int, int]] | None = None,
     ) -> dict[str, int]:
         identifier = validate_course_id(course_id)
         if len(events) > MAX_IMPORT_DATES:
@@ -143,6 +144,16 @@ class AcademicDateRepository:
                 source_id
                 for source_id in set(existing) - current
                 if not existing[source_id].get("manual_override")
+                and (
+                    covered_months is None
+                    or (
+                        (
+                            local := _instant(existing[source_id]["due_at"]) - timedelta(hours=3)
+                        ).year,
+                        local.month,
+                    )
+                    in covered_months
+                )
             )
             deletes: list[tuple[str, ...]] = [
                 ("courses", identifier, "academicDates", existing[source_id]["id"])

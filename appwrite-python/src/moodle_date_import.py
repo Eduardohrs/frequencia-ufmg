@@ -3,7 +3,6 @@
 import re
 from collections import defaultdict
 from collections.abc import Mapping
-from datetime import datetime
 from functools import partial
 from typing import Any, Protocol
 
@@ -30,7 +29,12 @@ class _Courses(Protocol):
 
 class _Dates(Protocol):
     def import_moodle_dates(
-        self, course_id: str, events: list[dict[str, object]], *, complete: bool = False
+        self,
+        course_id: str,
+        events: list[dict[str, object]],
+        *,
+        complete: bool = False,
+        covered_months: list[tuple[int, int]] | None = None,
     ) -> dict[str, int]: ...
 
 
@@ -67,7 +71,7 @@ class MoodleDateImportService:
                         self._client.fetch,
                         session.token,
                         term=term,
-                        months=_months(course_groups[term]),
+                        months=_term_months(term),
                     ),
                     telemetry=self._telemetry,
                     fields={"term": term},
@@ -150,6 +154,7 @@ class MoodleDateImportService:
                         course_id,
                         values,
                         complete=course_id not in unsafe_courses,
+                        covered_months=_term_months(course["term"]),
                     ),
                     telemetry=self._telemetry,
                     fields=fields,
@@ -200,35 +205,7 @@ def _courses_by_term(courses: list[dict[str, Any]]) -> dict[str, list[dict[str, 
     return groups
 
 
-def _months(courses: list[dict[str, Any]]) -> list[tuple[int, int]]:
-    values: set[tuple[int, int]] = set()
-    for course in courses:
-        starts_on = course.get("starts_on")
-        ends_on = course.get("ends_on")
-        if isinstance(starts_on, str) and isinstance(ends_on, str):
-            start = _instant(starts_on)
-            end = _instant(ends_on)
-            cursor = datetime(start.year, start.month, 1)
-            finish = datetime(end.year, end.month, 1)
-            while cursor <= finish:
-                values.add((cursor.year, cursor.month))
-                cursor = datetime(cursor.year + (cursor.month == 12), cursor.month % 12 + 1, 1)
-        else:
-            term = course.get("term")
-            if not isinstance(term, str) or re.fullmatch(r"[0-9]{4}-[12]", term) is None:
-                raise ValueError("invalid course term")
-            year = int(term[:4])
-            values.update(
-                (year, month) for month in (range(1, 7) if term[-1] == "1" else range(7, 13))
-            )
-    months = sorted(values)
-    if not months or len(months) > 12:
-        raise ValueError("invalid Moodle month range")
-    return months
-
-
-def _instant(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        raise ValueError("invalid course date")
-    return parsed
+def _term_months(term: str) -> list[tuple[int, int]]:
+    # Callers use the semesters already validated by _courses_by_term.
+    first = 1 if term.endswith("-1") else 7
+    return [(int(term[:4]), month) for month in range(first, first + 6)]

@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from moodle_date_import import MoodleDateImportService, _matches, _months
+from moodle_date_import import MoodleDateImportService, _matches, _term_months
 from ufmg_session_store import UFMGReauthenticationRequired
 
 
@@ -71,7 +71,12 @@ class _Dates:
         self.imports: list[tuple[str, list[dict[str, object]]]] = []
 
     def import_moodle_dates(
-        self, course_id: str, events: list[dict[str, object]], *, complete: bool = False
+        self,
+        course_id: str,
+        events: list[dict[str, object]],
+        *,
+        complete: bool = False,
+        covered_months=None,
     ) -> dict[str, int]:
         self.imports.append((course_id, events))
         return {"total": len(events), "created": len(events), "updated": 0, "unchanged": 0}
@@ -219,25 +224,9 @@ def test_import_rejects_a_course_with_an_invalid_term() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "courses",
-    [
-        [],
-        [{"term": "bad", "starts_on": None, "ends_on": None}],
-        [
-            {
-                "term": "2026-2",
-                "starts_on": "2026-07-01T00:00:00",
-                "ends_on": "2026-12-31T00:00:00Z",
-            }
-        ],
-    ],
-)
-def test_month_builder_rejects_missing_invalid_and_timezone_free_ranges(
-    courses: list[dict[str, object]],
-) -> None:
-    with pytest.raises(ValueError):
-        _months(courses)
+def test_term_calendar_covers_all_six_months_without_the_lesson_range() -> None:
+    assert _term_months("2026-1") == [(2026, month) for month in range(1, 7)]
+    assert _term_months("2026-2") == [(2026, month) for month in range(7, 13)]
 
 
 def test_same_code_in_another_term_does_not_make_the_event_ambiguous() -> None:
@@ -265,7 +254,12 @@ def test_same_code_in_another_term_does_not_make_the_event_ambiguous() -> None:
 def test_persistence_failure_in_one_course_does_not_abort_the_other() -> None:
     class Dates(_Dates):
         def import_moodle_dates(
-            self, course_id: str, events: list[dict[str, object]], *, complete: bool = False
+            self,
+            course_id: str,
+            events: list[dict[str, object]],
+            *,
+            complete: bool = False,
+            covered_months=None,
         ) -> dict[str, int]:
             if course_id == "dcc203":
                 raise OSError("synthetic persistence outage")
@@ -317,7 +311,7 @@ def test_failed_term_never_clears_its_courses_and_other_term_continues() -> None
 
 def test_persisted_failures_report_exact_course_and_logging_failure_is_not_fatal() -> None:
     class Dates(_Dates):
-        def import_moodle_dates(self, course_id, events, *, complete=False):
+        def import_moodle_dates(self, course_id, events, *, complete=False, covered_months=None):
             if course_id == "dcc203":
                 raise OSError("store failed")
             return {"created": 0, "updated": 0, "unchanged": 0, "removed": 1}
@@ -350,3 +344,27 @@ def test_global_event_limit_is_checked_before_any_persistence() -> None:
         ).import_dates("user", now=123)
     assert rejected.value.reason == "calendar_event_limit"
     assert not dates.imports
+
+
+def test_complete_calendar_covers_the_semester_even_when_lessons_end_earlier() -> None:
+    class Courses:
+        def list_courses(self):
+            return [
+                {
+                    "id": "x",
+                    "code": "DCC203",
+                    "term": "2026-2",
+                    "starts_on": "2026-10-01T00:00:00Z",
+                    "ends_on": "2026-10-31T00:00:00Z",
+                }
+            ]
+
+    class Dates(_Dates):
+        def import_moodle_dates(self, course_id, events, *, complete=False, covered_months=None):
+            assert complete is True
+            assert covered_months == [(2026, month) for month in range(7, 13)]
+            return super().import_moodle_dates(course_id, events)
+
+    client = _Client([])
+    MoodleDateImportService(_Sessions(), client, Courses(), Dates()).import_dates("user", now=123)
+    assert client.months == [(2026, month) for month in range(7, 13)]
