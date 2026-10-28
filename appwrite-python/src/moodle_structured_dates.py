@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 from diario_teaching_plan import TeachingPlanParseError, parse_teaching_plan_html
+from moodle_activities import InvalidActivityPage, parse_activity_page
 from ufmg_session_store import UFMGReauthenticationRequired
 
 MAX_RESPONSE_BYTES = 1_048_576
@@ -166,6 +167,7 @@ class MoodleStructuredDatesClient:
         *,
         term: str,
         course_codes: list[str],
+        activities: bool = False,
     ) -> list[dict[str, object]]:
         """Discover bounded visible course resources without downloading content."""
 
@@ -198,9 +200,7 @@ class MoodleStructuredDatesClient:
                 }
                 matched.append((code, canonical[0], "canonical"))
                 matched.extend(
-                    (code, course, "metaturma")
-                    for course in matches
-                    if _is_metaturma(course)
+                    (code, course, "metaturma") for course in matches if _is_metaturma(course)
                 )
             else:
                 results[code] = {
@@ -223,6 +223,7 @@ class MoodleStructuredDatesClient:
                 self._ajax(root, ajax_path, sesskey, state_calls),
                 root,
                 len(matched),
+                activities=activities,
             )
             total = 0
             grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
@@ -231,8 +232,7 @@ class MoodleStructuredDatesClient:
                 if total > MAX_CANDIDATES:
                     raise InvalidMoodleResponse("candidate_limit")
                 grouped[code].extend(
-                    candidate
-                    | {"origin": origin, "moodle_course_id": str(course["id"])}
+                    candidate | {"origin": origin, "moodle_course_id": str(course["id"])}
                     for candidate in candidates
                 )
             for code, candidates in grouped.items():
@@ -243,6 +243,63 @@ class MoodleStructuredDatesClient:
                     "candidates": candidates,
                 }
         return [results[code] for code in codes]
+
+    def list_activities(
+        self, token: str, *, term: str, course_id: int, course_code: str | None = None
+    ) -> list[dict[str, object]]:
+        if type(course_id) is not int or not 1 <= course_id <= 2_147_483_647:
+            raise InvalidMoodleResponse("activity_course_id")
+        if course_code is not None:
+            discovered = self.discover(
+                token, term=term, course_codes=[course_code], activities=True
+            )[0]
+            if discovered["status"] not in {"found", "empty"}:
+                raise InvalidMoodleResponse("course_activity_link_" + str(discovered["status"]))
+            candidates = discovered["candidates"]
+            if not isinstance(candidates, list):
+                raise InvalidMoodleResponse("course_activity_index_shape")
+            return candidates
+        root, ajax_path, sesskey = self._connect(token, term)
+        calls = [
+            {
+                "index": 0,
+                "methodname": "core_courseformat_get_state",
+                "args": {"courseid": course_id},
+            }
+        ]
+        return _parse_course_states(
+            self._ajax(root, ajax_path, sesskey, calls), root, 1, activities=True
+        )[0]
+
+    def fetch_activity(
+        self, token: str, *, term: str, source_id: int, kind: str
+    ) -> dict[str, object]:
+        if (
+            type(source_id) is not int
+            or not 1 <= source_id <= 2_147_483_647
+            or kind not in {"assign", "quiz"}
+        ):
+            raise InvalidMoodleResponse("activity_source_id")
+        root, _, _ = self._connect(token, term)
+        path = f"{root}/mod/{kind}/view.php"
+        payload, final_url, content_type = self._open(
+            Request(f"{MOODLE_ORIGIN}{path}?id={source_id}", headers={"Accept": "text/html"})
+        )
+        parsed = urlsplit(final_url)
+        if parsed.hostname == "sistemas.ufmg.br" or "/login/" in parsed.path:
+            raise UFMGReauthenticationRequired("UFMG reauthentication required")
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc != "virtual.ufmg.br"
+            or parsed.path != path
+            or parse_qs(parsed.query).get("id") != [str(source_id)]
+            or content_type != "text/html"
+        ):
+            raise InvalidMoodleResponse("activity_page_endpoint")
+        try:
+            return parse_activity_page(payload, term=term, kind=kind)
+        except InvalidActivityPage as error:
+            raise InvalidMoodleResponse(error.reason) from None
 
     def authorize_mobile_download(
         self,
@@ -261,8 +318,7 @@ class MoodleStructuredDatesClient:
         site_private_token = info.get("userprivateaccesskey")
         valid_site_private_token = (
             site_private_token
-            if isinstance(site_private_token, str)
-            and _MOBILE_TOKEN.fullmatch(site_private_token)
+            if isinstance(site_private_token, str) and _MOBILE_TOKEN.fullmatch(site_private_token)
             else None
         )
         private_token = callback_private_token or valid_site_private_token
@@ -342,9 +398,7 @@ class MoodleStructuredDatesClient:
             format=document_format,
         )
 
-    def fetch_diario_plan(
-        self, token: str, *, term: str, source_id: int
-    ) -> dict[str, object]:
+    def fetch_diario_plan(self, token: str, *, term: str, source_id: int) -> dict[str, object]:
         """Fetch and structure one official HTML teaching plan in memory."""
 
         _, body, document_format = self._fetch_diario_document(
@@ -877,6 +931,8 @@ def _parse_course_states(
     payload: bytes,
     root: str,
     expected_calls: int,
+    *,
+    activities: bool = False,
 ) -> list[list[dict[str, object]]]:
     try:
         decoded = json.loads(payload)
@@ -912,14 +968,18 @@ def _parse_course_states(
                 if raw.get("uservisible") is not True:
                     continue
                 module = str(raw.get("module"))
-                kind = {
-                    "page": "page",
-                    "book": "page",
-                    "resource": "file",
-                    "folder": "file",
-                    "label": "text",
-                    "url": "link",
-                }.get(module)
+                kind = (
+                    {"assign": "assign", "quiz": "quiz"}
+                    if activities
+                    else {
+                        "page": "page",
+                        "book": "page",
+                        "resource": "file",
+                        "folder": "file",
+                        "label": "text",
+                        "url": "link",
+                    }
+                ).get(module)
                 if kind is None:
                     continue
                 raw_source_id = raw.get("id")
@@ -1065,10 +1125,7 @@ def _private_file_url(value: object, root: str, private_token: str) -> str:
         or any("\\" in segment for segment in segments)
     ):
         raise ValueError("module_file_url")
-    return (
-        f"{MOODLE_ORIGIN}{root}/tokenpluginfile.php/{private_token}/{suffix}"
-        "?forcedownload=1"
-    )
+    return f"{MOODLE_ORIGIN}{root}/tokenpluginfile.php/{private_token}/{suffix}?forcedownload=1"
 
 
 def _validate_mobile_file_request(
@@ -1221,11 +1278,7 @@ def _is_diario_request_url(value: object) -> bool:
         or parsed.port is not None
         or parsed.username is not None
         or parsed.password is not None
-        or parsed.path
-        != (
-            "/diario/planoAula/relatorio/solicitar/"
-            "solicitarRelatorioPlanoEnsino.do"
-        )
+        or parsed.path != ("/diario/planoAula/relatorio/solicitar/solicitarRelatorioPlanoEnsino.do")
         or parsed.fragment
     ):
         return False
@@ -1249,7 +1302,7 @@ def _is_diario_request_url(value: object) -> bool:
 def _diario_transition_target(body: bytes, source_url: str) -> str:
     markup = _decode_diario_html(body, reason="diario_transition_encoding")
     targets: set[str] = set()
-    for raw in re.findall(r'''["']([^"']{1,8192})["']''', markup):
+    for raw in re.findall(r"""["']([^"']{1,8192})["']""", markup):
         candidate = urljoin(source_url, raw)
         if _is_diario_url(candidate):
             targets.add(candidate)

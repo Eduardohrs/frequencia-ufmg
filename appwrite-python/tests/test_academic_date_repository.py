@@ -180,9 +180,7 @@ def test_diario_assessment_import_is_idempotent_without_an_extra_commit() -> Non
             "scheduled_at": "2026-09-09T20:50:00-03:00",
         }
     ]
-    repository.import_diario_assessments(
-        "course-a", plan_source_id="701", assessments=assessments
-    )
+    repository.import_diario_assessments("course-a", plan_source_id="701", assessments=assessments)
     result = repository.import_diario_assessments(
         "course-a", plan_source_id="701", assessments=assessments
     )
@@ -199,9 +197,7 @@ def test_diario_assessment_import_is_idempotent_without_an_extra_commit() -> Non
 def test_diario_assessment_import_rejects_invalid_batches() -> None:
     repository = AcademicDateRepository(_Firestore(), now=lambda: NOW)
     with pytest.raises(InvalidAcademicDate):
-        repository.import_diario_assessments(
-            "course-a", plan_source_id="bad/id", assessments=[]
-        )
+        repository.import_diario_assessments("course-a", plan_source_id="bad/id", assessments=[])
     duplicate = {
         "code": "AV1",
         "title": "Primeira prova",
@@ -252,3 +248,92 @@ def test_list_rejects_wrong_source_id_and_backwards_audit_time() -> None:
 def test_instant_rejects_invalid_and_timezone_free_values(value: object) -> None:
     with pytest.raises(InvalidAcademicDate):
         _instant(value)
+
+
+def test_complete_moodle_snapshot_removes_only_stale_moodle_dates() -> None:
+    store = _Firestore()
+    repository = AcademicDateRepository(store, now=lambda: NOW)
+    repository.import_moodle_dates("course-a", [_event()])
+    repository.import_diario_assessments(
+        "course-a",
+        plan_source_id="20",
+        assessments=[{"code": "AV1", "title": "Prova", "scheduled_at": "2026-11-01T12:00:00Z"}],
+    )
+    repository.import_moodle_dates("course-a", [], complete=False)
+    assert len(repository.list_dates("course-a")) == 2
+    result = repository.import_moodle_dates("course-a", [], complete=True)
+    assert result["removed"] == 1
+    assert [row["source"] for row in repository.list_dates("course-a")] == ["diario"]
+
+
+def test_manual_date_crud_and_imported_override_survive_complete_import() -> None:
+    store = _Firestore()
+    repository = AcademicDateRepository(store, now=lambda: NOW)
+    payload = {key: value for key, value in _event().items() if key != "source_id"}
+    repository.save_date("course-a", "manual-personal", payload)
+    assert repository.list_dates("course-a")[0]["source"] == "manual"
+    repository.save_date("course-a", "manual-personal", {**payload, "title": "Edited"})
+    assert repository.list_dates("course-a")[0]["title"] == "Edited"
+    repository.delete_date("course-a", "manual-personal")
+    assert repository.list_dates("course-a") == []
+    repository.import_moodle_dates("course-a", [_event()])
+    repository.save_date("course-a", "moodle-910", {**payload, "title": "My correction"})
+    repository.import_moodle_dates("course-a", [_event(title="Upstream edit")], complete=True)
+    assert repository.list_dates("course-a")[0]["title"] == "My correction"
+    repository.import_moodle_dates("course-a", [], complete=True)
+    assert repository.list_dates("course-a")[0]["manual_override"] is True
+
+
+def test_manual_date_mutations_reject_unsafe_inputs_before_writing() -> None:
+    store = _Firestore()
+    repository = AcademicDateRepository(store, now=lambda: NOW)
+    payload = {key: value for key, value in _event().items() if key != "source_id"}
+    for identifier in ["../other", "invalid-x", "moodle-new"]:
+        with pytest.raises(InvalidAcademicDate):
+            repository.save_date("course-a", identifier, payload)
+    for invalid in [{}, {**payload, "extra": True}, {**payload, "due_at": "2026-10-01"}]:
+        with pytest.raises(InvalidAcademicDate):
+            repository.save_date("course-a", "manual-new", invalid)
+    repository.delete_date("course-a", "manual-missing")
+    assert store.patches == []
+    assert store.commits == []
+
+
+def test_complete_date_replacement_rejects_oversized_batch_without_partial_writes() -> None:
+    store = _Firestore()
+    repository = AcademicDateRepository(store, now=lambda: NOW)
+    repository.import_moodle_dates("course-a", [_event(source_id=str(i)) for i in range(500)])
+    before = dict(store.documents)
+    with pytest.raises(InvalidAcademicDate, match="atomic batch"):
+        repository.import_moodle_dates(
+            "course-a", [_event(source_id=str(i)) for i in range(500, 1000)], complete=True
+        )
+    assert store.documents == before
+    assert store.commits == []
+
+
+def test_manual_override_validation_and_diario_corrections_are_preserved() -> None:
+    from academic_date_repository import _date_identifier
+
+    store = _Firestore()
+    repository = AcademicDateRepository(store, now=lambda: NOW)
+    with pytest.raises(InvalidAcademicDate):
+        _date_identifier(None)
+    with pytest.raises(InvalidAcademicDate):
+        repository.delete_date("course-a", "moodle-1")
+    assessment = {"code": "AV1", "title": "Prova", "scheduled_at": "2026-11-01T12:00:00Z"}
+    repository.import_diario_assessments("course-a", plan_source_id="20", assessments=[assessment])
+    repository.save_date(
+        "course-a",
+        "diario-20-AV1",
+        {"title": "Personal correction", "kind": "assessment", "due_at": "2026-11-01T13:00:00Z"},
+    )
+    repository.import_diario_assessments("course-a", plan_source_id="20", assessments=[assessment])
+    repository.import_diario_assessments("course-a", plan_source_id="20", assessments=[])
+    assert repository.list_dates("course-a")[0]["title"] == "Personal correction"
+    fields = next(iter(store.documents.values()))
+    fields["manualOverride"] = {"booleanValue": False}
+    assert "manual_override" not in repository.list_dates("course-a")[0]
+    fields["manualOverride"] = {"booleanValue": "not a boolean"}
+    with pytest.raises(InvalidAcademicDate):
+        repository.list_dates("course-a")

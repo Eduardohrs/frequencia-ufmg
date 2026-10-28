@@ -426,15 +426,16 @@ describe("academic date documents", () => {
       academicDate({ title: "x".repeat(121) }),
       academicDate({ dueAt: "2026-10-22" }),
       academicDate({ kind: "exam" }),
-      academicDate({ source: "manual" }),
+      academicDate({ source: "unsupported" }),
       academicDate({ sourceId: "bad/id" }),
+      academicDate({ manualOverride: "true" }),
       academicDate({ createdAt: updatedAt, updatedAt: createdAt }),
       withoutField(academicDate(), "dueAt"),
       { ...academicDate(), privatePayload: "secret" },
     ];
-    for (const [index, data] of invalidDocuments.entries()) {
+    for (const data of invalidDocuments) {
       await assertFails(
-        setDoc(doc(db, academicDatePath("alice", `invalid-${index}`)), data),
+        setDoc(doc(db, academicDatePath("alice")), data),
       );
     }
 
@@ -442,6 +443,18 @@ describe("academic date documents", () => {
     await assertFails(
       updateDoc(doc(db, academicDatePath("alice")), { createdAt: updatedAt }),
     );
+  });
+  test("manual deadlines and imported corrections keep tenant and identifier boundaries", async () => {
+    await seed(coursePath("alice"), course());
+    const db = dbFor("alice");
+    const manual = academicDate({source:"manual",sourceId:"personal"});
+    const path = academicDatePath("alice","manual-personal");
+    await assertSucceeds(setDoc(doc(db,path),manual));
+    await assertSucceeds(updateDoc(doc(db,path),{title:"Edited",updatedAt}));
+    await assertSucceeds(setDoc(doc(db,academicDatePath("alice")),academicDate({manualOverride:true})));
+    await assertFails(setDoc(doc(db,academicDatePath("alice","moodle-personal")),manual));
+    await assertFails(setDoc(doc(dbFor("bob"),path),manual));
+    await assertSucceeds(deleteDoc(doc(db,path)));
   });
 });
 

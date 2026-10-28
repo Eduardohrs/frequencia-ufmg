@@ -27,18 +27,18 @@ class InvalidTeachingPlan(Exception):
     """A structured teaching plan does not satisfy the persisted contract."""
 
 
+class TeachingPlanNotFound(InvalidTeachingPlan):
+    """The course does not have a saved teaching plan yet."""
+
+
 class _Firestore(Protocol):
     def get_user_document(self, *segments: str) -> dict[str, Any]: ...
 
-    def patch_user_document(
-        self, *segments: str, fields: Mapping[str, Any]
-    ) -> dict[str, Any]: ...
+    def patch_user_document(self, *segments: str, fields: Mapping[str, Any]) -> dict[str, Any]: ...
 
 
 class TeachingPlanRepository:
-    def __init__(
-        self, firestore: _Firestore, *, now: Callable[[], datetime] | None = None
-    ) -> None:
+    def __init__(self, firestore: _Firestore, *, now: Callable[[], datetime] | None = None) -> None:
         self._firestore = firestore
         self._now = now or (lambda: datetime.now(UTC))
 
@@ -49,7 +49,7 @@ class TeachingPlanRepository:
                 "courses", identifier, "teachingPlans", "current"
             )
         except (FirestoreNotFound, LookupError):
-            raise InvalidTeachingPlan("teaching plan not found") from None
+            raise TeachingPlanNotFound("teaching plan not found") from None
         return _decode(document)
 
     def save(
@@ -76,9 +76,7 @@ class TeachingPlanRepository:
         ):
             return "unchanged"
         collected_at = _timestamp(self._now())
-        created_at = (
-            str(previous["created_at"]) if previous is not None else collected_at
-        )
+        created_at = str(previous["created_at"]) if previous is not None else collected_at
         fields = {
             "schemaVersion": {"integerValue": "1"},
             "source": {"stringValue": "ufmg_diario"},

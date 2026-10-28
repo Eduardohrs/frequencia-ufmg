@@ -255,10 +255,10 @@ def test_diario_probe_follows_the_real_official_request_and_accepts_html() -> No
                 "https://virtual.ufmg.br/20262/mod/url/view.php?id=99",
             ),
             _Response(
-                b'''<script>
+                b"""<script>
                   const ignored='not-a-report';
                   window.location='/diario/JasperServlet';
-                </script>''',
+                </script>""",
                 launch_url,
                 content_type="text/html; charset=utf-8",
             ),
@@ -326,9 +326,7 @@ def test_diario_probe_accepts_real_legacy_encoded_transition_and_report() -> Non
         "token-safe", term="2026-2", source_id=99
     )
 
-    assert result == DiarioPlanProbe(
-        delivery="link", content_length=len(report), format="html"
-    )
+    assert result == DiarioPlanProbe(delivery="link", content_length=len(report), format="html")
 
 
 def test_fetch_diario_plan_returns_structured_bounded_facts() -> None:
@@ -400,17 +398,15 @@ def test_fetch_diario_plan_rejects_unstructured_or_cross_term_documents(
         (b"\x81", "diario_transition_encoding"),
         (b"<html><body>sem destino</body></html>", "diario_transition_target"),
         (
-            b'''<script>
+            b"""<script>
               window.location='/diario/JasperServlet?first=1';
               const fallback='/diario/JasperServlet?second=1';
-            </script>''',
+            </script>""",
             "diario_transition_targets",
         ),
     ],
 )
-def test_diario_transition_rejects_invalid_or_ambiguous_targets(
-    body: bytes, reason: str
-) -> None:
+def test_diario_transition_rejects_invalid_or_ambiguous_targets(body: bytes, reason: str) -> None:
     source_url = (
         "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
         "solicitarRelatorioPlanoEnsino.do?"
@@ -574,9 +570,7 @@ def test_diario_probe_rejects_a_non_utf8_launch_page() -> None:
         ),
     ],
 )
-def test_diario_form_parser_rejects_ambiguous_or_unbounded_forms(
-    markup: str, reason: str
-) -> None:
+def test_diario_form_parser_rejects_ambiguous_or_unbounded_forms(markup: str, reason: str) -> None:
     parser = _DiarioFormParser()
     with pytest.raises(InvalidMoodleResponse) as caught:
         parser.feed(markup)
@@ -662,7 +656,9 @@ def test_diario_url_and_moodle_module_guards_reject_unsafe_shapes() -> None:
 def test_diario_probe_rejects_invalid_source_ids(source_id: object) -> None:
     with pytest.raises(ValueError, match="invalid Diario source"):
         MoodleStructuredDatesClient(opener=_Opener([])).probe_diario_plan(
-            "token-safe", term="2026-2", source_id=source_id  # type: ignore[arg-type]
+            "token-safe",
+            term="2026-2",
+            source_id=source_id,  # type: ignore[arg-type]
         )
 
 
@@ -804,9 +800,12 @@ def test_mobile_capability_probe_accepts_redirect_and_reports_missing_private_ac
 ) -> None:
     passport = "b" * 32
     callback = _mobile_callback("/20262", passport, private_token="")
-    callback = "moodlemobile://token=" + b64encode(
-        b64decode(callback.removeprefix("moodlemobile://token=")).rsplit(b":::", 1)[0]
-    ).decode()
+    callback = (
+        "moodlemobile://token="
+        + b64encode(
+            b64decode(callback.removeprefix("moodlemobile://token=")).rsplit(b":::", 1)[0]
+        ).decode()
+    )
     headers = Message()
     headers["Location"] = callback
     redirect = HTTPError("https://virtual.ufmg.br/20262/launch", 303, "redirect", headers, None)
@@ -1366,7 +1365,7 @@ def test_client_discovers_pages_files_text_and_empty_courses() -> None:
                     "url": "https://virtual.ufmg.br/20262/mod/page/view.php?id=101",
                     "relevance": "teaching_plan",
                     "origin": "canonical",
-                        "moodle_course_id": "3701",
+                    "moodle_course_id": "3701",
                 },
                 {
                     "source_id": "102",
@@ -1375,7 +1374,7 @@ def test_client_discovers_pages_files_text_and_empty_courses() -> None:
                     "url": "https://virtual.ufmg.br/20262/mod/resource/view.php?id=102",
                     "relevance": "schedule",
                     "origin": "canonical",
-                        "moodle_course_id": "3701",
+                    "moodle_course_id": "3701",
                 },
                 {
                     "source_id": "103",
@@ -1384,7 +1383,7 @@ def test_client_discovers_pages_files_text_and_empty_courses() -> None:
                     "url": None,
                     "relevance": "other",
                     "origin": "canonical",
-                        "moodle_course_id": "3701",
+                    "moodle_course_id": "3701",
                 },
             ],
         },
@@ -1472,7 +1471,9 @@ def test_discovery_enforces_the_global_candidate_limit(monkeypatch: pytest.Monke
         ]
     )
     candidate = {"source_id": "1", "kind": "text", "title": "X", "url": None, "relevance": "other"}
-    monkeypatch.setattr(module, "_parse_course_states", lambda *_: [[candidate] * 500, [candidate]])
+    monkeypatch.setattr(
+        module, "_parse_course_states", lambda *_, **_kwargs: [[candidate] * 500, [candidate]]
+    )
     with pytest.raises(InvalidMoodleResponse) as error:
         MoodleStructuredDatesClient(opener=opener).discover(
             "token", term="2026-2", course_codes=["AAA1", "BBB2"]
@@ -1638,9 +1639,7 @@ def test_discovery_uses_single_canonical_course_and_keeps_metaturma_materials() 
             },
             {
                 "error": False,
-                "data": json.dumps(
-                    {"course": {}, "section": [], "cm": []}
-                ),
+                "data": json.dumps({"course": {}, "section": [], "cm": []}),
             },
         ]
     ).encode()

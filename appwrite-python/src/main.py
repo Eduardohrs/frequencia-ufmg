@@ -25,6 +25,7 @@ from academic_date_repository import (  # noqa: E402
 )
 from academic_sync_progress import AcademicSyncProgress  # noqa: E402
 from attendance_service import InvalidAttendanceRequest, evaluate_attendance  # noqa: E402
+from course_activities import CourseActivityService, CourseMoodleNotLinked  # noqa: E402
 from course_repository import (  # noqa: E402
     CourseRepository,
     DuplicateCourseCode,
@@ -102,6 +103,7 @@ from teaching_plan_reconciliation_repository import (  # noqa: E402
 )
 from teaching_plan_repository import (  # noqa: E402
     InvalidTeachingPlan,
+    TeachingPlanNotFound,
     TeachingPlanRepository,
 )
 from ufmg_auth import (  # noqa: E402
@@ -239,7 +241,7 @@ def _dispatch(context: Any) -> Any:
             allowed_origin,
             {
                 "Access-Control-Allow-Headers": (
-                    "Authorization,Content-Type,X-Firebase-AppCheck,X-Request-ID"
+                    "Authorization,Content-Type,X-Firebase-AppCheck,X-Request-ID,X-Academic-Contract"
                 ),
                 "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
                 "Access-Control-Max-Age": "600",
@@ -317,6 +319,16 @@ def _dispatch(context: Any) -> Any:
     ):
         course_id = path.removeprefix("/v1/courses/").removesuffix("/schedule")
         return _schedule(context, allowed_origin, method, course_id)
+    workspace = re.fullmatch(r"/v1/courses/([^/]+)/(dates|plan|activities)(?:/([^/]+))?", path)
+    if workspace and method in {"GET", "PUT", "DELETE"}:
+        return _course_workspace(
+            context,
+            allowed_origin,
+            method,
+            workspace.group(1),
+            workspace.group(2),
+            workspace.group(3),
+        )
     if path.startswith("/v1/courses/") and method in {"PUT", "DELETE"}:
         return _course_mutation(context, allowed_origin, method, path.removeprefix("/v1/courses/"))
     return _respond(context, {"error": "not_found"}, 404, allowed_origin)
@@ -647,9 +659,11 @@ def _moodle_date_import(context: Any, origin: str | None) -> Any:
     if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
         return _ufmg_session_error(context, origin, "moodle_date_import_rejected", 400)
     try:
-        result = _moodle_date_import_service(context.req.headers, cast(str, user_id)).import_dates(
-            cast(str, user_id), now=int(time())
-        )
+        result = _moodle_date_import_service(
+            context.req.headers,
+            cast(str, user_id),
+            lambda event, fields: _academic_sync_telemetry(context, event, fields),
+        ).import_dates(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
         return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
     except MoodleUnavailable:
@@ -688,9 +702,11 @@ def _moodle_sync(context: Any, origin: str | None) -> Any:
     if not isinstance(context.req.body_json, Mapping) or context.req.body_json:
         return _ufmg_session_error(context, origin, "moodle_sync_rejected", 400)
     try:
-        result = _moodle_sync_service(context.req.headers, cast(str, user_id)).sync(
-            cast(str, user_id), now=int(time())
-        )
+        result = _moodle_sync_service(
+            context.req.headers,
+            cast(str, user_id),
+            lambda event, fields: _academic_sync_telemetry(context, event, fields),
+        ).sync(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
         return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
     except MoodleUnavailable:
@@ -751,10 +767,13 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
     if (
         not isinstance(payload, Mapping)
         or set(payload) - {"progress_id"}
-        or ("progress_id" in payload and (
-            not isinstance(payload["progress_id"], str)
-            or re.fullmatch(r"[A-Za-z0-9_-]{8,80}", payload["progress_id"]) is None
-        ))
+        or (
+            "progress_id" in payload
+            and (
+                not isinstance(payload["progress_id"], str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{8,80}", payload["progress_id"]) is None
+            )
+        )
     ):
         return _ufmg_session_error(context, origin, "academic_sync_rejected", 400)
     if environ.get("ENABLE_SCHEDULE_WRITES", "").lower() != "true":
@@ -772,6 +791,7 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
             cast(str, user_id),
             telemetry,
         )
+
         def run() -> dict[str, object]:
             return service.sync(cast(str, user_id), now=int(time()))
 
@@ -836,16 +856,19 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
 
 def _academic_sync_telemetry(context: Any, event: str, fields: Mapping[str, object]) -> None:
     writer = _error if event.endswith("_failed") else _log
-    writer(context, event, **fields)
+    writer(context, event, **{"request_id": _REQUEST_ID.get(), **fields})
 
 
 def _academic_sync_progress(
-    context: Any, user_id: str, operation_id: str | None,
+    context: Any,
+    user_id: str,
+    operation_id: str | None,
 ) -> AcademicSyncProgress | None:
     if operation_id is None:
         return None
     return AcademicSyncProgress(
-        _firestore(context.req.headers, user_id), operation_id,
+        _firestore(context.req.headers, user_id),
+        operation_id,
         telemetry=lambda event, fields: _academic_sync_telemetry(context, event, fields),
     )
 
@@ -1399,6 +1422,114 @@ def _courses_list(context: Any, origin: str | None) -> Any:
     return _respond(context, {"courses": courses}, origin=origin)
 
 
+def _course_workspace(
+    context: Any, origin: str | None, method: str, course_id: str, section: str, item_id: str | None
+) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/courses/workspace/" + method.lower())
+    if rejected is not None:
+        return rejected
+    started = perf_counter()
+    fields: dict[str, object] = {
+        "course_id": course_id,
+        "section": section,
+        "action": method.lower(),
+        "stage": "course_lookup",
+    }
+    if item_id is not None:
+        fields["item_id"] = item_id
+    _academic_sync_telemetry(context, "course_workspace_started", fields)
+
+    def fail(code: str, status: int, **details: object) -> Any:
+        _academic_sync_telemetry(
+            context,
+            "course_workspace_failed",
+            {**fields, "duration_ms": _elapsed_ms(started), "failure_code": code, **details},
+        )
+        return _respond(context, {"error": code}, status, origin)
+
+    try:
+        uid = cast(str, user_id)
+        courses = _course_repository(context.req.headers, uid)
+        course = courses.get_course(course_id)
+        fields["course_code"] = course["code"]
+        firestore = _firestore(context.req.headers, uid)
+        body: dict[str, Any]
+        fields["stage"] = section + "_" + method.lower()
+        if section == "dates":
+            repository = AcademicDateRepository(firestore)
+            if method == "GET" and item_id is None:
+                values = repository.list_dates(course_id)
+                body = {
+                    "dates": [
+                        {**value, "course_id": course_id, "course_code": course["code"]}
+                        for value in values
+                    ]
+                }
+            elif method == "PUT" and item_id is not None:
+                value = repository.save_date(course_id, item_id, context.req.body_json)
+                body = {"date": {**value, "course_id": course_id, "course_code": course["code"]}}
+            elif method == "DELETE" and item_id is not None:
+                repository.delete_date(course_id, item_id)
+                body = {"deleted": True}
+            else:
+                return _respond(context, {"error": "not_found"}, 404, origin)
+        elif method != "GET":
+            return _respond(context, {"error": "not_found"}, 404, origin)
+        elif section == "plan" and item_id is None:
+            try:
+                body = {"plan": TeachingPlanRepository(firestore).load(course_id)}
+            except TeachingPlanNotFound:
+                body = {"plan": None}
+        elif section == "activities":
+            sessions = _ufmg_session_store(context.req.headers)
+            client = MoodleStructuredDatesClient()
+            tokens = _moodle_token_store(context.req.headers)
+            service = CourseActivityService(
+                courses,
+                MoodleMaterialCatalogRepository(firestore),
+                sessions,
+                client,
+                tokens,
+                MoodleMobileCapabilityService(sessions, client, tokens),
+                telemetry=lambda event, values: _academic_sync_telemetry(context, event, values),
+            )
+            body = (
+                service.list_activities(uid, course_id, now=int(time()))
+                if item_id is None
+                else service.detail(uid, course_id, item_id, now=int(time()))
+            )
+        else:
+            return _respond(context, {"error": "not_found"}, 404, origin)
+    except CourseMoodleNotLinked:
+        return fail("course_moodle_not_linked", 409)
+    except UFMGReauthenticationRequired:
+        return fail("ufmg_reauthentication_required", 401)
+    except InvalidMoodleResponse as error:
+        return fail("moodle_response_invalid", 502, reason=error.reason, **error.details)
+    except (MoodleUnavailable, UFMGSessionStoreUnavailable, MoodleTokenStoreUnavailable):
+        return fail("moodle_unavailable", 503)
+    except (InvalidAcademicDate, InvalidCourse, TypeError, ValueError):
+        return fail("course_workspace_rejected", 400)
+    except InvalidTeachingPlan:
+        return fail("teaching_plan_data_invalid", 500)
+    except FirestoreNotFound:
+        return fail("course_not_found", 404)
+    except FirestoreAccessDenied:
+        return fail("course_access_denied", 403)
+    except (FirestoreUnavailable, FirestoreRequestRejected):
+        return fail("course_store_unavailable", 503)
+    _academic_sync_telemetry(
+        context,
+        "course_workspace_succeeded",
+        {
+            **fields,
+            "duration_ms": _elapsed_ms(started),
+            "item_count": len(cast(list[Any], body.get("dates", body.get("activities", [])))),
+        },
+    )
+    return _respond(context, body, origin=origin)
+
+
 def _academic_dates(context: Any, origin: str | None) -> Any:
     user_id, rejected = _authentication(context, origin, "/v1/moodle/dates")
     if rejected is not None:
@@ -1434,10 +1565,15 @@ def _course_mutation(context: Any, origin: str | None, method: str, course_id: s
         if method == "PUT":
             payload = {**context.req.body_json, "id": valid_id}
             course = repository.save_course(payload)
-            _log(context, "course_save_succeeded", course_id=course["id"],
-                 course_code=course["code"], modality=course.get("modality", "in_person"),
-                 attendance_policy=course.get("attendance_policy", "required"),
-                 session_history_preserved=True)
+            _log(
+                context,
+                "course_save_succeeded",
+                course_id=course["id"],
+                course_code=course["code"],
+                modality=course.get("modality", "in_person"),
+                attendance_policy=course.get("attendance_policy", "required"),
+                session_history_preserved=True,
+            )
             return _respond(context, {"course": course}, origin=origin)
         repository.delete_course(valid_id)
     except DuplicateCourseCode:
@@ -1514,16 +1650,21 @@ def _ufmg_sync_service(headers: dict[str, str], user_id: str) -> UFMGSyncService
     )
 
 
-def _moodle_date_import_service(headers: dict[str, str], user_id: str) -> MoodleDateImportService:
+def _moodle_date_import_service(
+    headers: dict[str, str], user_id: str, telemetry: Any = None
+) -> MoodleDateImportService:
     return MoodleDateImportService(
         _ufmg_session_store(headers),
         MoodleStructuredDatesClient(),
         _course_repository(headers, user_id),
         AcademicDateRepository(_firestore(headers, user_id)),
+        telemetry=telemetry,
     )
 
 
-def _moodle_sync_service(headers: dict[str, str], user_id: str) -> MoodleSyncService:
+def _moodle_sync_service(
+    headers: dict[str, str], user_id: str, telemetry: Any = None
+) -> MoodleSyncService:
     sessions = _ufmg_session_store(headers)
     client = MoodleStructuredDatesClient()
     courses = _course_repository(headers, user_id)
@@ -1533,6 +1674,7 @@ def _moodle_sync_service(headers: dict[str, str], user_id: str) -> MoodleSyncSer
             client,
             courses,
             AcademicDateRepository(_firestore(headers, user_id)),
+            telemetry=telemetry,
         ),
         MoodleContentDiscoveryService(
             sessions,
@@ -1546,6 +1688,7 @@ def _moodle_sync_service(headers: dict[str, str], user_id: str) -> MoodleSyncSer
             _moodle_token_store(headers),
         ),
         connection_count=lambda: client.connection_count,
+        telemetry=telemetry,
     )
 
 
@@ -1570,11 +1713,11 @@ def _unified_academic_sync_service(
             courses,
             ScheduleRepository(firestore),
         ),
-        MoodleDateImportService(sessions, client, courses, dates),
+        MoodleDateImportService(sessions, client, courses, dates, telemetry=telemetry),
         telemetry=telemetry,
     )
     moodle = MoodleSyncService(
-        MoodleDateImportService(sessions, client, courses, dates),
+        MoodleDateImportService(sessions, client, courses, dates, telemetry=telemetry),
         MoodleContentDiscoveryService(
             sessions,
             client,
@@ -1912,6 +2055,23 @@ def _respond(
     extra_headers: dict[str, str] | None = None,
 ) -> Any:
     _RESPONSE_STATUS.set(status)
+    if _header(context.req.headers, "x-academic-contract") != "2":
+        body = dict(body)
+        summary_keys = {"total", "matched", "unmatched", "created", "updated", "unchanged"}
+
+        def legacy_dates(value: Any) -> Any:
+            return (
+                {key: value[key] for key in summary_keys}
+                if isinstance(value, Mapping) and summary_keys <= value.keys()
+                else value
+            )
+
+        if summary_keys <= body.keys():
+            body = legacy_dates(body)
+        if "dates" in body:
+            body["dates"] = legacy_dates(body["dates"])
+        if isinstance(body.get("moodle"), Mapping) and "dates" in body["moodle"]:
+            body["moodle"] = {**body["moodle"], "dates": legacy_dates(body["moodle"]["dates"])}
     headers = {
         "Cache-Control": "no-store",
         "Vary": "Origin",
