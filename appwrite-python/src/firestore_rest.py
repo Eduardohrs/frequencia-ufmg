@@ -25,6 +25,10 @@ class FirestoreAccessDenied(FirestoreRestError):
     """Firestore Security Rules rejected the current user."""
 
 
+class FirestoreConflict(FirestoreRestError):
+    """A concurrent writer changed the document before the conditional write."""
+
+
 class FirestoreNotFound(FirestoreRestError):
     """The requested Firestore document does not exist."""
 
@@ -76,6 +80,8 @@ class FirestoreRestClient:
         *segments: str,
         fields: Mapping[str, Any],
         update_mask: tuple[str, ...] | None = None,
+        expected_update_time: str | None = None,
+        create_only: bool = False,
     ) -> dict[str, Any]:
         """Create or replace fields on a document owned by the verified user."""
 
@@ -101,6 +107,13 @@ class FirestoreRestClient:
             ):
                 raise ValueError("invalid Firestore update mask")
             query = [("updateMask.fieldPaths", field) for field in update_mask]
+        if expected_update_time is not None or create_only:
+            query = query or []
+            query.append(
+                ("currentDocument.updateTime", expected_update_time)
+                if expected_update_time
+                else ("currentDocument.exists", "false")
+            )
         return self._request("PATCH", segments, body, query=query)
 
     def list_user_documents(self, *segments: str) -> list[dict[str, Any]]:
@@ -207,6 +220,8 @@ class FirestoreRestClient:
             if status == 404:
                 outcome = "not_found"
                 raise FirestoreNotFound("Firestore document was not found")
+            if status in (409, 412):
+                raise FirestoreConflict("Firestore document changed concurrently")
             if status == 400:
                 raise FirestoreRequestRejected("Firestore rejected the request")
             if not 200 <= status < 300 or len(response_body) > MAX_PAYLOAD_BYTES:

@@ -494,3 +494,31 @@ def test_default_transport_normalizes_success_and_http_errors(
 
     monkeypatch.setattr(firestore_module, "urlopen", raise_error)
     assert firestore_module._urlopen_transport(request, 10) == (403, b"denied")
+
+
+def test_conditional_job_reservation_uses_atomic_firestore_preconditions():
+    from urllib.parse import parse_qs, urlsplit
+
+    from firestore_rest import FirestoreConflict
+
+    calls = []
+
+    def transport(request, _timeout):
+        calls.append(request)
+        return 200, request.data
+
+    client = FirestoreRestClient("project", "user", "token", transport=transport)
+    client.patch_user_document("syncJobs", "current", fields={}, create_only=True)
+    assert parse_qs(urlsplit(calls[-1].full_url).query)["currentDocument.exists"] == ["false"]
+    client.patch_user_document(
+        "syncJobs", "current", fields={}, expected_update_time="2026-10-28T12:00:00Z"
+    )
+    assert parse_qs(urlsplit(calls[-1].full_url).query)["currentDocument.updateTime"] == [
+        "2026-10-28T12:00:00Z"
+    ]
+    for status in [409, 412]:
+        client = FirestoreRestClient(
+            "project", "user", "token", transport=lambda *_, status=status: (status, b"{}")
+        )
+        with pytest.raises(FirestoreConflict):
+            client.patch_user_document("syncJobs", "current", fields={}, create_only=True)

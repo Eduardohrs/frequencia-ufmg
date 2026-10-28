@@ -120,7 +120,7 @@ class AcademicSyncBanner extends StatelessWidget {
                       ),
                     if (controller.isRunning)
                       const Text(
-                        'Você pode continuar usando o aplicativo. Mantenha-o aberto para acompanhar o resultado.',
+                        'Você pode continuar usando o aplicativo. O resultado ficará salvo mesmo se você fechar o aplicativo.',
                       ),
                     if (controller.error != null)
                       const Text(

@@ -382,6 +382,14 @@ service cloud.firestore {
       }
     }
 
+    match /users/{userId}/syncJobs/{jobId} {
+      allow get: if owns(userId) && jobId == 'current';
+      allow create, update: if owns(userId) && jobId == 'current'
+        && hasExactFields(request.resource.data, ['stateJson'])
+        && request.resource.data.stateJson is string
+        && request.resource.data.stateJson.size() <= 750000;
+    }
+
     match /users/{userId}/syncProgress/{progressId} {
       allow get: if owns(userId) && progressId == 'current';
       allow create, update: if owns(userId) && progressId == 'current'

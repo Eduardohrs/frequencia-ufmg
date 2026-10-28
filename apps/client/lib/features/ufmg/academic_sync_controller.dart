@@ -46,9 +46,30 @@ final class AcademicSyncController extends ChangeNotifier {
         : stages[progress!.completed];
   }
 
+  Future<void> restore() async {
+    if (gateway case final BackendResumableAcademicSyncGateway resumable) {
+      try {
+        final id = await resumable.pendingAcademicSyncId();
+        if (id != null && _active == null && !_disposed) {
+          await _begin(id);
+        }
+      } catch (failure, stack) {
+        _progressFailure(
+          progress?.operationId ?? 'restore',
+          failure,
+          stack,
+          stage: 'restore',
+        );
+      }
+    }
+  }
+
   Future<PythonUnifiedAcademicSyncResult> start() {
+    return _begin(_idGenerator());
+  }
+
+  Future<PythonUnifiedAcademicSyncResult> _begin(String id) {
     if (_active case final active?) return active;
-    final id = _idGenerator();
     result = null;
     error = null;
     visible = true;

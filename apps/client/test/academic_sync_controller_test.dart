@@ -11,6 +11,41 @@ import 'fixtures/academic_sync_fixture.dart';
 
 void main() {
   test(
+    'a reopened app reconnects to the existing job instead of inventing a new operation',
+    () async {
+      final gateway = _ResumableGateway();
+      final controller = AcademicSyncController(
+        gateway: gateway,
+        logger: _Logger(),
+      );
+      final restoring = controller.restore();
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.operationId, 'sync-existing123');
+      expect(controller.isRunning, isTrue);
+      gateway.response.complete(syncResult());
+      await restoring;
+      expect(controller.title, 'Sincronização concluída');
+      controller.dispose();
+      await gateway.updates.close();
+    },
+  );
+  test('missing or unavailable recovery does not start another job', () async {
+    for (final failing in [false, true]) {
+      final gateway = _ResumableGateway()
+        ..missing = true
+        ..failing = failing;
+      final controller = AcademicSyncController(
+        gateway: gateway,
+        logger: _Logger(),
+      );
+      await controller.restore();
+      expect(gateway.calls, 0);
+      controller.dispose();
+      await gateway.updates.close();
+    }
+  });
+
+  test(
     'validates progress documents without inventing time-based percentages',
     () {
       const valid = {
@@ -373,5 +408,16 @@ class _LogStore implements OperationalLogStore {
   Future<void> add(String userId, Map<String, Object?> document) async {
     expect(userId, 'user-1');
     documents.add(document);
+  }
+}
+
+class _ResumableGateway extends ProgressGateway
+    implements BackendResumableAcademicSyncGateway {
+  bool missing = false;
+  bool failing = false;
+  @override
+  Future<String?> pendingAcademicSyncId() async {
+    if (failing) throw StateError('read unavailable');
+    return missing ? null : 'sync-existing123';
   }
 }
