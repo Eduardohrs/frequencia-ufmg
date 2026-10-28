@@ -2788,7 +2788,9 @@ void main() {
     }
   });
 
-  test('gives the complete academic sync a longer bounded timeout', () async {
+  testWidgets('gives the complete academic sync a longer bounded timeout', (
+    tester,
+  ) async {
     final client = MockClient((request) async {
       await Future<void>.delayed(const Duration(milliseconds: 15));
       if (request.url.path == '/v1/identity') {
@@ -2804,7 +2806,7 @@ void main() {
       longRunningTimeout: const Duration(milliseconds: 50),
     );
 
-    await expectLater(
+    final shortRequest = expectLater(
       transport.verifyIdentity(),
       throwsA(
         isA<PythonBackendException>().having(
@@ -2814,7 +2816,11 @@ void main() {
         ),
       ),
     );
-    await expectLater(
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 6));
+    await tester.pump(const Duration(milliseconds: 6));
+    await shortRequest;
+    final longRequest = expectLater(
       transport.syncAllAcademicData(),
       throwsA(
         isA<PythonBackendException>().having(
@@ -2824,6 +2830,9 @@ void main() {
         ),
       ),
     );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    await longRequest;
   });
 
   test('rejects missing credentials before the network boundary', () async {

@@ -102,6 +102,7 @@ class CoursePage extends StatefulWidget {
 }
 
 class _CoursePageState extends State<CoursePage> {
+  final _calendarNavigation = CalendarNavigationState();
   List<CourseRecord> _courses = const [];
   bool _loading = true;
   bool _loadFailed = false;
@@ -606,6 +607,8 @@ class _CoursePageState extends State<CoursePage> {
                   if (_loadFailed) throw StateError('overview_refresh_failed');
                 }
               : null,
+          calendarNavigation: _calendarNavigation,
+          onOpenCourse: _openCourseHub,
           course: course,
           allCourses: _courses,
           datesByCourse: _datesByCourse,
@@ -639,6 +642,9 @@ class _CoursePageState extends State<CoursePage> {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => GeneralCalendarPage(
+          navigationState: _calendarNavigation,
+          logger: widget.logger,
+          onOpenCourse: _openCourseHub,
           overviewUpdates: _overviewUpdates,
           courses: _courses,
           datesByCourse: _datesByCourse,
@@ -683,6 +689,8 @@ class _CoursePageState extends State<CoursePage> {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => AbsenceDashboardPage(
+          logger: widget.logger,
+          onOpenCourse: _openCourseHub,
           courses: _courses,
           repository: widget.sessionRepository,
           location: tz.getLocation('America/Sao_Paulo'),
@@ -1161,6 +1169,9 @@ class _CoursePageState extends State<CoursePage> {
             if (index > 0) const SizedBox(height: 10),
             _CourseTile(
               course: _courses[index],
+              sessions: _sessionsByCourse[_courses[index].id],
+              dates: _datesByCourse[_courses[index].id] ?? [],
+              now: widget.now(),
               deleting: _deletingId == _courses[index].id,
               saving: _savingIds.contains(_courses[index].id),
               onOpen: () => _openCourseHub(_courses[index]),
@@ -1360,7 +1371,13 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _CourseTile extends StatelessWidget {
+  final List<SessionRecord>? sessions;
+  final List<PythonMoodleDate> dates;
+  final DateTime now;
   const _CourseTile({
+    required this.sessions,
+    required this.dates,
+    required this.now,
     required this.course,
     required this.deleting,
     required this.saving,
@@ -1375,6 +1392,35 @@ class _CourseTile extends StatelessWidget {
   final VoidCallback onOpen;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+
+  List<Widget> _contextLabels() {
+    final upcoming = courseAgenda(
+      course,
+      sessions!,
+      dates,
+      includeLessons: true,
+    ).where((event) => !event.startsAt.isBefore(now)).toList();
+    final summary = CourseAbsenceSummary.from(
+      course,
+      sessions!,
+      now: now,
+      location: tz.getLocation('America/Sao_Paulo'),
+    );
+    return [
+      if (upcoming.isNotEmpty)
+        Text('Próxima: ${_nextLabel(upcoming.first.startsAt)}'),
+      if (course.tracksAttendance && summary.eligibleLessons > 0)
+        Text('Saldo: ${summary.remainingAbsences} faltas'),
+    ];
+  }
+
+  String _nextLabel(DateTime instant) {
+    final local = tz.TZDateTime.from(
+      instant,
+      tz.getLocation('America/Sao_Paulo'),
+    );
+    return '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')} ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1402,6 +1448,7 @@ class _CourseTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(course.code),
+              if (sessions != null) ..._contextLabels(),
               if (!course.tracksAttendance) Text(course.policyLabel),
               const SizedBox(height: 2),
               Text(

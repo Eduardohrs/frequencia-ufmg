@@ -35,6 +35,117 @@ void main() {
   final now = DateTime.utc(2026, 9, 27, 12);
 
   testWidgets(
+    'hub late sessions and catalog retain terminal telemetry after disposal',
+    (tester) async {
+      final course = CourseRecord(
+        id: 'poo',
+        code: 'DCC203',
+        name: 'POO',
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final sessions = Completer<List<SessionRecord>>();
+      final catalog = Completer<PythonMoodleContentDiscovery>();
+      final store = _HubLogStore();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CourseHubPage(
+            course: course,
+            allCourses: [course],
+            courseRepository: _FakeCourseRepository(),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository()
+              ..pending = sessions.future,
+            ufmgSessionGateway: _UFMGGateway()..pendingCatalog = catalog.future,
+            logger: FirestoreAppLogger(
+              store: store,
+              currentUserId: () => 'owner',
+              platform: 'web',
+            ),
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      sessions.complete([]);
+      catalog.complete(
+        const PythonMoodleContentDiscovery(
+          courses: [],
+          candidateTotal: 0,
+          metaturmaCandidateTotal: 0,
+        ),
+      );
+      await tester.pumpAndSettle();
+      for (final event in [
+        'course_hub_read_succeeded',
+        'course_hub_catalog_succeeded',
+      ]) {
+        expect(
+          store.documents
+              .where((row) => row['event'] == event)
+              .any(
+                (row) =>
+                    (jsonDecode(row['details']! as String)
+                        as Map)['applied_to_view'] ==
+                    false,
+              ),
+          true,
+        );
+      }
+    },
+  );
+  testWidgets(
+    'hub upcoming row opens the correct calendar month with course filter',
+    (tester) async {
+      final course = CourseRecord(
+        id: 'poo',
+        code: 'DCC203',
+        name: 'POO',
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CourseHubPage(
+            course: course,
+            allCourses: [course],
+            courseRepository: _FakeCourseRepository(),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            logger: _RecordingAppLogger(),
+            now: () => now,
+            datesByCourse: {
+              'poo': [
+                PythonMoodleDate(
+                  id: 'event',
+                  courseId: 'poo',
+                  courseCode: 'DCC203',
+                  title: 'Entrega futura',
+                  dueAt: DateTime.utc(2026, 10, 5, 12),
+                  kind: 'assignment',
+                ),
+              ],
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Entrega futura'));
+      await tester.tap(find.text('Entrega futura'));
+      await tester.pumpAndSettle();
+      expect(find.text('Outubro 2026'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Entrega futura'), findsOneWidget);
+    },
+  );
+  testWidgets(
     'course hub opens the owned activity workspace through both gateway configurations',
     (tester) async {
       final course = CourseRecord(
@@ -2665,6 +2776,7 @@ final class _FakeMeetingRepository implements MeetingRepository {
 }
 
 final class _FakeSessionRepository implements SessionRepository {
+  Future<List<SessionRecord>>? pending;
   _FakeSessionRepository([this.sessions = const {}]);
 
   final Map<String, List<SessionRecord>> sessions;
@@ -2677,6 +2789,7 @@ final class _FakeSessionRepository implements SessionRepository {
   @override
   Future<List<SessionRecord>> listSessions(String courseId) async {
     listedCourseIds.add(courseId);
+    if (pending != null) return pending!;
     if (listError case final error?) throw error;
     return List.of(sessions[courseId] ?? const []);
   }
@@ -2853,6 +2966,7 @@ final class _RecordingAppLogger implements AppLogger {
 }
 
 class _UFMGGateway implements BackendUFMGSessionGateway {
+  Future<PythonMoodleContentDiscovery>? pendingCatalog;
   _UFMGGateway({
     this.status = const PythonUFMGSessionStatus(
       connected: false,
@@ -2881,6 +2995,7 @@ class _UFMGGateway implements BackendUFMGSessionGateway {
 
   @override
   Future<PythonMoodleContentDiscovery> listMoodleMaterialCatalog() async {
+    if (pendingCatalog != null) return pendingCatalog!;
     if (catalogError != null) throw catalogError!;
     return materialCatalog;
   }

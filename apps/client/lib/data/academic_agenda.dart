@@ -97,7 +97,13 @@ String _instant(Object? value) {
 
 /// Presentation only: never creates attendance sessions for standalone deadlines.
 final class AgendaEntry {
-  const AgendaEntry({required this.startsAt, this.title, this.session});
+  const AgendaEntry({
+    required this.startsAt,
+    this.title,
+    this.session,
+    this.date,
+  });
+  final PythonMoodleDate? date;
   final DateTime startsAt;
   final String? title;
   final SessionRecord? session;
@@ -141,12 +147,14 @@ List<AgendaEntry> courseAgenda(
         startsAt: linked?.dueAt ?? session.startsAt,
         title: linked?.title ?? title,
         session: session,
+        date: linked,
       ),
     );
   }
   entries.addAll(
     remaining.map(
-      (date) => AgendaEntry(startsAt: date.dueAt, title: date.title),
+      (date) =>
+          AgendaEntry(startsAt: date.dueAt, title: date.title, date: date),
     ),
   );
   entries.sort((a, b) {
