@@ -31,4 +31,38 @@ class CourseActivitySnapshotCache {
         _key(user, snapshot.courseId, snapshot.term),
         jsonEncode(snapshot.toJson()),
       );
+
+  Future<Map<String, Object?>?> readPlan(
+    String user,
+    String course,
+    String term,
+  ) async {
+    final value = await _preferences.getString(
+      'plan.${_key(user, course, term)}',
+    );
+    if (value == null) return null;
+    final plan = Map<String, Object?>.from(jsonDecode(value) as Map);
+    if ([
+      'criteria',
+      'schedule',
+      'assessments',
+    ].any((key) => plan[key] is! List)) {
+      throw const FormatException('Invalid cached plan');
+    }
+    return plan;
+  }
+
+  Future<void> writePlan(
+    String user,
+    String course,
+    String term,
+    Map<String, Object?>? plan,
+  ) => _preferences.setString(
+    'plan.${_key(user, course, term)}',
+    jsonEncode({
+      'criteria': plan?['criteria'] ?? [],
+      'schedule': plan?['schedule'] ?? [],
+      'assessments': plan?['assessments'] ?? [],
+    }),
+  );
 }

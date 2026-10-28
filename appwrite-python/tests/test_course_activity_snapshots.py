@@ -208,3 +208,25 @@ def test_saved_api_works_with_expired_session_and_reports_missing_or_corrupt_sna
     assert get()["status"] == 409
     store.documents[("courses", "poo", "activitySnapshots", "current")] = {}
     assert get()["status"] == 500
+
+
+def test_snapshot_failure_retains_parser_reason_and_keeps_previous_copy(activities):
+    from moodle_structured_dates import InvalidMoodleResponse
+
+    service, _, _, client, _, _, logs, _ = activities
+    service._courses.list_courses = lambda: [{"id": "poo", "code": "ELE631", "term": "2026-2"}]
+    repo = ActivitySnapshotRepository(Store())
+    repo.save("poo", snapshot())
+
+    def fail(*args, **kwargs):
+        raise InvalidMoodleResponse("activity_page_shape")
+
+    client.fetch_activity = fail
+    result = service.sync_snapshots("owner", now=1793188800, snapshots=repo)
+    assert result["failed_courses"][0]["reason"] == "activity_page_shape"
+    assert repo.load("poo") == snapshot()
+    failures = [fields for event, fields in logs if event == "academic_sync_stage_failed"]
+    assert failures[0]["reason"] == "activity_page_shape"
+    assert failures[0]["kind"] == "assign"
+    assert failures[0]["source_id"] == "20"
+    assert failures[0]["title"]

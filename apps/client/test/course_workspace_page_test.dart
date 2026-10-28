@@ -39,6 +39,61 @@ PythonMoodleDate date(String id, String title) => PythonMoodleDate(
 
 void main() {
   tz.initializeTimeZones();
+  testWidgets('plan cache failure is logged without blocking server plan', (
+    tester,
+  ) async {
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.empty();
+    final logs = _Logs();
+    await tester.pumpWidget(
+      _app(_Gateway(), logs, userId: 'owner', cache: _BrokenPlanCache()),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Plano'));
+    await tester.pumpAndSettle();
+    expect(find.text('Soma das notas'), findsOneWidget);
+    final errors = logs.documents
+        .where((d) => d['event'] == 'app_exception')
+        .toList();
+    expect(
+      errors.where((d) => '${d['errorDetails']}'.contains('plan_cache_read')),
+      isNotEmpty,
+    );
+    expect(
+      errors.where((d) => '${d['errorDetails']}'.contains('plan_cache_write')),
+      isNotEmpty,
+    );
+  });
+  testWidgets(
+    'plan remains readable after a fresh page opens without backend',
+    (tester) async {
+      SharedPreferencesAsyncPlatform.instance =
+          InMemorySharedPreferencesAsync.empty();
+      final logs = _Logs();
+      await tester.pumpWidget(_app(_Gateway(), logs, userId: 'owner'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Plano'));
+      await tester.pumpAndSettle();
+      expect(find.text('Soma das notas'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        _app(
+          _Gateway()..readError = StateError('offline'),
+          logs,
+          userId: 'owner',
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Plano'));
+      await tester.pumpAndSettle();
+      expect(find.text('Cópia local do plano de ensino.'), findsOneWidget);
+      expect(find.text('Soma das notas'), findsOneWidget);
+      await tester.tap(find.text('Cronograma (1)'));
+      await tester.pumpAndSettle();
+      expect(find.text('Revisão'), findsOneWidget);
+    },
+  );
   testWidgets(
     'manual plan review pauses only this course and retains data on failed writes',
     (tester) async {
@@ -611,7 +666,11 @@ class _Gateway implements BackendAcademicWorkspaceGateway {
   Future<List<PythonMoodleDate>> listCourseDates(String id) async =>
       List.of(dates);
   @override
-  Future<Map<String, Object?>?> loadCoursePlan(String id) async => plan;
+  Future<Map<String, Object?>?> loadCoursePlan(String id) async {
+    if (readError != null) throw readError!;
+    return plan;
+  }
+
   @override
   Future<void> saveCourseDate(
     String courseId,
@@ -708,4 +767,20 @@ class _PolicyGateway extends _Gateway
     if (failWrite) throw StateError('write unavailable');
     this.paused = paused;
   }
+}
+
+class _BrokenPlanCache extends CourseActivitySnapshotCache {
+  @override
+  Future<Map<String, Object?>?> readPlan(
+    String user,
+    String course,
+    String term,
+  ) async => throw StateError('corrupt plan cache');
+  @override
+  Future<void> writePlan(
+    String user,
+    String course,
+    String term,
+    Map<String, Object?>? plan,
+  ) async => throw StateError('plan storage full');
 }

@@ -1,5 +1,6 @@
 """Structured duration telemetry for academic synchronization stages."""
 
+import re
 from collections.abc import Callable, Mapping
 from time import monotonic
 
@@ -28,7 +29,12 @@ def timed_stage[T](
                 "stage": stage,
                 "duration_ms": round((clock() - started) * 1000),
                 "exception_type": type(error).__name__,
-                "reason": str(error) or type(error).__name__,
+                "reason": (
+                    reason
+                    if isinstance(reason := getattr(error, "reason", None), str)
+                    and re.fullmatch(r"[a-z_]{1,64}", reason)
+                    else str(error) or type(error).__name__
+                ),
                 **context,
             },
         )

@@ -11,6 +11,39 @@ void main() {
     () => SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty(),
   );
+  test('invalid cached plan is rejected before rendering', () async {
+    await SharedPreferencesAsync().setString(
+      'plan.course_activity_snapshot.v1.u.c.2026-2',
+      '{}',
+    );
+    await expectLater(
+      CourseActivitySnapshotCache().readPlan('u', 'c', '2026-2'),
+      throwsFormatException,
+    );
+  });
+  test(
+    'plan copy persists without credentials and is scoped to account and semester',
+    () async {
+      final cache = CourseActivitySnapshotCache();
+      expect(await cache.readPlan('u', 'c', '2026-2'), isNull);
+      await cache.writePlan('u', 'c', '2026-2', {
+        'criteria': [],
+        'schedule': [],
+        'assessments': [],
+        'token': 'never-cache',
+      });
+      final copy = await CourseActivitySnapshotCache().readPlan(
+        'u',
+        'c',
+        '2026-2',
+      );
+      expect(copy, {'criteria': [], 'schedule': [], 'assessments': []});
+      expect(await cache.readPlan('other', 'c', '2026-2'), isNull);
+      expect(await cache.readPlan('u', 'c', '2027-1'), isNull);
+      await cache.writePlan('u', 'c', '2026-2', null);
+      expect(await cache.readPlan('u', 'c', '2026-2'), copy);
+    },
+  );
   test(
     'snapshot persists across instances and stays isolated by account,course and semester',
     () async {

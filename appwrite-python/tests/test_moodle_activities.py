@@ -218,3 +218,32 @@ def test_activity_client_validates_permissions_redirects_and_membership_sources(
     with pytest.raises(InvalidMoodleResponse) as rejected:
         client.fetch_activity("token", term="2026-2", source_id=20, kind="assign")
     assert rejected.value.reason == "activity_page_shape"
+
+
+@pytest.mark.parametrize(
+    "marker", ["quizinfo", "quizattemptsummary", "quizattempt", "quizstartbuttondiv"]
+)
+def test_undated_quiz_without_intro_accepts_real_quiz_blocks(marker):
+    page = f'<section id="region-main"><div class="{marker}">Quiz</div></section>'.encode()
+    detail = parse_activity_page(page, term="2026-2", kind="quiz")
+    assert detail == {
+        "description": "",
+        "dates_text": "",
+        "has_due_date": False,
+        "submission_state": "unknown",
+        "submission_text": "",
+        "attachments": [],
+    }
+
+
+@pytest.mark.parametrize(
+    "kind,html",
+    [
+        ("assign", b'<section id="region-main"><div class="quizinfo"></div></section>'),
+        ("quiz", b'<div class="quizinfo"></div><section id="region-main"></section>'),
+        ("quiz", b'<section id="region-main">Temporarily unavailable</section>'),
+    ],
+)
+def test_quiz_marker_must_be_inside_main_and_only_validates_quizzes(kind, html):
+    with pytest.raises(InvalidActivityPage, match="activity_page_shape"):
+        parse_activity_page(html, term="2026-2", kind=kind)
