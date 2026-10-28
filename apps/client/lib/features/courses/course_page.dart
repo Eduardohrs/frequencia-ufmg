@@ -58,6 +58,7 @@ class CoursePage extends StatefulWidget {
     this.sessionGateway,
     this.ufmgSessionGateway,
     this.ufmgSyncSchedule,
+    this.academicSyncSchedule,
     this.overviewRepository,
     this.scheduleReadsEnabled = true,
     this.scheduleWritesEnabled = false,
@@ -85,6 +86,7 @@ class CoursePage extends StatefulWidget {
   final BackendSessionGateway? sessionGateway;
   final BackendUFMGSessionGateway? ufmgSessionGateway;
   final UFMGSyncScheduleGateway? ufmgSyncSchedule;
+  final UFMGSyncScheduleGateway? academicSyncSchedule;
   final AcademicOverviewRepository? overviewRepository;
   final bool scheduleReadsEnabled;
   final bool scheduleWritesEnabled;
@@ -115,6 +117,8 @@ class _CoursePageState extends State<CoursePage> {
   bool _automaticUFMGSyncStarted = false;
   String? _ufmgSyncNotice;
   AcademicSyncController? _academicSync;
+  Future<void>? _academicSyncRestore;
+  DateTime? _academicAutoNextAt;
   OverlayEntry? _syncIndicator;
   bool _academicSyncWasRunning = false;
   final _overviewUpdates = ValueNotifier<AcademicOverviewSnapshot?>(null);
@@ -128,14 +132,25 @@ class _CoursePageState extends State<CoursePage> {
         gateway: gateway,
         logger: widget.logger,
       )..addListener(_onAcademicSyncChanged);
-      unawaited(_academicSync!.restore());
+      _academicSyncRestore = _academicSync!.restore();
+      unawaited(_academicSyncRestore);
     }
     _load();
   }
 
+  Future<void> _refreshAfterAcademicSync() async {
+    if (widget.academicSyncSchedule case final schedule?
+        when _academicSync?.result != null && !_academicSync!.isRestoring) {
+      await _recordAcademicDeadline(schedule, const Duration(hours: 6));
+    }
+    if (mounted) await _load();
+  }
+
   void _onAcademicSyncChanged() {
     final running = _academicSync!.isRunning;
-    if (_academicSyncWasRunning && !running) unawaited(_load());
+    if (_academicSyncWasRunning && !running) {
+      unawaited(_refreshAfterAcademicSync());
+    }
     _academicSyncWasRunning = running;
     if (_syncIndicator == null && _academicSync!.visible) {
       _syncIndicator = OverlayEntry(
@@ -274,14 +289,100 @@ class _CoursePageState extends State<CoursePage> {
   void _startAutomaticUFMGSync() {
     if (_automaticUFMGSyncStarted ||
         widget.ufmgSessionGateway == null ||
-        widget.ufmgSyncSchedule == null) {
+        widget.ufmgSyncSchedule == null &&
+            widget.academicSyncSchedule == null) {
       return;
     }
     _automaticUFMGSyncStarted = true;
     unawaited(_runAutomaticUFMGSync());
   }
 
+  Future<void> _recordAcademicDeadline(
+    UFMGSyncScheduleGateway schedule,
+    Duration delay,
+  ) async {
+    _academicAutoNextAt = widget.now().toUtc().add(delay);
+    try {
+      await schedule.record(widget.user.id, _academicAutoNextAt!);
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'academic_auto_schedule_write',
+        {'stage': 'schedule_write'},
+        failureCode: 'academic_auto_schedule_write_failed',
+      );
+    }
+  }
+
+  Future<void> _runAutomaticAcademicSync(
+    UFMGSyncScheduleGateway schedule,
+  ) async {
+    final fields = <String, Object>{
+      'operation': 'academic_sync',
+      'trigger': 'dashboard_open',
+    };
+    try {
+      await _academicSyncRestore;
+      if (!mounted) return;
+      if ((_academicAutoNextAt?.isAfter(widget.now().toUtc()) ?? false) ||
+          !await schedule.isDue(widget.user.id)) {
+        emitOperationalEvent(widget.logger, 'academic_auto_sync_skipped', {
+          ...fields,
+          'reason': 'not_due',
+        });
+        return;
+      }
+      final status = await runAuditedOperation(
+        logger: widget.logger,
+        operation: AuditedOperation.ufmgSessionStatus,
+        action: widget.ufmgSessionGateway!.getUFMGSessionStatus,
+      );
+      if (!status.connected) {
+        emitOperationalEvent(widget.logger, 'academic_auto_sync_skipped', {
+          ...fields,
+          'reason': status.reauthenticationRequired
+              ? 'reauthentication_required'
+              : 'not_connected',
+        });
+        await _recordAcademicDeadline(schedule, const Duration(minutes: 15));
+        if (status.reauthenticationRequired && mounted) {
+          setState(
+            () => _ufmgSyncNotice =
+                'Reconecte à UFMG para atualizar suas atividades.',
+          );
+        }
+        return;
+      }
+      await _recordAcademicDeadline(schedule, const Duration(hours: 6));
+      emitOperationalEvent(widget.logger, 'academic_auto_sync_started', fields);
+      await _academicSync!.start();
+      emitOperationalEvent(
+        widget.logger,
+        'academic_auto_sync_succeeded',
+        fields,
+      );
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'academic_auto_sync',
+        fields,
+        failureCode: 'academic_auto_sync_failed',
+      );
+      await _recordAcademicDeadline(schedule, const Duration(minutes: 15));
+    }
+  }
+
   Future<void> _runAutomaticUFMGSync() async {
+    if (widget.academicSyncSchedule case final schedule?
+        when _academicSync != null) {
+      await _runAutomaticAcademicSync(schedule);
+      _automaticUFMGSyncStarted = false;
+      return;
+    }
     final gateway = widget.ufmgSessionGateway!;
     final schedule = widget.ufmgSyncSchedule!;
     try {

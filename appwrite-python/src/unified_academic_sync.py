@@ -120,6 +120,13 @@ class UnifiedAcademicSyncService:
                     error=error,
                 )
                 continue
+            if imported_plan.get("plan") == "unavailable":
+                summary["review_required"] += 1
+                exceptions.append(_unavailable_exception(course))
+                continue
+            if imported_plan.get("plan") == "deferred":
+                summary["unchanged"] += 1
+                continue
             if imported_plan.get("plan") == "not_published":
                 summary["review_required"] += 1
                 exceptions.append(_exception(course, "teaching_plan_not_published", 1))

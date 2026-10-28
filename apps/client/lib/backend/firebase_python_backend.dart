@@ -39,6 +39,7 @@ final class _FirebasePythonBackendVerifier
     implements
         BackendIdentityVerifier,
         BackendAcademicWorkspaceGateway,
+        BackendCourseSyncPolicyGateway,
         BackendAttendanceEvaluator,
         BackendCourseGateway,
         BackendScheduleGateway,
@@ -185,12 +186,32 @@ final class _FirebasePythonBackendVerifier
 
   @override
   Future<PythonUnifiedAcademicSyncResult> syncWithProgress(
-    String operationId,
-  ) async {
+    String operationId, {
+    bool force = false,
+  }) async {
     await (_activation ??= _activateAppCheck());
     return _transport.syncAllAcademicData(
       progressId: operationId,
       background: true,
+      force: force,
+    );
+  }
+
+  @override
+  Future<bool> coursePlanSyncPaused(String courseId) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.courseSyncPolicy.coursePlanSyncPaused(courseId);
+  }
+
+  @override
+  Future<void> setCoursePlanSyncPaused(
+    String courseId, {
+    required bool paused,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    await _transport.courseSyncPolicy.setCoursePlanSyncPaused(
+      courseId,
+      paused: paused,
     );
   }
 

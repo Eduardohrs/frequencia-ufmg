@@ -40,6 +40,40 @@ PythonMoodleDate date(String id, String title) => PythonMoodleDate(
 void main() {
   tz.initializeTimeZones();
   testWidgets(
+    'manual plan review pauses only this course and retains data on failed writes',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final gateway = _PolicyGateway();
+      final logs = _Logs();
+      await tester.pumpWidget(_app(gateway, logs));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Plano'));
+      await tester.pumpAndSettle();
+      expect(find.text('Pausar busca do plano'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('course-plan-sync-paused')));
+      await tester.pumpAndSettle();
+      expect(gateway.paused, isTrue);
+      expect(find.text('Busca pausada por você.'), findsOneWidget);
+      gateway.failWrite = true;
+      await tester.tap(find.byKey(const Key('course-plan-sync-paused')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Não foi possível salvar essa preferência.'),
+        findsOneWidget,
+      );
+      expect(gateway.paused, isTrue);
+      await tester.pumpWidget(const SizedBox());
+      gateway.failRead = true;
+      await tester.pumpWidget(_app(gateway, logs));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Plano'));
+      await tester.pumpAndSettle();
+      expect(find.text('Soma das notas'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'failure opening synchronization leaves the saved activity available',
     (tester) async {
       await tester.pumpWidget(
@@ -653,4 +687,25 @@ class _BrokenSnapshotCache extends CourseActivitySnapshotCache {
     String user,
     PythonCourseActivitySnapshot snapshot,
   ) async => throw StateError('local storage full');
+}
+
+class _PolicyGateway extends _Gateway
+    implements BackendCourseSyncPolicyGateway {
+  bool paused = false, failRead = false, failWrite = false;
+  @override
+  Future<bool> coursePlanSyncPaused(String courseId) async {
+    expect(courseId, 'poo');
+    if (failRead) throw StateError('read unavailable');
+    return paused;
+  }
+
+  @override
+  Future<void> setCoursePlanSyncPaused(
+    String courseId, {
+    required bool paused,
+  }) async {
+    expect(courseId, 'poo');
+    if (failWrite) throw StateError('write unavailable');
+    this.paused = paused;
+  }
 }

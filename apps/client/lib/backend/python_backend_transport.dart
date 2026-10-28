@@ -221,26 +221,41 @@ final class PythonActivitySyncSummary {
   const PythonActivitySyncSummary({
     required this.updated,
     required this.failed,
+    this.reused = 0,
   });
   factory PythonActivitySyncSummary.fromJson(Map<String, Object?> value) {
     final updated = value['updated'],
         failed = value['failed'],
         issues = value['failed_courses'];
-    if (!_hasExactKeys(value, const {'updated', 'failed', 'failed_courses'}) ||
+    final reused = value['reused'] ?? 0;
+    final canonical = Map<String, Object?>.of(value)..remove('reused');
+    if (!_hasExactKeys(canonical, const {
+          'updated',
+          'failed',
+          'failed_courses',
+        }) ||
+        reused is! int ||
+        reused < 0 ||
+        reused > 50 ||
         updated is! int ||
         failed is! int ||
         updated < 0 ||
         failed < 0 ||
-        updated + failed > 50 ||
+        updated + failed + reused > 50 ||
         issues is! List ||
         issues.length > 50) {
       throw const FormatException();
     }
-    return PythonActivitySyncSummary(updated: updated, failed: failed);
+    return PythonActivitySyncSummary(
+      updated: updated,
+      failed: failed,
+      reused: reused,
+    );
   }
-  final int updated, failed;
+  final int updated, failed, reused;
   String get message =>
-      '$updated disciplinas com atividades salvas. $failed não atualizadas; cópias anteriores preservadas.';
+      'Atividades: $updated atualizadas, $reused reutilizadas e $failed com falha.'
+      '${failed > 0 ? ' Cópias anteriores preservadas.' : ''}';
 }
 
 final class PythonMoodleSyncResult {
@@ -1581,6 +1596,9 @@ final class PythonBackendTransport
        _client = client,
        _jobDelay = jobDelay ?? Future<void>.delayed;
 
+  BackendCourseSyncPolicyGateway get courseSyncPolicy =>
+      _AcademicWorkspaceTransport(this);
+
   BackendAcademicWorkspaceGateway get workspace =>
       _AcademicWorkspaceTransport(this);
 
@@ -2302,11 +2320,16 @@ final class PythonBackendTransport
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData({
     String? progressId,
     bool background = false,
+    bool force = false,
   }) async {
     var response = await _authenticatedRequest(
       path: '/v1/ufmg/sync/all',
       method: _BackendMethod.post,
-      body: {'progress_id': ?progressId, if (background) 'background': true},
+      body: {
+        'progress_id': ?progressId,
+        if (background) 'background': true,
+        if (force) 'force': true,
+      },
       requestTimeout: background ? timeout : longRunningTimeout,
     );
     if (response.statusCode == 202) {
@@ -2936,7 +2959,7 @@ final class PythonBackendTransport
         'Authorization': 'Bearer $idToken',
         'X-Firebase-AppCheck': appCheckToken,
         'X-Request-ID': requestId,
-        'X-Academic-Contract': '2',
+        'X-Academic-Contract': '3',
       };
       final uri = _endpoint.resolve(path);
       stage = 'transport';

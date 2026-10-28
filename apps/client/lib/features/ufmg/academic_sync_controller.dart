@@ -25,6 +25,7 @@ final class AcademicSyncController extends ChangeNotifier {
   bool progressUnavailable = false;
   bool receivedProgress = false;
   bool _disposed = false;
+  bool isRestoring = false;
 
   bool get isRunning => _active != null;
   static const stages = [
@@ -51,7 +52,12 @@ final class AcademicSyncController extends ChangeNotifier {
       try {
         final id = await resumable.pendingAcademicSyncId();
         if (id != null && _active == null && !_disposed) {
-          await _begin(id);
+          isRestoring = true;
+          try {
+            await _begin(id);
+          } finally {
+            isRestoring = false;
+          }
         }
       } catch (failure, stack) {
         _progressFailure(
@@ -64,11 +70,14 @@ final class AcademicSyncController extends ChangeNotifier {
     }
   }
 
-  Future<PythonUnifiedAcademicSyncResult> start() {
-    return _begin(_idGenerator());
+  Future<PythonUnifiedAcademicSyncResult> start({bool force = false}) {
+    return _begin(_idGenerator(), force: force);
   }
 
-  Future<PythonUnifiedAcademicSyncResult> _begin(String id) {
+  Future<PythonUnifiedAcademicSyncResult> _begin(
+    String id, {
+    bool force = false,
+  }) {
     if (_active case final active?) return active;
     result = null;
     error = null;
@@ -80,18 +89,21 @@ final class AcademicSyncController extends ChangeNotifier {
       completed: 0,
       status: 'running',
     );
-    _active = _execute(id);
+    _active = _execute(id, force: force);
     _notify();
     return _active!;
   }
 
-  Future<PythonUnifiedAcademicSyncResult> _execute(String id) async {
+  Future<PythonUnifiedAcademicSyncResult> _execute(
+    String id, {
+    bool force = false,
+  }) async {
     try {
       _watch(id);
       final completed = await runAuditedOperation(
         logger: logger,
         operation: AuditedOperation.academicSync,
-        action: () => gateway.syncWithProgress(id),
+        action: () => gateway.syncWithProgress(id, force: force),
       );
       result = completed;
       progress = AcademicSyncProgress(

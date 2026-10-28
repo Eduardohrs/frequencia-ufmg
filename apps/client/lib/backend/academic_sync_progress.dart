@@ -2,7 +2,10 @@ import 'python_backend_transport.dart';
 
 abstract interface class BackendAcademicSyncProgressGateway
     implements BackendUnifiedAcademicSyncGateway {
-  Future<PythonUnifiedAcademicSyncResult> syncWithProgress(String operationId);
+  Future<PythonUnifiedAcademicSyncResult> syncWithProgress(
+    String operationId, {
+    bool force = false,
+  });
   Stream<AcademicSyncProgress> watchSyncProgress(String operationId);
 }
 

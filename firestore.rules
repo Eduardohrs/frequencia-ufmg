@@ -382,6 +382,16 @@ service cloud.firestore {
       }
     }
 
+    match /users/{userId}/courses/{courseId}/syncState/{sourceId} {
+      allow get: if owns(userId) && sourceId in ['plan', 'activities', 'planPreference'];
+      allow list: if owns(userId);
+      allow create, update: if owns(userId) && sourceId in ['plan', 'activities', 'planPreference']
+        && hasExactFields(request.resource.data, ['stateJson'])
+        && request.resource.data.stateJson is string
+        && request.resource.data.stateJson.size() <= 64000;
+      allow delete: if owns(userId);
+    }
+
     match /users/{userId}/syncJobs/{jobId} {
       allow get: if owns(userId) && jobId == 'current';
       allow create, update: if owns(userId) && jobId == 'current'

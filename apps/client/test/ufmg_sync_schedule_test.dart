@@ -7,6 +7,21 @@ import 'package:shared_preferences_platform_interface/in_memory_shared_preferenc
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
 void main() {
+  test(
+    'academic cadence is account scoped and independent of enrollment cadence',
+    () async {
+      SharedPreferencesAsyncPlatform.instance =
+          InMemorySharedPreferencesAsync.empty();
+      final now = DateTime.utc(2026, 10, 28);
+      final enrollment = UFMGSyncSchedule(now: () => now);
+      final academic = UFMGSyncSchedule.academic(now: () => now);
+      await academic.record('user1', now.add(const Duration(hours: 6)));
+      expect(await academic.isDue('user1'), isFalse);
+      expect(await enrollment.isDue('user1'), isTrue);
+      expect(await academic.isDue('user2'), isTrue);
+    },
+  );
+
   setUp(() {
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();

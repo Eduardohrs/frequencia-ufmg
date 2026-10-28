@@ -45,6 +45,41 @@ PythonBackendTransport _transport(Object? Function(http.Request) body) =>
     );
 void main() {
   test(
+    'course policy transport validates preferences and preserves errors',
+    () async {
+      var paused = false;
+      final transport = _transport((request) {
+        expect(request.url.path, '/v1/courses/poo/plan-sync');
+        if (request.method == 'PUT') {
+          paused = (jsonDecode(request.body) as Map)['paused'] as bool;
+        }
+        return {'paused': paused};
+      });
+      expect(
+        await transport.courseSyncPolicy.coursePlanSyncPaused('poo'),
+        isFalse,
+      );
+      await transport.courseSyncPolicy.setCoursePlanSyncPaused(
+        'poo',
+        paused: true,
+      );
+      expect(
+        await transport.courseSyncPolicy.coursePlanSyncPaused('poo'),
+        isTrue,
+      );
+      final invalid = _transport((_) => <String, Object?>{'paused': 'yes'});
+      await expectLater(
+        invalid.courseSyncPolicy.coursePlanSyncPaused('poo'),
+        throwsA(isA<PythonBackendException>()),
+      );
+      await expectLater(
+        invalid.courseSyncPolicy.setCoursePlanSyncPaused('poo', paused: true),
+        throwsA(isA<PythonBackendException>()),
+      );
+    },
+  );
+
+  test(
     'full snapshot survives serialization and rejects credentials or a different course',
     () async {
       final value = <String, Object?>{
@@ -117,7 +152,7 @@ void main() {
           'updated': 2,
           'failed': 1,
           'failed_courses': [],
-        }).message,
+        }).message.toLowerCase(),
         contains('cópias anteriores preservadas'),
       );
       for (final invalid in [
@@ -256,7 +291,7 @@ void main() {
       expect(detail.submissionState, 'not_submitted');
       expect(detail.files, isEmpty);
       expect(
-        requests.every((r) => r.headers['X-Academic-Contract'] == '2'),
+        requests.every((r) => r.headers['X-Academic-Contract'] == '3'),
         isTrue,
       );
       for (final response in [

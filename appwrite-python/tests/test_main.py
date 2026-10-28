@@ -579,7 +579,7 @@ def test_unified_academic_sync_factory_reuses_one_moodle_client(
     assert service._siga._dates._client is client
     assert service._moodle._dates._client is client
     assert service._moodle._content._client is client
-    assert service._plans._client is client
+    assert service._plans.importer._client is client
 
 
 def test_ufmg_session_routes_are_authenticated_and_sanitized(

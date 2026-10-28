@@ -10,6 +10,25 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('reused snapshot counts are visible and bounded', () {
+    final value = {
+      'updated': 0,
+      'failed': 0,
+      'failed_courses': <Object?>[],
+      'reused': 9,
+    };
+    expect(
+      PythonActivitySyncSummary.fromJson(value).message,
+      contains('9 reutilizadas'),
+    );
+    for (final count in [-1, 51, '1']) {
+      expect(
+        () => PythonActivitySyncSummary.fromJson({...value, 'reused': count}),
+        throwsFormatException,
+      );
+    }
+  });
+
   test(
     'authorization failure while watching does not become endless retries',
     () async {
@@ -126,6 +145,7 @@ void main() {
           if (request.method == 'POST') {
             posts++;
             expect(jsonDecode(request.body)['background'], true);
+            expect(jsonDecode(request.body)['force'], true);
             return http.Response(
               '{"operation_id":"sync-test123","status":"queued"}',
               202,
@@ -149,6 +169,7 @@ void main() {
         (await transport.syncAllAcademicData(
           progressId: 'sync-test123',
           background: true,
+          force: true,
         )).siga.courses.created,
         1,
       );

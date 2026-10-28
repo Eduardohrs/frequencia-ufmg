@@ -1,5 +1,10 @@
 part of 'python_backend_transport.dart';
 
+abstract interface class BackendCourseSyncPolicyGateway {
+  Future<bool> coursePlanSyncPaused(String courseId);
+  Future<void> setCoursePlanSyncPaused(String courseId, {required bool paused});
+}
+
 abstract interface class BackendAcademicWorkspaceGateway {
   Future<PythonCourseActivitySnapshot> loadCourseActivitySnapshot(
     String courseId,
@@ -204,9 +209,37 @@ final class PythonMoodleActivityDetail {
 }
 
 final class _AcademicWorkspaceTransport
-    implements BackendAcademicWorkspaceGateway {
+    implements BackendAcademicWorkspaceGateway, BackendCourseSyncPolicyGateway {
   const _AcademicWorkspaceTransport(this.transport);
   final PythonBackendTransport transport;
+  @override
+  Future<bool> coursePlanSyncPaused(String courseId) async {
+    final response = await transport._authenticatedRequest(
+      path: _path(courseId, 'plan-sync'),
+    );
+    final value = Map<String, Object?>.from(jsonDecode(response.body) as Map);
+    if (!_hasExactKeys(value, const {'paused'}) || value['paused'] is! bool) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+    return value['paused']! as bool;
+  }
+
+  @override
+  Future<void> setCoursePlanSyncPaused(
+    String courseId, {
+    required bool paused,
+  }) async {
+    final response = await transport._authenticatedRequest(
+      path: _path(courseId, 'plan-sync'),
+      method: _BackendMethod.put,
+      body: {'paused': paused},
+    );
+    final value = Map<String, Object?>.from(jsonDecode(response.body) as Map);
+    if (value['paused'] != paused) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
   String _path(String courseId, String section, [String? id]) {
     for (final segment in [courseId, ?id]) {
       if (!RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(segment)) {

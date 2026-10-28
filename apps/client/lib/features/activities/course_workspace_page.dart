@@ -51,6 +51,8 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
   List<PythonMoodleDate> _dates = [];
   Map<String, Object?>? _plan;
   bool _saving = false;
+  bool? _planSyncPaused;
+  bool _policySaving = false;
   String? _openingActivity;
   late final MaterialFileCache _files;
   Map<String, Object> _fields(String stage) => {
@@ -71,6 +73,87 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
   void dispose() {
     if (widget.materialFileCache == null) _files.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadPlanPolicy() async {
+    if (widget.gateway case final BackendCourseSyncPolicyGateway policy) {
+      final fields = _fields('plan_sync_policy_read');
+      final watch = Stopwatch()..start();
+      emitOperationalEvent(
+        widget.logger,
+        'course_sync_policy_read_started',
+        fields,
+      );
+      try {
+        final paused = await policy.coursePlanSyncPaused(widget.course.id);
+        if (mounted) _planSyncPaused = paused;
+        emitOperationalEvent(
+          widget.logger,
+          'course_sync_policy_read_succeeded',
+          {
+            ...fields,
+            'duration_ms': watch.elapsedMilliseconds,
+            'applied_to_view': mounted,
+          },
+        );
+      } catch (error, stack) {
+        recordOperationalFailure(
+          widget.logger,
+          error,
+          stack,
+          'plan_sync_policy_read',
+          fields,
+          failureCode: 'course_sync_policy_read_failed',
+        );
+      }
+    }
+  }
+
+  Future<void> _setPlanSyncPaused(bool paused) async {
+    final policy = widget.gateway as BackendCourseSyncPolicyGateway;
+    setState(() => _policySaving = true);
+    final fields = {..._fields('plan_sync_policy_write'), 'paused': paused};
+    final watch = Stopwatch()..start();
+    emitOperationalEvent(widget.logger, 'ui_interaction', {
+      ...fields,
+      'action': 'course_plan_sync_pause',
+    });
+    emitOperationalEvent(
+      widget.logger,
+      'course_sync_policy_write_started',
+      fields,
+    );
+    try {
+      await policy.setCoursePlanSyncPaused(widget.course.id, paused: paused);
+      if (mounted) setState(() => _planSyncPaused = paused);
+      emitOperationalEvent(
+        widget.logger,
+        'course_sync_policy_write_succeeded',
+        {
+          ...fields,
+          'duration_ms': watch.elapsedMilliseconds,
+          'applied_to_view': mounted,
+        },
+      );
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'plan_sync_policy_write',
+        fields,
+        failureCode: 'course_sync_policy_write_failed',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Não foi possível salvar essa preferência.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _policySaving = false);
+    }
   }
 
   Future<void> _load(_Section section) async {
@@ -127,6 +210,7 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
           );
           if (mounted) _dates = entries;
         case _Section.plan:
+          await _loadPlanPolicy();
           final plan = await widget.gateway.loadCoursePlan(widget.course.id);
           if (mounted) _plan = plan;
       }
@@ -594,6 +678,20 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
                     ],
                   ),
                 ),
+              if (_section == _Section.plan && _planSyncPaused != null)
+                SwitchListTile(
+                  key: const Key('course-plan-sync-paused'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Pausar busca do plano'),
+                  subtitle: Text(
+                    _planSyncPaused!
+                        ? 'Busca pausada por você.'
+                        : 'Use quando já tiver conferido ou preenchido os dados.',
+                  ),
+                  value: _planSyncPaused!,
+                  onChanged: _policySaving ? null : _setPlanSyncPaused,
+                ),
+
               Expanded(
                 child: _section == _Section.activities
                     ? _activityList()

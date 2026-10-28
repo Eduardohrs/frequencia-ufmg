@@ -475,3 +475,33 @@ def test_sync_reports_duration_and_progress_for_each_slow_stage() -> None:
             },
         ),
     ]
+
+
+def test_deferred_plan_does_not_repeat_reconciliation_or_create_false_review_errors():
+    from types import SimpleNamespace
+
+    reconciler = _Reconciler({})
+    plans = SimpleNamespace(import_plan=lambda *a, **k: {"plan": "deferred"})
+    result = UnifiedAcademicSyncService(_Siga(), _Moodle([_course()]), plans, reconciler).sync(
+        "user", now=42
+    )
+    assert result["teaching_plans"]["unchanged"] == 1
+    assert result["exceptions"] == []
+    assert reconciler.calls == []
+
+
+def test_unavailable_deferred_plan_keeps_review_warning_and_other_courses_continue():
+    from types import SimpleNamespace
+
+    reconciler = _Reconciler({"mat001": _preview()})
+    plans = SimpleNamespace(
+        import_plan=lambda *a, **k: {
+            "plan": "unavailable" if k["course_id"] == "ele028" else "created"
+        }
+    )
+    result = UnifiedAcademicSyncService(
+        _Siga(), _Moodle([_course(), _course("MAT001")]), plans, reconciler
+    ).sync("user", now=42)
+    assert result["teaching_plans"]["review_required"] == 1
+    assert result["exceptions"][0]["course_code"] == "ELE028"
+    assert reconciler.calls == [("mat001", False)]

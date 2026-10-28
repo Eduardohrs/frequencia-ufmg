@@ -99,7 +99,9 @@ class AcademicSyncJob:
             create_only=previous is None,
         )
 
-    def start(self, operation: str, enqueue: Callable[[], None]) -> dict[str, Any]:
+    def start(
+        self, operation: str, enqueue: Callable[[], None], *, force: bool = False
+    ) -> dict[str, Any]:
         previous = self._document()
         current = self.read() if previous else {"status": "missing"}
         if current["status"] in ("queued", "running"):
@@ -109,6 +111,7 @@ class AcademicSyncJob:
         value = {
             "operation_id": operation,
             "status": "queued",
+            "force": force,
             "started_at": self.now(),
             "updated_at": self.now(),
             "failure_code": "",
@@ -123,7 +126,7 @@ class AcademicSyncJob:
         except Exception:
             self.fail(operation, "enqueue_failed")
             raise
-        self._emit("academic_sync_job_queued", operation_id=operation)
+        self._emit("academic_sync_job_queued", operation_id=operation, force=force)
         return value
 
     def claim(self, operation: str) -> bool:

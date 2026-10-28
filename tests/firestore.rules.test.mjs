@@ -279,6 +279,19 @@ describe("course documents", () => {
 });
 
 describe("operational logs", () => {
+  test('course sync state is bounded, owned and removable with a course', async()=>{
+    const path='users/alice/courses/poo/syncState/plan';
+    const state={stateJson:JSON.stringify({source_key:'2026-2:123',manual_confirmed:true})};
+    await assertSucceeds(setDoc(doc(dbFor('alice'),path),state));
+    await assertSucceeds(getDoc(doc(dbFor('alice'),path)));
+    await assertFails(getDoc(doc(dbFor('bob'),path)));
+    await assertFails(setDoc(doc(dbFor('bob'),path),state));
+    await assertFails(setDoc(doc(dbFor('alice'),path),{stateJson:'x'.repeat(64001)}));
+    await assertFails(setDoc(doc(dbFor('alice'),'users/alice/courses/poo/syncState/unknown'),state));
+    await assertSucceeds(setDoc(doc(dbFor('alice'),'users/alice/courses/poo/syncState/planPreference'),state));
+    await assertSucceeds(deleteDoc(doc(dbFor('alice'),path)));
+  });
+
   test("sync jobs are bounded and isolated", async () => {
     const path = 'users/alice/syncJobs/current';
     const value = {stateJson: JSON.stringify({status:'queued',operation_id:'sync-test123'})};

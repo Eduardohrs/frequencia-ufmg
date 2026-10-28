@@ -59,6 +59,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   PythonUFMGSessionStatus? _status;
   bool _loading = true;
   bool _busy = false;
+  bool _forceSync = false;
   bool _reviewingSyncResult = false;
   bool _showReconnectForm = false;
   String? _error;
@@ -1221,7 +1222,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     var synchronized = false;
     try {
       final result = widget.academicSync != null
-          ? await widget.academicSync!.start()
+          ? await widget.academicSync!.start(force: _forceSync)
           : await runAuditedOperation(
               logger: widget.logger,
               operation: AuditedOperation.academicSync,
@@ -2038,6 +2039,26 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                     await widget.onOpenCalendar!();
                   },
           ),
+          if (widget.academicSync != null)
+            CheckboxListTile(
+              key: const Key('ufmg-force-refresh'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Consultar novamente todas as fontes'),
+              subtitle: const Text(
+                'Ignora os intervalos e revisa também os planos já completos.',
+              ),
+              value: _forceSync,
+              onChanged: widget.academicSync!.isRunning
+                  ? null
+                  : (value) {
+                      _logInteraction(
+                        value == true
+                            ? 'ufmg_force_refresh_enabled'
+                            : 'ufmg_force_refresh_disabled',
+                      );
+                      setState(() => _forceSync = value ?? false);
+                    },
+            ),
           const SizedBox(height: 12),
           if (widget.academicSync?.result case final result?)
             TextButton.icon(

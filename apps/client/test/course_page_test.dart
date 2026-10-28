@@ -465,6 +465,116 @@ void main() {
     expect(academicTermFor(DateTime(2026, 12, 31)), '2026-2');
   });
 
+  testWidgets("recovering yesterday's result does not postpone a due refresh", (
+    tester,
+  ) async {
+    final gateway = _RecoveredUFMGGateway();
+    gateway.progress.response.complete(syncResult());
+    final schedule = _FakeUFMGSyncSchedule(due: true);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CoursePage(
+          repository: _FakeCourseRepository(),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          ufmgSessionGateway: gateway,
+          academicSyncSchedule: schedule,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(gateway.progress.calls, 2);
+    expect(schedule.deadlines.length, 2);
+    await tester.pumpWidget(const SizedBox());
+    await gateway.progress.updates.close();
+  });
+
+  for (final scenario in [
+    'success',
+    'not_due',
+    'expired',
+    'not_connected',
+    'job_failure',
+    'schedule_failure',
+    'schedule_read_failure',
+  ]) {
+    testWidgets('automatic academic synchronization: $scenario', (
+      tester,
+    ) async {
+      final gateway = _ProgressUFMGGateway(
+        connected: !['expired', 'not_connected'].contains(scenario),
+        reauthenticationRequired: scenario == 'expired',
+      );
+      final schedule = _FakeUFMGSyncSchedule(
+        due: scenario != 'not_due',
+        failRecording: scenario == 'schedule_failure',
+        failReading: scenario == 'schedule_read_failure',
+      );
+      final logger = _RecordingAppLogger();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CoursePage(
+            repository: _FakeCourseRepository(),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            user: user,
+            logger: logger,
+            onSignOut: () async {},
+            ufmgSessionGateway: gateway,
+            academicSyncSchedule: schedule,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      final shouldStart = [
+        'success',
+        'job_failure',
+        'schedule_failure',
+      ].contains(scenario);
+      expect(gateway.progress.calls, shouldStart ? 1 : 0);
+      if (shouldStart) {
+        expect(find.text('Minhas disciplinas'), findsOneWidget);
+        if (scenario == 'job_failure') {
+          gateway.progress.response.completeError(
+            StateError('worker unavailable'),
+          );
+        } else {
+          gateway.progress.response.complete(syncResult());
+        }
+      }
+      await tester.pumpAndSettle();
+      if (scenario == 'not_due') {
+        expect(logger.events, contains('academic_auto_sync_skipped'));
+      }
+      if (scenario == 'expired') {
+        expect(find.textContaining('Reconecte à UFMG'), findsOneWidget);
+      }
+      if (scenario == 'job_failure') {
+        expect(logger.errorContexts, contains('academic_auto_sync'));
+        expect(
+          schedule.deadlines.last,
+          now.toUtc().add(const Duration(minutes: 15)),
+        );
+      }
+      if (scenario == 'success') {
+        expect(
+          schedule.deadlines.last,
+          now.toUtc().add(const Duration(hours: 6)),
+        );
+      }
+      if (scenario == 'schedule_failure') {
+        expect(logger.errorContexts, contains('academic_auto_schedule_write'));
+      }
+      await tester.pumpWidget(const SizedBox());
+      await gateway.progress.updates.close();
+    });
+  }
+
   testWidgets(
     'sync survives leaving the connection page and remains visible above the calendar',
     (tester) async {
@@ -489,8 +599,13 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('profile-ufmg-account')));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('ufmg-force-refresh')));
+      await tester.tap(find.byKey(const Key('ufmg-force-refresh')));
+      await tester.pump();
       await tester.ensureVisible(find.byKey(const Key('ufmg-sync-all')));
       await tester.tap(find.byKey(const Key('ufmg-sync-all')));
+      await tester.pump();
+      expect(gateway.progress.lastForce, isTrue);
       await tester.pump(const Duration(milliseconds: 100));
       expect(gateway.progress.calls, 1);
       expect(find.byKey(const Key('academic-sync-indicator')), findsOneWidget);
@@ -2852,13 +2967,15 @@ class _UFMGGateway implements BackendUFMGSessionGateway {
 
 final class _ProgressUFMGGateway extends _UFMGGateway
     implements BackendAcademicSyncProgressGateway {
-  _ProgressUFMGGateway()
-    : super(
-        status: const PythonUFMGSessionStatus(
-          connected: true,
-          reauthenticationRequired: false,
-        ),
-      );
+  _ProgressUFMGGateway({
+    bool connected = true,
+    bool reauthenticationRequired = false,
+  }) : super(
+         status: PythonUFMGSessionStatus(
+           connected: connected,
+           reauthenticationRequired: reauthenticationRequired,
+         ),
+       );
   final progress = ProgressGateway();
   bool failDates = false;
   @override
@@ -2869,8 +2986,9 @@ final class _ProgressUFMGGateway extends _UFMGGateway
 
   @override
   Future<PythonUnifiedAcademicSyncResult> syncWithProgress(
-    String operationId,
-  ) => progress.syncWithProgress(operationId);
+    String operationId, {
+    bool force = false,
+  }) => progress.syncWithProgress(operationId, force: force);
   @override
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() =>
       progress.syncAllAcademicData();
@@ -2888,17 +3006,28 @@ final class _PermissionGateway implements AttendancePermissionsGateway {
 }
 
 final class _FakeUFMGSyncSchedule implements UFMGSyncScheduleGateway {
-  _FakeUFMGSyncSchedule({required this.due});
+  _FakeUFMGSyncSchedule({
+    required this.due,
+    this.failRecording = false,
+    this.failReading = false,
+  });
+  final bool failRecording, failReading;
+  final deadlines = <DateTime>[];
 
   final bool due;
   final recordedUsers = <String>[];
 
   @override
-  Future<bool> isDue(String userId) async => due;
+  Future<bool> isDue(String userId) async {
+    if (failReading) throw StateError("schedule unavailable");
+    return due;
+  }
 
   @override
   Future<void> record(String userId, DateTime nextAutomaticSyncAt) async {
+    if (failRecording) throw StateError("local cache unavailable");
     recordedUsers.add(userId);
+    deadlines.add(nextAutomaticSyncAt);
   }
 }
 
@@ -2933,4 +3062,10 @@ class _WorkspaceGateway extends _UFMGGateway
 
   @override
   dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError();
+}
+
+final class _RecoveredUFMGGateway extends _ProgressUFMGGateway
+    implements BackendResumableAcademicSyncGateway {
+  @override
+  Future<String?> pendingAcademicSyncId() async => 'old-saved-operation';
 }

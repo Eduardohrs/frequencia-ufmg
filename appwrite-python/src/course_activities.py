@@ -1,12 +1,18 @@
 """Read Moodle activities for an owned course; attachment bytes stay at Moodle."""
 
+import json
 from datetime import UTC, datetime
 from functools import partial
 from mimetypes import guess_type
 from typing import Any, Protocol, cast
 
-from activity_snapshot_repository import ActivitySnapshotRepository
+from activity_snapshot_repository import (
+    ActivitySnapshotMissing,
+    ActivitySnapshotRepository,
+    InvalidActivitySnapshot,
+)
 from course_repository import CourseRepository
+from course_sync_policy import CourseSyncPolicy
 from moodle_material_catalog_repository import MoodleMaterialCatalogRepository
 from moodle_structured_dates import (
     MoodleStructuredDatesClient,
@@ -41,10 +47,13 @@ class CourseActivityService:
         tokens: AppwriteMoodleTokenStore,
         *,
         telemetry: Telemetry | None = None,
+        policy: CourseSyncPolicy | None = None,
+        force: bool = False,
     ) -> None:
         self._courses, self._catalog, self._sessions = courses, catalog, sessions
         self._client, self._tokens = client, tokens
         self._telemetry = telemetry
+        self._policy, self._force = policy, force
 
     def _source(
         self, user_id: str, course_id: str, now: int
@@ -66,52 +75,87 @@ class CourseActivityService:
         self, user_id: str, *, now: int, snapshots: ActivitySnapshotRepository
     ) -> dict[str, object]:
         updated = 0
+        reused_total = 0
         failed: list[dict[str, object]] = []
         courses = self._courses.list_courses()
         for course in courses:
             course_id = course["id"]
             fields = {"course_id": course_id, "course_code": course["code"], "term": course["term"]}
+
+            capture = partial(self._capture_snapshot, user_id, course, now, snapshots)
             try:
-                index = self.list_activities(user_id, course_id, now=now)
-                activities = []
-                session = self._source(user_id, course_id, now)[1]
-                for entry in cast(list[dict[str, Any]], index["activities"]):
-                    detail = timed_stage(
-                        "activity_snapshot_capture",
-                        partial(
-                            self._client.fetch_activity,
-                            session.token,
-                            term=course["term"],
-                            source_id=int(entry["source_id"]),
-                            kind=str(entry["kind"]),
-                        ),
-                        telemetry=self._telemetry,
-                        fields={**fields, "source_id": entry["source_id"]},
+                force = self._force
+                reused = False
+                if self._policy is not None:
+                    try:
+                        previous = snapshots.load(course_id)
+                        force = force or previous["term"] != course["term"]
+                    except (ActivitySnapshotMissing, InvalidActivitySnapshot):
+                        force = force or bool(
+                            self._policy.state(course_id, "activities").get("result")
+                        )
+                    _, reused = self._policy.run(
+                        course_id, "activities", course["term"], now=now, fetch=capture, force=force
                     )
-                    activities.append({**entry, **detail, "files": [], "term": course["term"]})
-                timed_stage(
-                    "activity_snapshot_persist",
-                    partial(
-                        snapshots.save,
-                        course_id,
-                        {
-                            "course_id": course_id,
-                            "term": course["term"],
-                            "synced_at": datetime.fromtimestamp(now, UTC)
-                            .isoformat()
-                            .replace("+00:00", "Z"),
-                            "activities": activities,
-                        },
-                    ),
-                    telemetry=self._telemetry,
-                    fields={**fields, "activity_count": len(activities)},
-                )
-                updated += 1
+                else:
+                    capture()
+                if reused:
+                    reused_total += 1
+                else:
+                    updated += 1
             except Exception as error:
                 issue = {**fields, "reason": type(error).__name__, "retained_previous": True}
                 failed.append(issue)
                 _emit(self._telemetry, "activity_snapshot_sync_failed", issue)
-        return {"updated": updated, "failed": len(failed), "failed_courses": failed}
+        return {
+            "updated": updated,
+            "failed": len(failed),
+            "failed_courses": failed,
+            **({"reused": reused_total} if self._policy is not None else {}),
+        }
+
+    def _capture_snapshot(
+        self, user_id: str, course: dict[str, Any], now: int, snapshots: ActivitySnapshotRepository
+    ) -> dict[str, object]:
+        course_id = course["id"]
+        fields = {"course_id": course_id, "course_code": course["code"], "term": course["term"]}
+        index = self.list_activities(user_id, course_id, now=now)
+        activities = []
+        session = self._source(user_id, course_id, now)[1]
+        for entry in cast(list[dict[str, Any]], index["activities"]):
+            detail = timed_stage(
+                "activity_snapshot_capture",
+                partial(
+                    self._client.fetch_activity,
+                    session.token,
+                    term=course["term"],
+                    source_id=int(entry["source_id"]),
+                    kind=str(entry["kind"]),
+                ),
+                telemetry=self._telemetry,
+                fields={**fields, "source_id": entry["source_id"]},
+            )
+            activities.append({**entry, **detail, "files": [], "term": course["term"]})
+        snapshot = {
+            "course_id": course_id,
+            "term": course["term"],
+            "synced_at": datetime.fromtimestamp(now, UTC).isoformat().replace("+00:00", "Z"),
+            "activities": activities,
+        }
+        payload_bytes = len(
+            json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        )
+        timed_stage(
+            "activity_snapshot_persist",
+            partial(snapshots.save, course_id, snapshot),
+            telemetry=self._telemetry,
+            fields={
+                **fields,
+                "activity_count": len(activities),
+                "snapshot_payload_bytes": payload_bytes,
+            },
+        )
+        return {"activity_count": len(activities), "snapshot_payload_bytes": payload_bytes}
 
     def authorize_saved(
         self, user_id: str, course_id: str, detail: dict[str, Any], *, now: int
