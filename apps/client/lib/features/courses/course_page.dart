@@ -486,6 +486,12 @@ class _CoursePageState extends State<CoursePage> {
       MaterialPageRoute<void>(
         builder: (context) => CourseHubPage(
           overviewUpdates: _overviewUpdates,
+          refreshOverview: widget.overviewReadsEnabled
+              ? () async {
+                  await _load();
+                  if (_loadFailed) throw StateError('overview_refresh_failed');
+                }
+              : null,
           course: course,
           allCourses: _courses,
           datesByCourse: _datesByCourse,

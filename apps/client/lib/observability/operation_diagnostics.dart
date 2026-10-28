@@ -76,6 +76,7 @@ final class _OperationalFailure implements StructuredAppError {
       ...fields,
       'cause_type': error.type,
       'cause_code': ?error.code,
+      'cause_details': ?error.details,
     });
   }
 }

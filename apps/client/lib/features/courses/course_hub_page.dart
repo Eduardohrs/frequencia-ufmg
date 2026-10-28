@@ -16,6 +16,8 @@ import '../../design/attendance_progress_bar.dart';
 import '../../design/app_theme.dart';
 import '../../design/course_identity.dart';
 import '../../observability/app_logger.dart';
+import '../../observability/audited_operation.dart';
+import '../../observability/operation_diagnostics.dart';
 import '../attendance/absence_dashboard_page.dart';
 import '../attendance/attendance_page.dart';
 import '../schedule/course_schedule_page.dart';
@@ -34,6 +36,7 @@ class CourseHubPage extends StatefulWidget {
     required this.now,
     this.initialSessionsByCourse,
     this.overviewUpdates,
+    this.refreshOverview,
     this.datesByCourse = const {},
     this.unavailableDateCourses = const {},
     this.attendanceEvaluator,
@@ -51,6 +54,7 @@ class CourseHubPage extends StatefulWidget {
   });
 
   final ValueListenable<AcademicOverviewSnapshot?>? overviewUpdates;
+  final Future<void> Function()? refreshOverview;
   final CourseRecord course;
   final List<CourseRecord> allCourses;
   final CourseRepository courseRepository;
@@ -83,12 +87,19 @@ class _CourseHubPageState extends State<CourseHubPage> {
   List<MeetingRecord> _meetings = const [];
   PythonMoodleCourseContent? _materials;
   bool _sessionsFailed = false;
+  bool _courseFailed = false;
   bool _meetingsFailed = false;
   bool _loading = true;
+  bool _materialsFailed = false;
+  bool _materialsLoading = false;
+  int _generation = 0;
+  bool _localSessionsRefreshed = false;
+  late CourseRecord _course;
 
   @override
   void initState() {
     super.initState();
+    _course = widget.course;
     widget.overviewUpdates?.addListener(_overviewChanged);
     _load();
   }
@@ -100,10 +111,19 @@ class _CourseHubPageState extends State<CourseHubPage> {
   }
 
   void _overviewChanged() {
-    final sessions =
-        widget.overviewUpdates?.value?.sessionsByCourse[widget.course.id];
+    final snapshot = widget.overviewUpdates?.value;
+    if (snapshot == null) return;
     setState(() {
-      if (sessions != null) _sessions = List.of(sessions);
+      for (final course in snapshot.courses) {
+        if (course.id == _course.id) _course = course;
+      }
+      final sessions = snapshot.sessionsByCourse[_course.id];
+      if (sessions != null) {
+        _localSessionsRefreshed = false;
+        _sessions = List.of(sessions)
+          ..sort((a, b) => a.startsAt.compareTo(b.startsAt));
+        _sessionsFailed = false;
+      }
     });
   }
 
@@ -113,72 +133,205 @@ class _CourseHubPageState extends State<CourseHubPage> {
       widget.overviewUpdates?.value?.unavailableDateCourses ??
       widget.unavailableDateCourses;
 
-  Future<void> _load() async {
-    final initial = widget.initialSessionsByCourse?[widget.course.id];
+  Future<void> _readSection<T>(
+    String stage,
+    Future<T> Function() read,
+    void Function(T) adopt,
+    void Function() fail,
+    int generation,
+  ) async {
+    final watch = Stopwatch()..start();
+    final operationId = newCorrelationId('course_hub_$stage');
+    final fields = <String, Object>{
+      'operation_id': operationId,
+      'screen': 'course',
+      'course_id': _course.id,
+      'course_code': _course.code,
+      'stage': stage,
+    };
+    emitOperationalEvent(widget.logger, 'course_hub_read_started', fields);
+    try {
+      final result = await read();
+      if (!mounted || generation != _generation) return;
+      setState(() => adopt(result));
+      emitOperationalEvent(widget.logger, 'course_hub_read_succeeded', {
+        ...fields,
+        'duration_ms': watch.elapsedMilliseconds,
+      });
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'course_hub_${stage}_failed',
+        {
+          ...fields,
+          'duration_ms': watch.elapsedMilliseconds,
+          'retained_previous': true,
+        },
+        failureCode: 'course_hub_read_failed',
+      );
+      if (mounted && generation == _generation) setState(fail);
+    }
+  }
+
+  Future<void> _load({bool refresh = false}) async {
+    final generation = ++_generation;
+    final initial = refresh
+        ? null
+        : widget.initialSessionsByCourse?[_course.id];
     if (initial != null) _sessions = List.of(initial);
-    final results = await Future.wait([
-      if (initial == null)
-        widget.sessionRepository
-            .listSessions(widget.course.id)
-            .then(
-              (value) => _sessions = List.of(value),
-              onError: (_) {
-                _sessionsFailed = true;
-                return _sessions = <SessionRecord>[];
-              },
-            ),
-      widget.meetingRepository
-          .listMeetings(widget.course.id)
-          .then(
-            (value) => _meetings = List.of(value),
-            onError: (_) {
-              _meetingsFailed = true;
-              return _meetings = <MeetingRecord>[];
+    // The catalog is independent: it must not block attendance and timetable.
+    unawaited(_loadMaterials());
+    await Future.wait([
+      if (refresh && widget.refreshOverview != null)
+        _readSection(
+          'overview',
+          widget.refreshOverview!,
+          (_) => _overviewChanged(),
+          () => _sessionsFailed = true,
+          generation,
+        )
+      else ...[
+        if (initial == null)
+          _readSection(
+            'sessions',
+            () => widget.sessionRepository.listSessions(_course.id),
+            (value) {
+              _sessions = List.of(value)
+                ..sort((a, b) => a.startsAt.compareTo(b.startsAt));
+              _sessionsFailed = false;
+              _localSessionsRefreshed = refresh;
             },
+            () => _sessionsFailed = true,
+            generation,
           ),
-      if (widget.ufmgSessionGateway case final gateway?)
-        gateway.listMoodleMaterialCatalog().then((catalog) {
-          for (final item in catalog.courses) {
-            if (_matchesCourse(item)) {
-              _materials = item;
-              break;
-            }
-          }
-        }, onError: (_) {}), // coverage:ignore-line
+        if (refresh)
+          _readSection(
+            'course',
+            widget.courseRepository.listCourses,
+            (value) {
+              for (final course in value) {
+                if (course.id == _course.id) _course = course;
+              }
+              _courseFailed = false;
+            },
+            () => _courseFailed = true,
+            generation,
+          ),
+      ],
+      _readSection(
+        'meetings',
+        () => widget.meetingRepository.listMeetings(_course.id),
+        (value) {
+          _meetings = List.of(value)
+            ..sort((a, b) {
+              final weekday = a.weekday.compareTo(b.weekday);
+              return weekday != 0
+                  ? weekday
+                  : a.startMinutes.compareTo(b.startMinutes);
+            });
+          _meetingsFailed = false;
+        },
+        () => _meetingsFailed = true,
+        generation,
+      ),
     ]);
-    results.length;
-    _sessions.sort((a, b) => a.startsAt.compareTo(b.startsAt));
-    _meetings.sort((a, b) {
-      final weekday = a.weekday.compareTo(b.weekday);
-      return weekday != 0 ? weekday : a.startMinutes.compareTo(b.startMinutes);
-    });
+    if (!mounted || generation != _generation) return;
     recordAgendaPresentation(
       logger: widget.logger,
       screen: 'course',
-      importedCount: _datesByCourse[widget.course.id]?.length ?? 0,
+      importedCount: _datesByCourse[_course.id]?.length ?? 0,
       entryCount: courseAgenda(
-        widget.course,
+        _course,
         _sessions,
-        _datesByCourse[widget.course.id] ?? [],
+        _datesByCourse[_course.id] ?? [],
       ).length,
       unavailableCourses: _unavailableDateCourses.where(
-        (id) => id == widget.course.id,
+        (id) => id == _course.id,
       ),
     );
-    if (mounted) setState(() => _loading = false);
+    setState(() => _loading = false);
+  }
+
+  int _catalogGeneration = 0;
+  Future<void> _loadMaterials() async {
+    final gateway = widget.ufmgSessionGateway;
+    if (gateway == null) return;
+    final generation = ++_catalogGeneration;
+    setState(() => _materialsLoading = true);
+    final watch = Stopwatch()..start();
+    final fields = <String, Object>{
+      'operation_id': newCorrelationId('course_catalog'),
+      'screen': 'course',
+      'course_id': _course.id,
+      'course_code': _course.code,
+      'stage': 'catalog',
+    };
+    emitOperationalEvent(widget.logger, 'course_hub_catalog_started', fields);
+    try {
+      final catalog = await gateway.listMoodleMaterialCatalog();
+      if (!mounted || generation != _catalogGeneration) return;
+      PythonMoodleCourseContent? match;
+      for (final item in catalog.courses) {
+        if (_matchesCourse(item)) {
+          match = item;
+          break;
+        }
+      }
+      setState(() {
+        _materials = match;
+        _materialsFailed = false;
+      });
+      emitOperationalEvent(widget.logger, 'course_hub_catalog_succeeded', {
+        ...fields,
+        'duration_ms': watch.elapsedMilliseconds,
+        'material_count': match?.candidates.length ?? 0,
+      });
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'course_hub_catalog_failed',
+        {
+          ...fields,
+          'duration_ms': watch.elapsedMilliseconds,
+          'retained_previous': _materials != null,
+        },
+        failureCode: 'course_catalog_read_failed',
+      );
+      if (mounted && generation == _catalogGeneration) {
+        setState(() => _materialsFailed = true);
+      }
+    } finally {
+      if (mounted && generation == _catalogGeneration) {
+        setState(() => _materialsLoading = false);
+      }
+    }
   }
 
   bool _matchesCourse(PythonMoodleCourseContent item) =>
-      item.courseId == widget.course.id ||
-      (item.courseCode.toUpperCase() == widget.course.code.toUpperCase() &&
-          item.term == widget.course.term);
+      item.courseId == _course.id ||
+      (item.courseCode.toUpperCase() == _course.code.toUpperCase() &&
+          item.term == _course.term);
+
+  void _logNavigation(String action) =>
+      emitOperationalEvent(widget.logger, 'course_hub_navigation', {
+        'operation_id': newCorrelationId('course_navigation'),
+        'screen': 'course',
+        'action': action,
+        'course_id': _course.id,
+        'course_code': _course.code,
+      });
 
   Future<void> _openAttendance() async {
+    _logNavigation('attendance');
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => AttendancePage(
-          courseId: widget.course.id,
-          courseCode: widget.course.code,
+          courseId: _course.id,
+          courseCode: _course.code,
           repository: widget.sessionRepository,
           logger: widget.logger,
           location: _location,
@@ -195,18 +348,10 @@ class _CourseHubPageState extends State<CourseHubPage> {
     if (mounted) await _reloadSessions();
   }
 
-  Future<void> _reloadSessions() async {
-    try {
-      final sessions = await widget.sessionRepository.listSessions(
-        widget.course.id,
-      );
-      sessions.sort((a, b) => a.startsAt.compareTo(b.startsAt));
-      if (mounted) setState(() => _sessions = sessions);
-    } catch (_) {} // coverage:ignore-line
-  }
+  Future<void> _reloadSessions() => _load(refresh: true);
 
   SessionRecord? get _firstPending {
-    if (!widget.course.tracksAttendance) return null;
+    if (!_course.tracksAttendance) return null;
     final today = tz.TZDateTime.from(widget.now(), _location);
     for (final session in _sessions.reversed) {
       final local = tz.TZDateTime.from(session.startsAt, _location);
@@ -224,50 +369,64 @@ class _CourseHubPageState extends State<CourseHubPage> {
     return null;
   }
 
-  Future<void> _openCalendar() => Navigator.of(context).push<void>(
-    MaterialPageRoute(
-      builder: (_) => GeneralCalendarPage(
-        overviewUpdates: widget.overviewUpdates,
-        courses: widget.allCourses,
-        datesByCourse: _datesByCourse,
-        unavailableDateCourses: _unavailableDateCourses,
-        repository: widget.sessionRepository,
-        location: _location,
-        now: widget.now,
-        initialCourseId: widget.course.id,
-        initialSessionsByCourse: {
-          ...?widget.initialSessionsByCourse,
-          widget.course.id: _sessions,
-        },
+  Future<void> _openCalendar() async {
+    _logNavigation('calendar');
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => GeneralCalendarPage(
+          overviewUpdates: _localSessionsRefreshed
+              ? null
+              : widget.overviewUpdates,
+          courses: [
+            for (final item
+                in widget.overviewUpdates?.value?.courses ?? widget.allCourses)
+              item.id == _course.id ? _course : item,
+          ],
+          datesByCourse: _datesByCourse,
+          unavailableDateCourses: _unavailableDateCourses,
+          repository: widget.sessionRepository,
+          location: _location,
+          now: widget.now,
+          initialCourseId: _course.id,
+          initialSessionsByCourse: {
+            ...?widget.initialSessionsByCourse,
+            _course.id: _sessions,
+          },
+        ),
       ),
-    ),
-  );
+    );
+  }
 
-  Future<void> _openSchedule() => Navigator.of(context).push<void>(
-    MaterialPageRoute(
-      builder: (_) => CourseSchedulePage(
-        course: widget.course,
-        courseRepository: widget.courseRepository,
-        repository: widget.meetingRepository,
-        sessionRepository: widget.sessionRepository,
-        logger: widget.logger,
-        attendanceEvaluator: widget.attendanceEvaluator,
-        scheduleGateway: widget.scheduleGateway,
-        scheduleReadsEnabled: widget.scheduleReadsEnabled,
-        sessionGateway: widget.sessionGateway,
-        scheduleWritesEnabled: widget.scheduleWritesEnabled,
-        sessionWritesEnabled: widget.sessionWritesEnabled,
-        androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
-        initialSessionsByCourse: widget.initialSessionsByCourse,
-        allCourses: widget.allCourses,
-        datesByCourse: _datesByCourse,
-        unavailableDateCourses: _unavailableDateCourses,
-        allCourseIds: widget.allCourses.map((item) => item.id),
+  Future<void> _openSchedule() async {
+    _logNavigation('schedule');
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => CourseSchedulePage(
+          course: _course,
+          courseRepository: widget.courseRepository,
+          repository: widget.meetingRepository,
+          sessionRepository: widget.sessionRepository,
+          logger: widget.logger,
+          attendanceEvaluator: widget.attendanceEvaluator,
+          scheduleGateway: widget.scheduleGateway,
+          scheduleReadsEnabled: widget.scheduleReadsEnabled,
+          sessionGateway: widget.sessionGateway,
+          scheduleWritesEnabled: widget.scheduleWritesEnabled,
+          sessionWritesEnabled: widget.sessionWritesEnabled,
+          androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
+          initialSessionsByCourse: widget.initialSessionsByCourse,
+          allCourses: widget.allCourses,
+          datesByCourse: _datesByCourse,
+          unavailableDateCourses: _unavailableDateCourses,
+          allCourseIds: widget.allCourses.map((item) => item.id),
+        ),
       ),
-    ),
-  );
+    );
+    if (mounted) await _load(refresh: true);
+  }
 
   Future<void> _openMaterials() async {
+    _logNavigation('materials');
     final gateway = widget.ufmgSessionGateway!;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
@@ -277,12 +436,13 @@ class _CourseHubPageState extends State<CourseHubPage> {
           logger: widget.logger,
           userId: widget.userId,
           syncSchedule: widget.ufmgSyncSchedule,
-          materialCourseId: widget.course.id,
-          materialCourseCode: widget.course.code,
-          materialCourseTerm: widget.course.term,
+          materialCourseId: _course.id,
+          materialCourseCode: _course.code,
+          materialCourseTerm: _course.term,
         ),
       ),
     );
+    if (mounted) await _load(refresh: true);
   }
 
   @override
@@ -328,6 +488,15 @@ class _CourseHubPageState extends State<CourseHubPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (_sessionsFailed || _meetingsFailed || _courseFailed)
+                      TextButton(
+                        key: const Key('course-hub-retry'),
+                        onPressed: () => _load(refresh: true),
+                        child: const Text(
+                          'Atualização incompleta. Tentar novamente',
+                        ),
+                      ),
+
                     _courseIdentity(compact),
                     if (_firstPending != null) ...[
                       const SizedBox(height: 24),
@@ -350,7 +519,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
     children: [
       CourseMark(
         key: const Key('course-hub-course-mark'),
-        code: widget.course.code,
+        code: _course.code,
         size: compact ? 50 : 62,
       ),
       SizedBox(width: compact ? 12 : 18),
@@ -363,7 +532,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
               runSpacing: 2,
               children: [
                 Text(
-                  widget.course.code,
+                  _course.code,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w700,
@@ -371,7 +540,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
                   ),
                 ),
                 Text(
-                  ' · ${widget.course.term.replaceFirst('-', '/')}',
+                  ' · ${_course.term.replaceFirst('-', '/')}',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w700,
@@ -382,7 +551,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
             ),
             const SizedBox(height: 4),
             Text(
-              widget.course.name,
+              _course.name,
               maxLines: compact ? 2 : 1,
               overflow: TextOverflow.ellipsis,
               style:
@@ -478,7 +647,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
     );
     final side = Column(
       children: [
-        if (widget.course.modality != CourseModality.online) _scheduleSection(),
+        if (_course.modality != CourseModality.online) _scheduleSection(),
         const SizedBox(height: 28),
         _materialsSection(),
       ],
@@ -499,14 +668,14 @@ class _CourseHubPageState extends State<CourseHubPage> {
   }
 
   Widget _frequencySection() {
-    if (!widget.course.tracksAttendance) {
+    if (!_course.tracksAttendance) {
       return _Panel(
         key: const Key('course-hub-frequency'),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              widget.course.policyLabel,
+              _course.policyLabel,
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
@@ -518,7 +687,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
       );
     }
     final summary = CourseAbsenceSummary.from(
-      widget.course,
+      _course,
       _sessions,
       now: widget.now(),
       location: _location,
@@ -559,9 +728,9 @@ class _CourseHubPageState extends State<CourseHubPage> {
   Widget _agendaSection() {
     final now = widget.now();
     final upcoming = courseAgenda(
-      widget.course,
+      _course,
       _sessions,
-      _datesByCourse[widget.course.id] ?? [],
+      _datesByCourse[_course.id] ?? [],
     ).where((event) => !event.startsAt.isBefore(now)).take(3).toList();
     return _HubSection(
       key: const Key('course-hub-agenda'),
@@ -573,7 +742,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_unavailableDateCourses.contains(widget.course.id))
+          if (_unavailableDateCourses.contains(_course.id))
             const Text(
               'Datas não atualizadas. Exibindo as informações disponíveis.',
             ),
@@ -596,9 +765,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
   Widget _scheduleSection() => _HubSection(
     key: const Key('course-hub-schedule'),
     eyebrow: 'Organização',
-    title: widget.course.tracksAttendance
-        ? 'Grade e período'
-        : 'Grade · Sem chamada',
+    title: _course.tracksAttendance ? 'Grade e período' : 'Grade · Sem chamada',
     actionKey: const Key('course-hub-open-schedule'),
     actionLabel: 'Ver grade',
     onAction: _openSchedule,
@@ -626,12 +793,28 @@ class _CourseHubPageState extends State<CourseHubPage> {
       actionKey: const Key('course-hub-open-materials'),
       actionLabel: 'Ver todos',
       onAction: widget.ufmgSessionGateway == null ? null : _openMaterials,
-      child: count == 0
-          ? const Text('Nenhum material sincronizado para esta disciplina.')
-          : _MaterialPreview(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_materialsFailed) ...[
+            const Text('Não foi possível atualizar os materiais.'),
+            TextButton(
+              key: const Key('course-hub-retry-materials'),
+              onPressed: _materialsLoading ? null : _loadMaterials,
+              child: const Text('Tentar novamente'),
+            ),
+          ],
+          if (count > 0)
+            _MaterialPreview(
               candidate: _materials!.candidates.first,
               count: count,
-            ),
+            )
+          else if (_materialsLoading)
+            const Text('Carregando materiais…')
+          else if (!_materialsFailed)
+            const Text('Nenhum material sincronizado para esta disciplina.'),
+        ],
+      ),
     );
   }
 
