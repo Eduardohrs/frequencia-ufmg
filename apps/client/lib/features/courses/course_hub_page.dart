@@ -19,6 +19,7 @@ import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import '../../observability/operation_diagnostics.dart';
 import '../attendance/absence_dashboard_page.dart';
+import '../activities/course_workspace_page.dart';
 import '../attendance/attendance_page.dart';
 import '../schedule/course_schedule_page.dart';
 import '../schedule/general_calendar_page.dart';
@@ -37,6 +38,7 @@ class CourseHubPage extends StatefulWidget {
     this.initialSessionsByCourse,
     this.overviewUpdates,
     this.refreshOverview,
+    this.workspaceGateway,
     this.datesByCourse = const {},
     this.unavailableDateCourses = const {},
     this.attendanceEvaluator,
@@ -55,6 +57,7 @@ class CourseHubPage extends StatefulWidget {
 
   final ValueListenable<AcademicOverviewSnapshot?>? overviewUpdates;
   final Future<void> Function()? refreshOverview;
+  final BackendAcademicWorkspaceGateway? workspaceGateway;
   final CourseRecord course;
   final List<CourseRecord> allCourses;
   final CourseRepository courseRepository;
@@ -425,6 +428,32 @@ class _CourseHubPageState extends State<CourseHubPage> {
     if (mounted) await _load(refresh: true);
   }
 
+  BackendAcademicWorkspaceGateway? get _workspaceGateway {
+    if (widget.workspaceGateway case final gateway?) return gateway;
+    if (widget.ufmgSessionGateway
+        case BackendAcademicWorkspaceGateway gateway) {
+      return gateway;
+    }
+    return null;
+  }
+
+  Future<void> _openWorkspace(BackendAcademicWorkspaceGateway gateway) async {
+    _logNavigation('activities_and_plan');
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => CourseWorkspacePage(
+          course: _course,
+          gateway: gateway,
+          logger: widget.logger,
+          now: widget.now,
+          userId: widget.userId,
+          onConnect: widget.ufmgSessionGateway == null ? null : _openMaterials,
+        ),
+      ),
+    );
+    if (mounted) await _load(refresh: true);
+  }
+
   Future<void> _openMaterials() async {
     _logNavigation('materials');
     final gateway = widget.ufmgSessionGateway!;
@@ -643,6 +672,16 @@ class _CourseHubPageState extends State<CourseHubPage> {
         _frequencySection(),
         const SizedBox(height: 28),
         _agendaSection(),
+        if (_workspaceGateway case final gateway?) ...[
+          const SizedBox(height: 20),
+          ListTile(
+            key: const Key('course-hub-workspace'),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            title: const Text('Atividades e plano de ensino'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _openWorkspace(gateway),
+          ),
+        ],
       ],
     );
     final side = Column(

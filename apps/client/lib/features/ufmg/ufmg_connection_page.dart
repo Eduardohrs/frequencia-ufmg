@@ -64,6 +64,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   String? _error;
   String? _sigaSummary;
   String? _moodleSummary;
+  PythonMoodleDateImportResult? _dateImportResult;
   String? _sigaError;
   String? _moodleError;
   bool _sigaBusy = false;
@@ -1290,6 +1291,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     ]);
     if (!mounted) return;
     setState(() {
+      _dateImportResult = result.moodle.dates;
       _dates = supplementary[0] as List<PythonMoodleDate>;
       _contentDiscovery = supplementary[1] as PythonMoodleContentDiscovery;
       _sigaSummary =
@@ -1521,6 +1523,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       final dates = await _listDates();
       if (mounted) {
         setState(() {
+          _dateImportResult = sync.dates;
           _dates = dates;
           _contentDiscovery = discovery;
           _moodleSummary =
@@ -1964,6 +1967,43 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       ),
   ];
 
+  List<Widget> _dateImportIssues() => [
+    if (_dateImportResult case final result?)
+      if (result.unmatchedEvents.isNotEmpty || result.failedCourses.isNotEmpty)
+        ExpansionTile(
+          key: const Key('moodle-date-import-issues'),
+          title: Text(
+            'Avisos das datas (${result.unmatchedEvents.length + result.failedCourses.length})',
+          ),
+          children: [
+            for (final issue in result.unmatchedEvents)
+              ListTile(
+                title: Text('${issue['title']}'),
+                subtitle: Text(
+                  '${issue['reason'] == 'ambiguous_course' ? 'Mais de uma disciplina corresponde' : 'Disciplina não encontrada'} · ${issue['term']}',
+                ),
+                trailing: TextButton(
+                  onPressed: () => _launchMaterialUri(
+                    Uri.parse(
+                      'https://virtual.ufmg.br/${(issue['term']! as String).replaceAll('-', '')}/course/view.php?id=${issue['moodle_course_id']}',
+                    ),
+                  ),
+                  child: const Text('Ver no Moodle'),
+                ),
+              ),
+            for (final issue in result.failedCourses)
+              ListTile(
+                title: Text(
+                  'Não foi possível atualizar ${issue['course_code'] ?? issue['course_id']}',
+                ),
+                subtitle: const Text(
+                  'Os dados anteriores foram preservados. Sincronize novamente para tentar esta disciplina.',
+                ),
+              ),
+          ],
+        ),
+  ];
+
   Widget _syncActions() {
     if (widget.gateway is BackendUnifiedAcademicSyncGateway) {
       return Column(
@@ -2007,6 +2047,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               icon: const Icon(Icons.checklist),
               label: const Text('Revisar última sincronização'),
             ),
+          ..._dateImportIssues(),
           _connectionManagementCard(),
         ],
       );
@@ -2084,6 +2125,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           },
         ),
         const SizedBox(height: 12),
+        ..._dateImportIssues(),
         _connectionManagementCard(),
       ],
     );
