@@ -3,7 +3,6 @@ from types import SimpleNamespace
 import pytest
 
 from course_activities import CourseActivityService, CourseMoodleNotLinked
-from moodle_structured_dates import InvalidMoodleResponse
 from ufmg_session_store import UFMGReauthenticationRequired
 
 
@@ -39,46 +38,36 @@ def activities():
         sessions,
         client,
         tokens,
-        capabilities,
         telemetry=lambda event, fields: logs.append((event, fields)),
     )
     return service, catalog, sessions, client, tokens, capabilities, logs, valid
 
 
-def test_lists_and_reads_owned_activity_without_reading_any_student_file(activities):
-    service, _, _, client, *_ = activities
+def test_sync_index_identifies_owned_activities(activities):
+    service, *_ = activities
     assert service.list_activities("user", "poo", now=123)["activities"][0]["source_id"] == "20"
-    assert service.detail("user", "poo", "20", now=123)["description"] == "Read this"
-    with pytest.raises(InvalidMoodleResponse) as rejected:
-        service.detail("user", "poo", "999", now=123)
-    assert rejected.value.reason == "course_activity_not_found"
-    client.fetch_activity = lambda *args, **kwargs: {"attachments": "invalid"}
-    with pytest.raises(InvalidMoodleResponse) as rejected:
-        service.detail("user", "poo", "20", now=123)
-    assert rejected.value.reason == "activity_attachment_shape"
 
 
-def test_attachment_credentials_are_delivered_only_to_client_and_not_telemetry(activities):
-    service, _, _, client, tokens, capabilities, logs, valid = activities
-    client.fetch_activity = lambda *args, **kwargs: {
+def test_attachment_credentials_are_delivered_only_for_download_not_persisted_content(activities):
+    service, _, _, _, tokens, _, logs, valid = activities
+    saved = {
+        "source_id": "20",
         "description": "Read this",
-        "submission_state": "not_submitted",
+        "term": "2026-2",
         "attachments": [
             {
                 "name": "instructions.pdf",
                 "url": "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_assign/introattachment/0/instructions.pdf",
             }
         ],
+        "files": [],
     }
-    result = service.detail("user", "poo", "20", now=123)
+    result = service.authorize_saved("user", "poo", saved, now=123)
     assert "/tokenpluginfile.php/" in result["files"][0]["url"]
     assert valid.private_token not in str(logs)
-    tokens.load = lambda *args, **kwargs: None
-    assert service.detail("user", "poo", "20", now=123)["files"] == []
-    assert logs[-2][0] == "course_activity_download_unavailable"
-    loads = iter([None, valid])
-    tokens.load = lambda *args, **kwargs: next(loads)
-    assert len(service.detail("user", "poo", "20", now=123)["files"]) == 1
+    assert saved["files"] == []
+    tokens.load = lambda *a, **k: None
+    assert service.authorize_saved("user", "poo", saved, now=123)["files"] == []
 
 
 def test_unlinked_ambiguous_or_expired_sources_are_explicit(activities):

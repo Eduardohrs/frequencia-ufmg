@@ -40,6 +40,7 @@ class FakeFirestore:
             "academicDates": [{"name": "root/date-1"}],
             "materialCatalog": [{"name": "root/current"}],
             "teachingPlans": [{"name": "root/current"}],
+            "activitySnapshots": [{"name": "root/current"}],
         }
 
     def list_user_documents(self, *segments: str) -> list[dict[str, Any]]:
@@ -129,6 +130,7 @@ def test_repository_cascades_children_before_course_delete() -> None:
             ("courses", "course-1", "academicDates", "date-1"),
             ("courses", "course-1", "materialCatalog", "current"),
             ("courses", "course-1", "teachingPlans", "current"),
+            ("courses", "course-1", "activitySnapshots", "current"),
             ("courses", "course-1"),
         ]
     ]

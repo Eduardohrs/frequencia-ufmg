@@ -1,27 +1,25 @@
 """Read Moodle activities for an owned course; attachment bytes stay at Moodle."""
 
+from datetime import UTC, datetime
+from functools import partial
 from mimetypes import guess_type
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
+from activity_snapshot_repository import ActivitySnapshotRepository
 from course_repository import CourseRepository
 from moodle_material_catalog_repository import MoodleMaterialCatalogRepository
-from moodle_mobile_capability import MoodleMobileCapabilityService
 from moodle_structured_dates import (
-    InvalidMoodleResponse,
     MoodleStructuredDatesClient,
-    MoodleUnavailable,
     _private_file_url,
 )
 from moodle_token_store import (
     AppwriteMoodleTokenStore,
-    MoodleAuthorizationRequired,
     MoodleTokenStoreUnavailable,
 )
 from sync_timing import Telemetry, _emit, timed_stage
 from ufmg_session_store import (
     UFMGReauthenticationRequired,
     UFMGSession,
-    UFMGSessionStoreUnavailable,
 )
 
 
@@ -41,12 +39,11 @@ class CourseActivityService:
         sessions: _Sessions,
         client: MoodleStructuredDatesClient,
         tokens: AppwriteMoodleTokenStore,
-        capabilities: MoodleMobileCapabilityService,
         *,
         telemetry: Telemetry | None = None,
     ) -> None:
         self._courses, self._catalog, self._sessions = courses, catalog, sessions
-        self._client, self._tokens, self._capabilities = client, tokens, capabilities
+        self._client, self._tokens = client, tokens
         self._telemetry = telemetry
 
     def _source(
@@ -64,6 +61,92 @@ class CourseActivityService:
         if session is None:
             raise UFMGReauthenticationRequired("UFMG reauthentication required")
         return course, session, int(str(catalogs[0]["moodle_course_id"]))
+
+    def sync_snapshots(
+        self, user_id: str, *, now: int, snapshots: ActivitySnapshotRepository
+    ) -> dict[str, object]:
+        updated = 0
+        failed: list[dict[str, object]] = []
+        courses = self._courses.list_courses()
+        for course in courses:
+            course_id = course["id"]
+            fields = {"course_id": course_id, "course_code": course["code"], "term": course["term"]}
+            try:
+                index = self.list_activities(user_id, course_id, now=now)
+                activities = []
+                session = self._source(user_id, course_id, now)[1]
+                for entry in cast(list[dict[str, Any]], index["activities"]):
+                    detail = timed_stage(
+                        "activity_snapshot_capture",
+                        partial(
+                            self._client.fetch_activity,
+                            session.token,
+                            term=course["term"],
+                            source_id=int(entry["source_id"]),
+                            kind=str(entry["kind"]),
+                        ),
+                        telemetry=self._telemetry,
+                        fields={**fields, "source_id": entry["source_id"]},
+                    )
+                    activities.append({**entry, **detail, "files": [], "term": course["term"]})
+                timed_stage(
+                    "activity_snapshot_persist",
+                    partial(
+                        snapshots.save,
+                        course_id,
+                        {
+                            "course_id": course_id,
+                            "term": course["term"],
+                            "synced_at": datetime.fromtimestamp(now, UTC)
+                            .isoformat()
+                            .replace("+00:00", "Z"),
+                            "activities": activities,
+                        },
+                    ),
+                    telemetry=self._telemetry,
+                    fields={**fields, "activity_count": len(activities)},
+                )
+                updated += 1
+            except Exception as error:
+                issue = {**fields, "reason": type(error).__name__, "retained_previous": True}
+                failed.append(issue)
+                _emit(self._telemetry, "activity_snapshot_sync_failed", issue)
+        return {"updated": updated, "failed": len(failed), "failed_courses": failed}
+
+    def authorize_saved(
+        self, user_id: str, course_id: str, detail: dict[str, Any], *, now: int
+    ) -> dict[str, Any]:
+        # A normal read never calls Moodle, renews a session or refreshes a token.
+        files = []
+        try:
+            tokens = self._tokens.load(user_id, now=now)
+            if tokens is not None and tokens.term == detail["term"]:
+                for attachment in detail["attachments"]:
+                    files.append(
+                        {
+                            "name": attachment["name"],
+                            "url": _private_file_url(
+                                attachment["url"],
+                                "/" + detail["term"].replace("-", ""),
+                                tokens.private_token,
+                            ),
+                            "size": 0,
+                            "mime_type": guess_type(attachment["name"])[0]
+                            or "application/octet-stream",
+                        }
+                    )
+        except (MoodleTokenStoreUnavailable, ValueError) as error:
+            _emit(
+                self._telemetry,
+                "activity_snapshot_download_unavailable",
+                {
+                    "course_id": course_id,
+                    "source_id": detail["source_id"],
+                    "reason": type(error).__name__,
+                    "stage": "saved_download_authorization",
+                },
+            )
+        return {**detail, "files": files}
 
     def list_activities(self, user_id: str, course_id: str, *, now: int) -> dict[str, object]:
         course, session, moodle_id = self._source(user_id, course_id, now)
@@ -89,95 +172,4 @@ class CourseActivityService:
             "course_id": course_id,
             "term": course["term"],
             "moodle_course_id": str(moodle_id),
-        }
-
-    def detail(
-        self, user_id: str, course_id: str, source_id: str, *, now: int
-    ) -> dict[str, object]:
-        course, session, moodle_id = self._source(user_id, course_id, now)
-        entries = timed_stage(
-            "course_activity_membership",
-            lambda: self._client.list_activities(
-                session.token, term=course["term"], course_id=moodle_id, course_code=course["code"]
-            ),
-            telemetry=self._telemetry,
-            fields={"course_id": course_id, "course_code": course["code"], "source_id": source_id},
-        )
-        entry = next((item for item in entries if item["source_id"] == source_id), None)
-        if entry is None:
-            raise InvalidMoodleResponse("course_activity_not_found")
-        detail = timed_stage(
-            "course_activity_detail",
-            lambda: self._client.fetch_activity(
-                session.token,
-                term=course["term"],
-                source_id=int(source_id),
-                kind=str(entry["kind"]),
-            ),
-            telemetry=self._telemetry,
-            fields={"course_id": course_id, "source_id": source_id},
-        )
-        attachments = detail["attachments"]
-        if not isinstance(attachments, list):
-            raise InvalidMoodleResponse("activity_attachment_shape")
-        files: list[dict[str, object]] = []
-        if attachments:
-            try:
-                tokens = self._tokens.load(user_id, now=now)
-                if tokens is None or tokens.term != course["term"]:
-                    self._capabilities.probe(user_id, now=now)
-                    tokens = self._tokens.load(user_id, now=now)
-                if tokens is None or tokens.term != course["term"]:
-                    raise MoodleAuthorizationRequired("Moodle file authorization required")
-                for attachment in attachments:
-                    files.append(
-                        {
-                            "name": attachment["name"],
-                            "url": _private_file_url(
-                                attachment["url"],
-                                "/" + str(course["term"]).replace("-", ""),
-                                tokens.private_token,
-                            ),
-                            "size": 0,
-                            "mime_type": guess_type(attachment["name"])[0]
-                            or "application/octet-stream",
-                        }
-                    )
-            except (
-                MoodleAuthorizationRequired,
-                MoodleTokenStoreUnavailable,
-                InvalidMoodleResponse,
-                MoodleUnavailable,
-                UFMGReauthenticationRequired,
-                UFMGSessionStoreUnavailable,
-                ValueError,
-            ) as error:
-                _emit(
-                    self._telemetry,
-                    "course_activity_download_unavailable",
-                    {
-                        "course_id": course_id,
-                        "source_id": source_id,
-                        "stage": "attachment_authorization",
-                        "reason": type(error).__name__,
-                        "attachment_count": len(attachments),
-                    },
-                )
-        _emit(
-            self._telemetry,
-            "course_activity_detail_loaded",
-            {
-                "course_id": course_id,
-                "source_id": source_id,
-                "submission_state": str(detail["submission_state"]),
-                "attachment_count": len(attachments),
-                "download_count": len(files),
-            },
-        )
-        return {
-            **entry,
-            **detail,
-            "term": course["term"],
-            "moodle_course_id": entry.get("moodle_course_id", str(moodle_id)),
-            "files": files,
         }

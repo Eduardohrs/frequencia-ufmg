@@ -31,9 +31,11 @@ class MoodleSyncService:
         capabilities: _Capabilities,
         *,
         connection_count: Callable[[], int] = lambda: 0,
+        snapshot_sync: Callable[[str, int], dict[str, object]] | None = None,
         telemetry: Telemetry | None = None,
         monotonic: Callable[[], float] | None = None,
     ) -> None:
+        self._snapshot_sync = snapshot_sync
         self._dates = dates
         self._content = content
         self._capabilities = capabilities
@@ -62,7 +64,17 @@ class MoodleSyncService:
             ValueError,
         ):
             capabilities = None
+        snapshots = {}
+        snapshot_sync = self._snapshot_sync
+        if snapshot_sync is not None:
+            try:
+                snapshots["activities"] = self._timed(
+                    "moodle_activity_snapshots", lambda: snapshot_sync(user_id, now)
+                )
+            except Exception:
+                snapshots["activities"] = {"updated": 0, "failed": 1, "failed_courses": []}
         return {
+            **snapshots,
             "dates": dates,
             "content": content,
             "capabilities": capabilities,

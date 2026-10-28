@@ -107,3 +107,28 @@ def test_sync_reports_each_moodle_stage_including_optional_failure() -> None:
             },
         ),
     ]
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_sync_saves_activity_snapshots_and_reports_failure_without_losing_other_stages(failure):
+    logs = []
+
+    def capture(user, now):
+        assert (user, now) == ("owner", 42)
+        if failure:
+            raise OSError("snapshot database unavailable")
+        return {"updated": 1, "failed": 0, "failed_courses": []}
+
+    result = MoodleSyncService(
+        _Stage({"created": 1}),
+        _Stage({"candidate_total": 2}),
+        _Stage({}),
+        snapshot_sync=capture,
+        telemetry=lambda event, fields: logs.append((event, fields)),
+    ).sync("owner", now=42)
+    assert result["dates"] == {"created": 1}
+    assert result["activities"]["failed"] == int(failure)
+    assert any(
+        fields["stage"] == "moodle_activity_snapshots" and "duration_ms" in fields
+        for _, fields in logs
+    )

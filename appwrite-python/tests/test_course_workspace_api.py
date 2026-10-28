@@ -33,6 +33,16 @@ def workspace(monkeypatch):
     activities = SimpleNamespace(
         list_activities=lambda *args, **kwargs: {"activities": []},
         detail=lambda *args, **kwargs: {"description": "Task"},
+        authorize_saved=lambda user, course, entry, **kwargs: entry,
+    )
+    snapshot = {
+        "course_id": "poo",
+        "term": "2026-2",
+        "synced_at": "2026-10-28T12:00:00Z",
+        "activities": [{"source_id": "20", "description": "Task", "files": []}],
+    }
+    monkeypatch.setattr(
+        function, "ActivitySnapshotRepository", lambda _: SimpleNamespace(load=lambda _: snapshot)
     )
     monkeypatch.setattr(function, "_authentication", lambda *_: ("owner", None))
     monkeypatch.setattr(function, "_course_repository", lambda *_: courses)
@@ -61,9 +71,12 @@ def test_workspace_date_crud_plan_and_activity_routes(workspace):
         function.main(FakeContext(FakeRequest("GET", "/v1/courses/poo/plan")))["body"]["plan"]
         is not None
     )
-    assert function.main(FakeContext(FakeRequest("GET", "/v1/courses/poo/activities")))["body"] == {
-        "activities": []
-    }
+    listing = function.main(
+        FakeContext(
+            FakeRequest("GET", "/v1/courses/poo/activities", headers={"X-Academic-Contract": "2"})
+        )
+    )
+    assert listing["body"]["activities"][0]["description"] == "Task"
     assert (
         function.main(FakeContext(FakeRequest("GET", "/v1/courses/poo/activities/20")))["body"][
             "description"

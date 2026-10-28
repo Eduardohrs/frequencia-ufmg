@@ -647,3 +647,19 @@ describe("session documents", () => {
     }
   });
 });
+
+
+test("activity snapshots remain owned, bounded and cascadeable course content", async () => {
+  await seed(coursePath("alice"), course());
+  const path = `${coursePath("alice")}/activitySnapshots/current`;
+  const value={schemaVersion:1,snapshotJson:'{"activities":[]}',contentHash:"a".repeat(64),updatedAt:Timestamp.now()};
+  await assertSucceeds(setDoc(doc(dbFor("alice"),path),value));
+  await assertSucceeds(getDoc(doc(dbFor("alice"),path)));
+  await assertFails(getDoc(doc(dbFor("bob"),path)));
+  await assertFails(getDoc(doc(anonymousDb(),path)));
+  for(const invalid of [{...value,snapshotJson:"x".repeat(750001)},{...value,contentHash:"invalid"},{...value,token:"unexpected"}]) {
+    await assertFails(setDoc(doc(dbFor("alice"),path),invalid));
+  }
+  await assertFails(setDoc(doc(dbFor("alice"),`${coursePath("alice")}/activitySnapshots/wrong`),value));
+  await assertSucceeds(deleteDoc(doc(dbFor("alice"),path)));
+});

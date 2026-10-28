@@ -24,6 +24,11 @@ from academic_date_repository import (  # noqa: E402
     InvalidAcademicDate,
 )
 from academic_sync_progress import AcademicSyncProgress  # noqa: E402
+from activity_snapshot_repository import (  # noqa: E402
+    ActivitySnapshotMissing,
+    ActivitySnapshotRepository,
+    InvalidActivitySnapshot,
+)
 from attendance_service import InvalidAttendanceRequest, evaluate_attendance  # noqa: E402
 from course_activities import CourseActivityService, CourseMoodleNotLinked  # noqa: E402
 from course_repository import (  # noqa: E402
@@ -744,6 +749,7 @@ def _moodle_sync(context: Any, origin: str | None) -> Any:
         "ambiguous",
     )
     body = {
+        **({"activities": result["activities"]} if "activities" in result else {}),
         "dates": dict(dates),
         "content": {field: content[field] for field in content_fields},
         "capabilities": dict(capabilities) if capabilities is not None else None,
@@ -1481,25 +1487,36 @@ def _course_workspace(
             except TeachingPlanNotFound:
                 body = {"plan": None}
         elif section == "activities":
-            sessions = _ufmg_session_store(context.req.headers)
-            client = MoodleStructuredDatesClient()
-            tokens = _moodle_token_store(context.req.headers)
-            service = CourseActivityService(
-                courses,
-                MoodleMaterialCatalogRepository(firestore),
-                sessions,
-                client,
-                tokens,
-                MoodleMobileCapabilityService(sessions, client, tokens),
-                telemetry=lambda event, values: _academic_sync_telemetry(context, event, values),
-            )
-            body = (
-                service.list_activities(uid, course_id, now=int(time()))
-                if item_id is None
-                else service.detail(uid, course_id, item_id, now=int(time()))
-            )
+            snapshot = ActivitySnapshotRepository(firestore).load(course_id)
+            if item_id is None:
+                body = snapshot
+            else:
+                entry = next(
+                    (entry for entry in snapshot["activities"] if entry["source_id"] == item_id),
+                    None,
+                )
+                if entry is None:
+                    return fail("activity_not_in_snapshot", 404)
+                body = {**entry, "synced_at": snapshot["synced_at"]}
+                try:
+                    service = _course_activity_service(context.req.headers, uid, courses=courses)
+                    body.update(service.authorize_saved(uid, course_id, entry, now=int(time())))
+                except Exception as error:
+                    _academic_sync_telemetry(
+                        context,
+                        "activity_snapshot_authorization_failed",
+                        {
+                            **fields,
+                            "reason": type(error).__name__,
+                            "content_preserved": True,
+                        },
+                    )
         else:
             return _respond(context, {"error": "not_found"}, 404, origin)
+    except ActivitySnapshotMissing:
+        return fail("activity_snapshot_missing", 409)
+    except InvalidActivitySnapshot:
+        return fail("activity_snapshot_invalid", 500)
     except CourseMoodleNotLinked:
         return fail("course_moodle_not_linked", 409)
     except UFMGReauthenticationRequired:
@@ -1518,6 +1535,8 @@ def _course_workspace(
         return fail("course_access_denied", 403)
     except (FirestoreUnavailable, FirestoreRequestRejected):
         return fail("course_store_unavailable", 503)
+    if "synced_at" in body:
+        fields["snapshot_synced_at"] = body["synced_at"]
     _academic_sync_telemetry(
         context,
         "course_workspace_succeeded",
@@ -1662,6 +1681,29 @@ def _moodle_date_import_service(
     )
 
 
+def _course_activity_service(
+    headers: dict[str, str],
+    user_id: str,
+    *,
+    courses: Any = None,
+    sessions: Any = None,
+    client: Any = None,
+    telemetry: Any = None,
+) -> CourseActivityService:
+    courses = courses or _course_repository(headers, user_id)
+    sessions = sessions or _ufmg_session_store(headers)
+    client = client or MoodleStructuredDatesClient()
+    tokens = _moodle_token_store(headers)
+    return CourseActivityService(
+        courses,
+        _moodle_material_catalog_repository(headers, user_id),
+        sessions,
+        client,
+        tokens,
+        telemetry=telemetry,
+    )
+
+
 def _moodle_sync_service(
     headers: dict[str, str], user_id: str, telemetry: Any = None
 ) -> MoodleSyncService:
@@ -1686,6 +1728,16 @@ def _moodle_sync_service(
             sessions,
             client,
             _moodle_token_store(headers),
+        ),
+        snapshot_sync=lambda uid, now: _course_activity_service(
+            headers,
+            user_id,
+            courses=courses,
+            sessions=sessions,
+            client=client,
+            telemetry=telemetry,
+        ).sync_snapshots(
+            uid, now=now, snapshots=ActivitySnapshotRepository(_firestore(headers, user_id))
         ),
         connection_count=lambda: client.connection_count,
         telemetry=telemetry,
@@ -1728,6 +1780,16 @@ def _unified_academic_sync_service(
             sessions,
             client,
             _moodle_token_store(headers),
+        ),
+        snapshot_sync=lambda uid, now: _course_activity_service(
+            headers,
+            user_id,
+            courses=courses,
+            sessions=sessions,
+            client=client,
+            telemetry=telemetry,
+        ).sync_snapshots(
+            uid, now=now, snapshots=ActivitySnapshotRepository(_firestore(headers, user_id))
         ),
         connection_count=lambda: client.connection_count,
         telemetry=telemetry,
@@ -2057,6 +2119,12 @@ def _respond(
     _RESPONSE_STATUS.set(status)
     if _header(context.req.headers, "x-academic-contract") != "2":
         body = dict(body)
+        if "dates" in body:
+            body.pop("activities", None)
+        if isinstance(body.get("moodle"), dict):
+            body["moodle"] = {
+                key: value for key, value in body["moodle"].items() if key != "activities"
+            }
         summary_keys = {"total", "matched", "unmatched", "created", "updated", "unchanged"}
 
         def legacy_dates(value: Any) -> Any:

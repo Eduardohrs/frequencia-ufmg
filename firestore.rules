@@ -355,6 +355,20 @@ service cloud.firestore {
           && preservesAuditFields();
       }
 
+      match /activitySnapshots/{snapshotId} {
+        allow read, delete: if owns(userId);
+        allow create, update: if owns(userId)
+          && snapshotId == 'current'
+          && exists(/databases/$(database)/documents/users/$(userId)/courses/$(courseId))
+          && hasExactFields(request.resource.data, ['schemaVersion','snapshotJson','contentHash','updatedAt'])
+          && request.resource.data.schemaVersion == 1
+          && request.resource.data.snapshotJson is string
+          && request.resource.data.snapshotJson.size() <= 750000
+          && request.resource.data.contentHash is string
+          && request.resource.data.contentHash.matches('^[0-9a-f]{64}$')
+          && request.resource.data.updatedAt is timestamp;
+      }
+
       match /teachingPlans/{planId} {
         allow read, delete: if owns(userId);
         allow create: if owns(userId)
