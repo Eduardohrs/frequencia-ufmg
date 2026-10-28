@@ -217,13 +217,41 @@ final class PythonMoodleMobileCapabilities {
   final bool webserviceTokenIssued;
 }
 
+final class PythonActivitySyncSummary {
+  const PythonActivitySyncSummary({
+    required this.updated,
+    required this.failed,
+  });
+  factory PythonActivitySyncSummary.fromJson(Map<String, Object?> value) {
+    final updated = value['updated'],
+        failed = value['failed'],
+        issues = value['failed_courses'];
+    if (!_hasExactKeys(value, const {'updated', 'failed', 'failed_courses'}) ||
+        updated is! int ||
+        failed is! int ||
+        updated < 0 ||
+        failed < 0 ||
+        updated + failed > 50 ||
+        issues is! List ||
+        issues.length > 50) {
+      throw const FormatException();
+    }
+    return PythonActivitySyncSummary(updated: updated, failed: failed);
+  }
+  final int updated, failed;
+  String get message =>
+      '$updated disciplinas com atividades salvas. $failed não atualizadas; cópias anteriores preservadas.';
+}
+
 final class PythonMoodleSyncResult {
   const PythonMoodleSyncResult({
     required this.dates,
     required this.candidateTotal,
     required this.capabilities,
+    this.activitySnapshots,
   });
 
+  final PythonActivitySyncSummary? activitySnapshots;
   final PythonMoodleDateImportResult dates;
   final int candidateTotal;
   final PythonMoodleMobileCapabilities? capabilities;
@@ -1843,7 +1871,10 @@ final class PythonBackendTransport
   PythonMoodleSyncResult _moodleSyncResult(Object? raw) {
     final value = raw;
     if (value is! Map<String, dynamic> ||
-        !_hasExactKeys(value, const {'dates', 'content', 'capabilities'})) {
+        !_hasExactKeys(
+          Map<String, Object?>.of(value)..remove('activities'),
+          const {'dates', 'content', 'capabilities'},
+        )) {
       throw const FormatException();
     }
     final dates = _moodleDateImportResult(value['dates']);
@@ -1888,6 +1919,11 @@ final class PythonBackendTransport
         : _moodleMobileCapabilities(rawCapabilities);
     return PythonMoodleSyncResult(
       dates: dates,
+      activitySnapshots: value.containsKey('activities')
+          ? PythonActivitySyncSummary.fromJson(
+              Map<String, Object?>.from(value['activities'] as Map),
+            )
+          : null,
       candidateTotal: candidateTotal,
       capabilities: capabilities,
     );

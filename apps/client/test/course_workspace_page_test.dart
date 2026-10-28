@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
+import 'package:frequencia_ufmg/data/course_activity_snapshot_cache.dart';
+import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:frequencia_ufmg/data/material_file_cache.dart';
 import 'package:frequencia_ufmg/features/activities/course_workspace_page.dart';
 import 'package:frequencia_ufmg/observability/firestore_app_logger.dart';
@@ -36,6 +39,112 @@ PythonMoodleDate date(String id, String title) => PythonMoodleDate(
 
 void main() {
   tz.initializeTimeZones();
+  testWidgets(
+    'failure opening synchronization leaves the saved activity available',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CourseWorkspacePage(
+            course: course,
+            gateway: _Gateway(),
+            logger: FirestoreAppLogger(
+              store: _Logs(),
+              currentUserId: () => 'owner',
+              platform: 'web',
+            ),
+            now: () => now,
+            onConnect: () async => throw StateError('route unavailable'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sincronizar Moodle'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('A cópia salva continua disponível'),
+        findsOneWidget,
+      );
+      expect(find.text('Protótipo'), findsOneWidget);
+    },
+  );
+  testWidgets(
+    'a fresh page opens the saved activity after restart with backend and Moodle unavailable',
+    (tester) async {
+      SharedPreferencesAsyncPlatform.instance =
+          InMemorySharedPreferencesAsync.empty();
+      final logs = _Logs();
+      final gateway = _Gateway();
+      await tester.pumpWidget(_app(gateway, logs, userId: 'owner'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Última sincronização:'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      final offline = _Gateway()
+        ..readError = StateError('server unavailable')
+        ..detailError = StateError('server unavailable');
+      await tester.pumpWidget(_app(offline, logs, userId: 'owner'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Cópia local:'), findsOneWidget);
+      expect(find.text('Protótipo'), findsOneWidget);
+      await tester.tap(find.text('Protótipo'));
+      await tester.pumpAndSettle();
+      expect(find.text('Enunciado completo'), findsOneWidget);
+      expect(offline.detailCalls, 0);
+      await tester.tap(find.byTooltip('Fechar atividade'));
+      await tester.pumpAndSettle();
+      expect(
+        logs.documents.any(
+          (d) => d['event'] == 'course_activity_open_succeeded',
+        ),
+        isTrue,
+      );
+      final saved = await CourseActivitySnapshotCache().read(
+        'owner',
+        'poo',
+        '2026-2',
+      );
+      expect(saved!.details.single.description, 'Enunciado completo');
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(_app(offline, logs, userId: 'different'));
+      await tester.pumpAndSettle();
+      expect(find.text('Protótipo'), findsNothing);
+      expect(find.textContaining('Não foi possível atualizar'), findsOneWidget);
+    },
+  );
+  testWidgets(
+    'cache failures are diagnosed without blocking the saved server snapshot',
+    (tester) async {
+      final logs = _Logs();
+      await tester.pumpWidget(
+        _app(_Gateway(), logs, userId: 'owner', cache: _BrokenSnapshotCache()),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Protótipo'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Não foi possível salvar esta cópia no dispositivo',
+        ),
+        findsOneWidget,
+      );
+      final errors = logs.documents
+          .where((d) => d['event'] == 'app_exception')
+          .map((d) => jsonDecode(d['errorDetails']! as String))
+          .toList();
+      expect(
+        errors.any(
+          (d) =>
+              d['context'] == 'activity_snapshot_cache_read' ||
+              d['stage'] == 'activity_snapshot_cache_read',
+        ),
+        isTrue,
+      );
+      expect(
+        logs.documents.where((d) => d['event'] == 'app_exception'),
+        hasLength(2),
+      );
+    },
+  );
   testWidgets(
     'plan dates use local readable dates and retain unknown source labels',
     (tester) async {
@@ -89,6 +198,9 @@ void main() {
       await tester.tap(find.text('Protótipo'));
       await tester.pumpAndSettle();
       expect(find.text('Texto preservado'), findsOneWidget);
+      expect(gateway.detailCalls, 0);
+      await tester.tap(find.text('instructions.pdf'));
+      await tester.pumpAndSettle();
       expect(
         find.textContaining('Não foi possível autorizar os anexos.'),
         findsOneWidget,
@@ -197,10 +309,9 @@ void main() {
       gateway.detailError = StateError('source timeout');
       await tester.tap(find.text('Protótipo'));
       await tester.pumpAndSettle();
-      expect(
-        find.textContaining('Não foi possível consultar a atividade'),
-        findsOneWidget,
-      );
+      expect(find.text('Enunciado completo'), findsOneWidget);
+      await tester.tap(find.byTooltip('Fechar atividade'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Prazos'));
       await tester.pumpAndSettle();
       gateway.saveError = StateError('denied');
@@ -224,7 +335,7 @@ void main() {
       final errors = store.documents
           .where((d) => d['event'] == 'app_exception')
           .toList();
-      expect(errors, hasLength(3));
+      expect(errors, hasLength(2));
       expect(
         jsonDecode(errors.first['errorDetails']! as String)['stage'],
         'activities',
@@ -366,6 +477,8 @@ Widget _app(
   _Logs store, {
   MaterialFileCache? files,
   Future<bool> Function(Uri)? open,
+  String? userId,
+  CourseActivitySnapshotCache? cache,
 }) => MaterialApp(
   home: CourseWorkspacePage(
     course: course,
@@ -377,6 +490,8 @@ Widget _app(
     ),
     now: () => now,
     materialFileCache: files,
+    userId: userId,
+    snapshotCache: cache,
     openExternalUri: open,
   ),
 );
@@ -384,6 +499,7 @@ Widget _app(
 class _Gateway implements BackendAcademicWorkspaceGateway {
   final dates = [date('moodle-1', 'Prova importada')];
   Object? readError, detailError, saveError;
+  int detailCalls = 0;
   List<PythonMoodleActivity> activities = [activity];
   PythonMoodleActivityDetail? detail;
   Map<String, Object?>? plan = {
@@ -398,6 +514,39 @@ class _Gateway implements BackendAcademicWorkspaceGateway {
     ],
   };
   @override
+  Future<PythonCourseActivitySnapshot> loadCourseActivitySnapshot(
+    String id,
+  ) async {
+    if (readError != null) throw readError!;
+    return PythonCourseActivitySnapshot.fromJson({
+      'course_id': id,
+      'term': '2026-2',
+      'synced_at': '2026-10-28T12:00:00Z',
+      'activities': [
+        for (final a in activities)
+          {
+            'source_id': a.id,
+            'title': a.title,
+            'kind': a.kind,
+            'url': a.url.toString(),
+            'origin': a.origin,
+            'description': detail?.description ?? 'Enunciado completo',
+            'dates_text': detail?.datesText ?? '',
+            'has_due_date': detail?.hasDueDate ?? false,
+            'submission_state': detail?.submissionState ?? 'not_submitted',
+            'submission_text': detail?.submissionText ?? 'Nenhum envio feito',
+            'term': '2026-2',
+            'attachments': [
+              for (var i = 0; i < (detail?.attachmentCount ?? 0); i++)
+                {'name': 'instructions.pdf'},
+            ],
+            'files': [],
+          },
+      ],
+    });
+  }
+
+  @override
   Future<List<PythonMoodleActivity>> listCourseActivities(String id) async {
     if (readError != null) throw readError!;
     return activities;
@@ -408,6 +557,7 @@ class _Gateway implements BackendAcademicWorkspaceGateway {
     String courseId,
     String id,
   ) async {
+    detailCalls++;
     if (detailError != null) throw detailError!;
     return detail ??
         PythonMoodleActivityDetail(
@@ -489,4 +639,18 @@ class _QueueCache extends _FileCache
   Future<void> enqueue(MaterialDownload download) async {
     queued.add(download);
   }
+}
+
+class _BrokenSnapshotCache extends CourseActivitySnapshotCache {
+  @override
+  Future<PythonCourseActivitySnapshot?> read(
+    String user,
+    String course,
+    String term,
+  ) async => throw StateError('local read unavailable');
+  @override
+  Future<void> write(
+    String user,
+    PythonCourseActivitySnapshot snapshot,
+  ) async => throw StateError('local storage full');
 }

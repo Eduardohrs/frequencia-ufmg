@@ -74,6 +74,13 @@ void main() {
           findsOneWidget,
         );
         expect(gateway.requested, 'poo');
+        if (!explicit) {
+          await tester.tap(find.text('Sincronizar Moodle'));
+          await tester.pumpAndSettle();
+          expect(find.text('Conectar à UFMG'), findsOneWidget);
+          await tester.pageBack();
+          await tester.pumpAndSettle();
+        }
         await tester.pageBack();
         await tester.pumpAndSettle();
         expect(find.byKey(const Key('course-hub-workspace')), findsOneWidget);
@@ -2904,6 +2911,19 @@ class _HubLogStore implements OperationalLogStore {
 
 class _WorkspaceGateway extends _UFMGGateway
     implements BackendAcademicWorkspaceGateway {
+  @override
+  Future<PythonCourseActivitySnapshot> loadCourseActivitySnapshot(
+    String id,
+  ) async {
+    requested = id;
+    return PythonCourseActivitySnapshot.fromJson({
+      'course_id': id,
+      'term': '2026-2',
+      'synced_at': '2026-10-28T12:00:00Z',
+      'activities': [],
+    });
+  }
+
   String? requested;
   @override
   Future<List<PythonMoodleActivity>> listCourseActivities(String id) async {

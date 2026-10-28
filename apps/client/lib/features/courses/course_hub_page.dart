@@ -447,14 +447,16 @@ class _CourseHubPageState extends State<CourseHubPage> {
           logger: widget.logger,
           now: widget.now,
           userId: widget.userId,
-          onConnect: widget.ufmgSessionGateway == null ? null : _openMaterials,
+          onConnect: widget.ufmgSessionGateway == null
+              ? null
+              : () => _openMaterials(manageConnection: true),
         ),
       ),
     );
     if (mounted) await _load(refresh: true);
   }
 
-  Future<void> _openMaterials() async {
+  Future<void> _openMaterials({bool manageConnection = false}) async {
     _logNavigation('materials');
     final gateway = widget.ufmgSessionGateway!;
     await Navigator.of(context).push<void>(
@@ -465,9 +467,9 @@ class _CourseHubPageState extends State<CourseHubPage> {
           logger: widget.logger,
           userId: widget.userId,
           syncSchedule: widget.ufmgSyncSchedule,
-          materialCourseId: _course.id,
-          materialCourseCode: _course.code,
-          materialCourseTerm: _course.term,
+          materialCourseId: manageConnection ? null : _course.id,
+          materialCourseCode: manageConnection ? null : _course.code,
+          materialCourseTerm: manageConnection ? null : _course.term,
         ),
       ),
     );

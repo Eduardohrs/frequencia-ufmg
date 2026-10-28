@@ -42,7 +42,7 @@ void main() {
       );
       final counts =
           jsonDecode(success['details']! as String) as Map<String, dynamic>;
-      expect(counts['deleted_document_count'], 6);
+      expect(counts['deleted_document_count'], 7);
       expect(counts['materialCatalog_count'], 1);
       expect(counts['teachingPlans_count'], 1);
       expect(counts['stage'], 'commit');
@@ -95,6 +95,7 @@ void main() {
       'users/user-1/courses/poo/academicDates',
       'users/user-1/courses/poo/materialCatalog',
       'users/user-1/courses/poo/teachingPlans',
+      'users/user-1/courses/poo/activitySnapshots',
     ]);
     expect(store.savedPaths, ['users/user-1/courses/poo']);
     expect(store.savedData.single, course.toFirestore());
@@ -104,6 +105,7 @@ void main() {
       'users/user-1/courses/poo/academicDates/child-1',
       'users/user-1/courses/poo/materialCatalog/child-1',
       'users/user-1/courses/poo/teachingPlans/child-1',
+      'users/user-1/courses/poo/activitySnapshots/child-1',
       'users/user-1/courses/poo',
     ]);
     expect(logger.events, [

@@ -104,6 +104,10 @@ final class _FirebasePythonBackendVerifier
   }
 
   @override
+  Future<PythonCourseActivitySnapshot> loadCourseActivitySnapshot(
+    String courseId,
+  ) async => (await _workspaceGateway()).loadCourseActivitySnapshot(courseId);
+  @override
   Future<List<PythonMoodleDate>> listCourseDates(String courseId) async =>
       (await _workspaceGateway()).listCourseDates(courseId);
   @override

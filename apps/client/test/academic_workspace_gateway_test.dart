@@ -45,6 +45,94 @@ PythonBackendTransport _transport(Object? Function(http.Request) body) =>
     );
 void main() {
   test(
+    'full snapshot survives serialization and rejects credentials or a different course',
+    () async {
+      final value = <String, Object?>{
+        'course_id': 'poo',
+        'term': '2026-2',
+        'synced_at': '2026-10-28T12:00:00Z',
+        'activities': [
+          {
+            ..._detail(),
+            'attachments': [
+              {
+                'name': 'teacher.pdf',
+                'url':
+                    'https://virtual.ufmg.br/20262/pluginfile.php/1/mod_assign/introattachment/0/teacher.pdf',
+              },
+            ],
+          },
+        ],
+      };
+      final snapshot = await _transport(
+        (_) => value,
+      ).workspace.loadCourseActivitySnapshot('poo');
+      expect(snapshot.activities.single.title, 'Protótipo');
+      expect(snapshot.details.single.attachmentNames, ['teacher.pdf']);
+      expect(
+        PythonCourseActivitySnapshot.fromJson(
+          snapshot.toJson(),
+        ).details.single.description,
+        'Prepare o protótipo',
+      );
+      expect(
+        jsonEncode(snapshot.toJson()),
+        isNot(contains('pluginfile.php/1')),
+      );
+      for (final invalid in [
+        {...value, 'course_id': 'other'},
+        {...value, 'course_id': '../poo'},
+        {...value, 'term': 'bad'},
+        {
+          ...value,
+          'activities': [_detail(), _detail()],
+        },
+        {
+          ...value,
+          'activities': [
+            {..._detail(), 'term': '2026-1'},
+          ],
+        },
+        {
+          ...value,
+          'activities': [
+            {
+              ..._detail(),
+              'files': [
+                {'name': 'x', 'url': 'secret'},
+              ],
+            },
+          ],
+        },
+      ]) {
+        await expectLater(
+          _transport(
+            (_) => invalid,
+          ).workspace.loadCourseActivitySnapshot('poo'),
+          throwsA(isA<PythonBackendException>()),
+        );
+      }
+      expect(
+        PythonActivitySyncSummary.fromJson({
+          'updated': 2,
+          'failed': 1,
+          'failed_courses': [],
+        }).message,
+        contains('cópias anteriores preservadas'),
+      );
+      for (final invalid in [
+        <String, Object?>{},
+        {'updated': -1, 'failed': 0, 'failed_courses': []},
+        {'updated': 1, 'failed': 0, 'failed_courses': 'bad'},
+      ]) {
+        expect(
+          () => PythonActivitySyncSummary.fromJson(invalid),
+          throwsFormatException,
+        );
+      }
+    },
+  );
+  test(
     'activity detail decodes teacher files for the existing direct-download flow',
     () async {
       final detail = await _transport(

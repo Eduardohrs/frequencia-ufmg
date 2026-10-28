@@ -1299,7 +1299,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           '${result.siga.schedules.updated} ${_plural(result.siga.schedules.updated, 'grade atualizada', 'grades atualizadas')}. '
           '${result.moodle.dates.created} ${_plural(result.moodle.dates.created, 'data importada', 'datas importadas')}. '
           '${result.teachingPlans.applied} ${_plural(result.teachingPlans.applied, 'alteração de plano aplicada', 'alterações de plano aplicadas')}. '
-          '${result.teachingPlans.reviewRequired} ${_plural(result.teachingPlans.reviewRequired, 'exceção para revisar', 'exceções para revisar')}.';
+          '${result.teachingPlans.reviewRequired} ${_plural(result.teachingPlans.reviewRequired, 'exceção para revisar', 'exceções para revisar')}. ${result.moodle.activitySnapshots?.message ?? ''}';
       _sigaBusy = false;
       _moodleBusy = false;
     });
@@ -1532,7 +1532,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               '${sync.dates.unchanged} sem alteração. '
               '${sync.dates.unmatched} ${_plural(sync.dates.unmatched, 'data não pôde ser ligada a uma disciplina', 'datas não puderam ser ligadas a uma disciplina')}. '
               '${sync.candidateTotal} ${_plural(sync.candidateTotal, 'material candidato encontrado', 'materiais candidatos encontrados')}.'
-              '$capabilitySummary';
+              '$capabilitySummary ${sync.activitySnapshots?.message ?? ''}';
         });
       }
     } catch (error) {

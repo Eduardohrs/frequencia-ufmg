@@ -1,6 +1,9 @@
 part of 'python_backend_transport.dart';
 
 abstract interface class BackendAcademicWorkspaceGateway {
+  Future<PythonCourseActivitySnapshot> loadCourseActivitySnapshot(
+    String courseId,
+  );
   Future<List<PythonMoodleDate>> listCourseDates(String courseId);
   Future<void> saveCourseDate(
     String courseId,
@@ -16,6 +19,67 @@ abstract interface class BackendAcademicWorkspaceGateway {
     String courseId,
     String sourceId,
   );
+}
+
+final class PythonCourseActivitySnapshot {
+  PythonCourseActivitySnapshot.fromJson(Map<String, Object?> value)
+    : courseId = value['course_id']! as String,
+      term = value['term']! as String,
+      syncedAt = _utcDate(value['synced_at']),
+      details = List.unmodifiable(
+        (value['activities']! as List).map(
+          (e) => PythonMoodleActivityDetail.fromJson(
+            Map<String, Object?>.from(e as Map),
+          ),
+        ),
+      ) {
+    if (!RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(courseId) ||
+        !RegExp(r'^20[2-9][0-9]-[12]$').hasMatch(term) ||
+        details.length > 500 ||
+        details.map((e) => e.activity.id).toSet().length != details.length) {
+      throw const FormatException('Invalid activity snapshot');
+    }
+    for (final raw in value['activities']! as List) {
+      if ((raw as Map)['files'] is! List ||
+          (raw['files'] as List).isNotEmpty ||
+          raw['term'] != term) {
+        throw const FormatException(
+          'Snapshot must not contain download credentials',
+        );
+      }
+    }
+  }
+  final String courseId, term;
+  final DateTime syncedAt;
+  final List<PythonMoodleActivityDetail> details;
+  List<PythonMoodleActivity> get activities => [
+    for (final detail in details) detail.activity,
+  ];
+  Map<String, Object?> toJson() => {
+    'course_id': courseId,
+    'term': term,
+    'synced_at': syncedAt.toIso8601String(),
+    'activities': [
+      for (final detail in details)
+        {
+          'source_id': detail.activity.id,
+          'title': detail.activity.title,
+          'kind': detail.activity.kind,
+          'url': detail.activity.url.toString(),
+          'origin': detail.activity.origin,
+          'description': detail.description,
+          'dates_text': detail.datesText,
+          'has_due_date': detail.hasDueDate,
+          'submission_state': detail.submissionState,
+          'submission_text': detail.submissionText,
+          'term': detail.term,
+          'attachments': [
+            for (final name in detail.attachmentNames) {'name': name},
+          ],
+          'files': [],
+        },
+    ],
+  };
 }
 
 final class PythonMoodleActivity {
@@ -78,6 +142,7 @@ final class PythonMoodleActivityDetail {
     required this.files,
     required this.attachmentCount,
     required this.term,
+    this.attachmentNames = const [],
   });
   factory PythonMoodleActivityDetail.fromJson(Map<String, Object?> value) {
     final activity = PythonMoodleActivity.fromJson(value);
@@ -121,6 +186,12 @@ final class PythonMoodleActivityDetail {
         ),
       ),
       attachmentCount: attachments.length,
+      attachmentNames: List.unmodifiable(
+        attachments.map(
+          (e) =>
+              e is Map && e['name'] is String ? e['name'] as String : 'Anexo',
+        ),
+      ),
       term: term,
     );
   }
@@ -128,6 +199,7 @@ final class PythonMoodleActivityDetail {
   final String description, datesText, submissionState, submissionText, term;
   final bool hasDueDate;
   final int attachmentCount;
+  final List<String> attachmentNames;
   final List<PythonMoodleMaterialFile> files;
 }
 
@@ -164,6 +236,14 @@ final class _AcademicWorkspaceTransport
     }
   }
 
+  @override
+  Future<PythonCourseActivitySnapshot> loadCourseActivitySnapshot(
+    String courseId,
+  ) => _read(_path(courseId, 'activities'), (value) {
+    final snapshot = PythonCourseActivitySnapshot.fromJson(value);
+    if (snapshot.courseId != courseId) throw const FormatException();
+    return snapshot;
+  });
   @override
   Future<List<PythonMoodleDate>> listCourseDates(String courseId) =>
       _read(_path(courseId, 'dates'), (value) {

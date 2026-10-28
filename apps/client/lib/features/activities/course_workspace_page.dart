@@ -4,6 +4,7 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:url_launcher/url_launcher.dart';
 import '../../backend/python_backend_transport.dart';
 import '../../data/academic_records.dart';
+import '../../data/course_activity_snapshot_cache.dart';
 import '../../data/material_file_cache.dart';
 import '../../data/material_file_cache_factory.dart';
 import '../../observability/app_logger.dart';
@@ -22,8 +23,10 @@ class CourseWorkspacePage extends StatefulWidget {
     this.onConnect,
     this.materialFileCache,
     this.openExternalUri,
+    this.snapshotCache,
     super.key,
   });
+  final CourseActivitySnapshotCache? snapshotCache;
   final CourseRecord course;
   final BackendAcademicWorkspaceGateway gateway;
   final AppLogger logger;
@@ -40,6 +43,11 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
   _Section _section = _Section.activities;
   final _loaded = <_Section>{}, _loading = <_Section>{}, _failed = <_Section>{};
   List<PythonMoodleActivity> _activities = [];
+  PythonCourseActivitySnapshot? _snapshot;
+  bool _localSnapshot = false;
+  bool _cacheWriteFailed = false;
+  late final _snapshotCache =
+      widget.snapshotCache ?? CourseActivitySnapshotCache();
   List<PythonMoodleDate> _dates = [];
   Map<String, Object?>? _plan;
   bool _saving = false;
@@ -78,10 +86,41 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
     try {
       switch (section) {
         case _Section.activities:
-          final entries = await widget.gateway.listCourseActivities(
+          await _restoreSnapshot();
+          final snapshot = await widget.gateway.loadCourseActivitySnapshot(
             widget.course.id,
           );
-          if (mounted) _activities = entries;
+          if (snapshot.term != widget.course.term) {
+            throw const FormatException('Snapshot semester mismatch');
+          }
+          fields['snapshot_synced_at'] = snapshot.syncedAt.toIso8601String();
+          fields['snapshot_source'] = 'server';
+          if (mounted) {
+            _snapshot = snapshot;
+            _activities = snapshot.activities;
+            _localSnapshot = false;
+          }
+          if (widget.userId case final user?) {
+            try {
+              await _snapshotCache.write(user, snapshot);
+              if (mounted) _cacheWriteFailed = false;
+              emitOperationalEvent(
+                widget.logger,
+                'activity_snapshot_cache_written',
+                {...fields, 'item_count': snapshot.details.length},
+              );
+            } catch (error, stack) {
+              recordOperationalFailure(
+                widget.logger,
+                error,
+                stack,
+                'activity_snapshot_cache_write',
+                fields,
+                failureCode: 'activity_snapshot_cache_write_failed',
+              );
+              if (mounted) _cacheWriteFailed = true;
+            }
+          }
         case _Section.dates:
           final entries = await widget.gateway.listCourseDates(
             widget.course.id,
@@ -124,6 +163,73 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
       if (mounted) setState(() => _failed.add(section));
     } finally {
       if (mounted) setState(() => _loading.remove(section));
+    }
+  }
+
+  Future<void> _restoreSnapshot() async {
+    final user = widget.userId;
+    if (user == null || _snapshot != null) return;
+    final fields = _fields('activity_snapshot_cache_read');
+    try {
+      final snapshot = await _snapshotCache.read(
+        user,
+        widget.course.id,
+        widget.course.term,
+      );
+      emitOperationalEvent(widget.logger, 'activity_snapshot_cache_read', {
+        ...fields,
+        'cache_hit': snapshot != null,
+        'snapshot_synced_at': ?snapshot?.syncedAt.toIso8601String(),
+      });
+      if (snapshot != null && mounted) {
+        setState(() {
+          _snapshot = snapshot;
+          _activities = snapshot.activities;
+          _localSnapshot = true;
+          _loaded.add(_Section.activities);
+        });
+      }
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'activity_snapshot_cache_read',
+        fields,
+        failureCode: 'activity_snapshot_cache_read_failed',
+      );
+    }
+  }
+
+  Future<void> _requestSync() async {
+    final fields = _fields('sync_navigation');
+    emitOperationalEvent(
+      widget.logger,
+      'course_activity_sync_requested',
+      fields,
+    );
+    try {
+      await widget.onConnect!();
+      emitOperationalEvent(
+        widget.logger,
+        'course_activity_sync_returned',
+        fields,
+      );
+      if (mounted) await _load(_section);
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'course_activity_sync_navigation',
+        fields,
+        failureCode: 'course_activity_sync_navigation_failed',
+      );
+      if (mounted) {
+        _message(
+          'Não foi possível abrir a sincronização. A cópia salva continua disponível.',
+        );
+      }
     }
   }
 
@@ -239,23 +345,23 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
 
   Future<void> _activity(PythonMoodleActivity activity) async {
     if (_openingActivity != null) return;
-    setState(() => _openingActivity = activity.id);
+    _openingActivity = activity.id;
     final fields = {..._fields('activity_detail'), 'activity_id': activity.id};
     final watch = Stopwatch()..start();
     emitOperationalEvent(widget.logger, 'course_activity_open_started', fields);
     try {
-      final detail = await widget.gateway.loadCourseActivity(
-        widget.course.id,
-        activity.id,
+      final detail = _snapshot!.details.firstWhere(
+        (e) => e.activity.id == activity.id,
       );
       emitOperationalEvent(widget.logger, 'course_activity_open_succeeded', {
         ...fields,
         'duration_ms': watch.elapsedMilliseconds,
+        'source': 'snapshot',
+        'synced_at': _snapshot!.syncedAt.toIso8601String(),
         'submission_state': detail.submissionState,
         'attachment_count': detail.attachmentCount,
       });
       if (!mounted) return;
-      setState(() => _openingActivity = null);
       await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
@@ -304,16 +410,12 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
                     'Anexos',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  if (detail.files.isEmpty)
-                    const Text(
-                      'Não foi possível autorizar os anexos. Reconecte à UFMG e tente novamente.',
-                    ),
-                  for (final file in detail.files)
+                  for (var i = 0; i < detail.attachmentNames.length; i++)
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: Text(file.name),
+                      title: Text(detail.attachmentNames[i]),
                       trailing: const Icon(Icons.download_outlined),
-                      onTap: () => _download(detail, file),
+                      onTap: () => _downloadSnapshotAttachment(detail, i),
                     ),
                 ],
               ],
@@ -321,22 +423,58 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
           ),
         ),
       );
+    } finally {
+      _openingActivity = null;
+    }
+  }
+
+  Future<void> _downloadSnapshotAttachment(
+    PythonMoodleActivityDetail saved,
+    int index,
+  ) async {
+    final fields = {
+      ..._fields('saved_attachment_authorization'),
+      'activity_id': saved.activity.id,
+      'attachment_index': index,
+      'file_name': saved.attachmentNames[index],
+    };
+    final watch = Stopwatch()..start();
+    emitOperationalEvent(
+      widget.logger,
+      'course_activity_attachment_authorization_started',
+      fields,
+    );
+    try {
+      final authorized = await widget.gateway.loadCourseActivity(
+        widget.course.id,
+        saved.activity.id,
+      );
+      final matching = authorized.files
+          .where((file) => file.name == saved.attachmentNames[index])
+          .toList();
+      if (matching.length != 1) {
+        throw StateError('saved_attachment_authorization_unavailable');
+      }
+      emitOperationalEvent(
+        widget.logger,
+        'course_activity_attachment_authorization_succeeded',
+        {...fields, 'duration_ms': watch.elapsedMilliseconds},
+      );
+      await _download(authorized, matching.single);
     } catch (error, stack) {
       recordOperationalFailure(
         widget.logger,
         error,
         stack,
-        'course_activity_open',
+        'saved_attachment_authorization',
         {...fields, 'duration_ms': watch.elapsedMilliseconds},
-        failureCode: 'course_activity_open_failed',
+        failureCode: 'saved_attachment_authorization_failed',
       );
       if (mounted) {
         _message(
-          'Não foi possível consultar a atividade. Verifique sua conexão UFMG.',
+          'Não foi possível autorizar os anexos. O enunciado salvo continua disponível.',
         );
       }
-    } finally {
-      if (mounted) setState(() => _openingActivity = null);
     }
   }
 
@@ -448,10 +586,7 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
                           ),
                           if (widget.onConnect != null)
                             TextButton(
-                              onPressed: () async {
-                                await widget.onConnect!();
-                                if (mounted) await _load(_section);
-                              },
+                              onPressed: _requestSync,
                               child: const Text('Conexão UFMG'),
                             ),
                         ],
@@ -476,6 +611,29 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
   Widget _activityList() => ListView(
     padding: const EdgeInsets.all(20),
     children: [
+      if (widget.onConnect != null)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _requestSync,
+            icon: const Icon(Icons.sync),
+            label: const Text('Sincronizar Moodle'),
+          ),
+        ),
+      if (_cacheWriteFailed)
+        const Padding(
+          padding: EdgeInsets.only(bottom: 16),
+          child: Text(
+            'Não foi possível salvar esta cópia no dispositivo. Ela continua disponível no servidor.',
+          ),
+        ),
+      if (_snapshot case final snapshot?)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Text(
+            '${_localSnapshot ? 'Cópia local' : 'Última sincronização'}: ${_displayDate(snapshot.syncedAt)}. Situação de envio registrada nessa data.',
+          ),
+        ),
       if (_loaded.contains(_Section.activities) && _activities.isEmpty)
         const Text('Nenhuma atividade disponível nesta disciplina.'),
       for (final activity in _activities)
@@ -486,12 +644,7 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
           subtitle: Text(
             '${activity.kind == 'assign' ? 'Tarefa · consultar enunciado e envio' : 'Questionário'}${activity.origin == 'metaturma' ? ' · Metaturma' : ''}',
           ),
-          trailing: _openingActivity == activity.id
-              ? const SizedBox.square(
-                  dimension: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.chevron_right),
+          trailing: const Icon(Icons.chevron_right),
           onTap: _openingActivity == null ? () => _activity(activity) : null,
         ),
     ],
