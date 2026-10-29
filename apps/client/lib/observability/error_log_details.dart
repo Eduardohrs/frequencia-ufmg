@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -24,7 +25,7 @@ final class ErrorLogDetails {
         type: error.runtimeType.toString(),
         code: sanitizeLogText(error.logCode),
         message: sanitizeLogText(error.logMessage),
-        details: sanitizeLogText(error.logDetails),
+        details: sanitizeDiagnosticDetails(error.logDetails),
       );
     }
     if (error is GoogleSignInException) {
@@ -32,7 +33,7 @@ final class ErrorLogDetails {
         type: error.runtimeType.toString(),
         code: error.code.name,
         message: sanitizeLogText(error.description),
-        details: sanitizeLogText(error.details?.toString()),
+        details: sanitizeDiagnosticDetails(error.details?.toString()),
       );
     }
     if (error is FirebaseAuthException) {
@@ -54,7 +55,7 @@ final class ErrorLogDetails {
         type: error.runtimeType.toString(),
         code: error.code,
         message: sanitizeLogText(error.message),
-        details: sanitizeLogText(error.details?.toString()),
+        details: sanitizeDiagnosticDetails(error.details?.toString()),
       );
     }
     return ErrorLogDetails(
@@ -97,9 +98,16 @@ final class SanitizedAppException implements Exception {
   String toString() => details.summary;
 }
 
-String? sanitizeLogText(String? value) {
+String? sanitizeLogText(String? value, {int maximumLength = 500}) {
   if (value == null) return null;
   var sanitized = value;
+  sanitized = sanitized.replaceAllMapped(
+    RegExp(
+      r'("(?:password|passwd|token|access[_-]?token|refresh[_-]?token|id[_-]?token|authorization|cookie|set[_-]?cookie|api[_-]?key|client[_-]?secret)"\s*:\s*)"(?:\\.|[^"\\])*"',
+      caseSensitive: false,
+    ),
+    (match) => '${match.group(1)}"$_redacted"',
+  );
   sanitized = sanitized.replaceAll(
     RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]+', caseSensitive: false),
     'Bearer $_redacted',
@@ -119,9 +127,63 @@ String? sanitizeLogText(String? value) {
     RegExp(r'\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b', caseSensitive: false),
     _redacted,
   );
-  return _limit(sanitized, 500);
+  return _limit(sanitized, maximumLength);
 }
 
 String _limit(String value, int maximumLength) => value.length <= maximumLength
     ? value
     : '${value.substring(0, maximumLength - 3)}...';
+
+const diagnosticDetailsLimit = 8192;
+final _diagnosticSecretKey = RegExp(
+  r'^(password|passwd|token|access[_-]?token|id[_-]?token|refresh[_-]?token|app[_-]?check[_-]?token|authorization|cookie|set[_-]?cookie|client[_-]?secret|api[_-]?key)$',
+  caseSensitive: false,
+);
+
+/// Keep structured reports parseable and bounded; never cut JSON mid-field.
+String? sanitizeDiagnosticDetails(String? value) {
+  if (value == null) return null;
+  String sanitized;
+  var truncated = false;
+  try {
+    sanitized = jsonEncode(_diagnosticNode(jsonDecode(value), 0));
+  } on FormatException {
+    sanitized = sanitizeLogText(value, maximumLength: diagnosticDetailsLimit)!;
+    truncated = value.length > diagnosticDetailsLimit;
+  }
+  if (!truncated && utf8.encode(sanitized).length <= diagnosticDetailsLimit) {
+    return sanitized;
+  }
+  return jsonEncode({
+    'details_truncated': true,
+    'original_length': value.length,
+    'preview': sanitized.substring(
+      0,
+      sanitized.length < 512 ? sanitized.length : 512,
+    ),
+  });
+}
+
+Object? _diagnosticNode(Object? value, int depth) {
+  if (depth > 8) return '[MAX_DEPTH]';
+  if (value is Map) {
+    return <String, Object?>{
+      for (final entry in value.entries.take(64))
+        entry.key
+            .toString(): _diagnosticSecretKey.hasMatch(entry.key.toString())
+            ? _redacted
+            : _diagnosticNode(entry.value, depth + 1),
+      if (value.length > 64) 'fields_omitted': value.length - 64,
+    };
+  }
+  if (value is List) {
+    return [
+      for (final item in value.take(64)) _diagnosticNode(item, depth + 1),
+      if (value.length > 64) {'items_omitted': value.length - 64},
+    ];
+  }
+  if (value is String) {
+    return sanitizeLogText(value, maximumLength: diagnosticDetailsLimit);
+  }
+  return value;
+}

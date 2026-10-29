@@ -43,4 +43,10 @@ class BackgroundLocationProofTest {
         assertFalse(BackgroundProofPolicy.interrupted("running", 20, 20, 110, 100))
         assertFalse(BackgroundProofPolicy.interrupted("running", 20, 30, 90, 100))
     }
+    @Test fun `scheduled foreground location respects Android background launch prerequisites`() {
+        assertFalse(BackgroundProofPolicy.canStartForegroundCapture(37, false, false))
+        assertTrue(BackgroundProofPolicy.canStartForegroundCapture(37, true, false))
+        assertTrue(BackgroundProofPolicy.canStartForegroundCapture(37, false, true))
+        assertTrue(BackgroundProofPolicy.canStartForegroundCapture(30, false, false))
+    }
 }

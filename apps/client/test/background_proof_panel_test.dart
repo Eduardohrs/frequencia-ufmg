@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:convert';
 import 'package:frequencia_ufmg/observability/firestore_app_logger.dart';
 import 'package:frequencia_ufmg/observability/operational_log_store.dart';
@@ -212,6 +213,60 @@ void main() {
       expect(details['network_outcome'], 'location_unavailable');
       expect(details['process_exit_reason'], 3);
       expect(row['correlationId'], 'proof-serialized');
+    },
+  );
+  testWidgets(
+    'the complete native report survives persisted logging at production size',
+    (tester) async {
+      final report =
+          jsonDecode(
+                File(
+                  'test/fixtures/background_location_report.json',
+                ).readAsStringSync(),
+              )
+              as Map<String, dynamic>;
+      expect(jsonEncode(report).length, greaterThan(500));
+      final store = ProofLogStore();
+      final logger = FirestoreAppLogger(
+        store: store,
+        currentUserId: () => 'owner',
+        platform: 'android',
+      );
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (_) async => report);
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: BackgroundProofPanel(logger: logger)),
+        ),
+      );
+      await tester.tap(find.text('Consultar resultado'));
+      await tester.pumpAndSettle();
+      final persisted =
+          jsonDecode(store.rows.last['details'] as String)
+              as Map<String, dynamic>;
+      persisted.remove('request_id');
+      expect(persisted, report);
+      expect(store.rows.last['correlationId'], 'background-proof-fixture');
+      await logger.recordError(
+        StateError('report delivery failed'),
+        StackTrace.current,
+        context: 'background_proof_read',
+        parameters: {
+          'operation_id': 'background-proof-fixture',
+          'screen': 'permissions',
+          'action': 'read',
+          'failure_code': 'report_delivery_failed',
+          'details': jsonEncode(report),
+        },
+      );
+      expect(jsonDecode(store.rows.last['details'] as String), report);
+      expect(store.rows.last['screen'], 'permissions');
+      expect(store.rows.last['action'], 'read');
+      expect(store.rows.last['failureCode'], 'report_delivery_failed');
     },
   );
 }
