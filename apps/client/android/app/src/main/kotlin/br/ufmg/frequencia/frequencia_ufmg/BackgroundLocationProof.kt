@@ -9,6 +9,7 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import android.os.SystemClock
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
@@ -53,8 +54,27 @@ class BackgroundLocationProof(private val context: Context) {
                         }
                     }, ContextCompat.getMainExecutor(context))
                 }
-                "read" -> result.success(JSONObject(context.getSharedPreferences(STORE, 0)
-                    .getString("report", "{}")!!).toMap())
+                "read" -> {
+                    val report = JSONObject(context.getSharedPreferences(STORE, 0).getString("report", "{}")!!)
+                    if (Build.VERSION.SDK_INT >= 30 && report.optString("status") == "running") {
+                        try {
+                            val workerPid = report.optInt("process_id")
+                            if (workerPid > 0) {
+                                val exit = context.getSystemService(ActivityManager::class.java)
+                                    .getHistoricalProcessExitReasons(context.packageName, workerPid, 1).firstOrNull()
+                                if (exit != null && BackgroundProofPolicy.interrupted(report.optString("status"), workerPid,
+                                    android.os.Process.myPid(), exit.timestamp, report.optLong("started_at_ms"))) {
+                                    report.put("status", "interrupted_process_exit").put("previous_status", "running")
+                                        .put("process_exit_reason", exit.reason).put("process_exit_at_ms", exit.timestamp)
+                                        .put("process_exit_description", exit.description?.take(300))
+                                }
+                            }
+                        } catch (error: Exception) {
+                            report.put("exit_lookup_error", error.javaClass.simpleName)
+                        }
+                    }
+                    result.success(report.toMap())
+                }
                 else -> result.notImplemented()
             }
         } catch (error: Exception) {
@@ -112,7 +132,7 @@ class BackgroundLocationProofWorker(context: Context, parameters: WorkerParamete
         }
         try {
             state("start")
-            report.put("started_at_ms", System.currentTimeMillis())
+            report.put("started_at_ms", System.currentTimeMillis()).put("process_id", android.os.Process.myPid())
                 .put("queue_wait_ms", System.currentTimeMillis() - report.optLong("scheduled_at_ms"))
                 .put("android_sdk", Build.VERSION.SDK_INT)
             val manager = context.getSystemService(LocationManager::class.java)
@@ -123,34 +143,60 @@ class BackgroundLocationProofWorker(context: Context, parameters: WorkerParamete
             BackgroundProofPolicy.blocked(precise, background, services)?.let { return save(it) }
             stage = "location_fix"
             save("running")
-            val provider = when {
-                manager.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
-                manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
-                else -> return save("provider_unavailable")
+            val power = context.getSystemService(PowerManager::class.java)
+            val mode = if (Build.VERSION.SDK_INT >= 28) power.locationPowerSaveMode else 0
+            val gps = manager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+            val network = manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+            report.put("power_save_mode", power.isPowerSaveMode).put("location_power_save_mode", mode)
+                .put("interactive", power.isInteractive)
+                .put("battery_unrestricted", power.isIgnoringBatteryOptimizations(context.packageName))
+                .put("gps_enabled", gps).put("network_enabled", network)
+            val providers = BackgroundProofPolicy.providers(gps, network, mode, power.isInteractive,
+                !report.optBoolean("background_start"))
+            if (providers.isEmpty()) return save(if (gps || network) "power_save_location_blocked" else "provider_unavailable")
+            var location: Location? = null
+            var lastFailure = "location_unavailable"
+            for ((index, provider) in providers.withIndex()) {
+                if (isStopped) return save("interrupted")
+                report.put("provider", provider).put("provider_attempt", index + 1).put("provider_timeout_ms", 20000)
+                val attemptStarted = SystemClock.elapsedRealtime()
+                save("running")
+                val latch = CountDownLatch(1)
+                val reading = AtomicReference<Location?>()
+                val signal = CancellationSignal()
+                activeSignal = signal
+                activeLatch = latch
+                val completed: Boolean
+                try {
+                    LocationManagerCompat.getCurrentLocation(manager, provider, signal,
+                        ContextCompat.getMainExecutor(context)) { fix -> reading.set(fix); latch.countDown() }
+                    completed = latch.await(20, TimeUnit.SECONDS)
+                } finally {
+                    signal.cancel()
+                    activeSignal = null
+                    activeLatch = null
+                }
+                if (isStopped) return save("interrupted")
+                val fix = reading.get()
+                lastFailure = when {
+                    !completed -> "location_timeout"
+                    fix == null -> "location_unavailable"
+                    else -> BackgroundProofPolicy.fix(
+                        (SystemClock.elapsedRealtimeNanos() - fix.elapsedRealtimeNanos) / 1000000,
+                        fix.accuracy, fix.elapsedRealtimeNanos >= startedAtNanos) ?: "succeeded"
+                }
+                report.put("${provider}_outcome", lastFailure)
+                    .put("${provider}_duration_ms", SystemClock.elapsedRealtime() - attemptStarted)
+                if (lastFailure == "succeeded") { location = fix; break }
+                save("running")
             }
-            report.put("provider", provider).put("timeout_ms", 45000)
-            val latch = CountDownLatch(1)
-            val reading = AtomicReference<Location?>()
-            val signal = CancellationSignal()
-            activeSignal = signal
-            activeLatch = latch
-            try {
-                LocationManagerCompat.getCurrentLocation(manager, provider, signal,
-                    ContextCompat.getMainExecutor(context)) { location -> reading.set(location); latch.countDown() }
-                if (!latch.await(45, TimeUnit.SECONDS)) return save("location_timeout")
-            } finally {
-                signal.cancel()
-                activeSignal = null
-                activeLatch = null
-            }
-            if (isStopped) return save("interrupted")
-            val location = reading.get() ?: return save("location_unavailable")
+            val fix = location ?: return save(lastFailure)
             state("capture")
-            val age = (SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) / 1000000
-            report.put("fix_age_ms", age).put("accuracy_m", location.accuracy.toDouble())
-                .put("fix_recorded_at_ms", location.time).put("captured_at_ms", System.currentTimeMillis())
+            val age = (SystemClock.elapsedRealtimeNanos() - fix.elapsedRealtimeNanos) / 1000000
+            report.put("fix_age_ms", age).put("accuracy_m", fix.accuracy.toDouble())
+                .put("fix_recorded_at_ms", fix.time).put("captured_at_ms", System.currentTimeMillis())
             stage = "validation"
-            val status = BackgroundProofPolicy.fix(age, location.accuracy, location.elapsedRealtimeNanos >= startedAtNanos) ?: "succeeded"
+            val status = BackgroundProofPolicy.fix(age, fix.accuracy, fix.elapsedRealtimeNanos >= startedAtNanos) ?: "succeeded"
             report.put("background_proven", BackgroundProofPolicy.proven(status,
                 report.optBoolean("screen_locked_start") || report.optBoolean("background_start"),
                 report.optBoolean("screen_locked_capture") || report.optBoolean("background_capture")))

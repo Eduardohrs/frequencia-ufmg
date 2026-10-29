@@ -26,4 +26,21 @@ class BackgroundLocationProofTest {
         assertFalse(BackgroundProofPolicy.proven("succeeded", true, false))
         assertFalse(BackgroundProofPolicy.proven("location_timeout", true, true))
     }
+    @Test fun `screen off battery saver never selects disabled GPS`() {
+        assertEquals(listOf("network"), BackgroundProofPolicy.providers(true, true, 1, false, false))
+        assertEquals(listOf("gps", "network"), BackgroundProofPolicy.providers(true, true, 1, true, false))
+        assertEquals(emptyList<String>(), BackgroundProofPolicy.providers(true, true, 2, false, false))
+        assertEquals(emptyList<String>(), BackgroundProofPolicy.providers(true, true, 3, true, false))
+        assertEquals(listOf("gps"), BackgroundProofPolicy.providers(true, false, 3, true, true))
+        assertEquals(listOf("network"), BackgroundProofPolicy.providers(false, true, 0, false, false))
+        assertEquals(emptyList<String>(), BackgroundProofPolicy.providers(false, false, 0, false, false))
+        assertEquals(listOf("gps"), BackgroundProofPolicy.providers(true, false, 4, false, false))
+    }
+    @Test fun `only a matching exited worker can turn running into interrupted`() {
+        assertTrue(BackgroundProofPolicy.interrupted("running", 20, 30, 110, 100))
+        assertFalse(BackgroundProofPolicy.interrupted("succeeded", 20, 30, 110, 100))
+        assertFalse(BackgroundProofPolicy.interrupted("running", 0, 30, 110, 100))
+        assertFalse(BackgroundProofPolicy.interrupted("running", 20, 20, 110, 100))
+        assertFalse(BackgroundProofPolicy.interrupted("running", 20, 30, 90, 100))
+    }
 }

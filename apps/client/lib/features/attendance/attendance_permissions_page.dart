@@ -318,10 +318,13 @@ class _AttendancePermissionsPageState extends State<AttendancePermissionsPage>
                         ? 'Sem otimização de bateria'
                         : 'Otimizada pelo Android',
                     description:
-                        'Se tarefas em segundo plano forem adiadas, revise as opções de bateria deste aplicativo. Esse ajuste é opcional.',
+                        '${s.batteryUnrestricted ? 'Acesso sem restrições configurado.' : 'Para reduzir adiamentos, abra Bateria e selecione Sem restrições. Você pode continuar usando o registro manual sem alterar isso.'}'
+                        '${s.powerSaveMode ? ' A economia de energia está ligada e ainda pode limitar a localização com a tela apagada.' : ''}',
                     icon: Icons.battery_saver_outlined,
                     granted: s.batteryUnrestricted,
-                    button: 'Revisar bateria',
+                    button: s.batteryUnrestricted
+                        ? 'Configurações de bateria'
+                        : 'Permitir sem restrições',
                     action: AttendancePermissionAction.batterySettings,
                   ),
                 ),

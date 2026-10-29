@@ -183,6 +183,9 @@ void main() {
               'duration_ms': 45000,
               'provider': 'gps',
               'queue_wait_ms': 123000,
+              'location_power_save_mode': 1,
+              'network_outcome': 'location_unavailable',
+              'process_exit_reason': 3,
             },
           );
       addTearDown(
@@ -205,6 +208,9 @@ void main() {
       expect(details['duration_ms'], 45000);
       expect(details['queue_wait_ms'], 123000);
       expect(details['provider'], 'gps');
+      expect(details['location_power_save_mode'], 1);
+      expect(details['network_outcome'], 'location_unavailable');
+      expect(details['process_exit_reason'], 3);
       expect(row['correlationId'], 'proof-serialized');
     },
   );
