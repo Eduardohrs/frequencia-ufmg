@@ -158,7 +158,8 @@ class _CoursePageState extends State<CoursePage> {
         builder: (context) => Positioned(
           left: 0,
           right: 0,
-          bottom: MediaQuery.sizeOf(context).width < 840 ? 80 : 12,
+          // Reserve the navigation + floating-action band on every route.
+          bottom: 160,
           child: AcademicSyncBanner(
             controller: _academicSync!,
             onReview: () => unawaited(_openUFMGConnection()),
