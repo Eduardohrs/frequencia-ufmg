@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 
 import 'package:flutter/material.dart';
 
@@ -8,6 +9,7 @@ import '../../data/campus_location.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import 'campus_location_page.dart';
+import 'background_proof_panel.dart';
 
 class AttendancePermissionsPage extends StatefulWidget {
   const AttendancePermissionsPage({
@@ -324,6 +326,8 @@ class _AttendancePermissionsPageState extends State<AttendancePermissionsPage>
                   ),
                 ),
               ],
+              if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+                BackgroundProofPanel(logger: widget.logger),
             ],
           ),
         ),
