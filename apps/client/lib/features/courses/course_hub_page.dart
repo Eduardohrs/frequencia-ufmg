@@ -36,6 +36,8 @@ class CourseHubPage extends StatefulWidget {
     required this.logger,
     required this.now,
     this.initialSessionsByCourse,
+    this.calendarNavigation,
+    this.onOpenCourse,
     this.overviewUpdates,
     this.refreshOverview,
     this.workspaceGateway,
@@ -58,6 +60,8 @@ class CourseHubPage extends StatefulWidget {
   final ValueListenable<AcademicOverviewSnapshot?>? overviewUpdates;
   final Future<void> Function()? refreshOverview;
   final BackendAcademicWorkspaceGateway? workspaceGateway;
+  final CalendarNavigationState? calendarNavigation;
+  final Future<void> Function(CourseRecord)? onOpenCourse;
   final CourseRecord course;
   final List<CourseRecord> allCourses;
   final CourseRepository courseRepository;
@@ -155,10 +159,18 @@ class _CourseHubPageState extends State<CourseHubPage> {
     emitOperationalEvent(widget.logger, 'course_hub_read_started', fields);
     try {
       final result = await read();
-      if (!mounted || generation != _generation) return;
+      if (!mounted || generation != _generation) {
+        emitOperationalEvent(widget.logger, 'course_hub_read_succeeded', {
+          ...fields,
+          'duration_ms': watch.elapsedMilliseconds,
+          'applied_to_view': false,
+        });
+        return;
+      }
       setState(() => adopt(result));
       emitOperationalEvent(widget.logger, 'course_hub_read_succeeded', {
         ...fields,
+        'applied_to_view': true,
         'duration_ms': watch.elapsedMilliseconds,
       });
     } catch (error, stack) {
@@ -274,7 +286,14 @@ class _CourseHubPageState extends State<CourseHubPage> {
     emitOperationalEvent(widget.logger, 'course_hub_catalog_started', fields);
     try {
       final catalog = await gateway.listMoodleMaterialCatalog();
-      if (!mounted || generation != _catalogGeneration) return;
+      if (!mounted || generation != _catalogGeneration) {
+        emitOperationalEvent(widget.logger, 'course_hub_catalog_succeeded', {
+          ...fields,
+          'duration_ms': watch.elapsedMilliseconds,
+          'applied_to_view': false,
+        });
+        return;
+      }
       PythonMoodleCourseContent? match;
       for (final item in catalog.courses) {
         if (_matchesCourse(item)) {
@@ -290,6 +309,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
         ...fields,
         'duration_ms': watch.elapsedMilliseconds,
         'material_count': match?.candidates.length ?? 0,
+        'applied_to_view': true,
       });
     } catch (error, stack) {
       recordOperationalFailure(
@@ -372,11 +392,15 @@ class _CourseHubPageState extends State<CourseHubPage> {
     return null;
   }
 
-  Future<void> _openCalendar() async {
+  Future<void> _openCalendar([AgendaEntry? event]) async {
     _logNavigation('calendar');
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => GeneralCalendarPage(
+          navigationState: widget.calendarNavigation,
+          onOpenCourse: widget.onOpenCourse,
+          initialDate: event?.startsAt,
+          logger: widget.logger,
           overviewUpdates: _localSessionsRefreshed
               ? null
               : widget.overviewUpdates,
@@ -795,6 +819,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
                       _EventRow(
                         session: session,
                         date: _shortDate(session.startsAt),
+                        onOpen: () => _openCalendar(session),
                       ),
                   ],
                 ),
@@ -1046,46 +1071,54 @@ class _FrequencyFigure extends StatelessWidget {
 }
 
 class _EventRow extends StatelessWidget {
-  const _EventRow({required this.session, required this.date});
+  const _EventRow({
+    required this.session,
+    required this.date,
+    required this.onOpen,
+  });
+  final VoidCallback onOpen;
   final AgendaEntry session;
   final String date;
   @override
   Widget build(BuildContext context) {
     final parts = date.split('/');
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 11),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: _semantic(context).separator)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 46,
-            height: 50,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: _semantic(context).subtleSurface,
-              borderRadius: BorderRadius.circular(13),
+    return InkWell(
+      onTap: onOpen,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 11),
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: _semantic(context).separator)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 46,
+              height: 50,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _semantic(context).subtleSurface,
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Text(
+                '${parts[0]}\n${parts[1]}',
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
             ),
-            child: Text(
-              '${parts[0]}\n${parts[1]}',
-              textAlign: TextAlign.center,
-              style: Theme.of(
-                context,
-              ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Text(
+                session.title!,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              ),
             ),
-          ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Text(
-              session.title!,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-            ),
-          ),
-          const Icon(Icons.chevron_right, size: 20),
-        ],
+            const Icon(Icons.chevron_right, size: 20),
+          ],
+        ),
       ),
     );
   }

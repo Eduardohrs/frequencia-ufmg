@@ -1,3 +1,6 @@
+import '../../observability/app_logger.dart';
+import '../../observability/audited_operation.dart';
+import '../../observability/operation_diagnostics.dart';
 import 'package:flutter/foundation.dart';
 import '../../data/python_overview_repository.dart';
 import '../../backend/python_backend_transport.dart';
@@ -12,6 +15,15 @@ import '../../design/course_identity.dart';
 
 enum CalendarDisplay { month, list }
 
+enum CalendarEntryType { all, lesson, assessment, deadline }
+
+class CalendarNavigationState {
+  String? courseId;
+  DateTime? month;
+  CalendarDisplay display = CalendarDisplay.month;
+  CalendarEntryType type = CalendarEntryType.all;
+}
+
 class GeneralCalendarPage extends StatefulWidget {
   const GeneralCalendarPage({
     required this.courses,
@@ -19,6 +31,10 @@ class GeneralCalendarPage extends StatefulWidget {
     required this.location,
     required this.now,
     this.initialCourseId,
+    this.navigationState,
+    this.logger,
+    this.onOpenCourse,
+    this.initialDate,
     this.initialSessionsByCourse,
     this.overviewUpdates,
     this.datesByCourse = const {},
@@ -32,6 +48,10 @@ class GeneralCalendarPage extends StatefulWidget {
   final tz.Location location;
   final DateTime Function() now;
   final String? initialCourseId;
+  final DateTime? initialDate;
+  final CalendarNavigationState? navigationState;
+  final AppLogger? logger;
+  final Future<void> Function(CourseRecord)? onOpenCourse;
   final Map<String, List<SessionRecord>>? initialSessionsByCourse;
   final Map<String, List<PythonMoodleDate>> datesByCourse;
   final Set<String> unavailableDateCourses;
@@ -47,13 +67,23 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
   CalendarDisplay _display = CalendarDisplay.month;
   bool _loading = true;
   bool _failed = false;
+  int _loadVersion = 0;
+  CalendarEntryType _type = CalendarEntryType.all;
 
   @override
   void initState() {
     super.initState();
-    _courseId = widget.initialCourseId;
+    _courseId = widget.initialCourseId ?? widget.navigationState?.courseId;
+    if (!widget.courses.any((course) => course.id == _courseId)) {
+      _courseId = null;
+    }
+    _display = widget.navigationState?.display ?? CalendarDisplay.month;
+    _type = widget.navigationState?.type ?? CalendarEntryType.all;
     final localNow = tz.TZDateTime.from(widget.now(), widget.location);
-    _month = DateTime(localNow.year, localNow.month);
+    final date =
+        widget.initialDate ?? widget.navigationState?.month ?? localNow;
+    _month = DateTime(date.year, date.month);
+    _remember();
     widget.overviewUpdates?.addListener(_overviewChanged);
     _load();
   }
@@ -74,7 +104,47 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
       widget.overviewUpdates?.value?.unavailableDateCourses ??
       widget.unavailableDateCourses;
 
+  void _event(String event, Map<String, Object> fields) {
+    final logger = widget.logger;
+    if (logger != null) {
+      emitOperationalEvent(logger, event, {
+        'screen': 'calendar',
+        'operation_id': newCorrelationId('calendar'),
+        'course_id': _courseId ?? 'all',
+        ...fields,
+      });
+    }
+  }
+
+  void _remember() {
+    final state = widget.navigationState;
+    if (state != null) {
+      state.courseId = _courseId;
+      state.month = _month;
+      state.display = _display;
+      state.type = _type;
+    }
+  }
+
+  void _change(VoidCallback update, String action) {
+    setState(update);
+    _remember();
+    _event('calendar_view_changed', {
+      'action': action,
+      'month': _month.toIso8601String(),
+      'display': _display.name,
+      'type': _type.name,
+    });
+  }
+
   Future<void> _load() async {
+    final version = ++_loadVersion;
+    final watch = Stopwatch()..start();
+    final operationId = newCorrelationId('calendar_read');
+    _event('calendar_read_started', {
+      'load_version': version,
+      'operation_id': operationId,
+    });
     setState(() {
       _loading = true;
       _failed = false;
@@ -100,20 +170,41 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
       ]);
       final entries = loaded.expand((items) => items).toList()
         ..sort((a, b) => a.session.startsAt.compareTo(b.session.startsAt));
-      if (mounted) setState(() => _entries = entries);
-    } catch (_) {
-      if (mounted) setState(() => _failed = true);
+      final applied = mounted && version == _loadVersion;
+      if (applied) setState(() => _entries = entries);
+      _event('calendar_read_succeeded', {
+        'load_version': version,
+        'operation_id': operationId,
+        'applied_to_view': applied,
+        'item_count': entries.length,
+        'duration_ms': watch.elapsedMilliseconds,
+      });
+    } catch (error, stack) {
+      final logger = widget.logger;
+      if (logger != null) {
+        recordOperationalFailure(logger, error, stack, 'calendar_read', {
+          'screen': 'calendar',
+          'operation_id': operationId,
+          'load_version': version,
+          'duration_ms': watch.elapsedMilliseconds,
+          'applied_to_view': mounted && version == _loadVersion,
+        }, failureCode: 'calendar_read_failed');
+      }
+      if (mounted && version == _loadVersion) setState(() => _failed = true);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && version == _loadVersion) setState(() => _loading = false);
     }
   }
 
   List<_CalendarEntry> get _filtered => _entries.where((entry) {
-    return _courseId == null || entry.course.id == _courseId;
+    return (_courseId == null || entry.course.id == _courseId) &&
+        (_type == CalendarEntryType.all || entry.type == _type);
   }).toList();
 
-  void _moveMonth(int delta) =>
-      setState(() => _month = DateTime(_month.year, _month.month + delta));
+  void _moveMonth(int delta) => _change(
+    () => _month = DateTime(_month.year, _month.month + delta),
+    'month',
+  );
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -151,6 +242,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                         width: 260,
                         child: DropdownButtonFormField<String?>(
                           key: const Key('calendar-course-filter'),
+                          isExpanded: true,
                           initialValue: _courseId,
                           decoration: const InputDecoration(
                             labelText: 'Disciplina',
@@ -167,7 +259,25 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                               ),
                           ],
                           onChanged: (value) =>
-                              setState(() => _courseId = value),
+                              _change(() => _courseId = value, 'course_filter'),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 200,
+                        child: DropdownButtonFormField<CalendarEntryType>(
+                          key: const Key('calendar-type-filter'),
+                          isExpanded: true,
+                          initialValue: _type,
+                          decoration: const InputDecoration(labelText: 'Tipo'),
+                          items: [
+                            for (final type in CalendarEntryType.values)
+                              DropdownMenuItem(
+                                value: type,
+                                child: Text(_typeLabel(type)),
+                              ),
+                          ],
+                          onChanged: (value) =>
+                              _change(() => _type = value!, 'type_filter'),
                         ),
                       ),
                       SegmentedButton<CalendarDisplay>(
@@ -199,7 +309,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                               ],
                         selected: {_display},
                         onSelectionChanged: (value) =>
-                            setState(() => _display = value.single),
+                            _change(() => _display = value.single, 'display'),
                       ),
                     ],
                   ),
@@ -350,19 +460,29 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '${day.day}',
-                      maxLines: 1,
-                      softWrap: false,
-                      style: TextStyle(
-                        color: day.month == _month.month
-                            ? null
-                            : Theme.of(context).disabledColor,
+                    InkWell(
+                      onTap: () => _openDay(day, entries),
+                      child: Text(
+                        '${day.day}',
+                        maxLines: 1,
+                        softWrap: false,
+                        style: TextStyle(
+                          color: day.month == _month.month
+                              ? null
+                              : Theme.of(context).disabledColor,
+                        ),
                       ),
                     ),
                     for (final entry in entries.take(2))
-                      _CalendarEventLabel(entry: entry),
-                    if (entries.length > 2) Text('+${entries.length - 2}'),
+                      InkWell(
+                        onTap: () => _openEntry(entry),
+                        child: _CalendarEventLabel(entry: entry),
+                      ),
+                    if (entries.length > 2)
+                      InkWell(
+                        onTap: () => _openDay(day, entries),
+                        child: Text('+${entries.length - 2}'),
+                      ),
                   ],
                 ),
               );
@@ -373,11 +493,117 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     );
   }
 
+  Future<void> _openDay(DateTime day, List<_CalendarEntry> entries) async {
+    _event('calendar_day_opened', {
+      'date': day.toIso8601String(),
+      'item_count': entries.length,
+    });
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheet) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheet).height * .7,
+          child: Column(
+            children: [
+              ListTile(
+                title: Text(_date(day)),
+                trailing: IconButton(
+                  tooltip: 'Fechar dia',
+                  onPressed: () => Navigator.pop(sheet),
+                  icon: const Icon(Icons.close),
+                ),
+              ),
+              Expanded(
+                child: entries.isEmpty
+                    ? const Center(child: Text('Nenhum item neste dia.'))
+                    : ListView(
+                        children: [
+                          for (final entry in entries) _entryTile(entry),
+                        ],
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openEntry(_CalendarEntry entry) async {
+    final fields = <String, Object>{
+      'operation_id': newCorrelationId('calendar_entry'),
+      'course_id': entry.course.id,
+      'entry_id': entry.session.session?.id ?? entry.session.date?.id ?? '',
+      'date': entry.session.startsAt.toIso8601String(),
+      'type': entry.type.name,
+    };
+    _event('calendar_entry_opened', fields);
+    final open = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (sheet) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                entry.session.title ?? 'Aula de ${entry.course.code}',
+                style: Theme.of(sheet).textTheme.titleLarge,
+              ),
+              Text(entry.course.name),
+              Text(
+                '${_date(tz.TZDateTime.from(entry.session.startsAt, widget.location))} • ${_time(tz.TZDateTime.from(entry.session.startsAt, widget.location))}',
+              ),
+              Text(
+                entry.session.session == null
+                    ? _typeLabel(entry.type)
+                    : _status(entry.session.session!.calendarStatus),
+              ),
+              if (widget.onOpenCourse != null)
+                TextButton(
+                  onPressed: () => Navigator.pop(sheet, true),
+                  child: const Text('Abrir disciplina'),
+                ),
+              TextButton(
+                onPressed: () => Navigator.pop(sheet),
+                child: const Text('Fechar'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    _event('calendar_entry_closed', {...fields, 'open_course': open == true});
+    if (open != true || !mounted) return;
+    try {
+      await widget.onOpenCourse!(entry.course);
+      _event('calendar_course_navigation_finished', {
+        ...fields,
+        'applied_to_view': mounted,
+      });
+    } catch (error, stack) {
+      final logger = widget.logger;
+      if (logger != null) {
+        recordOperationalFailure(
+          logger,
+          error,
+          stack,
+          'calendar_course_navigation',
+          fields,
+          failureCode: 'calendar_navigation_failed',
+        );
+      }
+    }
+  }
+
   Widget _entryTile(_CalendarEntry entry) {
     final local = tz.TZDateTime.from(entry.session.startsAt, widget.location);
     return Card(
       elevation: 0,
       child: ListTile(
+        onTap: () => _openEntry(entry),
         leading: CourseMark(
           key: Key('calendar-course-mark-${entry.course.id}'),
           code: entry.course.code,
@@ -389,7 +615,8 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
             '${_time(local)} • ${(entry.session.session == null ? 'Prazo' : _status(entry.session.session!.calendarStatus))}',
             if (entry.session.session != null && !entry.course.tracksAttendance)
               'Sem chamada',
-            if (entry.session.title case final title?) 'Avaliação: $title',
+            if (entry.session.title case final title?)
+              '${entry.type == CalendarEntryType.deadline ? 'Prazo' : 'Avaliação'}: $title',
           ].join('\n'),
         ),
         trailing: entry.session.title == null
@@ -444,6 +671,13 @@ final class _CalendarEntry {
   const _CalendarEntry(this.course, this.session);
   final CourseRecord course;
   final AgendaEntry session;
+  CalendarEntryType get type => session.session != null
+      ? (session.title == null
+            ? CalendarEntryType.lesson
+            : CalendarEntryType.assessment)
+      : (session.date?.kind == 'assessment' || session.date?.kind == 'quiz'
+            ? CalendarEntryType.assessment
+            : CalendarEntryType.deadline);
   bool get isNoCall =>
       session.session != null &&
       (!course.tracksAttendance ||
@@ -475,3 +709,10 @@ String _monthName(int month) => const [
   'Novembro',
   'Dezembro',
 ][month - 1];
+
+String _typeLabel(CalendarEntryType value) => switch (value) {
+  CalendarEntryType.all => 'Todos',
+  CalendarEntryType.lesson => 'Aulas',
+  CalendarEntryType.assessment => 'Avaliações',
+  CalendarEntryType.deadline => 'Entregas e prazos',
+};

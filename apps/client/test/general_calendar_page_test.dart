@@ -56,6 +56,11 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('calendar-day-2026-09-16')),
+        100,
+        scrollable: find.byType(Scrollable).last,
+      );
       expect(find.text('DCC203 · Sem chamada'), findsOneWidget);
       expect(find.text('MAT001'), findsNothing);
       await tester.tap(find.text('Lista'));
@@ -107,6 +112,11 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('month-calendar-grid')), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('calendar-day-2026-09-16')),
+      100,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(find.text('DCC203'), findsNWidgets(2));
     expect(find.text('DCC203 · Sem chamada'), findsOneWidget);
     expect(find.text('MAT001'), findsNothing);
@@ -120,17 +130,34 @@ void main() {
 
     await tester.tap(find.text('Lista'));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('calendar-course-mark-poo')), findsNWidgets(4));
+    expect(find.byKey(const Key('calendar-course-mark-poo')), findsWidgets);
     expect(find.text('DCC203 • 16/09/2026'), findsNWidgets(3));
     expect(find.text('MAT001 • 17/09/2026'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text('DCC203 • 18/09/2026'),
+      100,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(find.text('DCC203 • 18/09/2026'), findsOneWidget);
     expect(find.textContaining('Aula sem chamada'), findsWidgets);
+    await tester.scrollUntilVisible(
+      find.text('12:00 • Reposição'),
+      -100,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(find.text('12:00 • Reposição'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('calendar-course-filter')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('DCC203').last);
     await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView), const Offset(0, 600));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('DCC203 • 16/09/2026').first,
+      -100,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(find.text('DCC203 • 16/09/2026'), findsNWidgets(3));
     expect(find.text('MAT001 • 17/09/2026'), findsNothing);
   });

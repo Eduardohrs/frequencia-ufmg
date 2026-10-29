@@ -1,3 +1,6 @@
+import '../../observability/app_logger.dart';
+import '../../observability/audited_operation.dart';
+import '../../observability/operation_diagnostics.dart';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -122,9 +125,13 @@ class AbsenceDashboardPage extends StatefulWidget {
     required this.location,
     required this.now,
     this.initialSessionsByCourse,
+    this.onOpenCourse,
+    this.logger,
     super.key,
   });
 
+  final Future<void> Function(CourseRecord)? onOpenCourse;
+  final AppLogger? logger;
   final List<CourseRecord> courses;
   final SessionRepository repository;
   final tz.Location location;
@@ -146,7 +153,46 @@ class _AbsenceDashboardPageState extends State<AbsenceDashboardPage> {
     _load();
   }
 
+  void _event(String name, Map<String, Object> fields) {
+    final logger = widget.logger;
+    if (logger != null) {
+      emitOperationalEvent(logger, name, {
+        'screen': 'absence_dashboard',
+        'operation_id': newCorrelationId('absence_dashboard'),
+        ...fields,
+      });
+    }
+  }
+
+  Future<void> _open(CourseRecord course) async {
+    final operationId = newCorrelationId('absence_navigation');
+    _event('absence_course_open_started', {
+      'course_id': course.id,
+      'course_code': course.code,
+      'operation_id': operationId,
+    });
+    try {
+      await widget.onOpenCourse!(course);
+      _event('absence_course_open_finished', {
+        'course_id': course.id,
+        'operation_id': operationId,
+        'applied_to_view': mounted,
+      });
+    } catch (error, stack) {
+      final logger = widget.logger;
+      if (logger != null) {
+        recordOperationalFailure(logger, error, stack, 'absence_course_open', {
+          'course_id': course.id,
+          'operation_id': operationId,
+        }, failureCode: 'absence_navigation_failed');
+      }
+    }
+  }
+
   Future<void> _load() async {
+    final watch = Stopwatch()..start();
+    final operationId = newCorrelationId('absence_read');
+    _event('absence_overview_read_started', {'operation_id': operationId});
     setState(() {
       _loading = true;
       _failed = false;
@@ -176,11 +222,29 @@ class _AbsenceDashboardPageState extends State<AbsenceDashboardPage> {
                       ),
                     ),
             ]);
-      summaries.sort(
-        (left, right) => left.course.code.compareTo(right.course.code),
-      );
+      summaries.sort(compareAbsencePriority);
+      _event('absence_overview_read_succeeded', {
+        'operation_id': operationId,
+        'item_count': summaries.length,
+        'duration_ms': watch.elapsedMilliseconds,
+        'applied_to_view': mounted,
+      });
       if (mounted) setState(() => _summaries = summaries);
-    } catch (_) {
+    } catch (error, stack) {
+      final logger = widget.logger;
+      if (logger != null) {
+        recordOperationalFailure(
+          logger,
+          error,
+          stack,
+          'absence_overview_read',
+          {
+            'duration_ms': watch.elapsedMilliseconds,
+            'operation_id': operationId,
+          },
+          failureCode: 'absence_overview_read_failed',
+        );
+      }
       if (mounted) setState(() => _failed = true);
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -242,7 +306,13 @@ class _AbsenceDashboardPageState extends State<AbsenceDashboardPage> {
           const SizedBox(height: 12),
           for (var index = 0; index < _summaries.length; index++) ...[
             if (index > 0) const SizedBox(height: 8),
-            _SummaryCard(summary: _summaries[index], location: widget.location),
+            _SummaryCard(
+              summary: _summaries[index],
+              location: widget.location,
+              onOpen: widget.onOpenCourse == null
+                  ? null
+                  : () => _open(_summaries[index].course),
+            ),
           ],
         ],
       ),
@@ -334,7 +404,12 @@ class _SnapshotValue extends StatelessWidget {
 }
 
 class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({required this.summary, required this.location});
+  const _SummaryCard({
+    required this.summary,
+    required this.location,
+    this.onOpen,
+  });
+  final VoidCallback? onOpen;
 
   final CourseAbsenceSummary summary;
   final tz.Location location;
@@ -345,6 +420,7 @@ class _SummaryCard extends StatelessWidget {
     if (!course.tracksAttendance) {
       return Card(
         child: ListTile(
+          onTap: onOpen,
           leading: CourseMark(code: course.code, size: 40),
           title: Text('${course.code} • ${course.name}'),
           subtitle: Text('${course.policyLabel} • Frequência: não se aplica'),
@@ -377,6 +453,11 @@ class _SummaryCard extends StatelessWidget {
           ],
         ),
         children: [
+          if (onOpen != null)
+            TextButton(
+              onPressed: onOpen,
+              child: const Text('Abrir disciplina'),
+            ),
           if (summary.sessions.isEmpty)
             const Padding(
               padding: EdgeInsets.fromLTRB(20, 4, 20, 20),
@@ -519,3 +600,23 @@ String _statusName(SituacaoFrequencia? status) => switch (status) {
   SituacaoFrequencia.absent => 'Ausente',
   SituacaoFrequencia.pending || null => 'Sem registro',
 };
+
+int compareAbsencePriority(
+  CourseAbsenceSummary left,
+  CourseAbsenceSummary right,
+) {
+  int rank(CourseAbsenceSummary value) =>
+      !value.course.tracksAttendance || value.eligibleLessons == 0
+      ? 3
+      : value.consumedAbsences > value.absenceLimit
+      ? 0
+      : value.remainingAbsences == 0
+      ? 1
+      : 2;
+  var result = rank(left).compareTo(rank(right));
+  if (result != 0) return result;
+  result = left.remainingAbsences.compareTo(right.remainingAbsences);
+  if (result != 0) return result;
+  result = right.pendingSessions.compareTo(left.pendingSessions);
+  return result != 0 ? result : left.course.code.compareTo(right.course.code);
+}
