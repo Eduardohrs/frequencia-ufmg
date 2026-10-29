@@ -92,7 +92,7 @@ class BackgroundLocationProof(private val context: Context) {
         const val CHANNEL = "br.ufmg.frequencia.frequencia_ufmg/background_proof"
         const val STORE = "background_location_proof"
         fun emit(report: JSONObject) { Log.i("BackgroundLocationProof", JSONObject(report.toString())
-            .put("event", "background_location_proof").toString()) }
+            .put("event", if (report.optString("moment") == "first") "first_attendance_checkpoint" else "background_location_proof").toString()) }
         fun JSONObject.toMap(): Map<String, Any> = keys().asSequence().associateWith { get(it) }
     }
 }
@@ -106,7 +106,9 @@ class BackgroundLocationProofWorker(context: Context, parameters: WorkerParamete
     }
     override fun doWork(): Result {
         val context = applicationContext
-        val prefs = context.getSharedPreferences(BackgroundLocationProof.STORE, 0)
+        val checkpointStore = inputData.getString("checkpoint_store")
+        if (checkpointStore != null && !checkpointStore.matches(Regex("first_checkpoint_[a-f0-9-]{36}"))) return Result.failure()
+        val prefs = context.getSharedPreferences(checkpointStore ?: BackgroundLocationProof.STORE, 0)
         val report = try { JSONObject(prefs.getString("report", "{}")!!) } catch (error: Exception) {
             BackgroundLocationProof.emit(JSONObject().put("operation_id", id.toString())
                 .put("status", "invalid_report").put("stage", "report_read")
@@ -119,12 +121,14 @@ class BackgroundLocationProofWorker(context: Context, parameters: WorkerParamete
         val start = SystemClock.elapsedRealtime()
         var stage = "permissions"
         fun save(status: String): Result {
-            if (JSONObject(prefs.getString("report", "{}")!!).optString("operation_id") != id.toString()) return Result.success()
+            val current = JSONObject(prefs.getString("report", "{}")!!)
+            if (current.optString("operation_id") != id.toString() || current.optString("status") in listOf("cancelled", "superseded")) return Result.success()
+            if (checkpointStore != null && !FirstCheckpointBridge.active(context, report.optString("account_id"))) return Result.success()
             report.put("status", status).put("stage", stage).put("updated_at_ms", System.currentTimeMillis())
                 .put("duration_ms", SystemClock.elapsedRealtime() - start)
             val persisted = prefs.edit().putString("report", report.toString()).commit()
             report.put("persisted", persisted)
-            BackgroundLocationProof.emit(report)
+            BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(report))
             return if (persisted) Result.success() else Result.failure()
         }
         fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
@@ -136,6 +140,11 @@ class BackgroundLocationProofWorker(context: Context, parameters: WorkerParamete
                 .put("background_$suffix", info.importance > ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND)
         }
         try {
+            if (checkpointStore != null) {
+                if (!FirstCheckpointBridge.active(context, report.optString("account_id"))) return Result.success()
+                report.put("lateness_ms", System.currentTimeMillis() - report.getLong("checkpoint_expected_at_ms"))
+                if (FirstCheckpointPolicy.late(report, System.currentTimeMillis())) return save("checkpoint_outside_window")
+            }
             state("start")
             report.put("started_at_ms", System.currentTimeMillis()).put("process_id", android.os.Process.myPid())
                 .put("queue_wait_ms", System.currentTimeMillis() - report.optLong("scheduled_at_ms"))
@@ -228,6 +237,11 @@ class BackgroundLocationProofWorker(context: Context, parameters: WorkerParamete
                 .put("fix_recorded_at_ms", fix.time).put("captured_at_ms", System.currentTimeMillis())
             stage = "validation"
             val status = BackgroundProofPolicy.fix(age, fix.accuracy, fix.elapsedRealtimeNanos >= startedAtNanos) ?: "succeeded"
+            if (checkpointStore != null) {
+                report.put("lateness_ms", System.currentTimeMillis() - report.getLong("checkpoint_expected_at_ms"))
+                if (FirstCheckpointPolicy.late(report, System.currentTimeMillis())) return save("checkpoint_outside_window")
+                report.put("first_ping", FirstCheckpointPolicy.classify(report, fix.latitude, fix.longitude))
+            }
             report.put("background_proven", BackgroundProofPolicy.proven(status,
                 report.optBoolean("screen_locked_start") || report.optBoolean("background_start"),
                 report.optBoolean("screen_locked_capture") || report.optBoolean("background_capture")))
