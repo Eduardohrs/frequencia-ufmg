@@ -15,6 +15,16 @@ object BackgroundProofPolicy {
         accuracy > 100 -> "inaccurate_fix"
         else -> null
     }
+    // PowerManager LOCATION_MODE_* values: 1 GPS-off, 2 all-off, 3 foreground-only.
+    fun providers(gps: Boolean, network: Boolean, mode: Int, interactive: Boolean, foreground: Boolean): List<String> {
+        if ((mode == 2 && !interactive) || (mode == 3 && !foreground)) return emptyList()
+        return buildList {
+            if (gps && (mode != 1 || interactive)) add("gps")
+            if (network) add("network")
+        }
+    }
+    fun interrupted(status: String, workerPid: Int, currentPid: Int, exitAt: Long, startedAt: Long) =
+        status == "running" && workerPid > 0 && workerPid != currentPid && exitAt >= startedAt
     fun proven(status: String, beganInBackground: Boolean, capturedInBackground: Boolean) =
         status == "succeeded" && beganInBackground && capturedInBackground
 }
