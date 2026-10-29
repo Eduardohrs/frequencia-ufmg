@@ -686,6 +686,91 @@ void main() {
     });
   }
 
+  for (final width in [390.0, 1200.0]) {
+    for (final navigation in [false, true]) {
+      testWidgets(
+        'sync indicator leaves floating actions reachable width=$width navigation=$navigation',
+        (tester) async {
+          tester.view.devicePixelRatio = 1;
+          tester.view.physicalSize = Size(width, 844);
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final gateway = _ProgressUFMGGateway();
+          await tester.pumpWidget(
+            MaterialApp(
+              home: CoursePage(
+                repository: _FakeCourseRepository(),
+                meetingRepository: _FakeMeetingRepository(),
+                sessionRepository: _FakeSessionRepository(),
+                user: user,
+                logger: _RecordingAppLogger(),
+                onSignOut: () async {},
+                ufmgSessionGateway: gateway,
+                academicSyncSchedule: _FakeUFMGSyncSchedule(due: true),
+                now: () => now,
+              ),
+            ),
+          );
+          await tester.pump(const Duration(milliseconds: 100));
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const Key('academic-sync-indicator')),
+            findsOneWidget,
+          );
+          var taps = 0;
+          unawaited(
+            Navigator.of(tester.element(find.byType(CoursePage))).push<void>(
+              MaterialPageRoute(
+                builder: (_) => Scaffold(
+                  appBar: AppBar(title: const Text('Prazos')),
+                  bottomNavigationBar: navigation
+                      ? NavigationBar(
+                          destinations: const [
+                            NavigationDestination(
+                              icon: Icon(Icons.home),
+                              label: 'Início',
+                            ),
+                            NavigationDestination(
+                              icon: Icon(Icons.calendar_month),
+                              label: 'Calendário',
+                            ),
+                          ],
+                        )
+                      : null,
+                  floatingActionButton: FloatingActionButton.extended(
+                    key: const Key('test-deadline-action'),
+                    onPressed: () => taps++,
+                    label: const Text('Adicionar prazo'),
+                  ),
+                  body: const Center(child: Text('Dados preservados')),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          for (final completed in [false, true]) {
+            if (completed) {
+              gateway.progress.response.complete(syncResult());
+              await tester.pumpAndSettle();
+            }
+            final indicator = tester.getRect(
+              find.byKey(const Key('academic-sync-indicator')),
+            );
+            final action = tester.getRect(
+              find.byKey(const Key('test-deadline-action')),
+            );
+            expect(indicator.overlaps(action), isFalse);
+            await tester.tap(find.byKey(const Key('test-deadline-action')));
+            await tester.pump();
+            expect(taps, completed ? 2 : 1);
+          }
+          await tester.pumpWidget(const SizedBox());
+          await gateway.progress.updates.close();
+        },
+      );
+    }
+  }
+
   testWidgets(
     'sync survives leaving the connection page and remains visible above the calendar',
     (tester) async {
