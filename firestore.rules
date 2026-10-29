@@ -83,8 +83,8 @@ service cloud.firestore {
         && isNullableString(data.errorType, 120)
         && isNullableString(data.errorCode, 120)
         && isNullableString(data.errorMessage, 500)
-        && isNullableString(data.errorDetails, 500)
-        && isNullableString(data.get('details', null), 500)
+        && isNullableString(data.errorDetails, 8192)
+        && isNullableString(data.get('details', null), 8192)
         && data.fatal is bool;
     }
 

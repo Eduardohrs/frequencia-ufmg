@@ -41,3 +41,15 @@ def test_appwrite_health_checks_log_observed_status_before_rollback() -> None:
     assert "CORS health check attempt $attempt/6: HTTP $cors_status" in workflow
     assert "Expected HTTP 401, received HTTP $identity_status" in workflow
     assert "Expected HTTP 204, received HTTP $cors_status" in workflow
+
+
+def test_diagnostic_database_rules_are_deployed_before_new_clients() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "deploy-production.yml"
+    ).read_text(encoding="utf-8")
+    assert workflow.index("Deploy Firestore configuration before clients") < workflow.index(
+        "Publish Firebase Hosting after database rules"
+    )
+    assert "--only firestore:rules,firestore:indexes,hosting" not in workflow
+    assert "--only firestore:rules,firestore:indexes" in workflow
+    assert "--only hosting" in workflow

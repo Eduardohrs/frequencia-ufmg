@@ -25,6 +25,8 @@ object BackgroundProofPolicy {
     }
     fun interrupted(status: String, workerPid: Int, currentPid: Int, exitAt: Long, startedAt: Long) =
         status == "running" && workerPid > 0 && workerPid != currentPid && exitAt >= startedAt
+    fun canStartForegroundCapture(sdk: Int, unrestricted: Boolean, visible: Boolean) =
+        sdk < 31 || unrestricted || visible
     fun proven(status: String, beganInBackground: Boolean, capturedInBackground: Boolean) =
         status == "succeeded" && beganInBackground && capturedInBackground
 }

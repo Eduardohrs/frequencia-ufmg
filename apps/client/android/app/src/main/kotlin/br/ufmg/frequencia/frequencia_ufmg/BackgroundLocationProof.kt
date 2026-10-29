@@ -3,6 +3,11 @@ package br.ufmg.frequencia.frequencia_ufmg
 import android.Manifest
 import android.app.ActivityManager
 import android.app.KeyguardManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.pm.ServiceInfo
+import androidx.core.app.NotificationCompat
+import androidx.work.ForegroundInfo
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
@@ -141,9 +146,35 @@ class BackgroundLocationProofWorker(context: Context, parameters: WorkerParamete
             val services = LocationManagerCompat.isLocationEnabled(manager)
             report.put("precise_permission", precise).put("background_permission", background).put("location_services", services)
             BackgroundProofPolicy.blocked(precise, background, services)?.let { return save(it) }
+            val power = context.getSystemService(PowerManager::class.java)
+            stage = "foreground_service"
+            val unrestricted = power.isIgnoringBatteryOptimizations(context.packageName)
+            report.put("battery_unrestricted", unrestricted).put("run_attempt", runAttemptCount + 1)
+            val visible = !report.optBoolean("background_start") && !report.optBoolean("screen_locked_start")
+            if (!BackgroundProofPolicy.canStartForegroundCapture(Build.VERSION.SDK_INT, unrestricted, visible)) {
+                return save("battery_optimization_required")
+            }
+            save("running")
+            val foregroundStarted = SystemClock.elapsedRealtime()
+            setForegroundAsync(foregroundInfo()).get(10, TimeUnit.SECONDS)
+            // Wait for the OS to apply foreground importance before requesting a fix.
+            var importance: Int
+            do {
+                if (isStopped) return save("interrupted")
+                val process = ActivityManager.RunningAppProcessInfo()
+                ActivityManager.getMyMemoryState(process)
+                importance = process.importance
+                if (importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE) break
+                Thread.sleep(50)
+            } while (SystemClock.elapsedRealtime() - foregroundStarted < 5000)
+            report.put("foreground_service_duration_ms", SystemClock.elapsedRealtime() - foregroundStarted)
+                .put("foreground_service_importance", importance)
+            if (importance > ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE) {
+                return save("foreground_service_unavailable")
+            }
+            report.put("foreground_service_active", true)
             stage = "location_fix"
             save("running")
-            val power = context.getSystemService(PowerManager::class.java)
             val mode = if (Build.VERSION.SDK_INT >= 28) power.locationPowerSaveMode else 0
             val gps = manager.isProviderEnabled(LocationManager.GPS_PROVIDER)
             val network = manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
@@ -152,7 +183,7 @@ class BackgroundLocationProofWorker(context: Context, parameters: WorkerParamete
                 .put("battery_unrestricted", power.isIgnoringBatteryOptimizations(context.packageName))
                 .put("gps_enabled", gps).put("network_enabled", network)
             val providers = BackgroundProofPolicy.providers(gps, network, mode, power.isInteractive,
-                !report.optBoolean("background_start"))
+                report.optBoolean("foreground_service_active") || !report.optBoolean("background_start"))
             if (providers.isEmpty()) return save(if (gps || network) "power_save_location_blocked" else "provider_unavailable")
             var location: Location? = null
             var lastFailure = "location_unavailable"
@@ -203,7 +234,34 @@ class BackgroundLocationProofWorker(context: Context, parameters: WorkerParamete
             return save(status)
         } catch (error: Exception) {
             report.put("cause_type", error.javaClass.simpleName).put("cause_message", error.message?.take(300))
-            return save(if (error is SecurityException) "permission_revoked" else "provider_error")
+                .put("root_cause_type", error.cause?.javaClass?.simpleName)
+                .put("root_cause_message", error.cause?.message?.take(300))
+            return save(when {
+                error is InterruptedException -> "interrupted"
+                stage == "foreground_service" -> "foreground_service_start_failed"
+                error is SecurityException -> "permission_revoked"
+                else -> "provider_error"
+            })
         }
     }
+    private fun foregroundInfo(): ForegroundInfo {
+        val manager = applicationContext.getSystemService(NotificationManager::class.java)
+        val channel = "attendance_location_check"
+        if (Build.VERSION.SDK_INT >= 26) {
+            manager.createNotificationChannel(NotificationChannel(channel, "Verificação de localização", NotificationManager.IMPORTANCE_LOW))
+        }
+        val notification = NotificationCompat.Builder(applicationContext, channel)
+            .setSmallIcon(applicationContext.applicationInfo.icon)
+            .setContentTitle("Verificando localização em segundo plano")
+            .setContentText("Verificação temporária. Nenhuma presença será alterada.")
+            .setOngoing(true).setOnlyAlertOnce(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancelar",
+                WorkManager.getInstance(applicationContext).createCancelPendingIntent(id))
+            .build()
+        return if (Build.VERSION.SDK_INT >= 29) {
+            ForegroundInfo(47001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+        } else ForegroundInfo(47001, notification)
+    }
+
 }

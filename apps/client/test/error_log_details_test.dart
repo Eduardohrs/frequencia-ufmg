@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +7,81 @@ import 'package:frequencia_ufmg/observability/error_log_details.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 void main() {
+  test(
+    'structured diagnostic details preserve context and redact nested credentials',
+    () {
+      final data = jsonEncode({
+        'course': 'POO',
+        'padding': 'p' * 1000,
+        'stage': 'location_fix',
+        'nested': {
+          'password': 'hidden-password',
+          'authorization': 'hidden-authorization',
+          'enabled': true,
+        },
+        'list': [
+          null,
+          42,
+          {'api_key': 'hidden-api-key'},
+        ],
+        'message': 'Bearer hidden-bearer',
+      });
+      final result = sanitizeDiagnosticDetails(data)!;
+      final decoded = jsonDecode(result) as Map;
+      expect(decoded['course'], 'POO');
+      expect(decoded['stage'], 'location_fix');
+      for (final secret in [
+        'hidden-password',
+        'hidden-authorization',
+        'hidden-api-key',
+        'hidden-bearer',
+      ]) {
+        expect(result, isNot(contains(secret)));
+      }
+      expect(decoded['nested']['enabled'], true);
+      expect(sanitizeDiagnosticDetails(null), isNull);
+      expect(sanitizeDiagnosticDetails('stage=read'), 'stage=read');
+      expect(sanitizeDiagnosticDetails(jsonEncode(true)), 'true');
+      expect(
+        sanitizeDiagnosticDetails('{"password":"do-not-log", broken'),
+        isNot(contains('do-not-log')),
+      );
+    },
+  );
+  test(
+    'oversized, deeply nested and wide diagnostics remain valid and explicitly bounded',
+    () {
+      for (final value in [
+        jsonEncode({'large': 'x' * 9000}),
+        'x' * 9000,
+        jsonEncode({'large': '😀' * 3000}),
+      ]) {
+        final result = sanitizeDiagnosticDetails(value)!;
+        expect(utf8.encode(result).length, lessThanOrEqualTo(8192));
+        expect(jsonDecode(result)['details_truncated'], true);
+      }
+      final wide = {for (var i = 0; i < 70; i++) 'field$i': i};
+      final map =
+          jsonDecode(sanitizeDiagnosticDetails(jsonEncode(wide))!) as Map;
+      expect(map['fields_omitted'], 6);
+      final list =
+          jsonDecode(
+                sanitizeDiagnosticDetails(
+                  jsonEncode(List.generate(70, (i) => i)),
+                )!,
+              )
+              as List;
+      expect(list.last, {'items_omitted': 6});
+      Object nested = 'leaf';
+      for (var i = 0; i < 12; i++) {
+        nested = {'child': nested};
+      }
+      expect(
+        sanitizeDiagnosticDetails(jsonEncode(nested)),
+        contains('[MAX_DEPTH]'),
+      );
+    },
+  );
   test('keeps useful Google sign-in details and redacts secrets', () {
     const error = GoogleSignInException(
       code: GoogleSignInExceptionCode.clientConfigurationError,

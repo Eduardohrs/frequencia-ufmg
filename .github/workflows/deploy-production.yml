@@ -290,12 +290,20 @@ jobs:
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
           create_credentials_file: true
 
-      - name: Deploy Firestore configuration and Firebase Hosting
+      - name: Deploy Firestore configuration before clients
         run: |
           npm install --global firebase-tools@15.34.1
           firebase deploy \
             --project frequencia-ufmg-eduardo \
-            --only firestore:rules,firestore:indexes,hosting \
+            --only firestore:rules,firestore:indexes \
+            --non-interactive \
+            --message "GitHub ${{ steps.revision.outputs.sha }}"
+
+      - name: Publish Firebase Hosting after database rules
+        run: |
+          firebase deploy \
+            --project frequencia-ufmg-eduardo \
+            --only hosting \
             --non-interactive \
             --message "GitHub ${{ steps.revision.outputs.sha }}"
 
