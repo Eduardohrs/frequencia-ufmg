@@ -1,3 +1,6 @@
+import '../../data/first_checkpoint.dart';
+import '../../data/campus_location.dart';
+import '../attendance/first_checkpoint_page.dart';
 import '../../data/academic_agenda.dart';
 import 'dart:async';
 import 'dart:math';
@@ -37,7 +40,7 @@ import 'course_hub_page.dart';
 typedef CourseIdGenerator = String Function();
 typedef CurrentTime = DateTime Function();
 
-enum _ProfileAction { ufmgAccount, permissions, signOut }
+enum _ProfileAction { ufmgAccount, permissions, firstCheckpoint, signOut }
 
 enum _CourseTileAction { edit, delete }
 
@@ -736,7 +739,42 @@ class _CoursePageState extends State<CoursePage> {
             ),
           ),
         );
+      case _ProfileAction.firstCheckpoint:
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => FirstCheckpointPage(
+              courses: _courses,
+              sessions: widget.sessionRepository,
+              gateway: FirstCheckpointGateway(
+                accountId: widget.user.id,
+                logger: widget.logger,
+              ),
+              selection: LocalCampusSelection(),
+              logger: widget.logger,
+              now: widget.now,
+            ),
+          ),
+        );
       case _ProfileAction.signOut:
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+          try {
+            await FirstCheckpointGateway.deactivate();
+          } catch (error, stack) {
+            unawaited(
+              widget.logger
+                  .recordError(
+                    error,
+                    stack,
+                    context: 'first_checkpoint_logout_cleanup',
+                  )
+                  .catchError((Object e) {
+                    debugPrint(
+                      'first_checkpoint_log_delivery_failed type=${e.runtimeType}',
+                    );
+                  }),
+            );
+          }
+        }
         await widget.onSignOut();
     }
   }
@@ -936,6 +974,16 @@ class _CoursePageState extends State<CoursePage> {
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.settings_outlined),
               title: Text('Permissões do aplicativo'),
+            ),
+          ),
+        if (widget.attendancePermissions != null ||
+            (!kIsWeb && defaultTargetPlatform == TargetPlatform.android))
+          const PopupMenuItem(
+            value: _ProfileAction.firstCheckpoint,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.schedule),
+              title: Text('Primeiro ping'),
             ),
           ),
         if (widget.ufmgSessionGateway != null)

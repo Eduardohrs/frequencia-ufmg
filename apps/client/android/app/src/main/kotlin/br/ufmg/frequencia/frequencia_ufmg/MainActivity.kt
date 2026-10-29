@@ -11,6 +11,9 @@ class MainActivity: FlutterActivity() {
         attendancePermissions = AttendancePermissionsBridge(this)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AttendancePermissionsBridge.CHANNEL)
             .setMethodCallHandler { call, result -> attendancePermissions!!.handle(call.method, call.arguments, result) }
+        val checkpoint = FirstCheckpointBridge(applicationContext)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FirstCheckpointBridge.CHANNEL)
+            .setMethodCallHandler { call, result -> checkpoint.handle(call.method, call.arguments, result) }
         val proof = BackgroundLocationProof(applicationContext)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BackgroundLocationProof.CHANNEL)
             .setMethodCallHandler { call, result -> proof.handle(call.method, result) }

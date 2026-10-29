@@ -1,3 +1,6 @@
+import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
+import 'package:frequencia_ufmg/data/first_checkpoint.dart';
 import 'package:frequencia_ufmg/features/courses/course_hub_page.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -27,6 +30,13 @@ import 'package:timezone/data/latest.dart' as tz_data;
 
 void main() {
   tz_data.initializeTimeZones();
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          FirstCheckpointGateway.channel,
+          (_) async => null,
+        );
+  });
   final user = AuthUser(
     id: 'user-1',
     email: 'eduardo@ufmg.br',
@@ -565,6 +575,73 @@ void main() {
         await tester.pageBack();
         await tester.pumpAndSettle();
         expect(find.text('Minhas disciplinas'), findsOneWidget);
+      },
+    );
+  }
+
+  for (var failure = 0; failure < 3; failure++) {
+    testWidgets(
+      'first checkpoint route and logout cleanup (failure=$failure)',
+      (tester) async {
+        SharedPreferencesAsyncPlatform.instance =
+            InMemorySharedPreferencesAsync.empty();
+        final calls = <String>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(FirstCheckpointGateway.channel, (
+              call,
+            ) async {
+              calls.add(call.method);
+              if (call.method == 'deactivate' && failure > 0) {
+                throw PlatformException(code: 'storage_failed');
+              }
+              return call.method == 'deactivate' ? null : [];
+            });
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .setMockMethodCallHandler(FirstCheckpointGateway.channel, null),
+        );
+        final logger = _RecordingAppLogger()..failRecording = failure == 2;
+        var signedOut = false;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: CoursePage(
+              repository: _FakeCourseRepository(),
+              meetingRepository: _FakeMeetingRepository(),
+              sessionRepository: _FakeSessionRepository(),
+              user: user,
+              logger: logger,
+              onSignOut: () async {
+                signedOut = true;
+              },
+              now: () => now,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Perfil e configurações'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Primeiro ping'));
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Nenhuma sessão elegível para agendar.'),
+          findsOneWidget,
+        );
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Perfil e configurações'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Sair'));
+        await tester.pumpAndSettle();
+        expect(calls, containsAllInOrder(['read', 'deactivate']));
+        expect(signedOut, isTrue);
+        if (failure > 0) {
+          expect(
+            logger.errorContexts,
+            contains('first_checkpoint_logout_cleanup'),
+          );
+        }
       },
     );
   }
