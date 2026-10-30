@@ -30,3 +30,17 @@ object BackgroundProofPolicy {
     fun proven(status: String, beganInBackground: Boolean, capturedInBackground: Boolean) =
         status == "succeeded" && beganInBackground && capturedInBackground
 }
+
+/** Reject cached/imprecise updates without ending the bounded request for a fresh sample. */
+class FreshFixWindow(private val startedAtNanos: Long) {
+    var sampleCount = 0; private set
+    var rejectedCount = 0; private set
+    var lastFailure: String? = null; private set
+    fun offer(recordedAtNanos: Long, nowNanos: Long, accuracy: Float): Boolean {
+        sampleCount++
+        lastFailure = BackgroundProofPolicy.fix((nowNanos - recordedAtNanos) / 1000000,
+            accuracy, recordedAtNanos >= startedAtNanos)
+        if (lastFailure != null) rejectedCount++
+        return lastFailure == null
+    }
+}

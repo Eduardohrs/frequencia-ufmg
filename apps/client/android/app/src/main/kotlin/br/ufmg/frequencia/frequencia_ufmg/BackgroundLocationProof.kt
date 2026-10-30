@@ -18,7 +18,8 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
-import androidx.core.os.CancellationSignal
+import androidx.core.location.LocationListenerCompat
+import androidx.core.location.LocationRequestCompat
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
@@ -142,12 +143,12 @@ class BackgroundLocationCapture(
     private val attempt: Int,
     private val enterForeground: () -> Unit,
 ) {
-    @Volatile private var activeSignal: CancellationSignal? = null
+    @Volatile private var activeCancel: (() -> Unit)? = null
     @Volatile private var activeLatch: CountDownLatch? = null
     @Volatile private var isStopped = false
     fun cancel() {
         isStopped = true
-        activeSignal?.cancel()
+        activeCancel?.invoke()
         activeLatch?.countDown()
     }
     fun run(): Boolean {
@@ -245,34 +246,46 @@ class BackgroundLocationCapture(
             for ((index, provider) in providers.withIndex()) {
                 if (isStopped) return save("interrupted")
                 report.put("provider", provider).put("provider_attempt", index + 1).put("provider_timeout_ms", 20000)
+                    .put("location_request_mode", "fresh_updates")
                 val attemptStarted = SystemClock.elapsedRealtime()
                 save("running")
                 val latch = CountDownLatch(1)
                 val reading = AtomicReference<Location?>()
-                val signal = CancellationSignal()
-                activeSignal = signal
+                val gate = FreshFixWindow(startedAtNanos)
+                val listener = object : LocationListenerCompat {
+                    override fun onLocationChanged(fix: Location) {
+                        if (isStopped || latch.count == 0L) return
+                        reading.set(fix)
+                        if (gate.offer(fix.elapsedRealtimeNanos, SystemClock.elapsedRealtimeNanos(), fix.accuracy)) latch.countDown()
+                    }
+                    override fun onProviderDisabled(name: String) { latch.countDown() }
+                }
+                activeCancel = { LocationManagerCompat.removeUpdates(manager, listener) }
                 activeLatch = latch
                 val completed: Boolean
                 try {
-                    LocationManagerCompat.getCurrentLocation(manager, provider, signal,
-                        ContextCompat.getMainExecutor(context)) { fix -> reading.set(fix); latch.countDown() }
+                    LocationManagerCompat.requestLocationUpdates(manager, provider,
+                        LocationRequestCompat.Builder(1000).setDurationMillis(20000)
+                            .setQuality(LocationRequestCompat.QUALITY_HIGH_ACCURACY).build(),
+                        ContextCompat.getMainExecutor(context), listener)
                     completed = latch.await(20, TimeUnit.SECONDS)
                 } finally {
-                    signal.cancel()
-                    activeSignal = null
+                    LocationManagerCompat.removeUpdates(manager, listener)
+                    activeCancel = null
                     activeLatch = null
                 }
                 if (isStopped) return save("interrupted")
                 val fix = reading.get()
-                lastFailure = when {
-                    !completed -> "location_timeout"
-                    fix == null -> "location_unavailable"
-                    else -> BackgroundProofPolicy.fix(
-                        (SystemClock.elapsedRealtimeNanos() - fix.elapsedRealtimeNanos) / 1000000,
-                        fix.accuracy, fix.elapsedRealtimeNanos >= startedAtNanos) ?: "succeeded"
-                }
+                lastFailure = if (fix == null) {
+                    if (completed) "location_unavailable" else "location_timeout"
+                } else gate.lastFailure ?: "succeeded"
                 report.put("${provider}_outcome", lastFailure)
                     .put("${provider}_duration_ms", SystemClock.elapsedRealtime() - attemptStarted)
+                    .put("${provider}_sample_count", gate.sampleCount)
+                    .put("${provider}_rejected_count", gate.rejectedCount)
+                if (fix != null) report.put("${provider}_fix_age_ms",
+                    (SystemClock.elapsedRealtimeNanos() - fix.elapsedRealtimeNanos) / 1000000)
+                    .put("${provider}_accuracy_m", if (fix.accuracy.isFinite()) fix.accuracy.toDouble() else "non_finite")
                 if (lastFailure == "succeeded") { location = fix; break }
                 save("running")
             }
