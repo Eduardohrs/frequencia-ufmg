@@ -98,38 +98,83 @@ class BackgroundLocationProof(private val context: Context) {
 }
 
 class BackgroundLocationProofWorker(context: Context, parameters: WorkerParameters) : Worker(context, parameters) {
+    private var capture: BackgroundLocationCapture? = null
+    override fun onStopped() { capture?.cancel() }
+    override fun doWork(): Result {
+        // Old persisted checkpoint requests are migrated by the bridge/update receiver.
+        // Never let a legacy JobScheduler delivery compete with an exact alarm.
+        if (inputData.getString("checkpoint_store") != null) return Result.success()
+        val runner = BackgroundLocationCapture(applicationContext, id.toString(),
+            null, runAttemptCount + 1) {
+            setForegroundAsync(foregroundInfo()).get(10, TimeUnit.SECONDS)
+        }
+        capture = runner
+        if (isStopped) runner.cancel()
+        return if (runner.run()) Result.success() else Result.failure()
+    }
+    private fun foregroundInfo(): ForegroundInfo {
+        val manager = applicationContext.getSystemService(NotificationManager::class.java)
+        val channel = "attendance_location_check"
+        if (Build.VERSION.SDK_INT >= 26) {
+            manager.createNotificationChannel(NotificationChannel(channel, "Verificação de localização", NotificationManager.IMPORTANCE_LOW))
+        }
+        val notification = NotificationCompat.Builder(applicationContext, channel)
+            .setSmallIcon(applicationContext.applicationInfo.icon)
+            .setContentTitle("Verificando localização em segundo plano")
+            .setContentText("Verificação temporária. Nenhuma presença será alterada.")
+            .setOngoing(true).setOnlyAlertOnce(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancelar",
+                WorkManager.getInstance(applicationContext).createCancelPendingIntent(id))
+            .build()
+        return if (Build.VERSION.SDK_INT >= 29) {
+            ForegroundInfo(47001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+        } else ForegroundInfo(47001, notification)
+    }
+
+}
+
+/** The single capture implementation, shared by the diagnostic worker and exact alarm service. */
+class BackgroundLocationCapture(
+    private val context: Context,
+    private val id: String,
+    private val checkpointStore: String?,
+    private val attempt: Int,
+    private val enterForeground: () -> Unit,
+) {
     @Volatile private var activeSignal: CancellationSignal? = null
     @Volatile private var activeLatch: CountDownLatch? = null
-    override fun onStopped() {
+    @Volatile private var isStopped = false
+    fun cancel() {
+        isStopped = true
         activeSignal?.cancel()
         activeLatch?.countDown()
     }
-    override fun doWork(): Result {
-        val context = applicationContext
-        val checkpointStore = inputData.getString("checkpoint_store")
-        if (checkpointStore != null && !checkpointStore.matches(Regex("first_checkpoint_[a-f0-9-]{36}"))) return Result.failure()
+    fun run(): Boolean {
+        if (checkpointStore != null && !checkpointStore.matches(Regex("first_checkpoint_[a-f0-9-]{36}"))) return false
         val prefs = context.getSharedPreferences(checkpointStore ?: BackgroundLocationProof.STORE, 0)
         val report = try { JSONObject(prefs.getString("report", "{}")!!) } catch (error: Exception) {
             BackgroundLocationProof.emit(JSONObject().put("operation_id", id.toString())
                 .put("status", "invalid_report").put("stage", "report_read")
                 .put("cause_type", error.javaClass.simpleName))
-            return Result.failure()
+            return false
         }
         // A superseded request must not overwrite another diagnostic report.
-        if (report.optString("operation_id") != id.toString()) return Result.success()
+        if (report.optString("operation_id") != id.toString()) return true
         val startedAtNanos = SystemClock.elapsedRealtimeNanos()
         val start = SystemClock.elapsedRealtime()
         var stage = "permissions"
-        fun save(status: String): Result {
+        fun save(status: String): Boolean = synchronized(FirstCheckpointBridge.LOCK) {
             val current = JSONObject(prefs.getString("report", "{}")!!)
-            if (current.optString("operation_id") != id.toString() || current.optString("status") in listOf("cancelled", "superseded")) return Result.success()
-            if (checkpointStore != null && !FirstCheckpointBridge.active(context, report.optString("account_id"))) return Result.success()
+            if (current.optString("operation_id") != id.toString() || current.optString("status") in listOf("cancelled", "superseded")) return true
+            if (checkpointStore != null && (!FirstCheckpointBridge.active(context, report.optString("account_id")) ||
+                current.optString("status") !in listOf("scheduled", "running"))) return true
             report.put("status", status).put("stage", stage).put("updated_at_ms", System.currentTimeMillis())
                 .put("duration_ms", SystemClock.elapsedRealtime() - start)
             val persisted = prefs.edit().putString("report", report.toString()).commit()
             report.put("persisted", persisted)
             BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(report))
-            return if (persisted) Result.success() else Result.failure()
+            return persisted
         }
         fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
         fun state(suffix: String) {
@@ -139,9 +184,10 @@ class BackgroundLocationProofWorker(context: Context, parameters: WorkerParamete
                 .put("process_importance_$suffix", info.importance)
                 .put("background_$suffix", info.importance > ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND)
         }
+        if (checkpointStore != null && report.optString("status") !in listOf("scheduled", "running")) return true
         try {
             if (checkpointStore != null) {
-                if (!FirstCheckpointBridge.active(context, report.optString("account_id"))) return Result.success()
+                if (!FirstCheckpointBridge.active(context, report.optString("account_id"))) return true
                 report.put("lateness_ms", System.currentTimeMillis() - report.getLong("checkpoint_expected_at_ms"))
                 if (FirstCheckpointPolicy.late(report, System.currentTimeMillis())) return save("checkpoint_outside_window")
             }
@@ -158,14 +204,14 @@ class BackgroundLocationProofWorker(context: Context, parameters: WorkerParamete
             val power = context.getSystemService(PowerManager::class.java)
             stage = "foreground_service"
             val unrestricted = power.isIgnoringBatteryOptimizations(context.packageName)
-            report.put("battery_unrestricted", unrestricted).put("run_attempt", runAttemptCount + 1)
+            report.put("battery_unrestricted", unrestricted).put("run_attempt", attempt)
             val visible = !report.optBoolean("background_start") && !report.optBoolean("screen_locked_start")
             if (!BackgroundProofPolicy.canStartForegroundCapture(Build.VERSION.SDK_INT, unrestricted, visible)) {
                 return save("battery_optimization_required")
             }
             save("running")
             val foregroundStarted = SystemClock.elapsedRealtime()
-            setForegroundAsync(foregroundInfo()).get(10, TimeUnit.SECONDS)
+            enterForeground()
             // Wait for the OS to apply foreground importance before requesting a fix.
             var importance: Int
             do {
@@ -258,24 +304,4 @@ class BackgroundLocationProofWorker(context: Context, parameters: WorkerParamete
             })
         }
     }
-    private fun foregroundInfo(): ForegroundInfo {
-        val manager = applicationContext.getSystemService(NotificationManager::class.java)
-        val channel = "attendance_location_check"
-        if (Build.VERSION.SDK_INT >= 26) {
-            manager.createNotificationChannel(NotificationChannel(channel, "Verificação de localização", NotificationManager.IMPORTANCE_LOW))
-        }
-        val notification = NotificationCompat.Builder(applicationContext, channel)
-            .setSmallIcon(applicationContext.applicationInfo.icon)
-            .setContentTitle("Verificando localização em segundo plano")
-            .setContentText("Verificação temporária. Nenhuma presença será alterada.")
-            .setOngoing(true).setOnlyAlertOnce(true)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancelar",
-                WorkManager.getInstance(applicationContext).createCancelPendingIntent(id))
-            .build()
-        return if (Build.VERSION.SDK_INT >= 29) {
-            ForegroundInfo(47001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-        } else ForegroundInfo(47001, notification)
-    }
-
 }

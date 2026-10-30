@@ -39,6 +39,20 @@ class FirstCheckpointPolicyTest {
         assertFalse(log.has("rectangles")); assertTrue(r.has("rectangles"))
         assertEquals("no_campus",log.getString("first_ping")); assertEquals(25.0,log.getDouble("accuracy_m"),0.01)
     }
+    @Test fun pendingReportsExpireWithoutWaitingForTheScheduler() {
+        val r = report(); FirstCheckpointPolicy.validate(r, now)
+        r.put("status", "scheduled").put("scheduler", "alarmmanager_exact")
+        assertNull(FirstCheckpointPolicy.pendingFailure(r, now, true))
+        assertNull(FirstCheckpointPolicy.pendingFailure(r, now + 1500000, true))
+        assertEquals("checkpoint_outside_window", FirstCheckpointPolicy.pendingFailure(r, now + 1500001, true))
+        assertEquals("exact_alarm_permission_required", FirstCheckpointPolicy.pendingFailure(r, now, false))
+        r.put("status", "running")
+        assertNull(FirstCheckpointPolicy.pendingFailure(r, now, false))
+        r.put("status", "succeeded")
+        assertNull(FirstCheckpointPolicy.pendingFailure(r, now + 1500001, false))
+        r.put("status", "scheduled").put("ends_at_ms", now + 1300000)
+        assertEquals("checkpoint_outside_window", FirstCheckpointPolicy.pendingFailure(r, now + 1300000, true))
+    }
     @Test fun malformedSchedulesFailBeforeEnqueue() {
         for (key in listOf("account_id","course_id","session_id","campus_id")) {
             try { FirstCheckpointPolicy.validate(report().put(key,"../../bad"),now);fail(key) } catch (_:IllegalArgumentException) {}
