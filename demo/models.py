@@ -1,281 +1,149 @@
-"""Domínio didático: frequência pessoal; nenhuma integração ou I/O neste arquivo."""
+"""Regras do protótipo. Uma aula corresponde a 50 minutos."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date
-from enum import Enum
+
+SITUACOES = (
+    "presente",
+    "ausente",
+    "atrasado",
+    "saiu mais cedo",
+    "cancelada",
+    "sem chamada",
+)
 
 
-class Evidencia(Enum):
-    """Resultado SIMULADO da localização; indisponível não significa ausência."""
-
-    NO_CAMPUS = "no campus"
-    FORA = "fora do campus"
-    INDISPONIVEL = "indisponível"
-
-
-class Momento(Enum):
-    """Checkpoints conceituais: início+20min e término-20min; sem relógio real."""
-
-    INICIO = "20 minutos após o início"
-    FIM = "20 minutos antes do término"
-
-
-class Situacao(Enum):
-    """Classificações para controle pessoal, sem valor de comprovação oficial."""
-
-    PRESENTE = "presente"
-    ATRASADO = "atrasado"
-    SAIU_MAIS_CEDO = "saiu mais cedo"
-    AUSENTE = "ausente"
-    PENDENTE = "pendente"
-
-
-@dataclass(frozen=True)
-class RegistroFrequencia:
-    """Resultado imutável: correção substitui o objeto, sem acumular nem auditar."""
-
-    situacao: Situacao
-    faltas: int | None
-    manual: bool = False
-
-
-class PoliticaFrequencia(ABC):
-    """Contrato: mesmas evidências, faltas conforme a modalidade de chamada."""
+class PoliticaChamada(ABC):
+    """Calcula faltas após a disciplina validar a situação e a quantidade de aulas."""
 
     @abstractmethod
-    def classificar(
-        self, aulas: int, primeiro: Evidencia, segundo: Evidencia
-    ) -> RegistroFrequencia:
-        """Retorne a estimativa; a sessão valida os argumentos antes da chamada."""
-
-    def _situacao(self, primeiro: Evidencia, segundo: Evidencia) -> Situacao:
-        """Mantenha o significado dos estados comum às especializações."""
-        if Evidencia.INDISPONIVEL in (primeiro, segundo):
-            return Situacao.PENDENTE
-        return {
-            (Evidencia.NO_CAMPUS, Evidencia.NO_CAMPUS): Situacao.PRESENTE,
-            (Evidencia.NO_CAMPUS, Evidencia.FORA): Situacao.SAIU_MAIS_CEDO,
-            (Evidencia.FORA, Evidencia.NO_CAMPUS): Situacao.ATRASADO,
-            (Evidencia.FORA, Evidencia.FORA): Situacao.AUSENTE,
-        }[primeiro, segundo]
+    def calcular_faltas(self, situacao: str, aulas: int) -> int:
+        """Retorna faltas em unidades de 50 minutos."""
 
 
-class ChamadaUnica(PoliticaFrequencia):
-    """Qualquer confirmação positiva basta para zero faltas no bloco inteiro."""
+class ChamadaUnica(PoliticaChamada):
+    """Atraso ou saída antecipada não gera falta no bloco."""
 
-    def classificar(self, aulas, primeiro, segundo):
-        situacao = self._situacao(primeiro, segundo)
-        if situacao == Situacao.PENDENTE and Evidencia.NO_CAMPUS in (primeiro, segundo):
-            situacao = Situacao.PRESENTE
-        faltas = (
-            None
-            if situacao == Situacao.PENDENTE
-            else (aulas if situacao == Situacao.AUSENTE else 0)
-        )
-        return RegistroFrequencia(situacao, faltas)
+    def calcular_faltas(self, situacao, aulas):
+        return aulas if situacao == "ausente" else 0
 
 
-class ChamadaDupla(PoliticaFrequencia):
-    """Cada checkpoint corresponde à metade das unidades de uma sessão2/4."""
+class ChamadaDupla(PoliticaChamada):
+    """Atraso ou saída antecipada perde metade das aulas do bloco."""
 
-    def classificar(self, aulas, primeiro, segundo):
-        situacao = self._situacao(primeiro, segundo)
-        faltas = (
-            None
-            if situacao == Situacao.PENDENTE
-            else (
-                (int(primeiro == Evidencia.FORA) + int(segundo == Evidencia.FORA))
-                * (aulas // 2)
-            )
-        )
-        return RegistroFrequencia(situacao, faltas)
-
-
-class SessaoAula:
-    """Dona dos pings únicos por momento e do único resultado atual."""
-
-    def __init__(
-        self,
-        identificador: str,
-        dia: date,
-        aulas: int,
-        politica: PoliticaFrequencia,
-        natureza: str = "normal",
-    ):
-        if not isinstance(identificador, str) or not identificador.strip():
-            raise ValueError("Identificador obrigatório.")
-        if type(dia) is not date:
-            raise ValueError("Data da sessão inválida.")
-        if type(aulas) is not int or aulas not in (1, 2, 4):
-            raise ValueError("Use 1, 2 ou 4 aulas de 50 minutos.")
-        if not isinstance(politica, PoliticaFrequencia):
-            raise ValueError("Política de chamada inválida.")
-        if aulas == 1 and isinstance(politica, ChamadaDupla):
-            raise ValueError("Uma aula admite somente chamada única.")
-        if natureza not in ("normal", "cancelada", "sem_chamada"):
-            raise ValueError("Natureza da sessão inválida.")
-        self._identificador = identificador.strip()
-        self._dia, self._aulas, self._politica, self._natureza = (
-            dia,
-            aulas,
-            politica,
-            natureza,
-        )
-        self._pings: dict[Momento, Evidencia] = {}
-        self._registro = RegistroFrequencia(
-            Situacao.PRESENTE if natureza == "sem_chamada" else Situacao.PENDENTE,
-            0 if natureza == "sem_chamada" else None,
-        )
-
-    @property
-    def identificador(self):
-        """Identificador estável usado pelo menu."""
-        return self._identificador
-
-    @property
-    def dia(self):
-        """Dia fictício da sessão."""
-        return self._dia
-
-    @property
-    def aulas(self):
-        """Quantidade de unidades de50min."""
-        return self._aulas
-
-    @property
-    def natureza(self):
-        """Normal, cancelada ou sem chamada; fixa neste incremento."""
-        return self._natureza
-
-    @property
-    def modalidade(self):
-        """Descrição da política, sem expor estado mutável."""
-        return (
-            "uma chamada"
-            if isinstance(self._politica, ChamadaUnica)
-            else "duas chamadas"
-        )
-
-    @property
-    def pings(self):
-        """Retrato imutável; a coleção interna não pode ser alterada pelo menu."""
-        return tuple(self._pings.items())
-
-    @property
-    def registro(self):
-        """Resultado atual imutável."""
-        return self._registro
-
-    def _exigir_normal(self):
-        if self._natureza != "normal":
-            raise ValueError(
-                "Sessão cancelada/sem chamada não recebe pings nem correções."
-            )
-
-    def registrar_ping(
-        self, momento: Momento, evidencia: Evidencia
-    ) -> RegistroFrequencia:
-        """F01: valide, classifique uma cópia e só então altere o estado completo."""
-        self._exigir_normal()
-        if not isinstance(momento, Momento) or not isinstance(evidencia, Evidencia):
-            raise ValueError("Momento ou evidência inválidos.")
-        if self._registro.manual:
-            raise ValueError(
-                "Correção manual protegida; use corrigir para substituir o resultado."
-            )
-        if momento in self._pings:
-            raise ValueError("Ping deste momento já registrado.")
-        novos = {**self._pings, momento: evidencia}
-        registro = self._politica.classificar(
-            self._aulas,
-            novos.get(Momento.INICIO, Evidencia.INDISPONIVEL),
-            novos.get(Momento.FIM, Evidencia.INDISPONIVEL),
-        )
-        self._pings, self._registro = novos, registro
-        return registro
-
-    def corrigir(self, situacao: Situacao, faltas: int | None) -> RegistroFrequencia:
-        """F02: substitua o resultado; preserve evidências; rejeição não altera nada."""
-        self._exigir_normal()
-        if not isinstance(situacao, Situacao):
-            raise ValueError("Situação inválida.")
-        if situacao == Situacao.PENDENTE:
-            if faltas is not None:
-                raise ValueError("Pendente não aceita número de faltas.")
-        elif type(faltas) is not int or not 0 <= faltas <= self._aulas:
-            raise ValueError(f"Faltas devem ser inteiras entre 0 e {self._aulas}.")
-        self._registro = RegistroFrequencia(situacao, faltas, manual=True)
-        return self._registro
+    def calcular_faltas(self, situacao, aulas):
+        if situacao == "ausente":
+            return aulas
+        return aulas // 2 if situacao in ("atrasado", "saiu mais cedo") else 0
 
 
 @dataclass(frozen=True)
-class ResumoDisciplina:
-    """Unidades de50min; percentual final indefinido enquanto houver pendências."""
+class Registro:
+    """Retrato imutável de uma aula prevista e de sua frequência atual."""
 
-    aulas_elegiveis: int
-    aulas_presentes: int
-    aulas_pendentes: int
-    faltas_consumidas: int
-    limite_faltas: int
-    faltas_restantes: int
-    excedeu_limite: bool
-    frequencia_percentual: float | None
+    dia: date
+    aulas: int
+    situacao: str = "pendente"
+    faltas: int | None = None
 
 
 class Disciplina:
-    """Agrega sessões conhecidas; consulta calcula totais sem manter cache divergente."""
+    """Guarda a grade e valida cada registro antes de substituir seu estado."""
 
-    def __init__(self, codigo: str, nome: str, sessoes):
-        if (
-            not isinstance(codigo, str)
-            or not codigo.strip()
-            or not isinstance(nome, str)
-            or not nome.strip()
-        ):
-            raise ValueError("Código e nome obrigatórios.")
-        itens = tuple(sessoes)
-        if any(not isinstance(s, SessaoAula) for s in itens):
-            raise ValueError("A disciplina aceita apenas sessões de aula.")
-        if len({s.identificador for s in itens}) != len(itens):
-            raise ValueError("Identificador de sessão duplicado.")
-        self._codigo, self._nome, self._sessoes = codigo.strip(), nome.strip(), itens
+    def __init__(self, codigo, nome, chamadas, aulas, datas):
+        if not isinstance(codigo, str) or not codigo.strip():
+            raise ValueError("Informe o código da disciplina.")
+        if not isinstance(nome, str) or not nome.strip():
+            raise ValueError("Informe o nome da disciplina.")
+        if type(chamadas) is not int or chamadas not in (1, 2):
+            raise ValueError("Escolha uma ou duas chamadas.")
+        if type(aulas) is not int or aulas not in (1, 2, 4):
+            raise ValueError("Cada encontro deve ter 1, 2 ou 4 aulas de 50 minutos.")
+        if aulas == 1 and chamadas == 2:
+            raise ValueError("Um encontro de uma aula aceita apenas uma chamada.")
+        dias = tuple(datas)
+        if not dias or any(type(d) is not date for d in dias):
+            raise ValueError("Informe ao menos uma data válida.")
+        if len(set(dias)) != len(dias):
+            raise ValueError("A grade não pode repetir uma data.")
+        self._codigo = codigo.strip().upper()
+        self._nome = nome.strip()
+        self._chamadas = chamadas
+        self._politica = ChamadaUnica() if chamadas == 1 else ChamadaDupla()
+        self._registros = {d: Registro(d, aulas) for d in sorted(dias)}
 
     @property
     def codigo(self):
-        """Código fictício da disciplina."""
         return self._codigo
 
     @property
     def nome(self):
-        """Nome da disciplina fictícia."""
         return self._nome
 
     @property
-    def sessoes(self):
-        """Tupla dos agregados; não permite adicionar ou remover sessões externamente."""
-        return self._sessoes
+    def chamadas(self):
+        return self._chamadas
 
-    def obter_sessao(self, identificador: str) -> SessaoAula:
-        for sessao in self._sessoes:
-            if sessao.identificador == identificador:
-                return sessao
-        raise ValueError("Sessão não encontrada nesta disciplina.")
+    @property
+    def registros(self):
+        """A tupla e seus registros não permitem alterar a coleção interna."""
+        return tuple(self._registros.values())
 
-    def resumo(self) -> ResumoDisciplina:
-        """Cancelada sai da base; sem chamada entra com0faltas; pendente não presume presença."""
-        elegiveis = [s for s in self._sessoes if s.natureza != "cancelada"]
-        total = sum(s.aulas for s in elegiveis)
-        pendentes = sum(s.aulas for s in elegiveis if s.registro.faltas is None)
-        faltas = sum(s.registro.faltas or 0 for s in elegiveis)
+    def registrar_presenca(self, dia: date, situacao: str, *, corrigir=False):
+        """Registra uma data da grade; repetir exige correção explícita."""
+        if type(dia) is not date or dia not in self._registros:
+            raise ValueError("A data não faz parte da grade desta disciplina.")
+        if situacao not in SITUACOES:
+            raise ValueError("Situação de frequência inválida.")
+        anterior = self._registros[dia]
+        if anterior.situacao != "pendente" and not corrigir:
+            raise ValueError("Esta data já foi registrada. Use Corrigir registro.")
+        faltas = self._politica.calcular_faltas(situacao, anterior.aulas)
+        novo = Registro(dia, anterior.aulas, situacao, faltas)
+        self._registros[dia] = novo
+        return novo
+
+    def resumo(self):
+        """Calcula a partir da grade atual, sem presumir presença nas pendências."""
+        ativos = [r for r in self.registros if r.situacao != "cancelada"]
+        total = sum(r.aulas for r in ativos)
+        pendentes = sum(r.aulas for r in ativos if r.faltas is None)
+        faltas = sum(r.faltas or 0 for r in ativos)
         limite = total // 4
-        return ResumoDisciplina(
-            total,
-            total - pendentes - faltas,
-            pendentes,
-            faltas,
-            limite,
-            max(0, limite - faltas),
-            faltas > limite,
-            100 * (total - faltas) / total if total and not pendentes else None,
-        )
+        return {
+            "aulas": total,
+            "pendentes": pendentes,
+            "faltas": faltas,
+            "limite": limite,
+            "restantes": max(0, limite - faltas),
+            "excesso": max(0, faltas - limite),
+            "frequencia": 100 * (total - faltas) / total
+            if total and not pendentes
+            else None,
+        }
+
+
+class ControleAcademico:
+    """Cadastro iniciado vazio; impede dois códigos iguais."""
+
+    def __init__(self):
+        self._disciplinas = {}
+
+    @property
+    def disciplinas(self):
+        return tuple(self._disciplinas.values())
+
+    def criar_disciplina(self, codigo, nome, chamadas, aulas, datas):
+        """Cria a disciplina e sua grade; rejeições não mudam o cadastro."""
+        nova = Disciplina(codigo, nome, chamadas, aulas, datas)
+        if nova.codigo in self._disciplinas:
+            raise ValueError("Já existe uma disciplina com esse código.")
+        self._disciplinas[nova.codigo] = nova
+        return nova
+
+    def obter_disciplina(self, codigo):
+        chave = codigo.strip().upper()
+        if chave not in self._disciplinas:
+            raise ValueError("Disciplina não encontrada. Cadastre-a primeiro.")
+        return self._disciplinas[chave]
