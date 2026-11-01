@@ -33,6 +33,7 @@ from activity_snapshot_repository import (  # noqa: E402
     InvalidActivitySnapshot,
 )
 from attendance_service import InvalidAttendanceRequest, evaluate_attendance  # noqa: E402
+from checkpoint_service import validate_checkpoint_payload  # noqa: E402
 from course_activities import CourseActivityService, CourseMoodleNotLinked  # noqa: E402
 from course_repository import (  # noqa: E402
     CourseRepository,
@@ -53,6 +54,7 @@ from firebase_identity import (  # noqa: E402
 )
 from firestore_rest import (  # noqa: E402
     FirestoreAccessDenied,
+    FirestoreConflict,
     FirestoreNotFound,
     FirestoreRequestRejected,
     FirestoreRestClient,
@@ -1452,6 +1454,69 @@ def _overview(context: Any, origin: str | None) -> Any:
     return _respond(context, {"items": items}, origin=origin)
 
 
+def _checkpoint_delivery(context: Any, origin: str | None, course_id: str, session_id: str) -> Any:
+    started = perf_counter()
+    user_id, rejected = _authentication(context, origin, "/v1/sessions/checkpoints/put")
+    if rejected is not None:
+        return rejected
+    fields: dict[str, Any] = {"request_id": _REQUEST_ID.get()}
+    repository: SessionMutationRepository | None = None
+    stage = "validation"
+
+    def fail(event: str, status: int) -> Any:
+        _error(
+            context,
+            event,
+            **fields,
+            stage=getattr(repository, "checkpoint_stage", stage),
+            stage_duration_ms=_elapsed_ms(getattr(repository, "checkpoint_stage_started", started)),
+            duration_ms=_elapsed_ms(started),
+        )
+        return _respond(context, {"error": event}, status, origin)
+
+    if environ.get("ENABLE_SESSION_WRITES", "").lower() != "true":
+        return fail("session_writes_disabled", 503)
+    try:
+        validate_course_id(course_id)
+        validate_course_id(session_id)
+        body = validate_checkpoint_payload(context.req.body_json)
+        fields = {
+            **fields,
+            "course_id": course_id,
+            "session_id": session_id,
+            "call_count": body["call_count"],
+            "lesson_count": body["lesson_count"],
+            "first_operation_id": body["first"]["operation_id"] if body["first"] else None,
+            "second_operation_id": body["second"]["operation_id"] if body["second"] else None,
+        }
+        stage = "conditional_apply"
+        _log(context, "checkpoint_delivery_started", **fields)
+        result = _session_repository(context.req.headers, cast(str, user_id)).apply_checkpoints(
+            course_id,
+            session_id,
+            body,
+        )
+    except FirestoreConflict:
+        return fail("checkpoint_conflict", 409)
+    except FirestoreNotFound:
+        return fail("session_not_found", 404)
+    except FirestoreAccessDenied:
+        return fail("session_access_denied", 403)
+    except FirestoreUnavailable:
+        return fail("session_store_unavailable", 503)
+    except (InvalidSchedule, FirestoreRequestRejected):
+        return fail("session_data_invalid", 500)
+    except (InvalidSessionMutation, InvalidCourse, TypeError, ValueError):
+        return fail("checkpoint_rejected", 400)
+    _log(
+        context,
+        "checkpoint_delivery_succeeded",
+        **{**fields, **result},
+        duration_ms=_elapsed_ms(started),
+    )
+    return _respond(context, result, origin=origin)
+
+
 def _session_mutation(
     context: Any,
     origin: str | None,
@@ -1459,6 +1524,8 @@ def _session_mutation(
     session_id: str,
     mutation: str,
 ) -> Any:
+    if mutation == "checkpoints":
+        return _checkpoint_delivery(context, origin, course_id, session_id)
     route = f"/v1/sessions/{mutation}/put"
     user_id, rejected = _authentication(context, origin, route)
     if rejected is not None:
@@ -2200,9 +2267,9 @@ def _session_mutation_path(path: str) -> tuple[str, str, str] | None:
         len(segments) == 6
         and segments[:2] == ["v1", "courses"]
         and segments[3] == "sessions"
-        and segments[5] in {"attendance", "calendar-status"}
+        and segments[5] in {"attendance", "calendar-status", "checkpoints"}
     ):
-        mutation = "attendance" if segments[5] == "attendance" else "calendar_status"
+        mutation = segments[5].replace("-", "_")
         return segments[2], segments[4], mutation
     return None
 
