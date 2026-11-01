@@ -1,4 +1,4 @@
-"""Teste do menu como interface pública, com entradas e saídas reais do terminal."""
+"""Exercita o menu a partir de uma instalação vazia."""
 
 import io
 import runpy
@@ -7,105 +7,77 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from main import executar, mostrar_resumo, preparar_dados
-from models import Situacao
+from main import executar
 
 
-class TestTerminal(unittest.TestCase):
+class TesteMenu(unittest.TestCase):
     def rodar(self, entradas):
         saida = io.StringIO()
         with patch("builtins.input", side_effect=entradas), redirect_stdout(saida):
             executar()
         return saida.getvalue()
 
-    def test_menu_demonstra_as_duas_funcionalidades(self):
+    def test_fluxo_completo_sem_dados_preparados(self):
         saida = self.rodar(
             [
                 "1",
-                "1",  # consultar
+                "D",
+                "Teste",
                 "2",
                 "2",
-                "S1",
-                "1",
-                "2",  # início fora
+                "02/11/2026,04/11/2026",
                 "2",
+                "D",
+                "02/11/2026",
+                "ausente",
                 "2",
-                "S1",
-                "2",
-                "2",  # fim fora =>4faltas
-                "1",
-                "2",  # exibir pings
+                "D",
+                "04/11/2026",
+                "presente",
                 "3",
-                "2",
-                "S1",
-                "1",
-                "0",  # corrigir presente
-                "3",
-                "2",
-                "S1",
-                "5",  # corrigir pendente
+                "D",
                 "4",
-                "2",
+                "D",
+                "02/11/2026",
+                "presente",
                 "0",
             ]
         )
-        self.assertIn("Registro atualizado: ausente; faltas: 4", saida)
-        self.assertIn("limite de faltas excedido", saida)
-        self.assertIn("Registro atualizado: presente; faltas: 0", saida)
-        self.assertIn("Frequência final: pendente", saida)
-        self.assertIn("20 minutos após o início: fora do campus", saida)
-        self.assertIn("Dados da demo descartados", saida)
+        self.assertIn("Cadastro vazio", saida)
+        self.assertIn("Disciplina criada", saida)
+        self.assertIn("Limite excedido", saida)
+        self.assertIn("Frequência: 50.0%", saida)
+        self.assertIn("Frequência: 100.0%", saida)
+        self.assertIn("Frequência: pendente", saida)
 
-    def test_erros_nao_encerram_o_menu(self):
+    def test_rejeicoes_e_conversoes_sao_tratadas(self):
         saida = self.rodar(
             [
-                "banana",
+                "9",
+                "3",
+                "NAOEXISTE",
                 "1",
-                "abc",
+                "D",
+                "Teste",
+                "texto",
                 "1",
-                "0",  # ação, conversão, índice
+                "D",
+                "Teste",
+                "1",
                 "2",
-                "1",
-                "naoexiste",  # sessão inexistente
-                "3",
-                "1",
-                "S1",
-                "1",
-                "abc",  # faltas não numéricas
-                "3",
-                "1",
-                "S1",
-                "1",
-                "99",  # faltas fora do limite
-                "1",
-                "1",
+                "31/02/2026",
                 "0",
             ]
         )
-        self.assertEqual(saida.count("Operação rejeitada"), 6)
-        self.assertIn("faltas: não definidas | manual: False", saida)
+        self.assertEqual(saida.count("Operação rejeitada:"), 4)
+        self.assertIn("Encerrado", saida)
 
-    def test_terminar_entrada_e_interrupcao(self):
+    def test_fim_de_entrada_e_interrupcao_encerram(self):
         for erro in (EOFError(), KeyboardInterrupt()):
-            with self.subTest(erro=erro):
-                self.assertIn("Encerrado", self.rodar([erro]))
+            self.assertIn("Encerrado", self.rodar([erro]))
 
-    def test_percentual_final_e_dados_independentes(self):
-        disciplina = preparar_dados()[0]
-        for s in disciplina.sessoes[:2]:
-            s.corrigir(Situacao.PRESENTE, 0)
-        saida = io.StringIO()
-        with redirect_stdout(saida):
-            mostrar_resumo(disciplina)
-        self.assertIn("100.00%", saida.getvalue())
-        self.assertIsNone(preparar_dados()[0].sessoes[0].registro.faltas)
-
-    def test_ponto_de_entrada_documentado(self):
+    def test_ponto_de_entrada(self):
         with patch("builtins.input", return_value="0"), redirect_stdout(io.StringIO()):
             runpy.run_path(
                 str(Path(__file__).with_name("main.py")), run_name="__main__"
             )
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
