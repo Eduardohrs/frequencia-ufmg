@@ -35,7 +35,7 @@ class FirstCheckpointService : Service() {
             if (Build.VERSION.SDK_INT >= 26) notifications.createNotificationChannel(
                 NotificationChannel(channel, "Verificação de localização", NotificationManager.IMPORTANCE_LOW))
             val notification = NotificationCompat.Builder(this, channel)
-                .setSmallIcon(applicationInfo.icon).setContentTitle("Verificando primeiro ping")
+                .setSmallIcon(applicationInfo.icon).setContentTitle("Verificando localização da aula")
                 .setContentText("Verificação temporária de localização. Não altera sua frequência.")
                 .setOngoing(true).setOnlyAlertOnce(true)
                 .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE).build()

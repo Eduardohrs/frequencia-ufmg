@@ -25,6 +25,40 @@ class FirstCheckpointPolicyTest {
         r.put("ends_at_ms", now + 1300000)
         assertTrue(FirstCheckpointPolicy.late(r, now + 1300000))
     }
+    @Test fun secondMomentUsesEndMinusTwentyAndIndependentEvidenceField() {
+        val r=report().put("moment", "second")
+        FirstCheckpointPolicy.validate(r, now)
+        assertEquals(now+4800000, r.getLong("checkpoint_expected_at_ms"))
+        assertEquals("second_ping", FirstCheckpointPolicy.pingField(r))
+        assertEquals("first_ping", FirstCheckpointPolicy.pingField(report()))
+        assertTrue(FirstCheckpointPolicy.late(r, now+4799999))
+        assertFalse(FirstCheckpointPolicy.late(r, now+4800000))
+        assertTrue(FirstCheckpointPolicy.late(r, now+5100001))
+    }
+    @Test fun unknownMomentsAndSecondBeforeFirstAreRejected() {
+        for (r in listOf(report().put("moment", "typo"),
+            report().put("moment", "second").put("ends_at_ms", now+2400000))) {
+            try { FirstCheckpointPolicy.validate(r,now);fail() } catch (_:IllegalArgumentException) {}
+        }
+    }
+    @Test fun completedFirstIsRetainedUntilThePairEnds() {
+        val a=report().put("moment", "first").put("status", "succeeded")
+        val b=report().put("moment", "second").put("status", "scheduled")
+        assertFalse(FirstCheckpointPolicy.canClear(a,listOf(a),now))
+        assertFalse(FirstCheckpointPolicy.canClear(a,listOf(a,b),now))
+        assertFalse(FirstCheckpointPolicy.canClear(b,listOf(a,b),now))
+        b.put("status", "succeeded")
+        assertTrue(FirstCheckpointPolicy.canClear(a,listOf(a,b),now))
+        assertTrue(FirstCheckpointPolicy.canClear(a,listOf(a),now+6000000))
+        a.put("status", "cancelled")
+        assertTrue(FirstCheckpointPolicy.canClear(a,listOf(a),now))
+        b.put("campus_id", "other").put("status", "scheduled")
+        assertTrue(FirstCheckpointPolicy.canClear(a,listOf(a,b),now))
+        assertFalse(FirstCheckpointPolicy.sameRevision(a,b))
+        for (field in listOf("course_id","session_id","starts_at_ms","ends_at_ms","campus_id")) {
+            assertFalse(FirstCheckpointPolicy.sameRevision(a,JSONObject(a.toString()).put(field,"other")))
+        }
+    }
     @Test fun areaIncludesEdgesAndSeparatedSites() {
         val r=report()
         assertEquals("no_campus", FirstCheckpointPolicy.classify(r,-20.0,-44.0))

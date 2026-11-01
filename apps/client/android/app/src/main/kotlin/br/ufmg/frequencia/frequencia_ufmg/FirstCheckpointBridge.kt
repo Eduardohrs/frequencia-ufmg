@@ -32,7 +32,8 @@ class FirstCheckpointBridge(private val context: Context) {
                 "read" -> result.success(reports(account))
                 "clear_completed" -> {
                     val stores = prefs.getStringSet("stores", emptySet())!!.toMutableSet()
-                    val ended = stores.filter { reconcile(it).optString("status") !in listOf("scheduled", "running") }
+                    val current = stores.associateWith { reconcile(it) }
+                    val ended = stores.filter { FirstCheckpointPolicy.canClear(current.getValue(it), current.values.toList(), System.currentTimeMillis()) }
                     ended.forEach { key -> stores.remove(key); context.getSharedPreferences(key, 0).edit().clear().commit() }
                     check(prefs.edit().putStringSet("stores", stores).commit())
                     result.success(reports(account))
@@ -45,7 +46,7 @@ class FirstCheckpointBridge(private val context: Context) {
                     val report = load(key)
                     alarms.cancel(key)
                     work.cancelUniqueWork(key)
-                    report.put("status", "cancelled").put("first_ping", "indisponivel")
+                    report.put("status", "cancelled").put(FirstCheckpointPolicy.pingField(report), "indisponivel")
                         .put("updated_at_ms", System.currentTimeMillis())
                     check(context.getSharedPreferences(key, 0).edit().putString("report", report.toString()).commit())
                     BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(report))
@@ -65,11 +66,8 @@ class FirstCheckpointBridge(private val context: Context) {
 
                     val existing = prefs.getStringSet("stores", emptySet())!!.firstOrNull { key ->
                         val r = load(key)
-                        r.optString("course_id") == report.getString("course_id") &&
-                            r.optString("session_id") == report.getString("session_id") &&
-                            r.optLong("starts_at_ms") == report.getLong("starts_at_ms") &&
-                            r.optLong("ends_at_ms") == report.getLong("ends_at_ms") &&
-                            r.optString("campus_id") == report.getString("campus_id") &&
+                        r.optString("moment", "first") == report.getString("moment") &&
+                            FirstCheckpointPolicy.sameRevision(r, report) &&
                             r.optString("status") in listOf("scheduled", "running", "succeeded")
                     }
                     if (existing != null) { result.success(reports(account)); return }
@@ -79,17 +77,19 @@ class FirstCheckpointBridge(private val context: Context) {
                     val requestId = java.util.UUID.randomUUID().toString()
                     val key = PREFIX + requestId
                     report.put("operation_id", requestId).put("status", "scheduled")
-                        .put("first_ping", "indisponivel").put("scheduled_at_ms", System.currentTimeMillis())
-                        .put("scheduler", "alarmmanager_exact").put("moment", "first")
+                        .put(FirstCheckpointPolicy.pingField(report), "indisponivel").put("scheduled_at_ms", System.currentTimeMillis())
+                        .put("scheduler", "alarmmanager_exact")
                     check(context.getSharedPreferences(key, 0).edit().putString("report", report.toString()).commit())
                     stores.forEach { oldKey ->
                         val old = load(oldKey)
                         if (old.optString("course_id") == report.getString("course_id") &&
                             old.optString("session_id") == report.getString("session_id") &&
-                            old.optString("status") in listOf("scheduled", "running")) {
+                            old.optString("status") in listOf("scheduled", "running") &&
+                            (old.optString("moment", "first") == report.getString("moment") ||
+                                !FirstCheckpointPolicy.sameRevision(old, report))) {
                             alarms.cancel(oldKey)
                             work.cancelUniqueWork(oldKey)
-                            old.put("status", "superseded").put("first_ping", "indisponivel")
+                            old.put("status", "superseded").put(FirstCheckpointPolicy.pingField(old), "indisponivel")
                             context.getSharedPreferences(oldKey, 0).edit().putString("report", old.toString()).commit()
                         }
                     }
@@ -106,7 +106,7 @@ class FirstCheckpointBridge(private val context: Context) {
                 else -> result.notImplemented()
             }
         } catch (error: Exception) {
-            result.error("checkpoint_failed", "Não foi possível concluir a ação do primeiro ping.",
+            result.error("checkpoint_failed", "Não foi possível concluir a ação dos pings.",
                 mapOf("stage" to method, "cause_type" to error.javaClass.simpleName, "cause_message" to error.message?.take(300)))
         }
     }
@@ -118,7 +118,7 @@ class FirstCheckpointBridge(private val context: Context) {
     fun fail(key: String, status: String, stage: String, error: Exception) = synchronized(LOCK) {
         val report = load(key)
         if (!active(context, report.optString("account_id")) || report.optString("status") !in listOf("scheduled", "running")) return@synchronized
-        save(key, report.put("status", status).put("first_ping", "indisponivel")
+        save(key, report.put("status", status).put(FirstCheckpointPolicy.pingField(report), "indisponivel")
             .put("stage", stage).put("updated_at_ms", System.currentTimeMillis())
             .put("cause_type", error.javaClass.simpleName).put("cause_message", error.message?.take(300)))
     }
@@ -128,7 +128,7 @@ class FirstCheckpointBridge(private val context: Context) {
         val failure = FirstCheckpointPolicy.pendingFailure(report, now, alarms.allowed())
         if (failure != null) {
             alarms.cancel(key); work.cancelUniqueWork(key)
-            save(key, report.put("status", failure).put("first_ping", "indisponivel")
+            save(key, report.put("status", failure).put(FirstCheckpointPolicy.pingField(report), "indisponivel")
                 .put("stage", "schedule_reconciliation").put("updated_at_ms", now)
                 .put("lateness_ms", now - report.getLong("checkpoint_expected_at_ms")))
         } else if (report.optString("status") == "scheduled" && report.optString("scheduler") != "alarmmanager_exact") {
