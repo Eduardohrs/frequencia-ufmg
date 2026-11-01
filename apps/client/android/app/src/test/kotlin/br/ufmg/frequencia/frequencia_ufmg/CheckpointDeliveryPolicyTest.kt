@@ -76,4 +76,10 @@ class CheckpointDeliveryPolicyTest {
         assertFalse(details.toString().contains("hidden"))
         assertFalse(details.toString().contains("eyJhbGci"))
     }
+    @Test fun aPartialLocalAcknowledgementMustNotStopTheRemainingOutbox() {
+        val a=report("first").put("delivery_status","applied");val b=report("second")
+        assertFalse(CheckpointDeliveryPolicy.allAcknowledged(a,listOf(a,b)))
+        b.put("delivery_status","applied")
+        assertTrue(CheckpointDeliveryPolicy.allAcknowledged(a,listOf(a,b)))
+    }
 }

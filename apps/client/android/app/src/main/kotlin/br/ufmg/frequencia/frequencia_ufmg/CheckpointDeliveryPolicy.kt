@@ -11,6 +11,11 @@ object CheckpointDeliveryPolicy {
         .filter { it.optString("account_id") == seed.optString("account_id") &&
             FirstCheckpointPolicy.sameRevision(seed, it) && it.optString("moment", "first") == moment }
         .maxByOrNull { it.optLong("scheduled_at_ms") }
+    fun allAcknowledged(seed: JSONObject, reports: List<JSONObject>): Boolean {
+        val related = reports.filter { it.optString("account_id") == seed.optString("account_id") &&
+            FirstCheckpointPolicy.sameRevision(seed, it) && it.optBoolean("delivery_enabled") }
+        return related.isNotEmpty() && related.all { acknowledged(it) }
+    }
     fun workName(report: JSONObject): String {
         val revision = listOf("account_id", "course_id", "session_id", "starts_at_ms", "ends_at_ms", "campus_id", "lesson_count", "call_count")
             .joinToString("/") { report.get(it).toString() }

@@ -1,3 +1,4 @@
+import 'data/first_checkpoint.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
@@ -156,6 +157,10 @@ Future<void> main() async {
       scheduleWritesEnabled: pythonScheduleWritesEnabled,
       sessionWritesEnabled: pythonSessionWritesEnabled,
       overviewReadsEnabled: pythonOverviewReadsEnabled,
+      checkpointDeliveryUpdates:
+          !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+          ? FirstCheckpointGateway.deliveryUpdates
+          : null,
       androidOfflineQueueEnabled:
           !kIsWeb && defaultTargetPlatform == TargetPlatform.android,
     ),
@@ -184,6 +189,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
     this.sessionWritesEnabled = false,
     this.overviewReadsEnabled = false,
     this.androidOfflineQueueEnabled = false,
+    this.checkpointDeliveryUpdates,
     super.key,
   });
 
@@ -207,6 +213,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
   final bool sessionWritesEnabled;
   final bool overviewReadsEnabled;
   final bool androidOfflineQueueEnabled;
+  final Stream<Map<String, Object?>>? checkpointDeliveryUpdates;
 
   @override
   Widget build(BuildContext context) {
@@ -237,6 +244,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
         sessionWritesEnabled: sessionWritesEnabled,
         overviewReadsEnabled: overviewReadsEnabled,
         androidOfflineQueueEnabled: androidOfflineQueueEnabled,
+        checkpointDeliveryUpdates: checkpointDeliveryUpdates,
       ),
     );
   }

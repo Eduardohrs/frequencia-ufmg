@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/data/first_checkpoint.dart';
+import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/features/attendance/first_checkpoint_page.dart';
 import 'fixtures/campus_location_fixture.dart';
 import 'first_checkpoint_test.dart'
@@ -10,6 +12,29 @@ import 'first_checkpoint_test.dart'
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('native delivery broadcasts preserve account and revision', () async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const control = MethodChannel(FirstCheckpointGateway.deliveryChannelName);
+    messenger.setMockMethodCallHandler(control, (_) async => null);
+    addTearDown(() => messenger.setMockMethodCallHandler(control, null));
+    final events = <Map<String, Object?>>[];
+    final subscription = FirstCheckpointGateway.deliveryUpdates.listen(
+      events.add,
+    );
+    await Future<void>.delayed(Duration.zero);
+    await messenger.handlePlatformMessage(
+      FirstCheckpointGateway.deliveryChannelName,
+      const StandardMethodCodec().encodeSuccessEnvelope({
+        'account_id': 'owner',
+        'revision': 4,
+      }),
+      (_) {},
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(events.single, {'account_id': 'owner', 'revision': 4});
+    await subscription.cancel();
+  });
   testWidgets('delivery queue is visible, retryable and fully logged', (
     tester,
   ) async {
@@ -17,6 +42,8 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+    final updates = StreamController<Map<String, Object?>>.broadcast();
+    addTearDown(updates.close);
     final logger = CampusTestLogger();
     final repo = Sessions()..values = [session('s')];
     final messenger =
@@ -63,6 +90,7 @@ void main() {
       MaterialApp(
         home: FirstCheckpointPage(
           courses: [course()],
+          deliveryUpdates: updates.stream,
           sessions: repo,
           gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
           selection: Selection(),
@@ -114,6 +142,37 @@ void main() {
     expect(details['delivery_request_id'], 'request-1');
     expect((details['delivery_timings'] as Map)['http_ms'], 400);
     expect(details['delivery_attempt'], 3);
+    final beforeEvents = repo.reads;
+    updates.add({'account_id': 'other', 'revision': 1});
+    updates.add({'account_id': 'owner', 'revision': 'bad'});
+    updates.add({'account_id': 'owner', 'revision': 0});
+    await tester.pumpAndSettle();
+    expect(repo.reads, beforeEvents);
+    updates.add({'account_id': 'owner', 'revision': 1});
+    await tester.pumpAndSettle();
+    expect(repo.reads, beforeEvents + 1);
+    updates.add({'account_id': 'owner', 'revision': 1});
+    await tester.pumpAndSettle();
+    expect(repo.reads, beforeEvents + 1);
+    updates.addError(StateError('native stream unavailable'));
+    await tester.pumpAndSettle();
+    expect(
+      logger.errors.any((e) => e.$2 == 'checkpoint_delivery_updates'),
+      isTrue,
+    );
+    logger.failLogging = true;
+    updates.addError(StateError('stream and logger unavailable'));
+    await tester.pumpAndSettle();
+    logger.failLogging = false;
+    final waiting = Completer<List<SessionRecord>>();
+    repo.pending = waiting.future;
+    await tester.tap(find.byTooltip('Atualizar pings'));
+    await tester.pump();
+    updates.add({'account_id': 'owner', 'revision': 2});
+    await tester.pump();
+    repo.pending = null;
+    waiting.complete(repo.values);
+    await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
 }

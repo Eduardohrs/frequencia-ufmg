@@ -71,9 +71,9 @@ class CheckpointDeliveryWorker(context: Context, params: WorkerParameters) : Wor
             JSONObject(prefs.getString("report", "{}")!!)
         }
         val account = seed.optString("account_id")
-        if (!seed.optBoolean("delivery_enabled") || !FirstCheckpointBridge.active(applicationContext, account) ||
-            CheckpointDeliveryPolicy.acknowledged(seed)) return Result.success()
+        if (!seed.optBoolean("delivery_enabled") || !FirstCheckpointBridge.active(applicationContext, account)) return Result.success()
         val reports = FirstCheckpointBridge(applicationContext).deliveryReports(account)
+        if (CheckpointDeliveryPolicy.allAcknowledged(seed, reports)) return Result.success()
         if (CheckpointDeliveryPolicy.readyAt(seed, reports, System.currentTimeMillis()) > System.currentTimeMillis()) return Result.retry()
         val body = CheckpointDeliveryPolicy.payload(seed, reports)
         val knownOperations = reports.map { it.optString("operation_id") }.toSet()
@@ -99,6 +99,9 @@ class CheckpointDeliveryWorker(context: Context, params: WorkerParameters) : Wor
                     if (httpStatus != null) r.put("delivery_http_status", httpStatus)
                     check(saved.edit().putString("report", r.toString()).commit())
                     BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(r))
+                }
+                if (outcome !in listOf("sending", "retry")) {
+                    check(index.edit().putLong(CheckpointDeliveryEvents.REVISION, index.getLong(CheckpointDeliveryEvents.REVISION, 0)+1).commit())
                 }
             }
         }

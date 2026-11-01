@@ -20,6 +20,7 @@ class FirstCheckpointPage extends StatefulWidget {
     required this.selection,
     required this.logger,
     this.now = DateTime.now,
+    this.deliveryUpdates,
     super.key,
   });
   final List<CourseRecord> courses;
@@ -28,6 +29,7 @@ class FirstCheckpointPage extends StatefulWidget {
   final CampusSelectionGateway selection;
   final AppLogger logger;
   final DateTime Function() now;
+  final Stream<Map<String, Object?>>? deliveryUpdates;
   @override
   State<FirstCheckpointPage> createState() => _FirstCheckpointPageState();
 }
@@ -40,18 +42,46 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
   String _moment = 'first';
   List<Map<String, Object?>> _reports = [];
   int? _selected;
+  StreamSubscription<Map<String, Object?>>? _deliverySubscription;
+  bool _reloadQueued = false;
+  int _deliveryRevision = 0;
   bool _busy = false;
   String? _error;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _deliverySubscription = widget.deliveryUpdates?.listen(
+      (event) {
+        final revision = event['revision'];
+        if (event['account_id'] != widget.gateway.accountId ||
+            revision is! int ||
+            revision <= _deliveryRevision) {
+          return;
+        }
+        _deliveryRevision = revision;
+        _reloadQueued = true;
+        _reloadIfQueued();
+      },
+      onError: (Object error, StackTrace stack) {
+        unawaited(
+          widget.logger
+              .recordError(error, stack, context: 'checkpoint_delivery_updates')
+              .catchError((Object e) {
+                debugPrint(
+                  'checkpoint_delivery_event_log_failed type=${e.runtimeType}',
+                );
+              }),
+        );
+      },
+    );
     unawaited(_load());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    unawaited(_deliverySubscription?.cancel());
     super.dispose();
   }
 
@@ -60,8 +90,21 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
     if (state == AppLifecycleState.resumed) unawaited(_load());
   }
 
+  void _reloadIfQueued() {
+    if (!mounted ||
+        _busy ||
+        !_reloadQueued ||
+        (WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed) !=
+            AppLifecycleState.resumed) {
+      return;
+    }
+    _reloadQueued = false;
+    unawaited(_load());
+  }
+
   Future<void> _load() async {
     if (_busy) return;
+    _reloadQueued = false;
     setState(() {
       _busy = true;
       _error = null;
@@ -103,6 +146,7 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
       }
     } finally {
       if (mounted) setState(() => _busy = false);
+      _reloadIfQueued();
     }
   }
 
@@ -166,6 +210,7 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
       }
     } finally {
       if (mounted) setState(() => _busy = false);
+      _reloadIfQueued();
     }
   }
 
