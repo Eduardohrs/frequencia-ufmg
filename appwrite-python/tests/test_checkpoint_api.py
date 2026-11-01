@@ -39,6 +39,8 @@ def test_route_authenticates_applies_and_logs_both_operations(monkeypatch):
     assert done["course_id"] == "poo" and done["session_id"] == "s"
     assert done["first_operation_id"] == "first-id" and done["second_operation_id"] == "second-id"
     assert "duration_ms" in done
+    assert done["evidence"] == payload()
+    assert done["evidence"]["first"]["captured_at_ms"] > done["evidence"]["first"]["expected_at_ms"]
 
 
 def test_racing_edit_returns_retryable_conflict_and_a_diagnostic(monkeypatch):
