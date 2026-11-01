@@ -28,6 +28,13 @@ object FirstCheckpointPolicy {
         now < report.getLong("checkpoint_expected_at_ms") ||
         now - report.getLong("checkpoint_expected_at_ms") > MAX_LATENESS_MS || now >= report.getLong("ends_at_ms")
 
+    fun pendingFailure(report: JSONObject, now: Long, alarmsAllowed: Boolean): String? {
+        if (report.optString("status") !in listOf("scheduled", "running")) return null
+        if (now >= report.getLong("ends_at_ms") ||
+            now - report.getLong("checkpoint_expected_at_ms") > MAX_LATENESS_MS) return "checkpoint_outside_window"
+        if (report.optString("status") == "scheduled" && !alarmsAllowed) return "exact_alarm_permission_required"
+        return null
+    }
     fun classify(report: JSONObject, latitude: Double, longitude: Double): String {
         val areas = report.getJSONArray("rectangles")
         val inside = (0 until areas.length()).any { i ->

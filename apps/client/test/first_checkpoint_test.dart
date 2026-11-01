@@ -382,6 +382,69 @@ void main() {
     await tester.pumpAndSettle();
     expect(logger.errors, isNotEmpty);
   });
+  testWidgets(
+    'alarm access action and permission failure are explicit and logged',
+    (tester) async {
+      final logger = CampusTestLogger();
+      final actions = <String>[];
+      messenger.setMockMethodCallHandler(FirstCheckpointGateway.channel, (
+        call,
+      ) async {
+        actions.add(call.method);
+        if (call.method == 'schedule') {
+          throw PlatformException(
+            code: 'checkpoint_failed',
+            details: {'cause_message': 'exact_alarm_permission_required'},
+          );
+        }
+        return [];
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FirstCheckpointPage(
+            courses: [course()],
+            sessions: Sessions()..values = [session('s')],
+            gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
+            selection: Selection(),
+            logger: logger,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Revisar Alarmes e lembretes'));
+      await tester.pumpAndSettle();
+      expect(actions, contains('request_alarm_permission'));
+      await tester.tap(find.text('Agendar primeiro ping'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Permita Alarmes e lembretes para agendar o primeiro ping.'),
+        findsOneWidget,
+      );
+      expect(logger.errors, isNotEmpty);
+      messenger.setMockMethodCallHandler(
+        FirstCheckpointGateway.channel,
+        (_) async => [
+          {
+            'status': 'exact_alarm_permission_required',
+            'course_code': 'C',
+            'campus_name': 'Pampulha',
+          },
+          {
+            'status': 'scheduled',
+            'course_code': 'D',
+            'campus_name': 'Pampulha',
+          },
+        ],
+      );
+      await tester.tap(find.byTooltip('Atualizar primeiros pings'));
+      await tester.pumpAndSettle();
+      expect(find.text('Alarmes e lembretes não autorizado'), findsOneWidget);
+      await tester.drag(find.byType(ListView), const Offset(0, -600));
+      await tester.pumpAndSettle();
+      expect(find.text('Agendado para o horário da aula'), findsOneWidget);
+    },
+  );
   testWidgets('disposed loading cannot set state on a dead page', (
     tester,
   ) async {

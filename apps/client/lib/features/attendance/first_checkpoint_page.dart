@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/calendar_status.dart';
@@ -150,7 +151,12 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
       if (mounted) {
         setState(
           () => _error =
-              'Não foi possível concluir. Confira permissões e tente novamente.',
+              error is PlatformException &&
+                  error.details is Map &&
+                  (error.details as Map)['cause_message'] ==
+                      'exact_alarm_permission_required'
+              ? 'Permita Alarmes e lembretes para agendar o primeiro ping.'
+              : 'Não foi possível concluir. Confira permissões e tente novamente.',
         );
       }
     } finally {
@@ -165,7 +171,8 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
   }
 
   String _result(Map<String, Object?> report) => switch (report['status']) {
-    'scheduled' => 'Agendado — aguardando o Android',
+    'scheduled' => 'Agendado para o horário da aula',
+    'exact_alarm_permission_required' => 'Alarmes e lembretes não autorizado',
     'running' => 'Capturando localização',
     'cancelled' => 'Cancelado',
     'succeeded' when report['first_ping'] == 'no_campus' =>
@@ -196,7 +203,11 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
         ),
         const SizedBox(height: 12),
         const Text(
-          'Requer localização precisa permitida sempre e bateria sem restrições. Até 50 agendamentos/resultados ficam neste aparelho; limpe os encerrados quando necessário. A evidência ainda não encerra a frequência e não substitui registros manuais. O segundo ping entra na próxima etapa.',
+          'Requer Alarmes e lembretes, localização precisa permitida sempre e bateria sem restrições. Até 50 agendamentos/resultados ficam neste aparelho; limpe os encerrados quando necessário. A evidência ainda não encerra a frequência e não substitui registros manuais. O segundo ping entra na próxima etapa.',
+        ),
+        TextButton(
+          onPressed: _busy ? null : () => _act('request_alarm_permission'),
+          child: const Text('Revisar Alarmes e lembretes'),
         ),
         if (_busy) const LinearProgressIndicator(),
         if (_error case final error?)
