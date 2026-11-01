@@ -47,8 +47,10 @@ class Sessions implements SessionRepository {
   List<SessionRecord> values = [];
   Future<List<SessionRecord>>? pending;
   Object? error;
+  int reads = 0;
   @override
   Future<List<SessionRecord>> listSessions(String id) async {
+    reads++;
     if (error case final e?) throw e;
     return pending ?? values;
   }
@@ -272,10 +274,12 @@ void main() {
       expect((calls.last.arguments as Map)['session_id'], 'first');
       expect((calls.last.arguments as Map)['campus_id'], 'pampulha');
       await tester.ensureVisible(find.text('Cancelar primeiro ping'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Cancelar primeiro ping'));
       await tester.pumpAndSettle();
       expect(find.text('Cancelado'), findsOneWidget);
       await tester.ensureVisible(find.text('Limpar resultados encerrados'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Limpar resultados encerrados'));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Atualizar primeiros pings'));
@@ -382,6 +386,182 @@ void main() {
     await tester.pumpAndSettle();
     expect(logger.errors, isNotEmpty);
   });
+  testWidgets(
+    'alarm access action and permission failure are explicit and logged',
+    (tester) async {
+      final logger = CampusTestLogger();
+      final actions = <String>[];
+      messenger.setMockMethodCallHandler(FirstCheckpointGateway.channel, (
+        call,
+      ) async {
+        actions.add(call.method);
+        if (call.method == 'schedule') {
+          throw PlatformException(
+            code: 'checkpoint_failed',
+            details: {'cause_message': 'exact_alarm_permission_required'},
+          );
+        }
+        return [];
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FirstCheckpointPage(
+            courses: [course()],
+            sessions: Sessions()..values = [session('s')],
+            gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
+            selection: Selection(),
+            logger: logger,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Revisar Alarmes e lembretes'));
+      await tester.pumpAndSettle();
+      expect(actions, contains('request_alarm_permission'));
+      await tester.tap(find.text('Agendar primeiro ping'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Permita Alarmes e lembretes para agendar o primeiro ping.'),
+        findsOneWidget,
+      );
+      expect(logger.errors, isNotEmpty);
+      messenger.setMockMethodCallHandler(
+        FirstCheckpointGateway.channel,
+        (_) async => [
+          {
+            'status': 'exact_alarm_permission_required',
+            'course_code': 'C',
+            'campus_name': 'Pampulha',
+          },
+          {
+            'status': 'scheduled',
+            'course_code': 'D',
+            'campus_name': 'Pampulha',
+          },
+        ],
+      );
+      await tester.tap(find.byTooltip('Atualizar primeiros pings'));
+      await tester.pumpAndSettle();
+      expect(find.text('Alarmes e lembretes não autorizado'), findsOneWidget);
+      await tester.drag(find.byType(ListView), const Offset(0, -600));
+      await tester.pumpAndSettle();
+      expect(find.text('Agendado para o horário da aula'), findsOneWidget);
+    },
+  );
+  testWidgets(
+    'second moment and paired local results are visible and fully logged without writes',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final logger = CampusTestLogger();
+      final repo = Sessions()..values = [session('s')];
+      final one = repo.values.single;
+      Map<String, Object?> evidence(String moment, String ping) {
+        final expected =
+            (moment == 'first'
+                    ? one.startsAt.add(const Duration(minutes: 20))
+                    : one.endsAt.subtract(const Duration(minutes: 20)))
+                .millisecondsSinceEpoch;
+        return {
+          'course_id': 'poo',
+          'course_code': 'ELE631',
+          'session_id': 's',
+          'campus_id': 'pampulha',
+          'campus_name': 'Pampulha',
+          'starts_at_ms': one.startsAt.millisecondsSinceEpoch,
+          'ends_at_ms': one.endsAt.millisecondsSinceEpoch,
+          'operation_id': moment,
+          'moment': moment,
+          'scheduled_at_ms': now.millisecondsSinceEpoch,
+          'checkpoint_expected_at_ms': expected,
+          'captured_at_ms': expected + 1000,
+          'status': 'succeeded',
+          (moment == 'first' ? 'first_ping' : 'second_ping'): ping,
+        };
+      }
+
+      var reports = <Map<String, Object?>>[];
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(FirstCheckpointGateway.channel, (
+        call,
+      ) async {
+        calls.add(call);
+        return reports;
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FirstCheckpointPage(
+            courses: [course()],
+            sessions: repo,
+            gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
+            selection: Selection(),
+            logger: logger,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final readsBeforeSelection = repo.reads;
+      await tester.tap(find.text('Fim da aula'));
+      await tester.pumpAndSettle();
+      expect(repo.reads, readsBeforeSelection);
+      await tester.tap(find.text('Agendar segundo ping'));
+      await tester.pumpAndSettle();
+      expect((calls.last.arguments as Map)['moment'], 'second');
+      for (final item in [
+        ('no_campus', 'no_campus', 'Presente'),
+        ('fora', 'fora', 'Ausente'),
+        ('fora', 'no_campus', 'Chegou atrasado'),
+        ('no_campus', 'fora', 'Saiu mais cedo'),
+        ('indisponivel', 'indisponivel', 'Pendente'),
+      ]) {
+        reports = [
+          evidence('first', item.$1),
+          evidence('second', item.$2),
+          {'course_id': 'missing'},
+          {...evidence('first', item.$1), 'campus_id': null},
+          {...evidence('first', item.$1), 'starts_at_ms': 0},
+          {...evidence('first', item.$1), 'ends_at_ms': 0},
+        ];
+        await tester.tap(find.byTooltip('Atualizar primeiros pings'));
+        await tester.pumpAndSettle();
+        expect(find.text(item.$3), findsOneWidget);
+        expect(find.text('ELE631 · Resultado local'), findsOneWidget);
+      }
+      final row = logger.events.lastWhere(
+        (e) => e.$1 == 'attendance_checkpoint_classified',
+      );
+      final details = jsonDecode(row.$2!['details']! as String) as Map;
+      expect(details['call_count'], 2);
+      expect(details['lesson_count'], 2);
+      expect(details['first_operation_id'], 'first');
+      expect(details['second_operation_id'], 'second');
+      expect(details['attendance_status'], 'pendente');
+      expect(details['complete'], true);
+      reports = [
+        {...evidence('first', 'fora'), 'status': 'scheduled'},
+        {...evidence('second', 'fora'), 'status': 'scheduled'},
+      ];
+      await tester.tap(find.byTooltip('Atualizar primeiros pings'));
+      await tester.pumpAndSettle();
+      expect(find.text('Aguardando os dois resultados'), findsOneWidget);
+      await tester.tap(find.text('Cancelar segundo ping'));
+      await tester.pumpAndSettle();
+      expect((calls.last.arguments as Map)['operation_id'], 'second');
+      repo.values = [session('s', attendance: SituacaoFrequencia.present)];
+      logger.failLogging = true;
+      await tester.tap(find.byTooltip('Atualizar primeiros pings'));
+      await tester.pumpAndSettle();
+      expect(find.text('Registro da disciplina preservado'), findsOneWidget);
+      await tester.tap(find.text('Início da aula'));
+      await tester.pumpAndSettle();
+      expect(repo.values.single.attendanceStatus, SituacaoFrequencia.present);
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets('disposed loading cannot set state on a dead page', (
     tester,
   ) async {

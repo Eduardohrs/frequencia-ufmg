@@ -984,7 +984,7 @@ class _CoursePageState extends State<CoursePage> {
             child: ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.schedule),
-              title: Text('Primeiro ping'),
+              title: Text('Pings de presença'),
             ),
           ),
         if (widget.ufmgSessionGateway != null)

@@ -2,7 +2,7 @@ package br.ufmg.frequencia.frequencia_ufmg
 
 import org.json.JSONObject
 
-/** First checkpoint only; no attendance classification or cloud writes. */
+/** Both checkpoint moments share timing/quality rules; no cloud writes. */
 object FirstCheckpointPolicy {
     const val MAX_LATENESS_MS = 300000L
     fun validate(report: JSONObject, now: Long) {
@@ -11,7 +11,10 @@ object FirstCheckpointPolicy {
         }
         val start = report.getLong("starts_at_ms")
         val end = report.getLong("ends_at_ms")
-        val expected = start + 1200000L
+        val moment = report.optString("moment", "first")
+        require(moment in listOf("first", "second")) { "invalid_checkpoint_moment" }
+        require(moment != "second" || end - start > 2400000L) { "second_checkpoint_before_first" }
+        val expected = if (moment == "second") end - 1200000L else start + 1200000L
         require(start > 0 && end > expected && expected > now && expected - now <= 15552000000L) { "invalid_checkpoint_time" }
         val areas = report.getJSONArray("rectangles")
         require(areas.length() in 1..3) { "invalid_campus_rectangles" }
@@ -22,12 +25,37 @@ object FirstCheckpointPolicy {
             require(south.isFinite() && north.isFinite() && west.isFinite() && east.isFinite() &&
                 south >= -90 && north <= 90 && west >= -180 && east <= 180 && south < north && west < east) { "invalid_campus_rectangle" }
         }
-        report.put("checkpoint_expected_at_ms", expected).put("maximum_lateness_ms", MAX_LATENESS_MS)
+        report.put("moment", moment).put("checkpoint_expected_at_ms", expected).put("maximum_lateness_ms", MAX_LATENESS_MS)
     }
+    fun sameRevision(a: JSONObject, b: JSONObject): Boolean =
+        listOf("course_id", "session_id", "starts_at_ms", "ends_at_ms", "campus_id")
+            .all { a.optString(it) == b.optString(it) }
+
+    fun canClear(report: JSONObject, peers: List<JSONObject>, now: Long): Boolean {
+        val active = listOf("scheduled", "running")
+        if (report.optString("status") in active) return false
+        val related = peers.filter { sameRevision(report, it) }
+        if (related.any { it.optString("status") in active }) return false
+        if (report.optString("status") == "succeeded" && now < report.getLong("ends_at_ms")) {
+            return related.any { it.optString("moment", "first") != report.optString("moment", "first") &&
+                it.optString("status") !in active }
+        }
+        return true
+    }
+
+    fun pingField(report: JSONObject): String = if (report.optString("moment") == "second") "second_ping" else "first_ping"
+
     fun late(report: JSONObject, now: Long): Boolean =
         now < report.getLong("checkpoint_expected_at_ms") ||
         now - report.getLong("checkpoint_expected_at_ms") > MAX_LATENESS_MS || now >= report.getLong("ends_at_ms")
 
+    fun pendingFailure(report: JSONObject, now: Long, alarmsAllowed: Boolean): String? {
+        if (report.optString("status") !in listOf("scheduled", "running")) return null
+        if (now >= report.getLong("ends_at_ms") ||
+            now - report.getLong("checkpoint_expected_at_ms") > MAX_LATENESS_MS) return "checkpoint_outside_window"
+        if (report.optString("status") == "scheduled" && !alarmsAllowed) return "exact_alarm_permission_required"
+        return null
+    }
     fun classify(report: JSONObject, latitude: Double, longitude: Double): String {
         val areas = report.getJSONArray("rectangles")
         val inside = (0 until areas.length()).any { i ->
