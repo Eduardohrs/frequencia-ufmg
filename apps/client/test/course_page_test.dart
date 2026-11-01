@@ -622,7 +622,7 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.byTooltip('Perfil e configurações'));
         await tester.pumpAndSettle();
-        await tester.tap(find.text('Primeiro ping'));
+        await tester.tap(find.text('Pings de presença'));
         await tester.pumpAndSettle();
         expect(
           find.text('Nenhuma sessão elegível para agendar.'),

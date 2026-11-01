@@ -93,7 +93,7 @@ class BackgroundLocationProof(private val context: Context) {
         const val CHANNEL = "br.ufmg.frequencia.frequencia_ufmg/background_proof"
         const val STORE = "background_location_proof"
         fun emit(report: JSONObject) { Log.i("BackgroundLocationProof", JSONObject(report.toString())
-            .put("event", if (report.optString("moment") == "first") "first_attendance_checkpoint" else "background_location_proof").toString()) }
+            .put("event", when (report.optString("moment")) { "first" -> "first_attendance_checkpoint"; "second" -> "second_attendance_checkpoint"; else -> "background_location_proof" }).toString()) }
         fun JSONObject.toMap(): Map<String, Any> = keys().asSequence().associateWith { get(it) }
     }
 }
@@ -299,7 +299,7 @@ class BackgroundLocationCapture(
             if (checkpointStore != null) {
                 report.put("lateness_ms", System.currentTimeMillis() - report.getLong("checkpoint_expected_at_ms"))
                 if (FirstCheckpointPolicy.late(report, System.currentTimeMillis())) return save("checkpoint_outside_window")
-                report.put("first_ping", FirstCheckpointPolicy.classify(report, fix.latitude, fix.longitude))
+                report.put(FirstCheckpointPolicy.pingField(report), FirstCheckpointPolicy.classify(report, fix.latitude, fix.longitude))
             }
             report.put("background_proven", BackgroundProofPolicy.proven(status,
                 report.optBoolean("screen_locked_start") || report.optBoolean("background_start"),
