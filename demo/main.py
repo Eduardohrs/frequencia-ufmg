@@ -1,126 +1,93 @@
-"""Interface de terminal. Execute: python main.py (Python3.11+; sem instalações)."""
+"""Menu de terminal: python main.py. Começa sem disciplinas cadastradas."""
 
-from datetime import date
+from datetime import datetime
 
-from models import (
-    ChamadaDupla,
-    ChamadaUnica,
-    Disciplina,
-    Evidencia,
-    Momento,
-    SessaoAula,
-    Situacao,
-)
+from models import SITUACOES, ControleAcademico
 
 
-def preparar_dados():
-    """Objetos novos por execução: códigos, nomes e sessões totalmente fictícios."""
-    disciplinas = []
-    for codigo, politica in [("DEMO01", ChamadaUnica()), ("DEMO02", ChamadaDupla())]:
-        sessoes = [
-            SessaoAula("S1", date(2026, 10, 20), 4, politica),
-            SessaoAula("S2", date(2026, 10, 22), 2, politica),
-            SessaoAula("S3", date(2026, 10, 27), 2, politica, "sem_chamada"),
-            SessaoAula("S4", date(2026, 10, 29), 2, politica, "cancelada"),
-        ]
-        disciplinas.append(Disciplina(codigo, f"Disciplina fictícia {codigo}", sessoes))
-    return disciplinas
+def ler_data(texto):
+    try:
+        return datetime.strptime(texto.strip(), "%d/%m/%Y").date()
+    except ValueError:
+        raise ValueError("Use uma data válida no formato DD/MM/AAAA.") from None
 
 
-def escolher(rotulo, opcoes):
-    """Interprete um índice; conversão inválida é tratada pelo laço principal."""
-    for indice, (texto, _) in enumerate(opcoes, 1):
-        print(f"{indice}. {texto}")
-    indice = int(input(f"{rotulo}: "))
-    if not 1 <= indice <= len(opcoes):
-        raise ValueError("Opção fora da lista.")
-    return opcoes[indice - 1][1]
+def ler_inteiro(rotulo):
+    try:
+        return int(input(rotulo))
+    except ValueError:
+        raise ValueError("Informe um número inteiro.") from None
 
 
-def mostrar_sessoes(disciplina):
-    """Apresente o estado recebido do domínio, sem alterá-lo."""
-    print(f"\n{disciplina.codigo} — {disciplina.nome}")
-    for s in disciplina.sessoes:
-        r = s.registro
-        faltas = "não definidas" if r.faltas is None else str(r.faltas)
-        print(
-            f"{s.identificador} | {s.dia:%d/%m/%Y} | {s.aulas} aulas | {s.modalidade} | "
-            f"{s.natureza} | {r.situacao.value} | faltas: {faltas} | manual: {r.manual}"
-        )
-        for momento, evidencia in s.pings:
-            print(f"  {momento.value}: {evidencia.value}")
-
-
-def mostrar_resumo(disciplina):
-    """Separe unidades confirmadas, pendentes e ausentes; não invente percentual."""
-    r = disciplina.resumo()
+def mostrar(disciplina):
+    print(f"{disciplina.codigo} - {disciplina.nome} ({disciplina.chamadas} chamada(s))")
+    for r in disciplina.registros:
+        faltas = "-" if r.faltas is None else str(r.faltas)
+        print(f"{r.dia:%d/%m/%Y} | {r.aulas} aulas | {r.situacao} | faltas: {faltas}")
+    resumo = disciplina.resumo()
+    print(f"Base: {resumo['aulas']} aulas | Pendentes: {resumo['pendentes']}")
     print(
-        f"Aulas elegíveis (50min): {r.aulas_elegiveis}; presenças: {r.aulas_presentes}; "
-        f"pendentes: {r.aulas_pendentes}"
+        f"Faltas: {resumo['faltas']} | Limite: {resumo['limite']} | "
+        f"Restantes: {resumo['restantes']}"
     )
+    if resumo["excesso"]:
+        print(f"Limite excedido em {resumo['excesso']} aula(s).")
+    percentual = resumo["frequencia"]
     print(
-        f"Faltas usadas: {r.faltas_consumidas}; limite: {r.limite_faltas}; "
-        f"faltas restantes: {r.faltas_restantes}"
+        "Frequência: pendente"
+        if percentual is None
+        else f"Frequência: {percentual:.1f}%"
     )
-    print(
-        "Frequência final: pendente"
-        if r.frequencia_percentual is None
-        else f"Frequência final: {r.frequencia_percentual:.2f}%"
-    )
-    if r.excedeu_limite:
-        print("ATENÇÃO: limite de faltas excedido.")
 
 
 def executar():
-    """Ponto de entrada: F01registrar evidência; F02corrigir; consultas apoiam ambos."""
-    disciplinas = preparar_dados()
-    print("Frequência UFMG — protótipo didático de POO")
-    print("DADOS FICTÍCIOS. Pings SIMULADOS, sem GPS/login/rede. Controle pessoal.")
-    print(
-        "Alterações apenas em memória: ao sair, todos os dados da demo são reiniciados."
-    )
+    controle = ControleAcademico()
+    print("Frequência UFMG - protótipo de POO")
+    print("Cadastro vazio. Dados em memória; ao sair, as alterações são perdidas.")
     while True:
         try:
             print(
-                "\n1 Consultar sessões | 2 Registrar ping | 3 Corrigir frequência"
-                " | 4 Resumo | 0 Sair"
+                "\n1 Criar disciplina | 2 Registrar presença | 3 Consultar"
+                " | 4 Corrigir registro | 0 Sair"
             )
             acao = input("Ação: ").strip()
             if acao == "0":
-                print("Encerrado. Dados da demo descartados.")
+                print("Encerrado.")
                 return
-            if acao not in ("1", "2", "3", "4"):
-                raise ValueError("Ação inválida.")
-            disciplina = escolher("Disciplina", [(d.codigo, d) for d in disciplinas])
-            if acao == "4":
-                mostrar_resumo(disciplina)
-                continue
-            mostrar_sessoes(disciplina)
             if acao == "1":
-                continue
-            sessao = disciplina.obter_sessao(input("ID da sessão (ex.: S1): ").strip())
-            if acao == "2":
-                momento = escolher("Momento", [(m.value, m) for m in Momento])
-                evidencia = escolher(
-                    "Evidência SIMULADA", [(e.value, e) for e in Evidencia]
+                codigo = input("Código: ")
+                nome = input("Nome: ")
+                chamadas = ler_inteiro("Chamadas por encontro (1 ou 2): ")
+                aulas = ler_inteiro("Aulas de 50 min por encontro (1, 2 ou 4): ")
+                datas = [
+                    ler_data(d)
+                    for d in input(
+                        "Datas das aulas (DD/MM/AAAA, separadas por vírgula): "
+                    ).split(",")
+                ]
+                disciplina = controle.criar_disciplina(
+                    codigo, nome, chamadas, aulas, datas
                 )
-                resultado = sessao.registrar_ping(momento, evidencia)
+                print("Disciplina criada.")
+            elif acao in ("2", "3", "4"):
+                disciplina = controle.obter_disciplina(input("Código da disciplina: "))
+                if acao != "3":
+                    dia = ler_data(input("Data da aula (DD/MM/AAAA): "))
+                    print("Situações: " + ", ".join(SITUACOES))
+                    situacao = input("Situação: ").strip().lower()
+                    registro = disciplina.registrar_presenca(
+                        dia, situacao, corrigir=acao == "4"
+                    )
+                    print(
+                        f"Registro salvo: {registro.situacao}; faltas: {registro.faltas}."
+                    )
             else:
-                situacao = escolher("Situação", [(s.value, s) for s in Situacao])
-                faltas = (
-                    None
-                    if situacao == Situacao.PENDENTE
-                    else int(input("Faltas (aulas de 50 min): "))
-                )
-                resultado = sessao.corrigir(situacao, faltas)
-            print(
-                f"Registro atualizado: {resultado.situacao.value}; faltas: {resultado.faltas}"
-            )
-            mostrar_resumo(disciplina)
+                raise ValueError("Escolha uma opção de 0 a 4.")
+            mostrar(disciplina)
         except ValueError as erro:
-            print(f"Operação rejeitada: {erro} Estado anterior preservado.")
+            print(f"Operação rejeitada: {erro}")
         except (EOFError, KeyboardInterrupt):
-            print("\nEncerrado. Dados da demo descartados.")
+            print("\nEncerrado.")
             return
 
 
