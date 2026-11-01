@@ -160,6 +160,8 @@ void main() {
         {...a, 'starts_at_ms': 0},
         {...a, 'ends_at_ms': 0},
         {...a, 'campus_id': 'other'},
+        {...a, 'lesson_count': 4},
+        {...a, 'call_count': 1},
         {...a, 'moment': 'wrong'},
         {...a, 'scheduled_at_ms': 'bad'},
       ];

@@ -106,6 +106,25 @@ void main() {
             'lateness_ms': 95,
             'course_id': 'poo',
             'session_id': 'session-1',
+            'delivery_enabled': true,
+            'delivery_status': 'retry',
+            'delivery_attempt': 8,
+            'delivery_request_id': 'upload-operation',
+            'delivery_http_status': 503,
+            'delivery_stage': 'http',
+            'delivery_timings': {
+              'identity_ms': 3,
+              'app_check_ms': 250,
+              'http_ms': 25000,
+              'failure': {
+                'cause_type': 'ExecutionException',
+                'root_cause_type': 'SocketTimeoutException',
+                'root_cause_message': List.filled(
+                  20,
+                  'upstream response timeout c/s; ',
+                ).join(),
+              },
+            },
           });
       final store = CheckpointLogStore();
       final logger = FirestoreAppLogger(
@@ -135,6 +154,15 @@ void main() {
       expect(persisted['foreground_service_active'], isTrue);
       expect(persisted['accuracy_m'], report['accuracy_m']);
       expect(persisted['operation_id'], report['operation_id']);
+      expect(persisted['delivery_request_id'], 'upload-operation');
+      expect(persisted['delivery_http_status'], 503);
+      expect(persisted['delivery_attempt'], 8);
+      expect(
+        ((persisted['delivery_timings'] as Map)['failure']
+            as Map)['root_cause_message'],
+        ((report['delivery_timings'] as Map)['failure']
+            as Map)['root_cause_message'],
+      );
       messenger.setMockMethodCallHandler(
         FirstCheckpointGateway.channel,
         (_) async => throw PlatformException(
@@ -282,7 +310,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Limpar resultados encerrados'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Atualizar primeiros pings'));
+      await tester.tap(find.byTooltip('Atualizar pings'));
       await tester.pumpAndSettle();
       await tester.tap(find.byType(DropdownButtonFormField<int>));
       await tester.pumpAndSettle();
@@ -370,7 +398,7 @@ void main() {
     expect(find.textContaining('Não foi possível consultar'), findsOneWidget);
     repo.error = null;
     repo.values = [session('s')];
-    await tester.tap(find.byTooltip('Atualizar primeiros pings'));
+    await tester.tap(find.byTooltip('Atualizar pings'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Agendar primeiro ping'));
     await tester.pumpAndSettle();
@@ -422,7 +450,7 @@ void main() {
       await tester.tap(find.text('Agendar primeiro ping'));
       await tester.pumpAndSettle();
       expect(
-        find.text('Permita Alarmes e lembretes para agendar o primeiro ping.'),
+        find.text('Permita Alarmes e lembretes para agendar os pings.'),
         findsOneWidget,
       );
       expect(logger.errors, isNotEmpty);
@@ -441,7 +469,7 @@ void main() {
           },
         ],
       );
-      await tester.tap(find.byTooltip('Atualizar primeiros pings'));
+      await tester.tap(find.byTooltip('Atualizar pings'));
       await tester.pumpAndSettle();
       expect(find.text('Alarmes e lembretes não autorizado'), findsOneWidget);
       await tester.drag(find.byType(ListView), const Offset(0, -600));
@@ -526,7 +554,7 @@ void main() {
           {...evidence('first', item.$1), 'starts_at_ms': 0},
           {...evidence('first', item.$1), 'ends_at_ms': 0},
         ];
-        await tester.tap(find.byTooltip('Atualizar primeiros pings'));
+        await tester.tap(find.byTooltip('Atualizar pings'));
         await tester.pumpAndSettle();
         expect(find.text(item.$3), findsOneWidget);
         expect(find.text('ELE631 · Resultado local'), findsOneWidget);
@@ -545,7 +573,7 @@ void main() {
         {...evidence('first', 'fora'), 'status': 'scheduled'},
         {...evidence('second', 'fora'), 'status': 'scheduled'},
       ];
-      await tester.tap(find.byTooltip('Atualizar primeiros pings'));
+      await tester.tap(find.byTooltip('Atualizar pings'));
       await tester.pumpAndSettle();
       expect(find.text('Aguardando os dois resultados'), findsOneWidget);
       await tester.tap(find.text('Cancelar segundo ping'));
@@ -553,7 +581,7 @@ void main() {
       expect((calls.last.arguments as Map)['operation_id'], 'second');
       repo.values = [session('s', attendance: SituacaoFrequencia.present)];
       logger.failLogging = true;
-      await tester.tap(find.byTooltip('Atualizar primeiros pings'));
+      await tester.tap(find.byTooltip('Atualizar pings'));
       await tester.pumpAndSettle();
       expect(find.text('Registro da disciplina preservado'), findsOneWidget);
       await tester.tap(find.text('Início da aula'));

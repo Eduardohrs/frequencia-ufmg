@@ -755,6 +755,7 @@ class _CoursePageState extends State<CoursePage> {
             ),
           ),
         );
+        if (mounted) await _load();
       case _ProfileAction.signOut:
         if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
           try {
