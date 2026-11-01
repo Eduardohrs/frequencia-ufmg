@@ -90,6 +90,20 @@ jobs:
           flags: backend
           use_oidc: true
           fail_ci_if_error: true
+      - name: Test standalone POO demo with complete line coverage
+        working-directory: .
+        run: |
+          ruff check demo --config backend/pyproject.toml
+          ruff format --check demo
+          python -m coverage run --data-file=backend/.coverage-demo --source=demo --omit="*/test_*.py" -m unittest discover -s demo -v
+          python -m coverage report --data-file=backend/.coverage-demo --fail-under=100
+          python -m coverage xml --data-file=backend/.coverage-demo -o demo/coverage.xml
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
+        with:
+          files: demo/coverage.xml
+          flags: demo
+          use_oidc: true
+          fail_ci_if_error: true
 
   appwrite-python:
     name: Appwrite Python API

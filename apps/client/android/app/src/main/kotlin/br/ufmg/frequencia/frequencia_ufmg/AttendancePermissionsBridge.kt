@@ -91,6 +91,7 @@ class AttendancePermissionsBridge(private val activity: Activity) {
             "background_location" to AttendancePermissionPolicy.backgroundGranted(foreground,
                 Build.VERSION.SDK_INT, granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)),
             "notifications" to NotificationManagerCompat.from(activity).areNotificationsEnabled(),
+            "power_save_mode" to activity.getSystemService(PowerManager::class.java).isPowerSaveMode,
             "battery_unrestricted" to activity.getSystemService(PowerManager::class.java)
                 .isIgnoringBatteryOptimizations(activity.packageName),
             "location_requestable" to canRequest(Manifest.permission.ACCESS_FINE_LOCATION, "location"),

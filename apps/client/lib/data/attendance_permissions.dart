@@ -27,6 +27,7 @@ final class AttendancePermissionStatus {
       backgroundLocation = _flag(data, 'background_location'),
       notifications = _flag(data, 'notifications'),
       batteryUnrestricted = _flag(data, 'battery_unrestricted'),
+      powerSaveMode = _flag(data, 'power_save_mode'),
       locationRequestable = _flag(data, 'location_requestable'),
       notificationsRequestable = _flag(data, 'notifications_requestable'),
       backgroundOptionLabel = _text(data, 'background_option_label');
@@ -34,7 +35,7 @@ final class AttendancePermissionStatus {
   final int sdk;
   final bool locationServices, foregroundLocation, preciseLocation;
   final bool backgroundLocation, notifications, batteryUnrestricted;
-  final bool locationRequestable, notificationsRequestable;
+  final bool locationRequestable, notificationsRequestable, powerSaveMode;
   final String backgroundOptionLabel;
 
   bool get locationReady =>
@@ -51,6 +52,7 @@ final class AttendancePermissionStatus {
     'background_location': backgroundLocation,
     'notifications': notifications,
     'battery_unrestricted': batteryUnrestricted,
+    'power_save_mode': powerSaveMode,
     'location_requestable': locationRequestable,
     'notifications_requestable': notificationsRequestable,
   };

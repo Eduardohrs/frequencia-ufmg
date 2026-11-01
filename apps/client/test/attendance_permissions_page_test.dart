@@ -305,6 +305,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+  testWidgets(
+    'battery guidance asks for per-app unrestricted mode and refreshes after change',
+    (tester) async {
+      final gateway = _Gateway()..state['power_save_mode'] = true;
+      final logger = _Logger();
+      await show(tester, gateway, logger);
+      await tester.pumpAndSettle();
+      final button = find.text('Permitir sem restrições');
+      await tester.scrollUntilVisible(button, 300);
+      await tester.ensureVisible(button);
+      await tester.pumpAndSettle();
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(gateway.actions.last, AttendancePermissionAction.batterySettings);
+      expect(
+        find.textContaining('economia de energia está ligada'),
+        findsOneWidget,
+      );
+      gateway.state['battery_unrestricted'] = true;
+      await tester.tap(find.byTooltip('Atualizar permissões'));
+      await tester.pumpAndSettle();
+      expect(find.text('Configurações de bateria'), findsOneWidget);
+      expect(
+        logger.events.any((e) => e.$2?['power_save_mode'] == true),
+        isTrue,
+      );
+    },
+  );
 }
 
 class _Gateway implements AttendancePermissionsGateway {

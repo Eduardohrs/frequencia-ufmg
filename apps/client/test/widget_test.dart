@@ -1,3 +1,4 @@
+import 'package:frequencia_ufmg/data/first_checkpoint.dart';
 import 'dart:async';
 import 'fixtures/academic_sync_fixture.dart';
 
@@ -19,6 +20,13 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'package:timezone/data/latest.dart' as tz_data;
 
 void main() {
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          FirstCheckpointGateway.channel,
+          (_) async => null,
+        );
+  });
   TestWidgetsFlutterBinding.ensureInitialized();
   TestFirebaseCoreHostApi.setUp(_FirebaseCoreHostApi());
   SharedPreferencesAsyncPlatform.instance =

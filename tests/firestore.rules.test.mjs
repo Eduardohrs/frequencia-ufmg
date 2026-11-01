@@ -381,6 +381,17 @@ describe("operational logs", () => {
     await assertSucceeds(setDoc(doc(db, logPath("alice", "legacy-state")), operationalLog()));
   });
 
+  test("complete diagnostic reports and bounded error context survive database rules", async () => {
+    const report = JSON.parse(await readFile(new URL('../apps/client/test/fixtures/background_location_report.json', import.meta.url), 'utf8'));
+    const db = dbFor('alice');
+    const path = logPath('alice', 'complete-background-report');
+    await assertSucceeds(setDoc(doc(db, path), operationalLog({ details: JSON.stringify(report), errorDetails: 'x'.repeat(8192) })));
+    const saved = await getDoc(doc(db, path));
+    if (JSON.stringify(JSON.parse(saved.data().details)) !== JSON.stringify(report)) throw new Error('Report changed');
+    await assertSucceeds(setDoc(doc(db, logPath('alice', 'details-limit')), operationalLog({ details: 'x'.repeat(8192) })));
+    await assertFails(setDoc(doc(db, logPath('alice', 'error-details-limit')), operationalLog({ errorDetails: 'x'.repeat(8193) })));
+  });
+
   test("rejects malformed, oversized, and over-retained logs", async () => {
     const db = dbFor("alice");
     const invalidDocuments = [
@@ -393,7 +404,7 @@ describe("operational logs", () => {
       operationalLog({ screen: "x".repeat(81) }),
       operationalLog({ action: "x".repeat(81) }),
       operationalLog({ failureCode: "x".repeat(121) }),
-      operationalLog({ details: "x".repeat(501) }),
+      operationalLog({ details: "x".repeat(8193) }),
       operationalLog({ details: { precise_location: true } }),
       operationalLog({ errorMessage: "x".repeat(501) }),
       operationalLog({ expiresAt: Timestamp.fromDate(new Date(Date.now() + 32 * 24 * 60 * 60 * 1000)) }),

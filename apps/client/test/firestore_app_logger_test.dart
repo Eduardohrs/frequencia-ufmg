@@ -40,7 +40,7 @@ void main() {
         'bounded_context',
         parameters: {'details': 'x' * 501},
       );
-      expect((store.documents.last['details']! as String).length, 500);
+      expect(store.documents.last['details'], 'x' * 501);
     },
   );
   test(
