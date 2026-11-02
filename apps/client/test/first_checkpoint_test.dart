@@ -95,7 +95,7 @@ void main() {
           Map<String, Object?>.from(
             jsonDecode(
                   File(
-                    'test/fixtures/background_location_report.json',
+                    'test/fixtures/checkpoint_delivery_report.json',
                   ).readAsStringSync(),
                 )
                 as Map,
@@ -150,6 +150,7 @@ void main() {
                     as String,
               )
               as Map;
+      expect(persisted['fields_omitted'], isNull);
       expect(persisted['first_ping'], 'no_campus');
       expect(persisted['foreground_service_active'], isTrue);
       expect(persisted['accuracy_m'], report['accuracy_m']);

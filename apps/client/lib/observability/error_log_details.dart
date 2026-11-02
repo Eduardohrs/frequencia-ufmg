@@ -168,12 +168,12 @@ Object? _diagnosticNode(Object? value, int depth) {
   if (depth > 8) return '[MAX_DEPTH]';
   if (value is Map) {
     return <String, Object?>{
-      for (final entry in value.entries.take(64))
+      for (final entry in value.entries.take(128))
         entry.key
             .toString(): _diagnosticSecretKey.hasMatch(entry.key.toString())
             ? _redacted
             : _diagnosticNode(entry.value, depth + 1),
-      if (value.length > 64) 'fields_omitted': value.length - 64,
+      if (value.length > 128) 'fields_omitted': value.length - 128,
     };
   }
   if (value is List) {

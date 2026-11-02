@@ -60,7 +60,7 @@ void main() {
         expect(utf8.encode(result).length, lessThanOrEqualTo(8192));
         expect(jsonDecode(result)['details_truncated'], true);
       }
-      final wide = {for (var i = 0; i < 70; i++) 'field$i': i};
+      final wide = {for (var i = 0; i < 134; i++) 'field$i': i};
       final map =
           jsonDecode(sanitizeDiagnosticDetails(jsonEncode(wide))!) as Map;
       expect(map['fields_omitted'], 6);
