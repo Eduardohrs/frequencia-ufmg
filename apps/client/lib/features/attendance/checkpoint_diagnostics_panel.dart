@@ -15,6 +15,7 @@ class CheckpointDiagnosticsPanel extends StatefulWidget {
     required this.now,
     required this.onReviewPermissions,
     required this.onReviewAlarms,
+    this.onTestNotification,
     super.key,
   });
   final AttendancePermissionsGateway permissions;
@@ -22,6 +23,7 @@ class CheckpointDiagnosticsPanel extends StatefulWidget {
   final AppLogger logger;
   final DateTime Function() now;
   final Future<void> Function() onReviewPermissions, onReviewAlarms;
+  final Future<void> Function()? onTestNotification;
   @override
   State<CheckpointDiagnosticsPanel> createState() =>
       _CheckpointDiagnosticsPanelState();
@@ -295,6 +297,16 @@ class _CheckpointDiagnosticsPanelState extends State<CheckpointDiagnosticsPanel>
                 child: const Text('Revisar permissões'),
               ),
             ),
+            if (widget.onTestNotification case final test?)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () => _review('test_notification', test),
+                  child: const Text('Testar aviso'),
+                ),
+              ),
             if (d.lastProblem case final problem?)
               ExpansionTile(
                 title: const Text('Último problema registrado'),

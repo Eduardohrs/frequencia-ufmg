@@ -86,6 +86,47 @@ void main() {
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
       expect(find.text('Diagnóstico'), findsOneWidget);
+      await tester.tap(find.text('Testar aviso'));
+      await tester.pumpAndSettle();
+      expect(calls, contains('test_notification'));
+      expect(
+        find.text('Aviso de teste enviado. Toque nele para abrir os pings.'),
+        findsOneWidget,
+      );
+      messenger.setMockMethodCallHandler(FirstCheckpointGateway.channel, (
+        call,
+      ) async {
+        if (call.method == 'test_notification') {
+          throw PlatformException(
+            code: 'checkpoint_failed',
+            details: {'cause_message': 'notifications_disabled'},
+          );
+        }
+        return [];
+      });
+      await tester.tap(find.text('Testar aviso'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'Não foi possível enviar o aviso. Confira a permissão e o canal de notificações.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.ancestor(
+          of: find.text(
+            'Aviso não enviado. Revise as notificações do aplicativo.',
+          ),
+          matching: find.byType(SnackBar),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        logger.errors.any(
+          (e) => e.$2 == 'checkpoint_diagnostic_test_notification',
+        ),
+        isTrue,
+      );
       expect(tester.takeException(), isNull);
     },
   );

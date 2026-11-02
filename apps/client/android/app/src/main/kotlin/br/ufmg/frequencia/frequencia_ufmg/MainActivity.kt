@@ -1,5 +1,6 @@
 package br.ufmg.frequencia.frequencia_ufmg
 
+import android.content.Intent
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodChannel
@@ -10,6 +11,7 @@ class MainActivity: FlutterActivity() {
     private var attendancePermissions: AttendancePermissionsBridge? = null
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        acceptCheckpointNotice(intent)
         deliveryEvents = CheckpointDeliveryEvents(applicationContext)
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, CheckpointDeliveryEvents.CHANNEL).setStreamHandler(deliveryEvents)
         attendancePermissions = AttendancePermissionsBridge(this)
@@ -31,6 +33,15 @@ class MainActivity: FlutterActivity() {
             )
             bridge.handle(call.method, call.arguments, result)
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        acceptCheckpointNotice(intent)
+    }
+    private fun acceptCheckpointNotice(intent:Intent?) {
+        try { CheckpointNotifications.opened(applicationContext,intent) }
+        catch(error:Exception) { BackgroundLocationProof.emit(org.json.JSONObject().put("event","checkpoint_notification_open_failed").put("failure",CheckpointDeliveryPolicy.failureDetails(error))) }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {

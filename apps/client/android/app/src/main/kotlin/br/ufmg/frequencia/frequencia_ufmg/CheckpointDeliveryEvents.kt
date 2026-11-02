@@ -16,13 +16,18 @@ class CheckpointDeliveryEvents(context: Context) : EventChannel.StreamHandler {
         dispose()
         sink = events
         listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key == REVISION || key == null) send()
+            if (key == REVISION || key == OPEN_REVISION || key == null) send()
         }
         prefs.registerOnSharedPreferenceChangeListener(listener)
         send()
     }
     private fun send() { handler.post {
-        sink?.success(mapOf("account_id" to prefs.getString("account_id", null), "revision" to prefs.getLong(REVISION, 0)))
+        val target=sink ?: return@post
+        if(prefs.getBoolean("notice_open_pending",false)) {
+            target.success(mapOf("action" to "open_checkpoints", "account_id" to prefs.getString("account_id",null), "open_revision" to prefs.getLong(OPEN_REVISION,0)))
+            prefs.edit().putBoolean("notice_open_pending",false).apply()
+        }
+        target.success(mapOf("account_id" to prefs.getString("account_id", null), "revision" to prefs.getLong(REVISION, 0)))
     } }
     override fun onCancel(arguments: Any?) { dispose() }
     fun dispose() {
@@ -32,6 +37,7 @@ class CheckpointDeliveryEvents(context: Context) : EventChannel.StreamHandler {
     }
     companion object {
         const val CHANNEL = "br.ufmg.frequencia.frequencia_ufmg/checkpoint_delivery_events"
+        const val OPEN_REVISION="notice_open_revision"
         const val REVISION = "delivery_revision"
     }
 }

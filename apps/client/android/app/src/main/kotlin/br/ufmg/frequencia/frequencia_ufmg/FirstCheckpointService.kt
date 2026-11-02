@@ -36,7 +36,7 @@ class FirstCheckpointService : Service() {
                 NotificationChannel(channel, "Verificação de localização", NotificationManager.IMPORTANCE_LOW))
             val notification = NotificationCompat.Builder(this, channel)
                 .setSmallIcon(applicationInfo.icon).setContentTitle("Verificando localização da aula")
-                .setContentText("Verificação temporária de localização. Não altera sua frequência.")
+                .setContentText("Verificação temporária para estimar sua presença no campus.")
                 .setOngoing(true).setOnlyAlertOnce(true)
                 .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE).build()
             if (Build.VERSION.SDK_INT >= 29) startForeground(48001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)

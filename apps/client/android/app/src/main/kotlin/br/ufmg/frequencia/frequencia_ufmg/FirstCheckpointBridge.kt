@@ -22,6 +22,7 @@ class FirstCheckpointBridge(private val context: Context) {
                 clear(); check(prefs.edit().putString("account_id", account).commit())
             }
             when (method) {
+                "test_notification" -> { CheckpointNotifications.test(context,account);result.success(reports(account)) }
                 "request_alarm_permission" -> {
                     if (android.os.Build.VERSION.SDK_INT >= 31 && !alarms.allowed()) {
                         context.startActivity(android.content.Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
@@ -30,9 +31,9 @@ class FirstCheckpointBridge(private val context: Context) {
                     result.success(reports(account))
                 }
                 "read", "retry_deliveries" -> {
-                    val values = reports(account)
                     deliveryReports(account).forEach { CheckpointDelivery.enqueueSafely(context, it, method == "retry_deliveries") }
-                    result.success(values)
+                    CheckpointNotifications.refresh(context)
+                    result.success(reports(account))
                 }
                 "clear_completed" -> {
                     val stores = prefs.getStringSet("stores", emptySet())!!.toMutableSet()
@@ -40,6 +41,7 @@ class FirstCheckpointBridge(private val context: Context) {
                     val ended = stores.filter { FirstCheckpointPolicy.canClear(current.getValue(it), current.values.toList(), System.currentTimeMillis()) }
                     ended.forEach { key -> stores.remove(key); context.getSharedPreferences(key, 0).edit().clear().commit() }
                     check(prefs.edit().putStringSet("stores", stores).commit())
+                    CheckpointNotifications.refresh(context)
                     result.success(reports(account))
                 }
                 "cancel" -> {
@@ -54,6 +56,7 @@ class FirstCheckpointBridge(private val context: Context) {
                         .put("updated_at_ms", System.currentTimeMillis())
                     check(context.getSharedPreferences(key, 0).edit().putString("report", report.toString()).commit())
                     BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(report))
+                    CheckpointNotifications.refresh(context)
                     result.success(reports(account))
                 }
                 "schedule" -> {
@@ -124,6 +127,7 @@ class FirstCheckpointBridge(private val context: Context) {
     private fun save(key: String, report: JSONObject) {
         check(context.getSharedPreferences(key, 0).edit().putString("report", report.toString()).commit())
         BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(report))
+        CheckpointNotifications.refresh(context)
     }
     fun fail(key: String, status: String, stage: String, error: Exception) = synchronized(LOCK) {
         val report = load(key)
@@ -159,7 +163,7 @@ class FirstCheckpointBridge(private val context: Context) {
     }
     private fun reports(account: String): List<Map<String, Any?>> = prefs.getStringSet("stores", emptySet())!!
         .map { reconcile(it) }.filter { it.optString("account_id") == account }
-        .map { FirstCheckpointPolicy.channelFields(FirstCheckpointPolicy.logFields(it)) }
+        .map { FirstCheckpointPolicy.channelFields(FirstCheckpointPolicy.logFields(it)) } + CheckpointNotifications.reports(context,account)
     fun dispatch(key: String): JSONObject? = synchronized(LOCK) {
         if (key !in prefs.getStringSet("stores", emptySet())!!) return@synchronized null
         val report = reconcile(key)
@@ -183,6 +187,7 @@ class FirstCheckpointBridge(private val context: Context) {
         }
     }
     private fun clear() {
+        CheckpointNotifications.clear(context)
         work.cancelAllWorkByTag(CheckpointDelivery.TAG)
         // Invalidate ownership before asynchronous cancellation so a running worker cannot save after logout.
         check(prefs.edit().remove("account_id").commit())

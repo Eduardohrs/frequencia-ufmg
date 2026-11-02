@@ -53,15 +53,32 @@ class FirstCheckpointGateway {
       final reports = (raw ?? [])
           .map((value) => Map<String, Object?>.from(value! as Map))
           .toList();
+      final captures = <Map<String, Object?>>[];
       for (final report in reports) {
-        log('first_checkpoint_report', {'stage': action, ...report});
+        if (report.containsKey('notification_report')) {
+          final metadata = report['notification_report'];
+          if (metadata is Map && metadata['account_id'] == accountId) {
+            log(
+              'checkpoint_notification_report',
+              Map<String, Object?>.from(metadata),
+            );
+          } else {
+            log('checkpoint_notification_report_invalid', {
+              'stage': action,
+              'reason': 'invalid_or_foreign_notification_report',
+            });
+          }
+        } else {
+          captures.add(report);
+          log('first_checkpoint_report', {'stage': action, ...report});
+        }
       }
       log('first_checkpoint_action_succeeded', {
         'stage': action,
         'duration_ms': watch.elapsedMilliseconds,
-        'report_count': reports.length,
+        'report_count': captures.length,
       });
-      return reports;
+      return captures;
     } catch (error, stack) {
       unawaited(
         logger

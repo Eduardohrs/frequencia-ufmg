@@ -89,6 +89,57 @@ void main() {
     ),
   );
   test(
+    'notification envelopes are logged separately without hiding captures',
+    () async {
+      final logger = CampusTestLogger();
+      messenger.setMockMethodCallHandler(
+        FirstCheckpointGateway.channel,
+        (_) async => [
+          {'operation_id': 'capture', 'status': 'succeeded'},
+          {
+            'notification_report': {
+              'account_id': 'owner',
+              'event': 'checkpoint_notification',
+              'notification_id': 'notice',
+              'status': 'posted',
+              'checkpoint_operations': ['capture'],
+            },
+          },
+          {
+            'notification_report': {
+              'account_id': 'foreign',
+              'private': 'must-not-log',
+            },
+          },
+          {'notification_report': 'malformed'},
+        ],
+      );
+      final result = await FirstCheckpointGateway(
+        accountId: 'owner',
+        logger: logger,
+      ).perform('read');
+      expect(result.single['operation_id'], 'capture');
+      final notification = logger.events.singleWhere(
+        (e) => e.$1 == 'checkpoint_notification_report',
+      );
+      expect(
+        jsonDecode(notification.$2!['details'] as String)['notification_id'],
+        'notice',
+      );
+      expect(
+        logger.events
+            .where((e) => e.$1 == 'checkpoint_notification_report_invalid')
+            .length,
+        2,
+      );
+      expect(logger.events.toString(), isNot(contains('must-not-log')));
+      expect(
+        jsonDecode(logger.events.last.$2!['details'] as String)['report_count'],
+        1,
+      );
+    },
+  );
+  test(
     'full first checkpoint report survives real log document serialization',
     () async {
       final report =

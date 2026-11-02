@@ -111,9 +111,22 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   StreamSubscription<Map<String, Object?>>? _deliverySubscription;
   int _deliveryRevision = 0;
   bool _deliveryDirty = false;
+  bool _noticePending = false, _checkpointOpen = false;
+  int _noticeRevision = 0;
   bool _deliveryActive = true;
 
   void _onDeliveryUpdate(Map<String, Object?> event) {
+    if (event['account_id'] == widget.user.id &&
+        event['action'] == 'open_checkpoints') {
+      final revision = event['open_revision'];
+      if (revision is int && revision > _noticeRevision) {
+        _noticeRevision = revision;
+        if (_checkpointOpen) return;
+        _noticePending = true;
+        _refreshDeliveryIfNeeded();
+      }
+      return;
+    }
     final revision = event['revision'];
     if (event['account_id'] != widget.user.id ||
         revision is! int ||
@@ -126,6 +139,26 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   }
 
   void _refreshDeliveryIfNeeded() {
+    if (mounted && _noticePending && _deliveryActive && !_loading) {
+      _noticePending = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _checkpointOpen) return;
+        unawaited(
+          _openCheckpointPage().catchError((Object error, StackTrace stack) {
+            recordOperationalFailure(
+              widget.logger,
+              error,
+              stack,
+              'checkpoint_notification_navigation',
+              {'stage': 'open_checkpoints'},
+              failureCode: 'checkpoint_notification_navigation_failed',
+            );
+          }),
+        );
+      });
+      WidgetsBinding.instance.ensureVisualUpdate();
+    }
+
     if (!mounted ||
         !_deliveryDirty ||
         !_deliveryActive ||
@@ -814,26 +847,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
           ),
         );
       case _ProfileAction.firstCheckpoint:
-        await Navigator.of(context).push<void>(
-          MaterialPageRoute(
-            builder: (_) => FirstCheckpointPage(
-              courses: _courses,
-              permissions:
-                  widget.attendancePermissions ??
-                  const AndroidAttendancePermissions(),
-              sessions: widget.sessionRepository,
-              gateway: FirstCheckpointGateway(
-                accountId: widget.user.id,
-                logger: widget.logger,
-              ),
-              selection: LocalCampusSelection(),
-              logger: widget.logger,
-              now: widget.now,
-              deliveryUpdates: widget.checkpointDeliveryUpdates,
-            ),
-          ),
-        );
-        if (mounted) await _load();
+        await _openCheckpointPage();
       case _ProfileAction.signOut:
         if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
           try {
@@ -856,6 +870,35 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         }
         await widget.onSignOut();
     }
+  }
+
+  Future<void> _openCheckpointPage() async {
+    if (_checkpointOpen) return;
+    _checkpointOpen = true;
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => FirstCheckpointPage(
+            courses: _courses,
+            permissions:
+                widget.attendancePermissions ??
+                const AndroidAttendancePermissions(),
+            sessions: widget.sessionRepository,
+            gateway: FirstCheckpointGateway(
+              accountId: widget.user.id,
+              logger: widget.logger,
+            ),
+            selection: LocalCampusSelection(),
+            logger: widget.logger,
+            now: widget.now,
+            deliveryUpdates: widget.checkpointDeliveryUpdates,
+          ),
+        ),
+      );
+    } finally {
+      _checkpointOpen = false;
+    }
+    if (mounted) await _load();
   }
 
   Future<void> _openPendingAttendance() async {

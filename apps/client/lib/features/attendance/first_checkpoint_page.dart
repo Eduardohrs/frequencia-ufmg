@@ -189,7 +189,18 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
         });
       }
       final reports = await widget.gateway.perform(action, payload);
-      if (mounted) setState(() => _acceptReports(reports));
+      if (mounted) {
+        setState(() => _acceptReports(reports));
+        if (action == 'test_notification') {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Aviso de teste enviado. Toque nele para abrir os pings.',
+              ),
+            ),
+          );
+        }
+      }
     } catch (error, stack) {
       unawaited(
         widget.logger
@@ -213,8 +224,24 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
                   (error.details as Map)['cause_message'] ==
                       'exact_alarm_permission_required'
               ? 'Permita Alarmes e lembretes para agendar os pings.'
+              : action == 'test_notification'
+              ? 'Não foi possível enviar o aviso. Confira a permissão e o canal de notificações.'
               : 'Não foi possível concluir. Confira permissões e tente novamente.',
         );
+      }
+      if (action == 'test_notification') {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Aviso não enviado. Revise as notificações do aplicativo.',
+                ),
+              ),
+            );
+        }
+        rethrow;
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -400,6 +427,7 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
               );
             },
             onReviewAlarms: () => _act('request_alarm_permission'),
+            onTestNotification: () => _act('test_notification'),
           ),
         const Text(
           'Agende os dois momentos: 20 minutos após o início e 20 minutos antes do fim da aula. O Android pode atrasar: até 5 minutos após esse horário, antes do fim da aula; fora dessa janela, o resultado fica indisponível.',
