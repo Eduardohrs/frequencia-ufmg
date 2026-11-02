@@ -407,162 +407,169 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
         ),
       ],
     ),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        if (widget.permissions case final permissions?)
-          CheckpointDiagnosticsPanel(
-            permissions: permissions,
-            reports: _reports,
-            logger: widget.logger,
-            now: widget.now,
-            onReviewPermissions: () async {
-              await Navigator.of(context).push<void>(
-                MaterialPageRoute(
-                  builder: (_) => AttendancePermissionsPage(
-                    gateway: permissions,
-                    logger: widget.logger,
-                  ),
-                ),
-              );
-            },
-            onReviewAlarms: () => _act('request_alarm_permission'),
-            onTestNotification: () => _act('test_notification'),
-          ),
-        const Text(
-          'Agende os dois momentos: 20 minutos após o início e 20 minutos antes do fim da aula. O Android pode atrasar: até 5 minutos após esse horário, antes do fim da aula; fora dessa janela, o resultado fica indisponível.',
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          'Requer Alarmes e lembretes, localização precisa permitida sempre e bateria sem restrições. Até 50 agendamentos/resultados ficam neste aparelho; limpe os encerrados quando necessário. Resultados ficam salvos neste aparelho e são enviados automaticamente quando houver conexão. Registros manuais são preservados.',
-        ),
-        TextButton(
-          onPressed: _busy ? null : () => _act('request_alarm_permission'),
-          child: const Text('Revisar Alarmes e lembretes'),
-        ),
-        if (_busy) const LinearProgressIndicator(),
-        if (_error case final error?)
-          Text(
-            error,
-            style: TextStyle(color: Theme.of(context).colorScheme.error),
-          ),
-        SegmentedButton<String>(
-          segments: const [
-            ButtonSegment(value: 'first', label: Text('Início da aula')),
-            ButtonSegment(value: 'second', label: Text('Fim da aula')),
-          ],
-          selected: {_moment},
-          onSelectionChanged: _busy
-              ? null
-              : (values) {
-                  _selectMoment(values.single);
-                },
-        ),
-        if (_options.isEmpty && !_busy)
-          const Text('Nenhuma sessão elegível para agendar.'),
-        if (_options.isNotEmpty)
-          DropdownButtonFormField<int>(
-            key: ValueKey('$_moment/${_options.map((e) => e.$2.id).join(',')}'),
-            initialValue: _selected,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Sessão'),
-            items: [
-              for (var i = 0; i < _options.length; i++)
-                DropdownMenuItem(
-                  value: i,
-                  child: Text(
-                    '${_options[i].$1.code} • ${_date((_moment == 'first' ? _options[i].$2.startsAt.add(const Duration(minutes: 20)) : _options[i].$2.endsAt.subtract(const Duration(minutes: 20))).millisecondsSinceEpoch)}',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-            ],
-            onChanged: _busy
-                ? null
-                : (value) => setState(() => _selected = value),
-          ),
-        FilledButton(
-          onPressed: _busy || _selected == null ? null : () => _act('schedule'),
-          child: Text(
-            _moment == 'first'
-                ? 'Agendar primeiro ping'
-                : 'Agendar segundo ping',
-          ),
-        ),
-        if (_reports.isNotEmpty)
-          TextButton(
-            onPressed: _busy ? null : () => _act('clear_completed'),
-            child: const Text('Limpar resultados encerrados'),
-          ),
-        if (_reports.any(
-          (r) =>
-              r['delivery_enabled'] == true &&
-              !CheckpointDiagnostics.delivered.contains(r['delivery_status']),
-        ))
-          TextButton(
-            onPressed: _busy ? null : () => _act('retry_deliveries'),
-            child: const Text('Enviar resultados pendentes'),
-          ),
-        for (final (course, estimate) in _estimates)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${course.code} · ${estimate.complete ? 'Resultado local' : 'Prévia local'}',
-                  ),
-                  Text(_attendanceLabel(estimate.status)),
-                  Text(
-                    estimate.absences == null
-                        ? 'Faltas ainda não definidas'
-                        : '${estimate.absences} falta(s)',
-                  ),
-                  if (!estimate.complete)
-                    const Text('Aguardando os dois resultados'),
-                  if (estimate.preservesExistingRecord)
-                    const Text('Registro da disciplina preservado'),
-                ],
-              ),
-            ),
-          ),
-        for (final report in _reports)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${report['course_code']} • ${_date(report['checkpoint_expected_at_ms'])}',
-                  ),
-                  Text(_result(report)),
-                  if (report['delivery_enabled'] == true)
-                    Text(_deliveryLabel(report['delivery_status'])),
-                  Text('Campus: ${report['campus_name']}'),
-                  if (report['lateness_ms'] case final int lateness)
-                    Text('Atraso observado: ${(lateness / 1000).round()} s'),
-                  if (report['accuracy_m'] case final num accuracy)
-                    Text('Precisão: ${accuracy.toStringAsFixed(1)} m'),
-                  if (report['status'] == 'scheduled' ||
-                      report['status'] == 'running')
-                    TextButton(
-                      onPressed: _busy
-                          ? null
-                          : () => _act('cancel', {
-                              'operation_id': report['operation_id'],
-                            }),
-                      child: Text(
-                        report['moment'] == 'second'
-                            ? 'Cancelar segundo ping'
-                            : 'Cancelar primeiro ping',
-                      ),
+    body: SafeArea(
+      top: false,
+      child: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          if (widget.permissions case final permissions?)
+            CheckpointDiagnosticsPanel(
+              permissions: permissions,
+              reports: _reports,
+              logger: widget.logger,
+              now: widget.now,
+              onReviewPermissions: () async {
+                await Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) => AttendancePermissionsPage(
+                      gateway: permissions,
+                      logger: widget.logger,
                     ),
-                ],
+                  ),
+                );
+              },
+              onReviewAlarms: () => _act('request_alarm_permission'),
+              onTestNotification: () => _act('test_notification'),
+            ),
+          const Text(
+            'Agende os dois momentos: 20 minutos após o início e 20 minutos antes do fim da aula. O Android pode atrasar: até 5 minutos após esse horário, antes do fim da aula; fora dessa janela, o resultado fica indisponível.',
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Requer Alarmes e lembretes, localização precisa permitida sempre e bateria sem restrições. Até 50 agendamentos/resultados ficam neste aparelho; limpe os encerrados quando necessário. Resultados ficam salvos neste aparelho e são enviados automaticamente quando houver conexão. Registros manuais são preservados.',
+          ),
+          TextButton(
+            onPressed: _busy ? null : () => _act('request_alarm_permission'),
+            child: const Text('Revisar Alarmes e lembretes'),
+          ),
+          if (_busy) const LinearProgressIndicator(),
+          if (_error case final error?)
+            Text(
+              error,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'first', label: Text('Início da aula')),
+              ButtonSegment(value: 'second', label: Text('Fim da aula')),
+            ],
+            selected: {_moment},
+            onSelectionChanged: _busy
+                ? null
+                : (values) {
+                    _selectMoment(values.single);
+                  },
+          ),
+          if (_options.isEmpty && !_busy)
+            const Text('Nenhuma sessão elegível para agendar.'),
+          if (_options.isNotEmpty)
+            DropdownButtonFormField<int>(
+              key: ValueKey(
+                '$_moment/${_options.map((e) => e.$2.id).join(',')}',
               ),
+              initialValue: _selected,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Sessão'),
+              items: [
+                for (var i = 0; i < _options.length; i++)
+                  DropdownMenuItem(
+                    value: i,
+                    child: Text(
+                      '${_options[i].$1.code} • ${_date((_moment == 'first' ? _options[i].$2.startsAt.add(const Duration(minutes: 20)) : _options[i].$2.endsAt.subtract(const Duration(minutes: 20))).millisecondsSinceEpoch)}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: _busy
+                  ? null
+                  : (value) => setState(() => _selected = value),
+            ),
+          FilledButton(
+            onPressed: _busy || _selected == null
+                ? null
+                : () => _act('schedule'),
+            child: Text(
+              _moment == 'first'
+                  ? 'Agendar primeiro ping'
+                  : 'Agendar segundo ping',
             ),
           ),
-      ],
+          if (_reports.isNotEmpty)
+            TextButton(
+              onPressed: _busy ? null : () => _act('clear_completed'),
+              child: const Text('Limpar resultados encerrados'),
+            ),
+          if (_reports.any(
+            (r) =>
+                r['delivery_enabled'] == true &&
+                !CheckpointDiagnostics.delivered.contains(r['delivery_status']),
+          ))
+            TextButton(
+              onPressed: _busy ? null : () => _act('retry_deliveries'),
+              child: const Text('Enviar resultados pendentes'),
+            ),
+          for (final (course, estimate) in _estimates)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${course.code} · ${estimate.complete ? 'Resultado local' : 'Prévia local'}',
+                    ),
+                    Text(_attendanceLabel(estimate.status)),
+                    Text(
+                      estimate.absences == null
+                          ? 'Faltas ainda não definidas'
+                          : '${estimate.absences} falta(s)',
+                    ),
+                    if (!estimate.complete)
+                      const Text('Aguardando os dois resultados'),
+                    if (estimate.preservesExistingRecord)
+                      const Text('Registro da disciplina preservado'),
+                  ],
+                ),
+              ),
+            ),
+          for (final report in _reports)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${report['course_code']} • ${_date(report['checkpoint_expected_at_ms'])}',
+                    ),
+                    Text(_result(report)),
+                    if (report['delivery_enabled'] == true)
+                      Text(_deliveryLabel(report['delivery_status'])),
+                    Text('Campus: ${report['campus_name']}'),
+                    if (report['lateness_ms'] case final int lateness)
+                      Text('Atraso observado: ${(lateness / 1000).round()} s'),
+                    if (report['accuracy_m'] case final num accuracy)
+                      Text('Precisão: ${accuracy.toStringAsFixed(1)} m'),
+                    if (report['status'] == 'scheduled' ||
+                        report['status'] == 'running')
+                      TextButton(
+                        onPressed: _busy
+                            ? null
+                            : () => _act('cancel', {
+                                'operation_id': report['operation_id'],
+                              }),
+                        child: Text(
+                          report['moment'] == 'second'
+                              ? 'Cancelar segundo ping'
+                              : 'Cancelar primeiro ping',
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
     ),
   );
 }
