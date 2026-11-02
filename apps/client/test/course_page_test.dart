@@ -1,3 +1,4 @@
+import 'package:frequencia_ufmg/features/ufmg/academic_sync_host.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:frequencia_ufmg/data/first_checkpoint.dart';
@@ -61,6 +62,7 @@ void main() {
       final store = _HubLogStore();
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
           home: CourseHubPage(
             course: course,
             allCourses: [course],
@@ -122,6 +124,7 @@ void main() {
       );
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
           home: CourseHubPage(
             course: course,
             allCourses: [course],
@@ -171,6 +174,7 @@ void main() {
         final gateway = _WorkspaceGateway();
         await tester.pumpWidget(
           MaterialApp(
+            builder: (context, child) => AcademicSyncHost(child: child!),
             key: UniqueKey(),
             home: CourseHubPage(
               course: course,
@@ -233,6 +237,7 @@ void main() {
       final logger = _RecordingAppLogger();
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
           home: CourseHubPage(
             course: repository.courses.single,
             allCourses: repository.courses,
@@ -331,6 +336,7 @@ void main() {
     );
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CourseHubPage(
           course: course,
           allCourses: [course],
@@ -391,6 +397,7 @@ void main() {
       final logger = _RecordingAppLogger();
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
           home: CourseHubPage(
             course: course,
             allCourses: [course],
@@ -486,6 +493,7 @@ void main() {
         ];
         await tester.pumpWidget(
           MaterialApp(
+            builder: (context, child) => AcademicSyncHost(child: child!),
             home: CoursePage(
               repository: _FakeCourseRepository(),
               meetingRepository: _FakeMeetingRepository(),
@@ -554,6 +562,7 @@ void main() {
         final logger = _RecordingAppLogger();
         await tester.pumpWidget(
           MaterialApp(
+            builder: (context, child) => AcademicSyncHost(child: child!),
             home: CoursePage(
               repository: _FakeCourseRepository(),
               meetingRepository: _FakeMeetingRepository(),
@@ -606,6 +615,7 @@ void main() {
         var signedOut = false;
         await tester.pumpWidget(
           MaterialApp(
+            builder: (context, child) => AcademicSyncHost(child: child!),
             home: CoursePage(
               attendancePermissions: _PermissionGateway(),
               repository: _FakeCourseRepository(),
@@ -675,6 +685,7 @@ void main() {
       );
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: courses,
             meetingRepository: _FakeMeetingRepository(),
@@ -790,6 +801,7 @@ void main() {
       final logger = _RecordingAppLogger();
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: courses,
             meetingRepository: _FakeMeetingRepository(),
@@ -849,6 +861,7 @@ void main() {
     final schedule = _FakeUFMGSyncSchedule(due: true);
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
           meetingRepository: _FakeMeetingRepository(),
@@ -893,6 +906,7 @@ void main() {
       final logger = _RecordingAppLogger();
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: _FakeCourseRepository(),
             meetingRepository: _FakeMeetingRepository(),
@@ -963,6 +977,7 @@ void main() {
           final gateway = _ProgressUFMGGateway();
           await tester.pumpWidget(
             MaterialApp(
+              builder: (context, child) => AcademicSyncHost(child: child!),
               home: CoursePage(
                 repository: _FakeCourseRepository(),
                 meetingRepository: _FakeMeetingRepository(),
@@ -1007,7 +1022,17 @@ void main() {
                     onPressed: () => taps++,
                     label: const Text('Adicionar prazo'),
                   ),
-                  body: const Center(child: Text('Dados preservados')),
+                  body: ListView(
+                    children: [
+                      const SizedBox(height: 400),
+                      TextButton(
+                        key: const Key('test-inline-action'),
+                        onPressed: () => taps++,
+                        child: const Text('Editar registro'),
+                      ),
+                      const SizedBox(height: 900),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1025,10 +1050,28 @@ void main() {
               find.byKey(const Key('test-deadline-action')),
             );
             expect(indicator.overlaps(action), isFalse);
+            expect(
+              indicator.overlaps(tester.getRect(find.byType(ListView))),
+              isFalse,
+            );
             await tester.tap(find.byKey(const Key('test-deadline-action')));
             await tester.pump();
-            expect(taps, completed ? 2 : 1);
+            expect(taps, completed ? 3 : 1);
+            final inline = find.byKey(const Key('test-inline-action'));
+            await tester.ensureVisible(inline);
+            await tester.pumpAndSettle();
+            expect(indicator.overlaps(tester.getRect(inline)), isFalse);
+            await tester.tap(inline);
+            await tester.pump();
+            expect(taps, completed ? 4 : 2);
           }
+          await tester.tap(find.byTooltip('Ocultar sincronização'));
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const Key('academic-sync-indicator')),
+            findsNothing,
+          );
+          expect(tester.takeException(), isNull);
           await tester.pumpWidget(const SizedBox());
           await gateway.progress.updates.close();
         },
@@ -1043,6 +1086,7 @@ void main() {
       final logger = _RecordingAppLogger();
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: _FakeCourseRepository(),
             meetingRepository: _FakeMeetingRepository(),
@@ -1098,6 +1142,8 @@ void main() {
       expect(gateway.progress.calls, 1);
       gateway.failDates = true;
       logger.failRecording = true;
+      await tester.ensureVisible(find.text('Revisar última sincronização'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Revisar última sincronização'));
       await tester.pumpAndSettle();
       expect(
@@ -1107,6 +1153,7 @@ void main() {
       expect(logger.errorContexts, contains('academic_sync_result_review'));
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
+
       expect(tester.takeException(), isNull);
       await gateway.progress.updates.close();
     },
@@ -1129,6 +1176,7 @@ void main() {
       final repository = _FakeCourseRepository(courses: [course]);
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: repository,
             meetingRepository: _FakeMeetingRepository(),
@@ -1249,6 +1297,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
           meetingRepository: _FakeMeetingRepository(),
@@ -1609,6 +1658,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
           meetingRepository: meetingRepository,
@@ -1709,6 +1759,7 @@ void main() {
     );
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
           meetingRepository: _FakeMeetingRepository(),
@@ -1761,6 +1812,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
           meetingRepository: _FakeMeetingRepository(),
@@ -1827,6 +1879,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
           meetingRepository: _FakeMeetingRepository(),
@@ -1869,6 +1922,7 @@ void main() {
       ..listError = StateError('session offline');
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
           meetingRepository: meetings,
@@ -1925,6 +1979,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: courseRepository,
           meetingRepository: _FakeMeetingRepository(),
@@ -2030,6 +2085,7 @@ void main() {
     ];
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
           meetingRepository: _FakeMeetingRepository(),
@@ -2086,6 +2142,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
           meetingRepository: _FakeMeetingRepository(),
@@ -2155,6 +2212,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: _FakeCourseRepository(),
             meetingRepository: _FakeMeetingRepository(),
@@ -2209,6 +2267,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: courseRepository,
           meetingRepository: _FakeMeetingRepository(),
@@ -2249,6 +2308,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: courseRepository,
             meetingRepository: _FakeMeetingRepository(),
@@ -2305,6 +2365,7 @@ void main() {
     });
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
           meetingRepository: _FakeMeetingRepository(),
@@ -2358,6 +2419,7 @@ void main() {
     });
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
           meetingRepository: _FakeMeetingRepository(),
@@ -2378,6 +2440,7 @@ void main() {
     final logger = _RecordingAppLogger();
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
           meetingRepository: _FakeMeetingRepository(),
@@ -2512,6 +2575,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
           meetingRepository: _FakeMeetingRepository(),
@@ -2544,6 +2608,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
           meetingRepository: _FakeMeetingRepository(),
@@ -2606,6 +2671,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
           meetingRepository: _FakeMeetingRepository(),
@@ -2691,6 +2757,7 @@ void main() {
     final repository = _FakeCourseRepository();
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
           meetingRepository: _FakeMeetingRepository(),
@@ -2729,6 +2796,7 @@ void main() {
     );
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
           meetingRepository: _FakeMeetingRepository(),
@@ -2776,6 +2844,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
           meetingRepository: _FakeMeetingRepository(),
@@ -2900,6 +2969,7 @@ void main() {
     final syncSchedule = _FakeUFMGSyncSchedule(due: true);
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
           meetingRepository: _FakeMeetingRepository(),
@@ -2927,6 +2997,7 @@ void main() {
     final gateway = _UFMGGateway();
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
           meetingRepository: _FakeMeetingRepository(),
@@ -2957,6 +3028,7 @@ void main() {
     );
     await tester.pumpWidget(
       MaterialApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
           meetingRepository: _FakeMeetingRepository(),
@@ -3005,6 +3077,7 @@ void main() {
       );
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: _FakeCourseRepository(),
             meetingRepository: _FakeMeetingRepository(),
@@ -3059,6 +3132,7 @@ Widget _app(
   DateTime now, {
   AppLogger? logger,
 }) => MaterialApp(
+  builder: (context, child) => AcademicSyncHost(child: child!),
   home: CoursePage(
     repository: repository,
     meetingRepository: _FakeMeetingRepository(),

@@ -1,3 +1,4 @@
+import 'features/ufmg/academic_sync_host.dart';
 import 'data/first_checkpoint.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -219,6 +220,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Frequência UFMG',
+      builder: (context, child) => AcademicSyncHost(child: child!),
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       highContrastTheme: AppTheme.light(highContrast: true),

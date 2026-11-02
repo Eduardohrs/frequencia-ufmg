@@ -5,10 +5,12 @@ class AcademicSyncBanner extends StatelessWidget {
   const AcademicSyncBanner({
     required this.controller,
     required this.onReview,
+    this.detailsContext,
     super.key,
   });
   final AcademicSyncController controller;
   final VoidCallback onReview;
+  final BuildContext? detailsContext;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -16,10 +18,13 @@ class AcademicSyncBanner extends StatelessWidget {
     builder: (context, _) {
       if (!controller.visible) return const SizedBox.shrink();
       return SafeArea(
+        top: false,
+        bottom: true,
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Align(
-            alignment: Alignment.bottomRight,
+            alignment: Alignment.center,
+            heightFactor: 1,
             child: SizedBox(
               width: 360,
               child: Material(
@@ -29,20 +34,23 @@ class AcademicSyncBanner extends StatelessWidget {
                 clipBehavior: Clip.antiAlias,
                 child: InkWell(
                   key: const Key('academic-sync-indicator'),
-                  onTap: () => _details(context),
+                  onTap: () => _details(detailsContext ?? context),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
-                      vertical: 12,
+                      vertical: 0,
                     ),
                     child: Row(
                       children: [
-                        Icon(
-                          controller.error != null
-                              ? Icons.error_outline
-                              : controller.isRunning
-                              ? Icons.sync
-                              : Icons.check_circle_outline,
+                        SizedBox(
+                          height: 48,
+                          child: Icon(
+                            controller.error != null
+                                ? Icons.error_outline
+                                : controller.isRunning
+                                ? Icons.sync
+                                : Icons.check_circle_outline,
+                          ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
