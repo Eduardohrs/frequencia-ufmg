@@ -4,6 +4,12 @@ import org.json.JSONObject
 
 /** Both checkpoint moments share timing/quality rules; no cloud writes. */
 object FirstCheckpointPolicy {
+    fun eventName(report: JSONObject): String = when(report.optString("moment")) {
+        "first" -> "first_attendance_checkpoint"
+        "second" -> "second_attendance_checkpoint"
+        else -> report.optString("event").takeIf { it.matches(Regex("[a-z][a-z0-9_]{0,79}")) } ?: "background_location_proof"
+    }
+
     fun channelFields(report: JSONObject): Map<String, Any?> =
         report.keys().asSequence().associateWith { channelValue(report.get(it)) }
     private fun channelValue(value: Any): Any? = when (value) {
