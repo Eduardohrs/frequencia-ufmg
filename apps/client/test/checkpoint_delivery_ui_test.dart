@@ -35,6 +35,60 @@ void main() {
     expect(events.single, {'account_id': 'owner', 'revision': 4});
     await subscription.cancel();
   });
+  testWidgets(
+    'production pings diagnostics links to existing permissions and alarm action',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 6000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final permissions = CampusTestPermissions()
+        ..flags.addAll({'exact_alarms': false});
+      final logger = CampusTestLogger();
+      final calls = <String>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(FirstCheckpointGateway.channel, (
+        call,
+      ) async {
+        calls.add(call.method);
+        return [];
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(
+          FirstCheckpointGateway.channel,
+          null,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FirstCheckpointPage(
+            courses: [],
+            sessions: Sessions(),
+            gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
+            permissions: permissions,
+            selection: Selection(),
+            logger: logger,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Diagnóstico'), findsOneWidget);
+      await tester.tap(find.text('Configuração do Android'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Revisar'));
+      await tester.pumpAndSettle();
+      expect(calls, contains('request_alarm_permission'));
+      await tester.tap(find.text('Revisar permissões'));
+      await tester.pumpAndSettle();
+      expect(find.text('Permissões'), findsOneWidget);
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      expect(find.text('Diagnóstico'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets('local reports remain visible while catalog is offline', (
     tester,
   ) async {

@@ -818,6 +818,9 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
           MaterialPageRoute(
             builder: (_) => FirstCheckpointPage(
               courses: _courses,
+              permissions:
+                  widget.attendancePermissions ??
+                  const AndroidAttendancePermissions(),
               sessions: widget.sessionRepository,
               gateway: FirstCheckpointGateway(
                 accountId: widget.user.id,

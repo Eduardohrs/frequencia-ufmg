@@ -607,6 +607,7 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             home: CoursePage(
+              attendancePermissions: _PermissionGateway(),
               repository: _FakeCourseRepository(),
               meetingRepository: _FakeMeetingRepository(),
               sessionRepository: _FakeSessionRepository(),
@@ -624,6 +625,11 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.text('Pings de presença'));
         await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.text('Nenhuma sessão elegível para agendar.'),
+          200,
+          scrollable: find.byType(Scrollable).first,
+        );
         expect(
           find.text('Nenhuma sessão elegível para agendar.'),
           findsOneWidget,
