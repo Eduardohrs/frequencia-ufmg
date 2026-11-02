@@ -50,6 +50,7 @@ object CheckpointDelivery {
                 current.put("delivery_status", "retry").put("delivery_stage", "enqueue")
                     .put("delivery_reason", "delivery_enqueue_failed").put("delivery_enqueue_failure", failure)
                 check(prefs.edit().putString("report", current.toString()).commit())
+                CheckpointNotifications.refresh(context)
                 BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(current))
             }
         } catch (_: Exception) {
@@ -82,7 +83,7 @@ class CheckpointDeliveryWorker(context: Context, params: WorkerParameters) : Wor
         var stage = "identity"
         var stageStarted = started
         val timings = JSONObject()
-        fun record(outcome: String, reason: String, httpStatus: Int? = null) {
+        fun record(outcome: String, reason: String, httpStatus: Int? = null, attendance: String? = null) {
             synchronized(FirstCheckpointBridge.LOCK) {
                 if (!FirstCheckpointBridge.active(applicationContext, account)) return@synchronized
                 val index = applicationContext.getSharedPreferences(FirstCheckpointBridge.INDEX, 0)
@@ -95,11 +96,13 @@ class CheckpointDeliveryWorker(context: Context, params: WorkerParameters) : Wor
                         .put("delivery_attempt", attempt).put("delivery_worker_attempt", runAttemptCount+1).put("delivery_request_id", id.toString())
                         .put("delivery_stage", stage).put("delivery_updated_at_ms", System.currentTimeMillis())
                         .put("delivery_duration_ms", System.currentTimeMillis()-started).put("delivery_timings", timings)
+                    if (attendance != null) r.put("delivery_attendance_status", attendance)
                     r.remove("delivery_http_status")
                     if (httpStatus != null) r.put("delivery_http_status", httpStatus)
                     check(saved.edit().putString("report", r.toString()).commit())
                     BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(r))
                 }
+                CheckpointNotifications.refresh(applicationContext)
                 if (outcome !in listOf("sending", "retry")) {
                     check(index.edit().putLong(CheckpointDeliveryEvents.REVISION, index.getLong(CheckpointDeliveryEvents.REVISION, 0)+1).commit())
                 }
@@ -164,7 +167,7 @@ class CheckpointDeliveryWorker(context: Context, params: WorkerParameters) : Wor
             val outcome = CheckpointDeliveryPolicy.confirmedOutcome(status, response, body)
             val confirmationMismatch = status == 200 && outcome == "retry" && response.optString("outcome") !in listOf("waiting", "")
             val reason = if (confirmationMismatch) "confirmation_mismatch" else response.optString("reason", response.optString("error", "unexpected_response"))
-            record(outcome, reason, status)
+            record(outcome, reason, status, if (status==200 && outcome in listOf("applied","already_applied")) response.optString("status") else null)
             return if (outcome == "retry") Result.retry() else Result.success()
         } catch (error: Exception) {
             timings.put("failed_stage", stage).put(stage + "_ms", System.currentTimeMillis()-stageStarted)

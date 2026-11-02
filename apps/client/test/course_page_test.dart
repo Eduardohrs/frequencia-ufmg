@@ -653,6 +653,135 @@ void main() {
   }
 
   testWidgets(
+    'notification opens pings after loading and resume without duplicate routes',
+    (tester) async {
+      SharedPreferencesAsyncPlatform.instance =
+          InMemorySharedPreferencesAsync.empty();
+      final updates = StreamController<Map<String, Object?>>.broadcast();
+      addTearDown(updates.close);
+      final courses = _FakeCourseRepository()
+        ..pending = Completer<List<CourseRecord>>();
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        FirstCheckpointGateway.channel,
+        (_) async => [],
+      );
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(
+          FirstCheckpointGateway.channel,
+          null,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CoursePage(
+            repository: courses,
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            attendancePermissions: _PermissionGateway(),
+            user: user,
+            logger: _RecordingAppLogger(),
+            onSignOut: () async {},
+            now: () => now,
+            checkpointDeliveryUpdates: updates.stream,
+          ),
+        ),
+      );
+      updates.add({
+        'action': 'open_checkpoints',
+        'account_id': 'foreign',
+        'open_revision': 1,
+      });
+      updates.add({
+        'action': 'open_checkpoints',
+        'account_id': user.id,
+        'open_revision': 'bad',
+      });
+      updates.add({
+        'action': 'open_checkpoints',
+        'account_id': user.id,
+        'open_revision': 1,
+      });
+      await tester.pump();
+      expect(find.text('Pings de presença'), findsNothing);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      courses.pending!.complete([]);
+      courses.pending = null;
+      await tester.pumpAndSettle();
+      expect(find.text('Pings de presença'), findsNothing);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(find.text('Pings de presença'), findsOneWidget);
+      updates.add({
+        'action': 'open_checkpoints',
+        'account_id': user.id,
+        'open_revision': 2,
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Pings de presença'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Pings de presença'), findsNothing);
+      updates.add({
+        'action': 'open_checkpoints',
+        'account_id': user.id,
+        'open_revision': 2,
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Pings de presença'), findsNothing);
+      updates.add({
+        'action': 'open_checkpoints',
+        'account_id': user.id,
+        'open_revision': 3,
+      });
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets('notification navigation failure records its exact stage', (
+    tester,
+  ) async {
+    final updates = StreamController<Map<String, Object?>>.broadcast();
+    addTearDown(updates.close);
+    final logger = _RecordingAppLogger();
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (_, _) => Overlay(
+          initialEntries: [
+            OverlayEntry(
+              builder: (_) => CoursePage(
+                repository: _FakeCourseRepository(),
+                meetingRepository: _FakeMeetingRepository(),
+                sessionRepository: _FakeSessionRepository(),
+                attendancePermissions: _PermissionGateway(),
+                user: user,
+                logger: logger,
+                onSignOut: () async {},
+                now: () => now,
+                checkpointDeliveryUpdates: updates.stream,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    updates.add({
+      'action': 'open_checkpoints',
+      'account_id': user.id,
+      'open_revision': 1,
+    });
+    await tester.pumpAndSettle();
+    expect(
+      logger.errorContexts,
+      contains('checkpoint_notification_navigation'),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
     'checkpoint confirmations refresh once and defer while backgrounded',
     (tester) async {
       final updates = StreamController<Map<String, Object?>>.broadcast();
@@ -2952,6 +3081,7 @@ final class _FakeCourseRepository implements CourseRepository {
   Object? saveError;
   Object? deleteError;
   int listCalls = 0;
+  Completer<List<CourseRecord>>? pending;
 
   @override
   Future<void> deleteCourse(String courseId) async {
@@ -2964,7 +3094,7 @@ final class _FakeCourseRepository implements CourseRepository {
   Future<List<CourseRecord>> listCourses() async {
     listCalls++;
     if (listError case final error?) throw error;
-    return List.of(courses);
+    return pending == null ? List.of(courses) : await pending!.future;
   }
 
   @override
