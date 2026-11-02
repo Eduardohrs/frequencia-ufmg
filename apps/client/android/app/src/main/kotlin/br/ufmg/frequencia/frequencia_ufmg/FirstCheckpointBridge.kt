@@ -110,7 +110,7 @@ class FirstCheckpointBridge(private val context: Context) {
                         result.success(reports(account))
                     } catch (error: Exception) {
                         fail(key, "enqueue_failed", "alarm_schedule", error)
-                        result.error("checkpoint_enqueue_failed", "Não foi possível agendar.", FirstCheckpointPolicy.logFields(load(key)).toMap())
+                        result.error("checkpoint_enqueue_failed", "Não foi possível agendar.", FirstCheckpointPolicy.channelFields(FirstCheckpointPolicy.logFields(load(key))))
                     }
                 }
                 else -> result.notImplemented()
@@ -157,9 +157,9 @@ class FirstCheckpointBridge(private val context: Context) {
         prefs.getStringSet("stores", emptySet())!!.map { reconcile(it) }
             .filter { it.optString("account_id") == account }
     }
-    private fun reports(account: String): List<Map<String, Any>> = prefs.getStringSet("stores", emptySet())!!
+    private fun reports(account: String): List<Map<String, Any?>> = prefs.getStringSet("stores", emptySet())!!
         .map { reconcile(it) }.filter { it.optString("account_id") == account }
-        .map { FirstCheckpointPolicy.logFields(it).toMap() }
+        .map { FirstCheckpointPolicy.channelFields(FirstCheckpointPolicy.logFields(it)) }
     fun dispatch(key: String): JSONObject? = synchronized(LOCK) {
         if (key !in prefs.getStringSet("stores", emptySet())!!) return@synchronized null
         val report = reconcile(key)
@@ -200,6 +200,5 @@ class FirstCheckpointBridge(private val context: Context) {
         const val PREFIX = "first_checkpoint_"
         fun active(context: Context, account: String): Boolean =
             context.getSharedPreferences(INDEX, 0).getString("account_id", null) == account
-        private fun JSONObject.toMap(): Map<String, Any> = keys().asSequence().associateWith { get(it) }
     }
 }

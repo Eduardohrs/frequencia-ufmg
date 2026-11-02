@@ -4,6 +4,15 @@ import org.json.JSONObject
 
 /** Both checkpoint moments share timing/quality rules; no cloud writes. */
 object FirstCheckpointPolicy {
+    fun channelFields(report: JSONObject): Map<String, Any?> =
+        report.keys().asSequence().associateWith { channelValue(report.get(it)) }
+    private fun channelValue(value: Any): Any? = when (value) {
+        JSONObject.NULL -> null
+        is JSONObject -> channelFields(value)
+        is org.json.JSONArray -> (0 until value.length()).map { channelValue(value.get(it)) }
+        else -> value
+    }
+
     const val MAX_LATENESS_MS = 300000L
     fun validate(report: JSONObject, now: Long) {
         for (key in listOf("account_id", "course_id", "session_id", "campus_id")) {

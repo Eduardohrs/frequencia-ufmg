@@ -15,6 +15,21 @@ class CheckpointDeliveryPolicyTest {
         .put("captured_at_ms",start+if(moment=="first")1200100L else 1800100L)
         .put(if(moment=="first")"first_ping" else "second_ping","fora").put("delivery_enabled",true)
 
+    @Test fun completedReportCrossesRealFlutterCodecWithNestedTimingsAndNulls() {
+        val source=report("first").put("delivery_status","applied")
+            .put("delivery_timings",JSONObject().put("identity_ms",1).put("http_ms",1382)
+                .put("optional",JSONObject.NULL).put("steps",org.json.JSONArray().put("identity").put(JSONObject().put("ok",true))))
+        val fields=FirstCheckpointPolicy.logFields(source)
+        val channel=FirstCheckpointPolicy.channelFields(fields)
+        val encoded=io.flutter.plugin.common.StandardMessageCodec.INSTANCE.encodeMessage(channel)!!
+        encoded.flip()
+        val decoded=io.flutter.plugin.common.StandardMessageCodec.INSTANCE.decodeMessage(encoded) as Map<*,*>
+        val timings=decoded["delivery_timings"] as Map<*,*>
+        assertEquals(1382,timings["http_ms"])
+        assertNull(timings["optional"])
+        assertEquals(listOf("identity",mapOf("ok" to true)),timings["steps"])
+        assertEquals("applied",decoded["delivery_status"])
+    }
     @Test fun pairsMostRecentMomentsWithoutMixingRevisionsOrAccounts() {
         val a=report("first");val b=report("second")
         val canceled=report("first","cancelled").put("scheduled_at_ms",start+1)
