@@ -110,13 +110,15 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
       _error = null;
     });
     try {
+      // Native evidence must remain readable while the academic catalog is offline.
+      final reports = await widget.gateway.perform('read');
+      if (mounted) setState(() => _acceptReports(reports));
       final catalog = <String, (CourseRecord, SessionRecord)>{};
       for (final course in widget.courses.where((c) => c.tracksAttendance)) {
         for (final session in await widget.sessions.listSessions(course.id)) {
           catalog['${course.id}/${session.id}'] = (course, session);
         }
       }
-      final reports = await widget.gateway.perform('read');
       if (mounted) {
         setState(() {
           _catalog

@@ -35,6 +35,63 @@ void main() {
     expect(events.single, {'account_id': 'owner', 'revision': 4});
     await subscription.cancel();
   });
+  testWidgets('local reports remain visible while catalog is offline', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final pending = Completer<List<SessionRecord>>();
+    final repo = Sessions()..pending = pending.future;
+    final logger = CampusTestLogger();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      FirstCheckpointGateway.channel,
+      (_) async => [
+        {
+          'course_code': 'OFFLINE',
+          'operation_id': 'durable',
+          'moment': 'first',
+          'status': 'succeeded',
+          'first_ping': 'fora',
+          'delivery_enabled': true,
+          'delivery_status': 'pending',
+          'checkpoint_expected_at_ms': now.millisecondsSinceEpoch,
+        },
+      ],
+    );
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(
+        FirstCheckpointGateway.channel,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FirstCheckpointPage(
+          courses: [course()],
+          sessions: repo,
+          gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
+          selection: Selection(),
+          logger: logger,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Salvo neste aparelho; aguardando envio'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    pending.completeError(StateError('catalog offline'));
+    await tester.pumpAndSettle();
+    expect(find.text('Salvo neste aparelho; aguardando envio'), findsOneWidget);
+    expect(
+      find.text('Não foi possível consultar os pings. Tente atualizar.'),
+      findsOneWidget,
+    );
+    expect(logger.errors, isNotEmpty);
+  });
   testWidgets('delivery queue is visible, retryable and fully logged', (
     tester,
   ) async {
