@@ -85,6 +85,7 @@ class AttendancePermissionsBridge(private val activity: Activity) {
         val foreground = fine || granted(Manifest.permission.ACCESS_COARSE_LOCATION)
         val data = mapOf(
             "sdk" to Build.VERSION.SDK_INT,
+            "exact_alarms" to FirstCheckpointAlarm(activity).allowed(),
             "location_services" to LocationManagerCompat.isLocationEnabled(activity.getSystemService(LocationManager::class.java)),
             "foreground_location" to foreground,
             "precise_location" to fine,

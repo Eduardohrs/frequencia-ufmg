@@ -3,6 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../data/academic_records.dart';
+import '../../data/checkpoint_diagnostics.dart';
+import '../../data/attendance_permissions.dart';
+import 'attendance_permissions_page.dart';
+import 'checkpoint_diagnostics_panel.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/calendar_status.dart';
 import '../../data/checkpoint_attendance_estimate.dart';
@@ -21,11 +25,13 @@ class FirstCheckpointPage extends StatefulWidget {
     required this.logger,
     this.now = DateTime.now,
     this.deliveryUpdates,
+    this.permissions,
     super.key,
   });
   final List<CourseRecord> courses;
   final SessionRepository sessions;
   final FirstCheckpointGateway gateway;
+  final AttendancePermissionsGateway? permissions;
   final CampusSelectionGateway selection;
   final AppLogger logger;
   final DateTime Function() now;
@@ -333,14 +339,6 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
     return '${d.day.toString().padLeft(2, "0")}/${d.month.toString().padLeft(2, "0")} ${d.hour.toString().padLeft(2, "0")}:${d.minute.toString().padLeft(2, "0")}';
   }
 
-  static const _delivered = {
-    'applied',
-    'already_applied',
-    'preserved',
-    'unresolved',
-    'discarded',
-    'rejected',
-  };
   String _deliveryLabel(Object? status) => switch (status) {
     'sending' => 'Enviando frequência',
     'retry' => 'Salvo neste aparelho; nova tentativa pendente',
@@ -385,6 +383,24 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
+        if (widget.permissions case final permissions?)
+          CheckpointDiagnosticsPanel(
+            permissions: permissions,
+            reports: _reports,
+            logger: widget.logger,
+            now: widget.now,
+            onReviewPermissions: () async {
+              await Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) => AttendancePermissionsPage(
+                    gateway: permissions,
+                    logger: widget.logger,
+                  ),
+                ),
+              );
+            },
+            onReviewAlarms: () => _act('request_alarm_permission'),
+          ),
         const Text(
           'Agende os dois momentos: 20 minutos após o início e 20 minutos antes do fim da aula. O Android pode atrasar: até 5 minutos após esse horário, antes do fim da aula; fora dessa janela, o resultado fica indisponível.',
         ),
@@ -452,7 +468,7 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
         if (_reports.any(
           (r) =>
               r['delivery_enabled'] == true &&
-              !_delivered.contains(r['delivery_status']),
+              !CheckpointDiagnostics.delivered.contains(r['delivery_status']),
         ))
           TextButton(
             onPressed: _busy ? null : () => _act('retry_deliveries'),

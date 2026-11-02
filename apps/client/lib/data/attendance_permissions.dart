@@ -20,7 +20,8 @@ abstract interface class AttendancePermissionsGateway {
 
 final class AttendancePermissionStatus {
   AttendancePermissionStatus.fromMap(Map<Object?, Object?> data)
-    : sdk = _integer(data, 'sdk'),
+    : exactAlarms = _optionalFlag(data, 'exact_alarms'),
+      sdk = _integer(data, 'sdk'),
       locationServices = _flag(data, 'location_services'),
       foregroundLocation = _flag(data, 'foreground_location'),
       preciseLocation = _flag(data, 'precise_location'),
@@ -32,6 +33,7 @@ final class AttendancePermissionStatus {
       notificationsRequestable = _flag(data, 'notifications_requestable'),
       backgroundOptionLabel = _text(data, 'background_option_label');
 
+  final bool? exactAlarms;
   final int sdk;
   final bool locationServices, foregroundLocation, preciseLocation;
   final bool backgroundLocation, notifications, batteryUnrestricted;
@@ -45,6 +47,7 @@ final class AttendancePermissionStatus {
       backgroundLocation;
 
   Map<String, Object> get logFields => {
+    'exact_alarms': ?exactAlarms,
     'android_sdk': sdk,
     'location_services': locationServices,
     'foreground_location': foregroundLocation,
@@ -56,6 +59,12 @@ final class AttendancePermissionStatus {
     'location_requestable': locationRequestable,
     'notifications_requestable': notificationsRequestable,
   };
+
+  static bool? _optionalFlag(Map<Object?, Object?> data, String field) {
+    final value = data[field];
+    if (value == null || value is bool) return value as bool?;
+    throw PermissionSnapshotException(field);
+  }
 
   static bool _flag(Map<Object?, Object?> data, String field) {
     if (data[field] case final bool value) return value;

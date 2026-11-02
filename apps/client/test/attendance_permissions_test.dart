@@ -5,6 +5,22 @@ import 'package:frequencia_ufmg/observability/error_log_details.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('exact alarm snapshots distinguish allowed, blocked and unknown', () {
+    expect(AttendancePermissionStatus.fromMap(ready).exactAlarms, isNull);
+    for (final allowed in [true, false]) {
+      final s = AttendancePermissionStatus.fromMap({
+        ...ready,
+        'exact_alarms': allowed,
+      });
+      expect(s.exactAlarms, allowed);
+      expect(s.logFields['exact_alarms'], allowed);
+    }
+    expect(
+      () =>
+          AttendancePermissionStatus.fromMap({...ready, 'exact_alarms': 'bad'}),
+      throwsA(isA<PermissionSnapshotException>()),
+    );
+  });
   test('production channel reads the native response', () async {
     const channel = MethodChannel(
       'br.ufmg.frequencia.frequencia_ufmg/attendance_permissions',
