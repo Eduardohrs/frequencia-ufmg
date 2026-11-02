@@ -6,6 +6,14 @@ class CheckpointNotificationPolicyTest {
     private fun report(status:String="succeeded",outcome:String="",attendance:String="")=JSONObject()
         .put("account_id","owner").put("operation_id","operation").put("status",status)
         .put("delivery_status",outcome).put("delivery_attendance_status",attendance)
+    @Test fun nativeLoggingPreservesExplicitNotificationEventsAndLegacyCaptureNames() {
+        assertEquals("checkpoint_notification",FirstCheckpointPolicy.eventName(JSONObject().put("event","checkpoint_notification")))
+        assertEquals("checkpoint_notification_opened",FirstCheckpointPolicy.eventName(JSONObject().put("event","checkpoint_notification_opened")))
+        assertEquals("first_attendance_checkpoint",FirstCheckpointPolicy.eventName(JSONObject().put("moment","first").put("event","other")))
+        assertEquals("second_attendance_checkpoint",FirstCheckpointPolicy.eventName(JSONObject().put("moment","second")))
+        assertEquals("background_location_proof",FirstCheckpointPolicy.eventName(JSONObject()))
+        assertEquals("background_location_proof",FirstCheckpointPolicy.eventName(JSONObject().put("event","invalid event")))
+    }
     @Test fun noticesFollowCanonicalOutcomeAndDoNotGuessAttendance() {
         for(status in listOf("presente","pendente","")) assertNull(CheckpointNotificationPolicy.select("owner",listOf(report(outcome="applied",attendance=status))))
         for(status in listOf("ausente","chegou_atrasado","saiu_mais_cedo")) {

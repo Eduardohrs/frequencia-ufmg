@@ -35,6 +35,59 @@ void main() {
     expect(events.single, {'account_id': 'owner', 'revision': 4});
     await subscription.cancel();
   });
+  testWidgets('scheduling remains above the Android system navigation bar', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(bottom: 48);
+    tester.view.viewPadding = const FakeViewPadding(bottom: 48);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPadding);
+    addTearDown(tester.view.resetViewPadding);
+    final logger = CampusTestLogger();
+    final calls = <String>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(FirstCheckpointGateway.channel, (
+      call,
+    ) async {
+      calls.add(call.method);
+      return [];
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(
+        FirstCheckpointGateway.channel,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FirstCheckpointPage(
+          courses: [course()],
+          sessions: Sessions()..values = [session('s')],
+          gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
+          permissions: CampusTestPermissions(),
+          selection: Selection(),
+          logger: logger,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final button = find.widgetWithText(FilledButton, 'Agendar primeiro ping');
+    await tester.scrollUntilVisible(
+      button,
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getRect(button).bottom, lessThanOrEqualTo(796));
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(calls, contains('schedule'));
+  });
   testWidgets(
     'production pings diagnostics links to existing permissions and alarm action',
     (tester) async {
