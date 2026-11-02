@@ -113,6 +113,15 @@ void main() {
         findsOneWidget,
       );
       expect(
+        find.ancestor(
+          of: find.text(
+            'Aviso não enviado. Revise as notificações do aplicativo.',
+          ),
+          matching: find.byType(SnackBar),
+        ),
+        findsOneWidget,
+      );
+      expect(
         logger.errors.any(
           (e) => e.$2 == 'checkpoint_diagnostic_test_notification',
         ),

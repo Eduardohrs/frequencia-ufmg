@@ -229,7 +229,20 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
               : 'Não foi possível concluir. Confira permissões e tente novamente.',
         );
       }
-      if (action == 'test_notification') rethrow;
+      if (action == 'test_notification') {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Aviso não enviado. Revise as notificações do aplicativo.',
+                ),
+              ),
+            );
+        }
+        rethrow;
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
       _reloadIfQueued();
