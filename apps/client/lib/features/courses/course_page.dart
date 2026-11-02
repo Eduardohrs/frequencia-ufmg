@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../ufmg/academic_sync_host.dart';
 import '../../data/first_checkpoint.dart';
 import '../../data/campus_location.dart';
 import '../attendance/first_checkpoint_page.dart';
@@ -208,7 +209,8 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   AcademicSyncController? _academicSync;
   Future<void>? _academicSyncRestore;
   DateTime? _academicAutoNextAt;
-  OverlayEntry? _syncIndicator;
+  AcademicSyncHostState? _syncHost;
+  bool _syncBannerShown = false;
   bool _academicSyncWasRunning = false;
   final _overviewUpdates = ValueNotifier<AcademicOverviewSnapshot?>(null);
 
@@ -258,29 +260,40 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       unawaited(_refreshAfterAcademicSync());
     }
     _academicSyncWasRunning = running;
-    if (_syncIndicator == null && _academicSync!.visible) {
-      _syncIndicator = OverlayEntry(
-        builder: (context) => Positioned(
-          left: 0,
-          right: 0,
-          // Reserve the navigation + floating-action band on every route.
-          bottom: 160,
-          child: AcademicSyncBanner(
-            controller: _academicSync!,
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final controller = _academicSync!;
+      final host = _syncHost ??= AcademicSyncHost.maybeOf(context);
+      if (host == null) return;
+      if (controller.visible && !_syncBannerShown) {
+        _syncBannerShown = true;
+        host.show(
+          controller,
+          AcademicSyncBanner(
+            controller: controller,
+            detailsContext: context,
             onReview: () => unawaited(_openUFMGConnection()),
           ),
-        ),
-      );
-      Overlay.of(context, rootOverlay: true).insert(_syncIndicator!);
-    }
+        );
+      } else if (!controller.visible && _syncBannerShown) {
+        _syncBannerShown = false;
+        host.clear(controller);
+      }
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_deliverySubscription?.cancel());
-    _syncIndicator?.remove();
-    _syncIndicator?.dispose();
+    final controller = _academicSync;
+    final host = _syncHost;
+    if (controller != null && host != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => host.clear(controller),
+      );
+    }
     _academicSync?.removeListener(_onAcademicSyncChanged);
     _academicSync?.dispose();
     _overviewUpdates.dispose();
