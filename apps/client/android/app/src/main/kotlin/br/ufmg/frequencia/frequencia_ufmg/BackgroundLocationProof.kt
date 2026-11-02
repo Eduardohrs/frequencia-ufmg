@@ -175,6 +175,7 @@ class BackgroundLocationCapture(
             val persisted = prefs.edit().putString("report", report.toString()).commit()
             report.put("persisted", persisted)
             BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(report))
+            if (persisted && checkpointStore != null && status != "running") CheckpointDelivery.enqueueSafely(context, report)
             return persisted
         }
         fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED

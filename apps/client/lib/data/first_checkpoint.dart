@@ -10,6 +10,12 @@ class FirstCheckpointGateway {
   FirstCheckpointGateway({required this.accountId, required this.logger});
   final String accountId;
   final AppLogger logger;
+  static const deliveryChannelName =
+      'br.ufmg.frequencia.frequencia_ufmg/checkpoint_delivery_events';
+  static final Stream<Map<String, Object?>> deliveryUpdates =
+      const EventChannel(deliveryChannelName).receiveBroadcastStream().map(
+        (event) => Map<String, Object?>.from(event as Map),
+      );
   static const channel = MethodChannel(
     'br.ufmg.frequencia.frequencia_ufmg/first_checkpoint',
   );

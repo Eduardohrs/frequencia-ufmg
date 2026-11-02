@@ -646,6 +646,59 @@ void main() {
     );
   }
 
+  testWidgets(
+    'checkpoint confirmations refresh once and defer while backgrounded',
+    (tester) async {
+      final updates = StreamController<Map<String, Object?>>.broadcast();
+      addTearDown(updates.close);
+      final courses = _FakeCourseRepository();
+      final logger = _RecordingAppLogger();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CoursePage(
+            repository: courses,
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            user: user,
+            logger: logger,
+            onSignOut: () async {},
+            now: () => now,
+            checkpointDeliveryUpdates: updates.stream,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final original = courses.listCalls;
+      updates.add({'account_id': 'other', 'revision': 1});
+      updates.add({'account_id': user.id, 'revision': 0});
+      updates.add({'account_id': user.id, 'revision': 'bad'});
+      await tester.pumpAndSettle();
+      expect(courses.listCalls, original);
+      updates.add({'account_id': user.id, 'revision': 1});
+      await tester.pumpAndSettle();
+      expect(courses.listCalls, original + 1);
+      updates.add({'account_id': user.id, 'revision': 1});
+      await tester.pumpAndSettle();
+      expect(courses.listCalls, original + 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      updates.add({'account_id': user.id, 'revision': 2});
+      await tester.pumpAndSettle();
+      expect(courses.listCalls, original + 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(courses.listCalls, original + 2);
+      updates.addError(StateError('native stream failed'));
+      await tester.pumpAndSettle();
+      expect(logger.errorContexts, contains('checkpoint_delivery_updates'));
+      expect(logger.events, contains('checkpoint_delivery_ui_refresh'));
+      logger.failDeliveryLog = true;
+      updates.add({'account_id': user.id, 'revision': 3});
+      await tester.pumpAndSettle();
+      expect(courses.listCalls, original + 3);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   test('derives the academic term from the calendar half-year', () {
     expect(academicTermFor(DateTime(2026, 1, 1)), '2026-1');
     expect(academicTermFor(DateTime(2026, 6, 30)), '2026-1');
@@ -3106,11 +3159,15 @@ final class _SelectivelyBlockingLogger implements AppLogger {
 
 final class _RecordingAppLogger implements AppLogger {
   bool failRecording = false;
+  bool failDeliveryLog = false;
   final events = <String>[];
   final errorContexts = <String>[];
 
   @override
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
+    if (failDeliveryLog && name == 'checkpoint_delivery_ui_refresh') {
+      throw StateError('logger offline');
+    }
     events.add(name);
   }
 

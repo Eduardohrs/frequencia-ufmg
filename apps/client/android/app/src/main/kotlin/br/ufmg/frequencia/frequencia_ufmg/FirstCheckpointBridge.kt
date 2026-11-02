@@ -29,7 +29,11 @@ class FirstCheckpointBridge(private val context: Context) {
                     }
                     result.success(reports(account))
                 }
-                "read" -> result.success(reports(account))
+                "read", "retry_deliveries" -> {
+                    val values = reports(account)
+                    deliveryReports(account).forEach { CheckpointDelivery.enqueueSafely(context, it, method == "retry_deliveries") }
+                    result.success(values)
+                }
                 "clear_completed" -> {
                     val stores = prefs.getStringSet("stores", emptySet())!!.toMutableSet()
                     val current = stores.associateWith { reconcile(it) }
@@ -54,6 +58,11 @@ class FirstCheckpointBridge(private val context: Context) {
                 }
                 "schedule" -> {
                     val report = JSONObject(args)
+                    if (report.optBoolean("delivery_enabled")) {
+                        val lessons = report.getInt("lesson_count"); val calls = report.getInt("call_count")
+                        require(lessons in listOf(1, 2, 4) && calls in listOf(1, 2) && !(lessons == 1 && calls == 2)) { "invalid_delivery_configuration" }
+                        report.put("delivery_status", "pending")
+                    }
                     require(alarms.allowed()) { "exact_alarm_permission_required" }
                     FirstCheckpointPolicy.validate(report, System.currentTimeMillis())
                     val precise = ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -96,11 +105,12 @@ class FirstCheckpointBridge(private val context: Context) {
                     stores.add(key); check(prefs.edit().putStringSet("stores", stores).commit())
                     try {
                         alarms.schedule(key, report.getLong("checkpoint_expected_at_ms"))
+                        CheckpointDelivery.enqueueSafely(context, report)
                         BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(report))
                         result.success(reports(account))
                     } catch (error: Exception) {
                         fail(key, "enqueue_failed", "alarm_schedule", error)
-                        result.error("checkpoint_enqueue_failed", "Não foi possível agendar.", FirstCheckpointPolicy.logFields(load(key)).toMap())
+                        result.error("checkpoint_enqueue_failed", "Não foi possível agendar.", FirstCheckpointPolicy.channelFields(FirstCheckpointPolicy.logFields(load(key))))
                     }
                 }
                 else -> result.notImplemented()
@@ -121,6 +131,7 @@ class FirstCheckpointBridge(private val context: Context) {
         save(key, report.put("status", status).put(FirstCheckpointPolicy.pingField(report), "indisponivel")
             .put("stage", stage).put("updated_at_ms", System.currentTimeMillis())
             .put("cause_type", error.javaClass.simpleName).put("cause_message", error.message?.take(300)))
+        CheckpointDelivery.enqueueSafely(context, load(key))
     }
     private fun reconcile(key: String): JSONObject {
         val report = load(key)
@@ -141,9 +152,14 @@ class FirstCheckpointBridge(private val context: Context) {
         }
         return load(key)
     }
-    private fun reports(account: String): List<Map<String, Any>> = prefs.getStringSet("stores", emptySet())!!
+    fun deliveryReports(account: String): List<JSONObject> = synchronized(LOCK) {
+        if (!active(context, account)) return@synchronized emptyList()
+        prefs.getStringSet("stores", emptySet())!!.map { reconcile(it) }
+            .filter { it.optString("account_id") == account }
+    }
+    private fun reports(account: String): List<Map<String, Any?>> = prefs.getStringSet("stores", emptySet())!!
         .map { reconcile(it) }.filter { it.optString("account_id") == account }
-        .map { FirstCheckpointPolicy.logFields(it).toMap() }
+        .map { FirstCheckpointPolicy.channelFields(FirstCheckpointPolicy.logFields(it)) }
     fun dispatch(key: String): JSONObject? = synchronized(LOCK) {
         if (key !in prefs.getStringSet("stores", emptySet())!!) return@synchronized null
         val report = reconcile(key)
@@ -156,6 +172,7 @@ class FirstCheckpointBridge(private val context: Context) {
     fun restore(trigger: String) = synchronized(LOCK) {
         prefs.getStringSet("stores", emptySet())!!.forEach { key ->
             val report = reconcile(key)
+            CheckpointDelivery.enqueueSafely(context, report)
             if (active(context, report.optString("account_id")) && report.optString("status") == "scheduled") {
                 try {
                     alarms.schedule(key, report.getLong("checkpoint_expected_at_ms"))
@@ -166,6 +183,7 @@ class FirstCheckpointBridge(private val context: Context) {
         }
     }
     private fun clear() {
+        work.cancelAllWorkByTag(CheckpointDelivery.TAG)
         // Invalidate ownership before asynchronous cancellation so a running worker cannot save after logout.
         check(prefs.edit().remove("account_id").commit())
         prefs.getStringSet("stores", emptySet())!!.forEach { key ->
@@ -182,6 +200,5 @@ class FirstCheckpointBridge(private val context: Context) {
         const val PREFIX = "first_checkpoint_"
         fun active(context: Context, account: String): Boolean =
             context.getSharedPreferences(INDEX, 0).getString("account_id", null) == account
-        private fun JSONObject.toMap(): Map<String, Any> = keys().asSequence().associateWith { get(it) }
     }
 }

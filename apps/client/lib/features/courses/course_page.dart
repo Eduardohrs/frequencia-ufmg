@@ -1,3 +1,4 @@
+import 'dart:convert';
 import '../../data/first_checkpoint.dart';
 import '../../data/campus_location.dart';
 import '../attendance/first_checkpoint_page.dart';
@@ -68,6 +69,7 @@ class CoursePage extends StatefulWidget {
     this.sessionWritesEnabled = false,
     this.overviewReadsEnabled = false,
     this.androidOfflineQueueEnabled = false,
+    this.checkpointDeliveryUpdates,
     this.attendancePermissions,
     CourseIdGenerator? idGenerator,
     CurrentTime? now,
@@ -96,6 +98,7 @@ class CoursePage extends StatefulWidget {
   final bool sessionWritesEnabled;
   final bool overviewReadsEnabled;
   final bool androidOfflineQueueEnabled;
+  final Stream<Map<String, Object?>>? checkpointDeliveryUpdates;
   final AttendancePermissionsGateway? attendancePermissions;
   final CourseIdGenerator idGenerator;
   final CurrentTime now;
@@ -104,7 +107,56 @@ class CoursePage extends StatefulWidget {
   State<CoursePage> createState() => _CoursePageState();
 }
 
-class _CoursePageState extends State<CoursePage> {
+class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
+  StreamSubscription<Map<String, Object?>>? _deliverySubscription;
+  int _deliveryRevision = 0;
+  bool _deliveryDirty = false;
+  bool _deliveryActive = true;
+
+  void _onDeliveryUpdate(Map<String, Object?> event) {
+    final revision = event['revision'];
+    if (event['account_id'] != widget.user.id ||
+        revision is! int ||
+        revision <= _deliveryRevision) {
+      return;
+    }
+    _deliveryRevision = revision;
+    _deliveryDirty = true;
+    _refreshDeliveryIfNeeded();
+  }
+
+  void _refreshDeliveryIfNeeded() {
+    if (!mounted ||
+        !_deliveryDirty ||
+        !_deliveryActive ||
+        _loading ||
+        ModalRoute.of(context)?.isCurrent == false) {
+      return;
+    }
+    unawaited(
+      widget.logger
+          .logEvent(
+            'checkpoint_delivery_ui_refresh',
+            parameters: {
+              'screen': 'home',
+              'details': jsonEncode({'revision': _deliveryRevision}),
+            },
+          )
+          .catchError((Object error) {
+            debugPrint(
+              'checkpoint_delivery_refresh_log_failed type=${error.runtimeType}',
+            );
+          }),
+    );
+    unawaited(_load());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _deliveryActive = state == AppLifecycleState.resumed;
+    _refreshDeliveryIfNeeded();
+  }
+
   final _calendarNavigation = CalendarNavigationState();
   List<CourseRecord> _courses = const [];
   bool _loading = true;
@@ -130,6 +182,23 @@ class _CoursePageState extends State<CoursePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _deliveryActive =
+        (WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed) ==
+        AppLifecycleState.resumed;
+    _deliverySubscription = widget.checkpointDeliveryUpdates?.listen(
+      _onDeliveryUpdate,
+      onError: (Object error, StackTrace stack) {
+        recordOperationalFailure(
+          widget.logger,
+          error,
+          stack,
+          'checkpoint_delivery_updates',
+          {'stage': 'delivery_events'},
+          failureCode: 'checkpoint_delivery_events_failed',
+        );
+      },
+    );
     if (widget.ufmgSessionGateway
         case final BackendAcademicSyncProgressGateway gateway) {
       _academicSync = AcademicSyncController(
@@ -175,6 +244,8 @@ class _CoursePageState extends State<CoursePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_deliverySubscription?.cancel());
     _syncIndicator?.remove();
     _syncIndicator?.dispose();
     _academicSync?.removeListener(_onAcademicSyncChanged);
@@ -184,6 +255,7 @@ class _CoursePageState extends State<CoursePage> {
   }
 
   Future<void> _load() async {
+    _deliveryDirty = false;
     setState(() {
       _loading = true;
       _loadFailed = false;
@@ -288,6 +360,7 @@ class _CoursePageState extends State<CoursePage> {
     } finally {
       if (mounted) setState(() => _loading = false);
       _startAutomaticUFMGSync();
+      _refreshDeliveryIfNeeded();
     }
   }
 
@@ -753,9 +826,11 @@ class _CoursePageState extends State<CoursePage> {
               selection: LocalCampusSelection(),
               logger: widget.logger,
               now: widget.now,
+              deliveryUpdates: widget.checkpointDeliveryUpdates,
             ),
           ),
         );
+        if (mounted) await _load();
       case _ProfileAction.signOut:
         if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
           try {

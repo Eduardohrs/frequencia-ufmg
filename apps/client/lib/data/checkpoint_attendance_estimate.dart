@@ -23,6 +23,22 @@ class CheckpointAttendanceEstimate {
   final String? firstReason, secondReason;
   final Object? firstOperation, secondOperation;
 
+  static bool matches(
+    Map<String, Object?> report,
+    String courseId,
+    SessionRecord session,
+    String campusId,
+  ) =>
+      report['course_id'] == courseId &&
+      report['session_id'] == session.id &&
+      report['starts_at_ms'] == session.startsAt.millisecondsSinceEpoch &&
+      report['ends_at_ms'] == session.endsAt.millisecondsSinceEpoch &&
+      report['campus_id'] == campusId &&
+      (!report.containsKey('lesson_count') ||
+          report['lesson_count'] == session.lessonCount.value) &&
+      (!report.containsKey('call_count') ||
+          report['call_count'] == session.callCount.value);
+
   factory CheckpointAttendanceEstimate.fromReports({
     required String courseId,
     required SessionRecord session,
@@ -33,11 +49,7 @@ class CheckpointAttendanceEstimate {
     Map<String, Object?>? latest(String moment) {
       Map<String, Object?>? found;
       for (final r in reports) {
-        if (r['course_id'] != courseId ||
-            r['session_id'] != session.id ||
-            r['starts_at_ms'] != session.startsAt.millisecondsSinceEpoch ||
-            r['ends_at_ms'] != session.endsAt.millisecondsSinceEpoch ||
-            r['campus_id'] != campusId ||
+        if (!matches(r, courseId, session, campusId) ||
             (r['moment'] ?? 'first') != moment) {
           continue;
         }

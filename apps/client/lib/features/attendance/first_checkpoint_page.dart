@@ -20,6 +20,7 @@ class FirstCheckpointPage extends StatefulWidget {
     required this.selection,
     required this.logger,
     this.now = DateTime.now,
+    this.deliveryUpdates,
     super.key,
   });
   final List<CourseRecord> courses;
@@ -28,6 +29,7 @@ class FirstCheckpointPage extends StatefulWidget {
   final CampusSelectionGateway selection;
   final AppLogger logger;
   final DateTime Function() now;
+  final Stream<Map<String, Object?>>? deliveryUpdates;
   @override
   State<FirstCheckpointPage> createState() => _FirstCheckpointPageState();
 }
@@ -40,18 +42,46 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
   String _moment = 'first';
   List<Map<String, Object?>> _reports = [];
   int? _selected;
+  StreamSubscription<Map<String, Object?>>? _deliverySubscription;
+  bool _reloadQueued = false;
+  int _deliveryRevision = 0;
   bool _busy = false;
   String? _error;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _deliverySubscription = widget.deliveryUpdates?.listen(
+      (event) {
+        final revision = event['revision'];
+        if (event['account_id'] != widget.gateway.accountId ||
+            revision is! int ||
+            revision <= _deliveryRevision) {
+          return;
+        }
+        _deliveryRevision = revision;
+        _reloadQueued = true;
+        _reloadIfQueued();
+      },
+      onError: (Object error, StackTrace stack) {
+        unawaited(
+          widget.logger
+              .recordError(error, stack, context: 'checkpoint_delivery_updates')
+              .catchError((Object e) {
+                debugPrint(
+                  'checkpoint_delivery_event_log_failed type=${e.runtimeType}',
+                );
+              }),
+        );
+      },
+    );
     unawaited(_load());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    unawaited(_deliverySubscription?.cancel());
     super.dispose();
   }
 
@@ -60,20 +90,35 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
     if (state == AppLifecycleState.resumed) unawaited(_load());
   }
 
+  void _reloadIfQueued() {
+    if (!mounted ||
+        _busy ||
+        !_reloadQueued ||
+        (WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed) !=
+            AppLifecycleState.resumed) {
+      return;
+    }
+    _reloadQueued = false;
+    unawaited(_load());
+  }
+
   Future<void> _load() async {
     if (_busy) return;
+    _reloadQueued = false;
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
+      // Native evidence must remain readable while the academic catalog is offline.
+      final reports = await widget.gateway.perform('read');
+      if (mounted) setState(() => _acceptReports(reports));
       final catalog = <String, (CourseRecord, SessionRecord)>{};
       for (final course in widget.courses.where((c) => c.tracksAttendance)) {
         for (final session in await widget.sessions.listSessions(course.id)) {
           catalog['${course.id}/${session.id}'] = (course, session);
         }
       }
-      final reports = await widget.gateway.perform('read');
       if (mounted) {
         setState(() {
           _catalog
@@ -97,12 +142,13 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
       );
       if (mounted) {
         setState(
-          () => _error =
-              'Não foi possível consultar os primeiros pings. Tente atualizar.',
+          () =>
+              _error = 'Não foi possível consultar os pings. Tente atualizar.',
         );
       }
     } finally {
       if (mounted) setState(() => _busy = false);
+      _reloadIfQueued();
     }
   }
 
@@ -123,6 +169,9 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
             CampusAreas.defaultArea;
         payload.addAll({
           'moment': _moment,
+          'delivery_enabled': true,
+          'lesson_count': session.lessonCount.value,
+          'call_count': session.callCount.value,
           'course_id': course.id,
           'course_code': course.code,
           'session_id': session.id,
@@ -157,12 +206,13 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
                   error.details is Map &&
                   (error.details as Map)['cause_message'] ==
                       'exact_alarm_permission_required'
-              ? 'Permita Alarmes e lembretes para agendar o primeiro ping.'
+              ? 'Permita Alarmes e lembretes para agendar os pings.'
               : 'Não foi possível concluir. Confira permissões e tente novamente.',
         );
       }
     } finally {
       if (mounted) setState(() => _busy = false);
+      _reloadIfQueued();
     }
   }
 
@@ -224,8 +274,12 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
       final entry = _catalog['$courseId/$sessionId'];
       if (entry == null || campus is! String) continue;
       final (course, session) = entry;
-      if (r['starts_at_ms'] != session.startsAt.millisecondsSinceEpoch ||
-          r['ends_at_ms'] != session.endsAt.millisecondsSinceEpoch ||
+      if (!CheckpointAttendanceEstimate.matches(
+            r,
+            course.id,
+            session,
+            campus,
+          ) ||
           !seen.add('$courseId/$sessionId/$campus')) {
         continue;
       }
@@ -279,6 +333,26 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
     return '${d.day.toString().padLeft(2, "0")}/${d.month.toString().padLeft(2, "0")} ${d.hour.toString().padLeft(2, "0")}:${d.minute.toString().padLeft(2, "0")}';
   }
 
+  static const _delivered = {
+    'applied',
+    'already_applied',
+    'preserved',
+    'unresolved',
+    'discarded',
+    'rejected',
+  };
+  String _deliveryLabel(Object? status) => switch (status) {
+    'sending' => 'Enviando frequência',
+    'retry' => 'Salvo neste aparelho; nova tentativa pendente',
+    'applied' || 'already_applied' => 'Frequência sincronizada',
+    'preserved' => 'Registro existente mantido',
+    'unresolved' =>
+      'Informação insuficiente; registre a frequência manualmente',
+    'discarded' => 'Disciplina ou sessão removida; nenhum registro criado',
+    'rejected' => 'Envio não validado; confira os detalhes de diagnóstico',
+    _ => 'Salvo neste aparelho; aguardando envio',
+  };
+
   String _result(Map<String, Object?> report) {
     final second = report['moment'] == 'second';
     final ping = report[second ? 'second_ping' : 'first_ping'];
@@ -302,7 +376,7 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
       title: const Text('Pings de presença'),
       actions: [
         IconButton(
-          tooltip: 'Atualizar primeiros pings',
+          tooltip: 'Atualizar pings',
           onPressed: _busy ? null : _load,
           icon: const Icon(Icons.refresh),
         ),
@@ -316,7 +390,7 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
         ),
         const SizedBox(height: 12),
         const Text(
-          'Requer Alarmes e lembretes, localização precisa permitida sempre e bateria sem restrições. Até 50 agendamentos/resultados ficam neste aparelho; limpe os encerrados quando necessário. A classificação fica neste aparelho e ainda não altera os registros da disciplina. Registros manuais são preservados.',
+          'Requer Alarmes e lembretes, localização precisa permitida sempre e bateria sem restrições. Até 50 agendamentos/resultados ficam neste aparelho; limpe os encerrados quando necessário. Resultados ficam salvos neste aparelho e são enviados automaticamente quando houver conexão. Registros manuais são preservados.',
         ),
         TextButton(
           onPressed: _busy ? null : () => _act('request_alarm_permission'),
@@ -375,6 +449,15 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
             onPressed: _busy ? null : () => _act('clear_completed'),
             child: const Text('Limpar resultados encerrados'),
           ),
+        if (_reports.any(
+          (r) =>
+              r['delivery_enabled'] == true &&
+              !_delivered.contains(r['delivery_status']),
+        ))
+          TextButton(
+            onPressed: _busy ? null : () => _act('retry_deliveries'),
+            child: const Text('Enviar resultados pendentes'),
+          ),
         for (final (course, estimate) in _estimates)
           Card(
             child: Padding(
@@ -410,6 +493,8 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
                     '${report['course_code']} • ${_date(report['checkpoint_expected_at_ms'])}',
                   ),
                   Text(_result(report)),
+                  if (report['delivery_enabled'] == true)
+                    Text(_deliveryLabel(report['delivery_status'])),
                   Text('Campus: ${report['campus_name']}'),
                   if (report['lateness_ms'] case final int lateness)
                     Text('Atraso observado: ${(lateness / 1000).round()} s'),

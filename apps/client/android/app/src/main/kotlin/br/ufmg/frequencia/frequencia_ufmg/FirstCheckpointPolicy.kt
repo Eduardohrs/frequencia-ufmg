@@ -4,6 +4,15 @@ import org.json.JSONObject
 
 /** Both checkpoint moments share timing/quality rules; no cloud writes. */
 object FirstCheckpointPolicy {
+    fun channelFields(report: JSONObject): Map<String, Any?> =
+        report.keys().asSequence().associateWith { channelValue(report.get(it)) }
+    private fun channelValue(value: Any): Any? = when (value) {
+        JSONObject.NULL -> null
+        is JSONObject -> channelFields(value)
+        is org.json.JSONArray -> (0 until value.length()).map { channelValue(value.get(it)) }
+        else -> value
+    }
+
     const val MAX_LATENESS_MS = 300000L
     fun validate(report: JSONObject, now: Long) {
         for (key in listOf("account_id", "course_id", "session_id", "campus_id")) {
@@ -28,13 +37,15 @@ object FirstCheckpointPolicy {
         report.put("moment", moment).put("checkpoint_expected_at_ms", expected).put("maximum_lateness_ms", MAX_LATENESS_MS)
     }
     fun sameRevision(a: JSONObject, b: JSONObject): Boolean =
-        listOf("course_id", "session_id", "starts_at_ms", "ends_at_ms", "campus_id")
+        listOf("course_id", "session_id", "starts_at_ms", "ends_at_ms", "campus_id", "lesson_count", "call_count")
             .all { a.optString(it) == b.optString(it) }
 
     fun canClear(report: JSONObject, peers: List<JSONObject>, now: Long): Boolean {
+        if (report.optBoolean("delivery_enabled") && !CheckpointDeliveryPolicy.acknowledged(report)) return false
         val active = listOf("scheduled", "running")
         if (report.optString("status") in active) return false
         val related = peers.filter { sameRevision(report, it) }
+        if (related.any { it.optBoolean("delivery_enabled") && !CheckpointDeliveryPolicy.acknowledged(it) }) return false
         if (related.any { it.optString("status") in active }) return false
         if (report.optString("status") == "succeeded" && now < report.getLong("ends_at_ms")) {
             return related.any { it.optString("moment", "first") != report.optString("moment", "first") &&

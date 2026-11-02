@@ -1486,6 +1486,7 @@ def _checkpoint_delivery(context: Any, origin: str | None, course_id: str, sessi
             "session_id": session_id,
             "call_count": body["call_count"],
             "lesson_count": body["lesson_count"],
+            "evidence": body,
             "first_operation_id": body["first"]["operation_id"] if body["first"] else None,
             "second_operation_id": body["second"]["operation_id"] if body["second"] else None,
         }
@@ -1506,7 +1507,9 @@ def _checkpoint_delivery(context: Any, origin: str | None, course_id: str, sessi
         return fail("session_store_unavailable", 503)
     except (InvalidSchedule, FirestoreRequestRejected):
         return fail("session_data_invalid", 500)
-    except (InvalidSessionMutation, InvalidCourse, TypeError, ValueError):
+    except (InvalidSessionMutation, InvalidCourse, TypeError, ValueError) as error:
+        fields["cause_type"] = type(error).__name__
+        fields["validation_reason"] = str(error)[:160]
         return fail("checkpoint_rejected", 400)
     _log(
         context,

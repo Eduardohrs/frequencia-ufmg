@@ -3,11 +3,15 @@ package br.ufmg.frequencia.frequencia_ufmg
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.EventChannel
 
 class MainActivity: FlutterActivity() {
+    private var deliveryEvents: CheckpointDeliveryEvents? = null
     private var attendancePermissions: AttendancePermissionsBridge? = null
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        deliveryEvents = CheckpointDeliveryEvents(applicationContext)
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, CheckpointDeliveryEvents.CHANNEL).setStreamHandler(deliveryEvents)
         attendancePermissions = AttendancePermissionsBridge(this)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AttendancePermissionsBridge.CHANNEL)
             .setMethodCallHandler { call, result -> attendancePermissions!!.handle(call.method, call.arguments, result) }
@@ -27,6 +31,11 @@ class MainActivity: FlutterActivity() {
             )
             bridge.handle(call.method, call.arguments, result)
         }
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        deliveryEvents?.dispose(); deliveryEvents = null
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {

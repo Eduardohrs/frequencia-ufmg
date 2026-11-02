@@ -33,6 +33,7 @@ class AuthGate extends StatefulWidget {
     this.sessionWritesEnabled = false,
     this.overviewReadsEnabled = false,
     this.androidOfflineQueueEnabled = false,
+    this.checkpointDeliveryUpdates,
     super.key,
   });
 
@@ -56,6 +57,7 @@ class AuthGate extends StatefulWidget {
   final bool sessionWritesEnabled;
   final bool overviewReadsEnabled;
   final bool androidOfflineQueueEnabled;
+  final Stream<Map<String, Object?>>? checkpointDeliveryUpdates;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -156,6 +158,7 @@ class _AuthGateState extends State<AuthGate> {
             sessionWritesEnabled: widget.sessionWritesEnabled,
             overviewReadsEnabled: widget.overviewReadsEnabled,
             androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
+            checkpointDeliveryUpdates: widget.checkpointDeliveryUpdates,
             onSignOut: () =>
                 _run(AuditedOperation.logout, widget.authGateway.signOut),
           );

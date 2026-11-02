@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("dev.flutter.flutter-gradle-plugin")
@@ -51,6 +53,13 @@ flutter {
 }
 
 dependencies {
+    // Expose the SDKs already shipped by FlutterFire to the native queue, using its locked BOM.
+    val firebaseSdk = Properties().apply {
+        rootProject.project(":firebase_core").file("gradle.properties").inputStream().use { load(it) }
+    }.getProperty("FirebaseSDKVersion")
+    implementation(platform("com.google.firebase:firebase-bom:$firebaseSdk"))
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-appcheck-playintegrity")
     implementation("androidx.work:work-runtime:2.12.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")
