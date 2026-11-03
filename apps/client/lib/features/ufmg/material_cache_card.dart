@@ -18,7 +18,7 @@ final class MaterialCacheCard extends StatelessWidget {
   final List<MaterialDownloadProgress> downloads;
   final ValueChanged<CachedMaterialFile> onOpen;
   final ValueChanged<CachedMaterialFile> onRemove;
-  final ValueChanged<MaterialDownloadProgress> onRetry;
+  final ValueChanged<MaterialDownloadProgress>? onRetry;
   final ValueChanged<MaterialDownloadProgress> onDismiss;
   final VoidCallback onClear;
 
@@ -65,12 +65,13 @@ final class MaterialCacheCard extends StatelessWidget {
                   ? Wrap(
                       spacing: 4,
                       children: [
-                        IconButton(
-                          key: Key('material-download-retry-${download.id}'),
-                          tooltip: 'Tentar novamente',
-                          onPressed: () => onRetry(download),
-                          icon: const Icon(Icons.refresh),
-                        ),
+                        if (onRetry != null)
+                          IconButton(
+                            key: Key('material-download-retry-${download.id}'),
+                            tooltip: 'Tentar novamente',
+                            onPressed: () => onRetry!(download),
+                            icon: const Icon(Icons.refresh),
+                          ),
                         IconButton(
                           key: Key('material-download-dismiss-${download.id}'),
                           tooltip: 'Remover falha da lista',

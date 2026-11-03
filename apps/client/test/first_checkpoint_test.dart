@@ -88,6 +88,33 @@ void main() {
       null,
     ),
   );
+  testWidgets('normal presence settings never expose manual QA scheduling', (
+    tester,
+  ) async {
+    final logger = CampusTestLogger();
+    messenger.setMockMethodCallHandler(
+      FirstCheckpointGateway.channel,
+      (_) async => [],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FirstCheckpointPage(
+          courses: [course()],
+          sessions: Sessions()..values = [session('future')],
+          gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
+          selection: Selection(),
+          logger: logger,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Presença automática'), findsOneWidget);
+    expect(find.text('Agendar primeiro ping'), findsNothing);
+    expect(find.text('Agendar segundo ping'), findsNothing);
+    expect(find.text('Testar aviso'), findsNothing);
+    expect(find.text('Histórico de capturas'), findsOneWidget);
+  });
   test(
     'notification envelopes are logged separately without hiding captures',
     () async {
@@ -339,6 +366,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: FirstCheckpointPage(
+            showTestTools: true,
             courses: [course()],
             sessions: repo,
             gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
@@ -408,6 +436,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: FirstCheckpointPage(
+          showTestTools: true,
           courses: const [],
           sessions: Sessions(),
           gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
@@ -437,6 +466,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: FirstCheckpointPage(
+          showTestTools: true,
           courses: [course()],
           sessions: repo,
           gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
@@ -486,6 +516,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: FirstCheckpointPage(
+            showTestTools: true,
             courses: [course()],
             sessions: Sessions()..values = [session('s')],
             gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
@@ -574,6 +605,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: FirstCheckpointPage(
+            showTestTools: true,
             courses: [course()],
             sessions: repo,
             gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
@@ -654,6 +686,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: FirstCheckpointPage(
+          showTestTools: true,
           courses: [course()],
           sessions: repo,
           gateway: FirstCheckpointGateway(

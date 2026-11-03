@@ -93,11 +93,9 @@ class CourseHubPage extends StatefulWidget {
 class _CourseHubPageState extends State<CourseHubPage> {
   static final _location = tz.getLocation('America/Sao_Paulo');
   List<SessionRecord> _sessions = const [];
-  List<MeetingRecord> _meetings = const [];
   PythonMoodleCourseContent? _materials;
   bool _sessionsFailed = false;
   bool _courseFailed = false;
-  bool _meetingsFailed = false;
   bool _loading = true;
   bool _materialsFailed = false;
   bool _materialsLoading = false;
@@ -237,22 +235,6 @@ class _CourseHubPageState extends State<CourseHubPage> {
             generation,
           ),
       ],
-      _readSection(
-        'meetings',
-        () => widget.meetingRepository.listMeetings(_course.id),
-        (value) {
-          _meetings = List.of(value)
-            ..sort((a, b) {
-              final weekday = a.weekday.compareTo(b.weekday);
-              return weekday != 0
-                  ? weekday
-                  : a.startMinutes.compareTo(b.startMinutes);
-            });
-          _meetingsFailed = false;
-        },
-        () => _meetingsFailed = true,
-        generation,
-      ),
     ]);
     if (!mounted || generation != _generation) return;
     recordAgendaPresentation(
@@ -402,6 +384,9 @@ class _CourseHubPageState extends State<CourseHubPage> {
         builder: (_) => GeneralCalendarPage(
           navigationState: widget.calendarNavigation,
           onOpenCourse: widget.onOpenCourse,
+          onOpenActivities: _workspaceGateway == null
+              ? null
+              : (_) => _openWorkspace(_workspaceGateway!, fromCalendar: true),
           initialDate: event?.startsAt,
           logger: widget.logger,
           overviewUpdates: _localSessionsRefreshed
@@ -464,7 +449,10 @@ class _CourseHubPageState extends State<CourseHubPage> {
     return null;
   }
 
-  Future<void> _openWorkspace(BackendAcademicWorkspaceGateway gateway) async {
+  Future<void> _openWorkspace(
+    BackendAcademicWorkspaceGateway gateway, {
+    bool fromCalendar = false,
+  }) async {
     _logNavigation('activities_and_plan');
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
@@ -474,6 +462,9 @@ class _CourseHubPageState extends State<CourseHubPage> {
           logger: widget.logger,
           now: widget.now,
           userId: widget.userId,
+          onOpenCalendar: fromCalendar
+              ? () async => Navigator.of(context).pop()
+              : null,
           onConnect: widget.ufmgSessionGateway == null
               ? null
               : () => _openMaterials(manageConnection: true),
@@ -514,6 +505,13 @@ class _CourseHubPageState extends State<CourseHubPage> {
     appBar: AppBar(
       toolbarHeight: 64,
       actions: [
+        if (_course.modality != CourseModality.online)
+          IconButton(
+            key: const Key('course-hub-open-schedule'),
+            tooltip: 'Grade e período',
+            onPressed: _openSchedule,
+            icon: const Icon(Icons.edit_calendar_outlined),
+          ),
         if (widget.onEdit != null)
           if (MediaQuery.sizeOf(context).width < 500 ||
               MediaQuery.textScalerOf(context).scale(14) > 20)
@@ -570,7 +568,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    if (_sessionsFailed || _meetingsFailed || _courseFailed)
+                    if (_sessionsFailed || _courseFailed)
                       TextButton(
                         key: const Key('course-hub-retry'),
                         onPressed: () => _load(refresh: true),
@@ -725,25 +723,9 @@ class _CourseHubPageState extends State<CourseHubPage> {
         _frequencySection(),
         const SizedBox(height: 28),
         _agendaSection(),
-        if (_workspaceGateway case final gateway?) ...[
-          const SizedBox(height: 20),
-          ListTile(
-            key: const Key('course-hub-workspace'),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-            title: const Text('Atividades e plano de ensino'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => _openWorkspace(gateway),
-          ),
-        ],
       ],
     );
-    final side = Column(
-      children: [
-        if (_course.modality != CourseModality.online) _scheduleSection(),
-        const SizedBox(height: 28),
-        _materialsSection(),
-      ],
-    );
+    final side = Column(children: [_materialsSection()]);
     return KeyedSubtree(
       key: const Key('course-hub-section-grid'),
       child: compact
@@ -829,11 +811,18 @@ class _CourseHubPageState extends State<CourseHubPage> {
       eyebrow: 'Agenda',
       title: 'Próximas datas',
       actionKey: const Key('course-hub-open-calendar'),
-      actionLabel: 'Ver calendário',
+      actionLabel: 'Ver agenda',
       onAction: _openCalendar,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_workspaceGateway case final gateway?)
+            TextButton.icon(
+              key: const Key('course-hub-workspace'),
+              onPressed: () => _openWorkspace(gateway),
+              icon: const Icon(Icons.assignment_outlined, size: 18),
+              label: const Text('Atividades e plano'),
+            ),
           if (_unavailableDateCourses.contains(_course.id))
             const Text(
               'Datas não atualizadas. Exibindo as informações disponíveis.',
@@ -854,28 +843,6 @@ class _CourseHubPageState extends State<CourseHubPage> {
       ),
     );
   }
-
-  Widget _scheduleSection() => _HubSection(
-    key: const Key('course-hub-schedule'),
-    eyebrow: 'Organização',
-    title: _course.tracksAttendance ? 'Grade e período' : 'Grade · Sem chamada',
-    actionKey: const Key('course-hub-open-schedule'),
-    actionLabel: 'Ver grade',
-    onAction: _openSchedule,
-    child: _meetingsFailed
-        ? const Text('Não foi possível carregar a grade agora.')
-        : _meetings.isEmpty
-        ? const Text('Nenhum horário cadastrado.')
-        : Column(
-            children: [
-              for (final meeting in _meetings)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: _ScheduleRow(meeting: meeting),
-                ),
-            ],
-          ),
-  );
 
   Widget _materialsSection() {
     final count = _materials?.candidates.length ?? 0;
@@ -1151,36 +1118,6 @@ class _EventRow extends StatelessWidget {
   }
 }
 
-class _ScheduleRow extends StatelessWidget {
-  const _ScheduleRow({required this.meeting});
-  final MeetingRecord meeting;
-  @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-        decoration: BoxDecoration(
-          color: _semantic(context).success.withValues(alpha: .10),
-          borderRadius: BorderRadius.circular(9),
-        ),
-        child: Text(
-          _weekday(meeting.weekday),
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: _semantic(context).success,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-      ),
-      const SizedBox(width: 12),
-      Expanded(
-        child: Text(
-          '${_clock(meeting.startMinutes)}–${_clock(meeting.endMinutes)}',
-        ),
-      ),
-    ],
-  );
-}
-
 class _MaterialPreview extends StatelessWidget {
   const _MaterialPreview({required this.candidate, required this.count});
   final PythonMoodleContentCandidate candidate;
@@ -1246,16 +1183,6 @@ class _MaterialPreview extends StatelessWidget {
     ],
   );
 }
-
-String _weekday(int weekday) => const [
-  'Segunda',
-  'Terça',
-  'Quarta',
-  'Quinta',
-  'Sexta',
-  'Sábado',
-  'Domingo',
-][weekday - 1];
 
 String _clock(int minutes) =>
     '${(minutes ~/ 60).toString().padLeft(2, '0')}:${(minutes % 60).toString().padLeft(2, '0')}';

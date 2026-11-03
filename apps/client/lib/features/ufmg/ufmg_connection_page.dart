@@ -1,3 +1,5 @@
+import '../../data/material_scope_cache.dart';
+import '../../observability/operation_diagnostics.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -16,6 +18,8 @@ import '../../observability/audited_operation.dart';
 import 'material_cache_card.dart';
 import 'academic_sync_controller.dart';
 
+enum UFMGView { account, materials, savedFiles }
+
 class UFMGConnectionPage extends StatefulWidget {
   const UFMGConnectionPage({
     required this.gateway,
@@ -26,13 +30,15 @@ class UFMGConnectionPage extends StatefulWidget {
     this.openExternalUri,
     this.materialFileCache,
     this.materialCourseId,
+    this.view = UFMGView.account,
+    this.materialScopeCache,
     this.materialCourseCode,
     this.materialCourseName,
     this.materialCourseTerm,
     this.onOpenCourses,
     this.onOpenCalendar,
     super.key,
-  });
+  }) : assert(view != UFMGView.savedFiles || materialCourseId == null);
 
   final BackendUFMGSessionGateway gateway;
   final AppLogger logger;
@@ -42,6 +48,10 @@ class UFMGConnectionPage extends StatefulWidget {
   final Future<bool> Function(Uri uri)? openExternalUri;
   final MaterialFileCache? materialFileCache;
   final String? materialCourseId;
+  final UFMGView view;
+  bool get savedFilesOnly => view == UFMGView.savedFiles;
+  bool get isMaterialView => isMaterialScope || view == UFMGView.materials;
+  final MaterialScopeCache? materialScopeCache;
   final String? materialCourseCode;
   final String? materialCourseName;
   final String? materialCourseTerm;
@@ -77,6 +87,90 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   late final MaterialFileCache _materialFileCache;
   late final bool _ownsMaterialFileCache;
   List<CachedMaterialFile> _cachedMaterials = const [];
+  Set<String> _materialPrefixes = {};
+  bool _materialCatalogFailed = false;
+  bool _cacheReadFailed = false;
+  late final _scopeCache = widget.materialScopeCache ?? MaterialScopeCache();
+  bool _ownsScopedFile(String id) => _materialPrefixes.any(id.startsWith);
+  List<CachedMaterialFile> get _visibleFiles => widget.isMaterialScope
+      ? _cachedMaterials.where((file) => _ownsScopedFile(file.id)).toList()
+      : _cachedMaterials;
+  List<MaterialDownloadProgress> get _visibleDownloads => widget.isMaterialScope
+      ? _materialDownloadProgress
+            .where((file) => _ownsScopedFile(file.id))
+            .toList()
+      : _materialDownloadProgress;
+
+  Future<void> _readMaterialScope() async {
+    if (!widget.isMaterialScope || widget.userId == null) return;
+    final watch = Stopwatch()..start();
+    final fields = <String, Object>{
+      'operation_id': newCorrelationId('material_scope_read'),
+      'course_id': widget.materialCourseId!,
+      'stage': 'scope_cache_read',
+    };
+    try {
+      _materialPrefixes = await _scopeCache.read(
+        widget.userId!,
+        widget.materialCourseId!,
+      );
+      emitOperationalEvent(widget.logger, 'material_scope_read_succeeded', {
+        ...fields,
+        'prefix_count': _materialPrefixes.length,
+        'duration_ms': watch.elapsedMilliseconds,
+      });
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'material_scope_read',
+        {...fields, 'duration_ms': watch.elapsedMilliseconds},
+        failureCode: 'material_scope_cache_failed',
+      );
+    }
+  }
+
+  Future<void> _saveMaterialScope(
+    List<PythonMoodleCourseContent> courses,
+  ) async {
+    if (!widget.isMaterialScope) return;
+    final prefixes = {
+      for (final course in courses)
+        for (final item in course.candidates)
+          '${course.term}/${item.moodleCourseId}/',
+    };
+    _materialPrefixes = {..._materialPrefixes, ...prefixes};
+    if (widget.userId == null) return;
+    final watch = Stopwatch()..start();
+    final fields = <String, Object>{
+      'operation_id': newCorrelationId('material_scope_write'),
+      'course_id': widget.materialCourseId!,
+      'stage': 'scope_cache_write',
+    };
+    try {
+      await _scopeCache.write(
+        widget.userId!,
+        widget.materialCourseId!,
+        _materialPrefixes,
+      );
+      emitOperationalEvent(widget.logger, 'material_scope_write_succeeded', {
+        ...fields,
+        'prefix_count': _materialPrefixes.length,
+        'duration_ms': watch.elapsedMilliseconds,
+      });
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'material_scope_write',
+        {...fields, 'duration_ms': watch.elapsedMilliseconds},
+        failureCode: 'material_scope_cache_failed',
+      );
+    }
+  }
+
   List<MaterialDownloadProgress> _materialDownloadProgress = const [];
   Timer? _materialProgressTimer;
   final Set<String> _materialDownloadsInFlight = {};
@@ -126,6 +220,13 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   void _onAcademicSyncChanged() => setState(() {});
 
   Future<void> _load() async {
+    await _readMaterialScope();
+    if (!mounted) return;
+    if (widget.savedFilesOnly || widget.isMaterialView) {
+      await _loadSupplementaryData();
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
     final supplementary = _loadSupplementaryData();
     try {
       final status = await runAuditedOperation(
@@ -147,10 +248,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   }
 
   Future<void> _loadSupplementaryData() => Future.wait([
-    _loadDates(),
-    _loadMaterialCatalog(),
-    _loadCachedMaterials(),
-    _loadMaterialDownloadProgress(),
+    if (widget.isMaterialView) _loadMaterialCatalog(),
+    if (widget.isMaterialView || widget.savedFilesOnly) _loadCachedMaterials(),
+    if (widget.isMaterialView || widget.savedFilesOnly)
+      _loadMaterialDownloadProgress(),
   ]);
 
   Future<void> _loadMaterialDownloadProgress({bool pollAgain = false}) async {
@@ -229,22 +330,17 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       if (mounted) {
         setState(() {
           _cachedMaterials = files;
+          _cacheReadFailed = false;
           _materialDownloadsScheduled.addAll(files.map((file) => file.id));
         });
       }
-    } catch (_) {}
-  }
-
-  Future<void> _loadDates() async {
-    try {
-      final dates = await _listDates();
-      if (mounted) setState(() => _dates = dates);
     } catch (_) {
-      // Imported dates are supplementary and never hide the attendance core.
+      if (mounted) setState(() => _cacheReadFailed = true);
     }
   }
 
   Future<void> _loadMaterialCatalog() async {
+    if (mounted) setState(() => _materialCatalogFailed = false);
     try {
       final catalog = await runAuditedOperation(
         logger: widget.logger,
@@ -255,6 +351,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         final courses = widget.isMaterialScope
             ? catalog.courses.where(_matchesMaterialScope).toList()
             : catalog.courses;
+        await _saveMaterialScope(courses);
+        if (!mounted) return;
         setState(
           () => _contentDiscovery = PythonMoodleContentDiscovery(
             courses: courses,
@@ -277,7 +375,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         );
       }
     } catch (_) {
-      // The persisted catalogue is supplementary and may be synced later.
+      if (mounted) setState(() => _materialCatalogFailed = true);
     }
   }
 
@@ -1015,7 +1113,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       builder: (context) => AlertDialog(
         title: const AppDialogHeader(
           icon: Icons.delete_sweep_outlined,
-          title: 'Remover todas as cópias?',
+          title: 'Remover as cópias listadas?',
           subtitle: 'Os arquivos originais continuarão disponíveis no Moodle.',
           destructive: true,
         ),
@@ -1047,7 +1145,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     if (confirmed != true) return;
     try {
       if (_materialFileCache case final BackgroundMaterialDownloadQueue queue) {
-        final failures = _materialDownloadProgress
+        final failures = _visibleDownloads
             .where((item) => item.state == MaterialDownloadState.failed)
             .toList();
         for (final download in failures) {
@@ -1057,11 +1155,45 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       await runAuditedOperation(
         logger: widget.logger,
         operation: AuditedOperation.moodleMaterialCacheClear,
-        action: _materialFileCache.clear,
+        action: () async {
+          if (widget.isMaterialScope) {
+            for (final file in _visibleFiles) {
+              await _materialFileCache.remove(file.id);
+            }
+          } else {
+            await _materialFileCache.clear();
+          }
+        },
       );
-      _materialDownloadsScheduled.clear();
-      _reportedMaterialDownloadFailures.clear();
-      if (mounted) setState(() => _materialDownloadProgress = const []);
+      if (widget.isMaterialScope) {
+        _materialDownloadsScheduled.removeWhere(_ownsScopedFile);
+        _reportedMaterialDownloadFailures.removeWhere(_ownsScopedFile);
+        if (mounted) {
+          setState(
+            () => _materialDownloadProgress = _materialDownloadProgress
+                .where(
+                  (file) =>
+                      !_ownsScopedFile(file.id) ||
+                      file.state == MaterialDownloadState.enqueued ||
+                      file.state == MaterialDownloadState.running,
+                )
+                .toList(),
+          );
+        }
+      } else {
+        _materialDownloadsScheduled.clear();
+        _reportedMaterialDownloadFailures.clear();
+        if (mounted) setState(() => _materialDownloadProgress = const []);
+      }
+      _materialDownloadsScheduled.addAll(
+        _materialDownloadProgress
+            .where(
+              (file) =>
+                  file.state == MaterialDownloadState.enqueued ||
+                  file.state == MaterialDownloadState.running,
+            )
+            .map((file) => file.id),
+      );
       await _loadCachedMaterials();
     } catch (_) {
       if (mounted) {
@@ -1573,6 +1705,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         title: Text(
           widget.isMaterialScope
               ? 'Materiais • ${widget.materialCourseName ?? widget.materialCourseCode}'
+              : widget.savedFilesOnly
+              ? 'Arquivos no dispositivo'
+              : widget.isMaterialView
+              ? 'Materiais'
               : 'Conta acadêmica UFMG',
         ),
       ),
@@ -1586,8 +1722,12 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               ),
               child: _loading
                   ? _loadingContent()
+                  : widget.savedFilesOnly
+                  ? _savedFilesContent()
                   : widget.isMaterialScope
                   ? _scopedMaterialContent()
+                  : widget.isMaterialView
+                  ? _materialLibraryContent()
                   : _content(),
             ),
           ),
@@ -1603,7 +1743,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       const Center(child: CircularProgressIndicator()),
       const SizedBox(height: 12),
       Text(
-        widget.isMaterialScope
+        widget.savedFilesOnly
+            ? 'Carregando arquivos do dispositivo…'
+            : widget.isMaterialView
             ? 'Carregando materiais…'
             : 'Conferindo a conexão com a UFMG…',
         textAlign: TextAlign.center,
@@ -1611,15 +1753,103 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       if (_materialFileCache.isAvailable) ...[
         const SizedBox(height: 20),
         MaterialCacheCard(
-          files: _cachedMaterials,
-          downloads: _materialDownloadProgress,
+          files: _visibleFiles,
+          downloads: _visibleDownloads,
           onOpen: _openCachedMaterial,
           onRemove: _removeCachedMaterial,
-          onRetry: _retryFailedMaterial,
+          onRetry: widget.savedFilesOnly ? null : _retryFailedMaterial,
           onDismiss: _dismissFailedMaterial,
           onClear: _clearCachedMaterials,
         ),
       ],
+    ],
+  );
+
+  Future<void> _openMaterialLibrary() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => UFMGConnectionPage(
+          gateway: widget.gateway,
+          logger: widget.logger,
+          userId: widget.userId,
+          materialFileCache: _materialFileCache,
+          view: UFMGView.materials,
+        ),
+      ),
+    );
+    if (mounted && widget.isMaterialScope) await _loadCachedMaterials();
+  }
+
+  Widget _materialLibraryContent() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Wrap(
+        spacing: 12,
+        runSpacing: 8,
+        children: [
+          FilledButton.icon(
+            key: const Key('ufmg-sync-moodle'),
+            onPressed: _moodleBusy ? null : _syncMoodle,
+            icon: const Icon(Icons.sync),
+            label: const Text('Atualizar materiais'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => UFMGConnectionPage(
+                  gateway: widget.gateway,
+                  logger: widget.logger,
+                  userId: widget.userId,
+                ),
+              ),
+            ),
+            child: const Text('Gerenciar conexão'),
+          ),
+        ],
+      ),
+      if (_moodleBusy) const LinearProgressIndicator(),
+      if (_moodleSummary != null) Text(_moodleSummary!),
+      if (_moodleError != null) Text(_moodleError!),
+      if (_materialCatalogFailed)
+        TextButton(
+          onPressed: _loadMaterialCatalog,
+          child: const Text(
+            'Não foi possível ler o catálogo. Tentar novamente',
+          ),
+        ),
+      if (_materialFileCache.isAvailable) _savedFilesContent(),
+      if (_contentDiscovery != null) ..._materialSections(),
+    ],
+  );
+
+  Widget _savedFilesContent() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Text('Arquivos salvos neste dispositivo'),
+      if (_cacheReadFailed) ...[
+        const Text('Não foi possível ler os arquivos salvos.'),
+        TextButton(
+          onPressed: _loadCachedMaterials,
+          child: const Text('Tentar novamente'),
+        ),
+      ],
+      const SizedBox(height: 16),
+      MaterialCacheCard(
+        files: _cachedMaterials,
+        downloads: _materialDownloadProgress,
+        onOpen: _openCachedMaterial,
+        onRemove: _removeCachedMaterial,
+        onRetry: widget.savedFilesOnly ? null : _retryFailedMaterial,
+        onDismiss: _dismissFailedMaterial,
+        onClear: _clearCachedMaterials,
+      ),
+      if (widget.savedFilesOnly &&
+          _materialDownloadProgress.any(
+            (file) => file.state == MaterialDownloadState.failed,
+          ))
+        const Text(
+          'Para tentar baixar novamente, abra os materiais da disciplina.',
+        ),
     ],
   );
 
@@ -1663,12 +1893,59 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         'Os arquivos são baixados diretamente da UFMG para este dispositivo, '
         'sem ocupar espaço no nosso servidor.',
       ),
-      if (_contentDiscovery?.courses.isEmpty ?? true) ...[
+      TextButton(
+        onPressed: _openMaterialLibrary,
+        child: const Text('Materiais de todas as disciplinas'),
+      ),
+      if (_materialPrefixes.isEmpty && _cachedMaterials.isNotEmpty)
+        const Text(
+          'As cópias anteriores estão na lista completa do dispositivo até o catálogo desta disciplina ser atualizado.',
+        ),
+      if (_cacheReadFailed)
+        const Text('Não foi possível ler os arquivos salvos agora.'),
+      if (_materialFileCache.isAvailable) ...[
+        const SizedBox(height: 16),
+        TextButton(
+          onPressed: () async {
+            await Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => UFMGConnectionPage(
+                  gateway: widget.gateway,
+                  logger: widget.logger,
+                  userId: widget.userId,
+                  materialFileCache: _materialFileCache,
+                  view: UFMGView.savedFiles,
+                ),
+              ),
+            );
+            if (mounted) await _loadCachedMaterials();
+          },
+          child: const Text('Todos os arquivos do dispositivo'),
+        ),
+        MaterialCacheCard(
+          files: _visibleFiles,
+          downloads: _visibleDownloads,
+          onOpen: _openCachedMaterial,
+          onRemove: _removeCachedMaterial,
+          onRetry: _retryFailedMaterial,
+          onDismiss: _dismissFailedMaterial,
+          onClear: _clearCachedMaterials,
+        ),
+      ],
+      if (_materialCatalogFailed) ...[
+        const Text(
+          'Não foi possível atualizar o catálogo. Os arquivos salvos continuam disponíveis.',
+        ),
+        TextButton(
+          onPressed: _loadMaterialCatalog,
+          child: const Text('Tentar novamente'),
+        ),
+      ] else if (_contentDiscovery?.courses.isEmpty ?? true) ...[
         const SizedBox(height: 24),
         const Card(
           child: ListTile(
             leading: Icon(Icons.folder_off_outlined),
-            title: Text('Nenhum material sincronizado'),
+            title: Text('Nenhum item no catálogo desta disciplina'),
             subtitle: Text(
               'Sincronize o Moodle pela conta para atualizar o catálogo.',
             ),
@@ -1697,62 +1974,27 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             ),
           ),
         ],
+        const SizedBox(height: 16),
+        TextButton.icon(
+          key: const Key('ufmg-open-materials'),
+          onPressed: _openMaterialLibrary,
+          icon: const Icon(Icons.folder_outlined),
+          label: const Text('Abrir materiais'),
+        ),
         const SizedBox(height: 24),
         if (!connected || _showReconnectForm)
           _connectionForm()
         else
           _syncActions(),
-        if (_materialFileCache.isAvailable) ...[
-          const SizedBox(height: 16),
-          MaterialCacheCard(
-            files: _cachedMaterials,
-            downloads: _materialDownloadProgress,
-            onOpen: _openCachedMaterial,
-            onRemove: _removeCachedMaterial,
-            onRetry: _retryFailedMaterial,
-            onDismiss: _dismissFailedMaterial,
-            onClear: _clearCachedMaterials,
+        if (_dates.isNotEmpty && widget.onOpenCalendar != null)
+          TextButton.icon(
+            onPressed: widget.onOpenCalendar,
+            icon: const Icon(Icons.calendar_month_outlined),
+            label: const Text('Ver datas no calendário'),
           ),
-        ],
-        if (_dates.isNotEmpty) ...[
-          const SizedBox(height: 24),
-          _academicAgenda(),
-        ],
-        if (_contentDiscovery != null) ..._materialSections(),
       ],
     );
   }
-
-  Widget _academicAgenda() => Card(
-    key: const Key('ufmg-academic-agenda'),
-    margin: EdgeInsets.zero,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.calendar_month_outlined),
-            title: Text(
-              'Agenda do Moodle',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            subtitle: const Text('Avaliações e entregas encontradas'),
-          ),
-          for (final date in _dates)
-            ListTile(
-              leading: Icon(_dateIcon(date.kind)),
-              title: Text(date.title),
-              subtitle: Text(
-                '${date.courseCode} • ${_formattedDate(date.dueAt)}',
-              ),
-            ),
-        ],
-      ),
-    ),
-  );
 
   Widget _accountOverview(
     PythonUFMGSessionStatus? status,
@@ -2382,18 +2624,6 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     return '${MaterialLocalizations.of(context).formatMediumDate(local)} às '
         '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(local))}';
   }
-
-  String _formattedDate(DateTime value) {
-    final local = value.toLocal();
-    return '${MaterialLocalizations.of(context).formatMediumDate(local)} às '
-        '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(local))}';
-  }
-
-  static IconData _dateIcon(String kind) => switch (kind) {
-    'assignment' => Icons.assignment_outlined,
-    'quiz' => Icons.quiz_outlined,
-    _ => Icons.event_outlined,
-  };
 
   static IconData _contentIcon(String kind) => switch (kind) {
     'page' => Icons.article_outlined,

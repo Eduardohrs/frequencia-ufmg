@@ -36,6 +36,7 @@ class GeneralCalendarPage extends StatefulWidget {
     this.navigationState,
     this.logger,
     this.onOpenCourse,
+    this.onOpenActivities,
     this.initialDate,
     this.initialSessionsByCourse,
     this.overviewUpdates,
@@ -55,6 +56,7 @@ class GeneralCalendarPage extends StatefulWidget {
   final CalendarNavigationState? navigationState;
   final AppLogger? logger;
   final Future<void> Function(CourseRecord)? onOpenCourse;
+  final Future<void> Function(CourseRecord)? onOpenActivities;
   final Map<String, List<SessionRecord>>? initialSessionsByCourse;
   final Map<String, List<PythonMoodleDate>> datesByCourse;
   final Set<String> unavailableDateCourses;
@@ -261,6 +263,20 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                     'Calendário operacional',
                     style: Theme.of(context).textTheme.headlineMedium,
                   ),
+                  if (widget.onOpenActivities != null && _courseId != null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        key: const Key('calendar-open-activities'),
+                        onPressed: () => _openActivities(
+                          widget.courses.firstWhere(
+                            (course) => course.id == _courseId,
+                          ),
+                        ),
+                        icon: const Icon(Icons.assignment_outlined),
+                        label: const Text('Atividades e plano'),
+                      ),
+                    ),
                   const SizedBox(height: 6),
                   Text(
                     'Aulas, reposições e avaliações em uma visão só.',
@@ -316,6 +332,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                         ),
                       ),
                       SegmentedButton<CalendarDisplay>(
+                        key: const Key('calendar-display'),
                         showSelectedIcon: false,
                         segments:
                             MediaQuery.sizeOf(context).width < 420 ||
@@ -508,12 +525,49 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                         ),
                       ),
                     ),
-                    for (final entry in entries.take(2))
+                    if (compactDays && entries.isNotEmpty)
                       InkWell(
-                        onTap: () => _openEntry(entry),
-                        child: _CalendarEventLabel(entry: entry),
+                        key: ValueKey(
+                          'calendar-count-${day.toIso8601String().substring(0, 10)}',
+                        ),
+                        onTap: () => _openDay(day, entries),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Wrap(
+                                spacing: 2,
+                                runSpacing: 2,
+                                children: [
+                                  for (final entry in entries.take(3))
+                                    Container(
+                                      width: 5,
+                                      height: 5,
+                                      decoration: BoxDecoration(
+                                        color: CourseIdentity.fromCode(
+                                          entry.course.code,
+                                        ).color,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              Text(
+                                '${entries.length}',
+                                style: Theme.of(context).textTheme.labelSmall,
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
-                    if (entries.length > 2)
+                    if (!compactDays)
+                      for (final entry in entries.take(2))
+                        InkWell(
+                          onTap: () => _openEntry(entry),
+                          child: _CalendarEventLabel(entry: entry),
+                        ),
+                    if (!compactDays && entries.length > 2)
                       InkWell(
                         onTap: () => _openDay(day, entries),
                         child: Text('+${entries.length - 2}'),
@@ -596,6 +650,12 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                     ? _typeLabel(entry.type)
                     : _status(entry.session.session!.calendarStatus),
               ),
+              if (widget.onOpenActivities != null &&
+                  entry.session.title != null)
+                TextButton(
+                  onPressed: () => Navigator.pop(sheet, false),
+                  child: const Text('Ver atividades e plano'),
+                ),
               if (widget.onOpenCourse != null)
                 TextButton(
                   onPressed: () => Navigator.pop(sheet, true),
@@ -611,7 +671,12 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
       ),
     );
     _event('calendar_entry_closed', {...fields, 'open_course': open == true});
-    if (open != true || !mounted) return;
+    if (!mounted) return;
+    if (open == false) {
+      await _openActivities(entry.course);
+      return;
+    }
+    if (open != true) return;
     try {
       await widget.onOpenCourse!(entry.course);
       _event('calendar_course_navigation_finished', {
@@ -628,6 +693,44 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
           'calendar_course_navigation',
           fields,
           failureCode: 'calendar_navigation_failed',
+        );
+      }
+    }
+  }
+
+  Future<void> _openActivities(CourseRecord course) async {
+    final fields = <String, Object>{
+      'operation_id': newCorrelationId('calendar_activities'),
+      'course_id': course.id,
+      'course_name': course.displayName,
+      'stage': 'activities_navigation',
+    };
+    _event('calendar_activities_open_started', fields);
+    try {
+      await widget.onOpenActivities!(course);
+      _event('calendar_activities_open_succeeded', {
+        ...fields,
+        'applied_to_view': mounted,
+      });
+    } catch (error, stack) {
+      final logger = widget.logger;
+      if (logger != null) {
+        recordOperationalFailure(
+          logger,
+          error,
+          stack,
+          'calendar_activities_navigation',
+          fields,
+          failureCode: 'calendar_navigation_failed',
+        );
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Não foi possível abrir as atividades. Tente novamente.',
+            ),
+          ),
         );
       }
     }
