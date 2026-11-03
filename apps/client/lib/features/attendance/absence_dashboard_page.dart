@@ -1,3 +1,4 @@
+import '../../design/app_feedback.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import '../../observability/operation_diagnostics.dart';
@@ -281,18 +282,10 @@ class _AbsenceDashboardPageState extends State<AbsenceDashboardPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'Sua frequência',
-            style: Theme.of(context).textTheme.headlineMedium,
+          const AppPageIntro(
+            title: 'Sua frequência',
+            subtitle: 'Veja primeiro onde sua atenção é necessária.',
           ),
-          const SizedBox(height: 6),
-          Text(
-            'Veja primeiro onde sua atenção é necessária.',
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 16),
           _GlobalSnapshot(summaries: _summaries),
           const SizedBox(height: 24),
           Text('Por disciplina', style: Theme.of(context).textTheme.titleLarge),
@@ -431,18 +424,37 @@ class _SummaryCard extends StatelessWidget {
       elevation: 0,
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
-        leading: CourseMark(
-          key: Key('absence-course-mark-${course.id}'),
-          code: course.code,
-          size: 40,
+        title: Row(
+          children: [
+            CourseMark(
+              key: Key('absence-course-mark-${course.id}'),
+              code: course.code,
+              size: 36,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    course.displayName,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  Text(
+                    course.code,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        title: Text(course.displayName),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(course.code),
-            if (course.nickname != null) Text(course.name),
-            const SizedBox(height: 4),
+            const SizedBox(height: 8),
             Text(
               '${summary.consumedAbsences} de ${summary.absenceLimit} faltas usadas'
               ' • ${_pendingLabel(summary.pendingSessions)}',
@@ -454,6 +466,14 @@ class _SummaryCard extends StatelessWidget {
           ],
         ),
         children: [
+          if (course.nickname != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Text(
+                course.name,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
           if (onOpen != null)
             TextButton(
               onPressed: onOpen,

@@ -184,10 +184,17 @@ class _AuthGateState extends State<AuthGate> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(
-          Icons.school_outlined,
-          size: 64,
-          color: Theme.of(context).colorScheme.primary,
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(26),
+          ),
+          child: Icon(
+            Icons.school_outlined,
+            size: 48,
+            color: Theme.of(context).colorScheme.primary,
+          ),
         ),
         const SizedBox(height: 20),
         Text(

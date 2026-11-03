@@ -1,3 +1,4 @@
+import '../../design/app_feedback.dart';
 import 'dart:async';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
@@ -259,9 +260,9 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                 final scrollWholePage =
                     constraints.maxWidth < 320 || enlargedText;
                 final children = <Widget>[
-                  Text(
-                    'Calendário operacional',
-                    style: Theme.of(context).textTheme.headlineMedium,
+                  const AppPageIntro(
+                    title: 'Sua agenda',
+                    subtitle: 'Aulas, provas e entregas.',
                   ),
                   if (widget.onOpenActivities != null && _courseId != null)
                     Align(
@@ -277,14 +278,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                         label: const Text('Atividades e plano'),
                       ),
                     ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Aulas, reposições e avaliações em uma visão só.',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 12),
                   Wrap(
                     spacing: 12,
                     runSpacing: 12,
@@ -414,7 +408,11 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
   Widget _list() {
     final entries = _filtered;
     if (entries.isEmpty) {
-      return const Center(child: Text('Nenhuma sessão encontrada'));
+      return const AppEmptyState(
+        icon: Icons.event_available_outlined,
+        title: 'Nenhuma sessão encontrada',
+        message: 'Experimente outro filtro para ver suas aulas e datas.',
+      );
     }
     return ListView.separated(
       itemCount: entries.length,
@@ -478,7 +476,9 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
             itemCount: 42,
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              childAspectRatio: compactDays ? .42 : .9,
+              mainAxisExtent:
+                  MediaQuery.textScalerOf(context).scale(14) * 3 +
+                  (compactDays ? 16 : 50),
             ),
             itemBuilder: (_, index) {
               final day = firstCell.add(Duration(days: index));
@@ -532,7 +532,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                         ),
                         onTap: () => _openDay(day, entries),
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          padding: const EdgeInsets.symmetric(vertical: 3),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -754,7 +754,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
             if (entry.session.session != null && !entry.course.tracksAttendance)
               'Sem chamada',
             if (entry.session.title case final title?)
-              '${entry.type == CalendarEntryType.deadline ? 'Prazo' : 'Avaliação'}: $title',
+              '${entry.type == CalendarEntryType.deadline ? 'Prazo' : 'Avaliação'}: ${compactAcademicTitle(title)}',
           ].join('\n'),
         ),
         trailing: entry.session.title == null

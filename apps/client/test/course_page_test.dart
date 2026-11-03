@@ -198,7 +198,7 @@ void main() {
         endsAt: now.add(const Duration(days: 1, hours: 2)),
         lessonCount: QuantidadeAulas.two,
         callCount: NumeroChamadas.one,
-        assessmentTitle: 'Entrega específica',
+        assessmentTitle: 'Entrega específica está marcado(a) para esta data',
         createdAt: now,
         updatedAt: now,
       );
@@ -230,10 +230,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      expect(find.text('Entrega específica'), findsOneWidget);
       await tester.tap(find.byKey(const Key('upcoming-course-1-exam')));
       await tester.pumpAndSettle();
       expect(find.text('Fechar'), findsOneWidget);
-      expect(find.text('Entrega específica'), findsOneWidget);
+      expect(
+        find.text('Entrega específica está marcado(a) para esta data'),
+        findsOneWidget,
+      );
       expect(find.text('POO prática'), findsWidgets);
       expect(logger.events, contains('calendar_entry_opened'));
       await tester.tap(find.text('Fechar'));
@@ -2072,7 +2076,7 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('course-hub-open-calendar')));
     await tester.pumpAndSettle();
-    expect(find.text('Calendário operacional'), findsOneWidget);
+    expect(find.text('Sua agenda'), findsOneWidget);
     expect(find.text('POO'), findsWidgets);
     await tester.pageBack();
     await tester.pumpAndSettle();
@@ -2155,7 +2159,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('nav-general-calendar')));
     await tester.pumpAndSettle();
-    expect(find.text('Calendário operacional'), findsOneWidget);
+    expect(find.text('Sua agenda'), findsOneWidget);
   });
 
   testWidgets('shows the compact pending action and segmented absence bar', (
@@ -2382,7 +2386,7 @@ void main() {
     await tester.tap(find.byKey(const Key('nav-general-calendar')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Calendário operacional'), findsOneWidget);
+    expect(find.text('Sua agenda'), findsOneWidget);
     expect(sessionRepository.listedCourseIds, isEmpty);
     await tester.pageBack();
     await tester.pumpAndSettle();
@@ -2488,7 +2492,7 @@ void main() {
     expect(find.text('Ignorada'), findsNothing);
     await tester.tap(find.text('Ver calendário'));
     await tester.pumpAndSettle();
-    expect(find.text('Calendário operacional'), findsOneWidget);
+    expect(find.text('Sua agenda'), findsOneWidget);
   });
 
   testWidgets('warns when disciplines come from the saved offline copy', (
@@ -3207,7 +3211,7 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('ufmg-open-calendar')));
     await tester.tap(find.byKey(const Key('ufmg-open-calendar')));
     await tester.pumpAndSettle();
-    expect(find.text('Calendário operacional'), findsOneWidget);
+    expect(find.text('Sua agenda'), findsOneWidget);
   });
 
   testWidgets('uses a navigation rail when the available width is large', (

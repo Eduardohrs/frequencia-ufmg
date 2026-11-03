@@ -390,7 +390,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Limpar resultados encerrados'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Atualizar pings'));
+      await tester.tap(find.byTooltip('Atualizar capturas'));
       await tester.pumpAndSettle();
       await tester.tap(find.byType(DropdownButtonFormField<int>));
       await tester.pumpAndSettle();
@@ -480,7 +480,7 @@ void main() {
     expect(find.textContaining('Não foi possível consultar'), findsOneWidget);
     repo.error = null;
     repo.values = [session('s')];
-    await tester.tap(find.byTooltip('Atualizar pings'));
+    await tester.tap(find.byTooltip('Atualizar capturas'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Agendar primeiro ping'));
     await tester.pumpAndSettle();
@@ -552,7 +552,7 @@ void main() {
           },
         ],
       );
-      await tester.tap(find.byTooltip('Atualizar pings'));
+      await tester.tap(find.byTooltip('Atualizar capturas'));
       await tester.pumpAndSettle();
       expect(find.text('Alarmes e lembretes não autorizado'), findsOneWidget);
       await tester.drag(find.byType(ListView), const Offset(0, -600));
@@ -638,7 +638,7 @@ void main() {
           {...evidence('first', item.$1), 'starts_at_ms': 0},
           {...evidence('first', item.$1), 'ends_at_ms': 0},
         ];
-        await tester.tap(find.byTooltip('Atualizar pings'));
+        await tester.tap(find.byTooltip('Atualizar capturas'));
         await tester.pumpAndSettle();
         expect(find.text(item.$3), findsOneWidget);
         expect(find.text('ELE631 · Resultado local'), findsOneWidget);
@@ -657,7 +657,7 @@ void main() {
         {...evidence('first', 'fora'), 'status': 'scheduled'},
         {...evidence('second', 'fora'), 'status': 'scheduled'},
       ];
-      await tester.tap(find.byTooltip('Atualizar pings'));
+      await tester.tap(find.byTooltip('Atualizar capturas'));
       await tester.pumpAndSettle();
       expect(find.text('Aguardando os dois resultados'), findsOneWidget);
       await tester.tap(find.text('Cancelar segundo ping'));
@@ -665,7 +665,7 @@ void main() {
       expect((calls.last.arguments as Map)['operation_id'], 'second');
       repo.values = [session('s', attendance: SituacaoFrequencia.present)];
       logger.failLogging = true;
-      await tester.tap(find.byTooltip('Atualizar pings'));
+      await tester.tap(find.byTooltip('Atualizar capturas'));
       await tester.pumpAndSettle();
       expect(find.text('Registro da disciplina preservado'), findsOneWidget);
       await tester.tap(find.text('Início da aula'));

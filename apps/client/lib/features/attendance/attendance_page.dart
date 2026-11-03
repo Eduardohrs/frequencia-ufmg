@@ -1,3 +1,4 @@
+import '../../design/app_feedback.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -245,7 +246,7 @@ class _AttendancePageState extends State<AttendancePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Não foi possível carregar as sessões.'),
+              const Text('Não foi possível carregar as aulas.'),
               const SizedBox(height: 12),
               OutlinedButton(
                 onPressed: _load,
@@ -259,7 +260,11 @@ class _AttendancePageState extends State<AttendancePage> {
     if (_sessions.isEmpty) {
       return const AppStateTransition(
         stateKey: ValueKey('attendance-empty'),
-        child: Center(child: Text('Nenhuma sessão gerada')),
+        child: AppEmptyState(
+          icon: Icons.event_outlined,
+          title: 'Nenhuma aula cadastrada',
+          message: 'Defina os horários na grade da disciplina.',
+        ),
       );
     }
     final sections = _sections();
@@ -320,7 +325,7 @@ class _AttendancePageState extends State<AttendancePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              code,
+              widget.courseName ?? code,
               style: Theme.of(
                 context,
               ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),

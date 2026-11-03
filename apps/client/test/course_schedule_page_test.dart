@@ -1102,10 +1102,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await _chooseScheduleAction(tester, 'Exceções de calendário');
+    await _chooseScheduleAction(tester, 'Aulas e reposições');
     await tester.pumpAndSettle();
-    expect(find.text('Exceções de calendário'), findsOneWidget);
-    expect(find.text('Nenhuma sessão gerada'), findsOneWidget);
+    expect(find.text('Aulas e reposições'), findsOneWidget);
+    expect(find.text('Nenhuma aula cadastrada'), findsOneWidget);
   });
 
   testWidgets('opens manual attendance for the selected course', (
@@ -1145,7 +1145,7 @@ void main() {
     await tester.pumpAndSettle();
     await _chooseScheduleAction(tester, 'Ver calendário');
     await tester.pumpAndSettle();
-    expect(find.text('Calendário operacional'), findsOneWidget);
+    expect(find.text('Sua agenda'), findsOneWidget);
     expect(
       tester
           .widget<DropdownButtonFormField<String?>>(

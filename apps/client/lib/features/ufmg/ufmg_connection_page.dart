@@ -1718,7 +1718,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxWidth: widget.isMaterialScope ? 720 : 920,
+                maxWidth: widget.isMaterialView && !widget.isMaterialScope
+                    ? 920
+                    : 720,
               ),
               child: _loading
                   ? _loadingContent()
@@ -1783,6 +1785,11 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   Widget _materialLibraryContent() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
+      const AppPageIntro(
+        title: 'Seus materiais',
+        subtitle:
+            'Organizados por disciplina. Os downloads vêm direto da UFMG.',
+      ),
       Wrap(
         spacing: 12,
         runSpacing: 8,
@@ -1819,13 +1826,22 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         ),
       if (_materialFileCache.isAvailable) _savedFilesContent(),
       if (_contentDiscovery != null) ..._materialSections(),
+      if (_contentDiscovery == null && !_materialCatalogFailed && !_moodleBusy)
+        const AppEmptyState(
+          icon: Icons.folder_outlined,
+          title: 'Nenhum material sincronizado',
+          message: 'Atualize os materiais para consultar o catálogo.',
+        ),
     ],
   );
 
   Widget _savedFilesContent() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      const Text('Arquivos salvos neste dispositivo'),
+      const AppPageIntro(
+        title: 'Arquivos salvos neste dispositivo',
+        subtitle: 'Abra suas cópias mesmo sem internet.',
+      ),
       if (_cacheReadFailed) ...[
         const Text('Não foi possível ler os arquivos salvos.'),
         TextButton(
@@ -1890,8 +1906,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       ),
       const SizedBox(height: 16),
       const Text(
-        'Os arquivos são baixados diretamente da UFMG para este dispositivo, '
-        'sem ocupar espaço no nosso servidor.',
+        'Download direto da UFMG, '
+        'sem armazenar arquivos no nosso servidor.',
       ),
       TextButton(
         onPressed: _openMaterialLibrary,
@@ -2412,7 +2428,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         const ListTile(
           contentPadding: EdgeInsets.zero,
           leading: Icon(Icons.shield_outlined),
-          title: Text('Seus dados manuais são preservados'),
+          title: Text('Seus registros são preservados'),
           subtitle: Text(
             'Sincronizações complementam seus registros. Sua senha não '
             'é armazenada e os arquivos vêm direto da UFMG.',

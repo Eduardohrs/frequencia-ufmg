@@ -199,3 +199,13 @@ void recordAgendaFailure(
   fields,
   failureCode: 'agenda_read_failed',
 );
+
+/// Removes only Moodle's redundant calendar sentence; raw titles remain in snapshots.
+String compactAcademicTitle(String title) {
+  final match = RegExp(
+    r'^(.+?)\s+está marcado\(a\) para esta data[.]?$',
+    caseSensitive: false,
+    unicode: true,
+  ).firstMatch(title.trim());
+  return match == null ? title : match.group(1)!;
+}

@@ -1031,6 +1031,13 @@ class _FrequencyFigure extends StatelessWidget {
             height: .95,
           ),
         ),
+        const SizedBox(height: 6),
+        Text(
+          'saldo de faltas',
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(height: 8),
         Text(
           summary.remainingMeetingsLabel,
@@ -1104,7 +1111,7 @@ class _EventRow extends StatelessWidget {
             const SizedBox(width: 13),
             Expanded(
               child: Text(
-                session.title!,
+                compactAcademicTitle(session.title!),
                 style: Theme.of(
                   context,
                 ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),

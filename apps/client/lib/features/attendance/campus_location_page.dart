@@ -1,3 +1,4 @@
+import '../../design/app_feedback.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../data/campus_location.dart';
@@ -159,15 +160,11 @@ class _CampusLocationPageState extends State<CampusLocationPage> {
           child: ListView(
             padding: const EdgeInsets.all(20),
             children: [
-              Text(
-                'Seu campus',
-                style: Theme.of(context).textTheme.headlineSmall,
+              const AppPageIntro(
+                title: 'Seu campus',
+                subtitle:
+                    'Salvo neste aparelho. A verificação não registra presença.',
               ),
-              const SizedBox(height: 12),
-              const Text(
-                'A escolha fica salva neste aparelho. Verificar a localização não registra presença.',
-              ),
-              const SizedBox(height: 24),
               InputDecorator(
                 decoration: const InputDecoration(
                   labelText: 'Campus ou unidade',

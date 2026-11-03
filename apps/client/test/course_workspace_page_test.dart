@@ -165,7 +165,7 @@ void main() {
       final gateway = _Gateway();
       await tester.pumpWidget(_app(gateway, logs, userId: 'owner'));
       await tester.pumpAndSettle();
-      expect(find.textContaining('Última sincronização:'), findsOneWidget);
+      expect(find.textContaining('Atualizado:'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       await tester.pumpAndSettle();
       final offline = _Gateway()

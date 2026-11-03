@@ -571,7 +571,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
             ),
             const PopupMenuItem(
               value: _ScheduleAction.exceptions,
-              child: Text('Exceções de calendário'),
+              child: Text('Aulas e reposições'),
             ),
           ],
           child: Padding(
@@ -619,6 +619,10 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     }
     return ListView(
       children: [
+        const AppPageIntro(
+          title: 'Grade e período',
+          subtitle: 'Defina quando suas aulas acontecem.',
+        ),
         if (_usingLocalCopy) ...[
           Card(
             key: const Key('offline-schedule-banner'),

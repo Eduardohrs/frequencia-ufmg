@@ -4,6 +4,50 @@ import 'package:frequencia_ufmg/design/app_feedback.dart';
 import 'package:frequencia_ufmg/design/app_theme.dart';
 
 void main() {
+  testWidgets(
+    'secondary headings and empty guidance share a calm hierarchy on small screens',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    AppPageIntro(
+                      title: 'Programação Orientada a Objetos',
+                      subtitle: 'Aulas, provas e entregas.',
+                    ),
+                    AppEmptyState(
+                      key: UniqueKey(),
+                      icon: Icons.assignment_outlined,
+                      title: 'Nenhuma atividade',
+                      message:
+                          'Sincronize a disciplina para buscar atividades.',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Programação Orientada a Objetos'), findsOneWidget);
+      expect(
+        find.text('Sincronize a disciplina para buscar atividades.'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('inline messages remain readable and announce errors', (
     tester,
   ) async {

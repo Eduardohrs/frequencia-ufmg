@@ -17,7 +17,13 @@ void main() {
       expect(theme.navigationBarTheme.elevation, 0);
       expect(theme.navigationRailTheme.elevation, 0);
       expect(theme.popupMenuTheme.elevation, 3);
-      expect(theme.appBarTheme.titleTextStyle?.fontWeight, FontWeight.w700);
+      expect(theme.appBarTheme.titleTextStyle?.fontWeight, FontWeight.w600);
+      expect(theme.colorScheme.surface, theme.cardTheme.color);
+      expect(
+        theme.segmentedButtonTheme.style?.textStyle?.resolve({}),
+        theme.textTheme.labelLarge,
+      );
+      expect(theme.listTileTheme.titleTextStyle, theme.textTheme.titleSmall);
       expect(theme.dialogTheme.elevation, 8);
       expect(theme.dialogTheme.surfaceTintColor, Colors.transparent);
       expect(theme.snackBarTheme.behavior, SnackBarBehavior.floating);

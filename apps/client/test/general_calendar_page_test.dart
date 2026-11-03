@@ -47,6 +47,15 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      final lastDay = find.byKey(const ValueKey('calendar-day-2026-10-11'));
+      expect(
+        tester.getBottomRight(lastDay).dy,
+        lessThanOrEqualTo(
+          tester
+              .getBottomRight(find.byKey(const Key('month-calendar-grid')))
+              .dy,
+        ),
+      );
       final count = find.byKey(const Key('calendar-count-2026-09-16'));
       await tester.ensureVisible(count);
       await tester.tap(count);
@@ -105,7 +114,7 @@ void main() {
             findsOneWidget,
           );
         }
-        expect(find.text('Calendário operacional'), findsOneWidget);
+        expect(find.text('Sua agenda'), findsOneWidget);
       },
     );
   }
@@ -126,7 +135,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Esta data não está mais disponível.'), findsOneWidget);
-    expect(find.text('Calendário operacional'), findsOneWidget);
+    expect(find.text('Sua agenda'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
   testWidgets(
