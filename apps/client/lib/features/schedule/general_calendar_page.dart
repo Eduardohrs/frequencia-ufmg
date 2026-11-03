@@ -632,7 +632,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
       return Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: Text(
-          '${const ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'][day.weekday - 1]} • ${_date(day)} • Sem aulas ou prazos',
+          '${const ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'][day.weekday - 1]} • ${_date(day)} • ${_type == CalendarEntryType.all ? 'Sem aulas ou prazos' : 'Nenhum item para este filtro'}',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),

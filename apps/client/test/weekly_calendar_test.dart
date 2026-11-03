@@ -41,6 +41,56 @@ void main() {
     () => SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty(),
   );
+  testWidgets(
+    'empty day describes the active filter without denying saved lessons',
+    (tester) async {
+      final lesson = SessionRecord(
+        id: 'lesson',
+        startsAt: now,
+        endsAt: now.add(const Duration(hours: 2)),
+        lessonCount: QuantidadeAulas.two,
+        callCount: NumeroChamadas.one,
+        createdAt: now,
+        updatedAt: now,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GeneralCalendarPage(
+            courses: [course],
+            repository: _Sessions([lesson]),
+            location: location,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('POO'), findsOneWidget);
+      expect(find.textContaining('Sem aulas ou prazos'), findsWidgets);
+      for (final label in ['Avaliações', 'Entregas e prazos', 'Aulas']) {
+        final current = find.byKey(const Key('calendar-type-filter'));
+        await tester.tap(current);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(label).last);
+        await tester.pumpAndSettle();
+        expect(find.textContaining('Sem aulas ou prazos'), findsNothing);
+        expect(
+          find.textContaining('Nenhum item para este filtro'),
+          findsWidgets,
+        );
+        expect(
+          find.text('POO'),
+          label == 'Aulas' ? findsOneWidget : findsNothing,
+        );
+      }
+      await tester.tap(find.byKey(const Key('calendar-type-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Todos').last);
+      await tester.pumpAndSettle();
+      expect(find.text('POO'), findsOneWidget);
+      expect(find.textContaining('Sem aulas ou prazos'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    },
+  );
   for (final width in [320.0, 390.0, 1200.0]) {
     testWidgets(
       'default short interval is readable and list preserves it at $width',
