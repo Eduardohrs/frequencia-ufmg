@@ -1,3 +1,4 @@
+import '../../design/course_visuals.dart';
 import '../activities/course_workspace_page.dart';
 import 'dart:convert';
 import '../../data/automatic_checkpoint_scheduler.dart';
@@ -414,6 +415,11 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
             snapshot?.unavailableDateCourses ??
             {for (final course in courses) course.id};
       });
+      await CourseVisualHost.of(
+        context,
+        listen: false,
+      )?.update(widget.user.id, _courses, logger: widget.logger);
+      if (!mounted) return;
       _overviewUpdates.value = AcademicOverviewSnapshot(
         courses: _courses,
         sessionsByCourse: _sessionsByCourse,
@@ -643,6 +649,12 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         isLocalCopy: true,
       ),
       'cached_overview',
+    );
+    unawaited(
+      CourseVisualHost.of(
+        context,
+        listen: false,
+      )?.update(widget.user.id, courses, logger: widget.logger),
     );
     _setPastPending(courses, [
       for (final course in courses)
@@ -1161,6 +1173,12 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
             course,
           ]..sort(compareCourseNames);
         });
+        unawaited(
+          CourseVisualHost.of(
+            context,
+            listen: false,
+          )?.update(widget.user.id, _courses, logger: widget.logger),
+        );
         unawaited(_loadPastPendingCount(_courses));
       }
       return null;

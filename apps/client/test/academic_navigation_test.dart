@@ -98,7 +98,8 @@ void main() {
         currentUserId: () => 'owner',
         platform: 'web',
       );
-      final state = CalendarNavigationState()..display = CalendarDisplay.list;
+      final state = (CalendarNavigationState()..range = CalendarRange.month)
+        ..display = CalendarDisplay.list;
       final opened = <String>[];
       Widget app() => MaterialApp(
         home: GeneralCalendarPage(
@@ -149,11 +150,11 @@ void main() {
       await tester.tap(
         find.descendant(
           of: find.byType(SegmentedButton<CalendarDisplay>),
-          matching: find.text('Calendário'),
+          matching: find.text('Agenda'),
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Próximo'));
+      await tester.tap(find.byTooltip('Próximo período'));
       await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox());
       await tester.pumpAndSettle();
@@ -185,6 +186,8 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: GeneralCalendarPage(
+            navigationState: CalendarNavigationState()
+              ..range = CalendarRange.month,
             courses: [course('POO')],
             repository: repo,
             location: location,
@@ -237,7 +240,8 @@ void main() {
         currentUserId: () => 'owner',
         platform: 'web',
       );
-      final state = CalendarNavigationState()..courseId = 'deleted';
+      final state = (CalendarNavigationState()..range = CalendarRange.month)
+        ..courseId = 'deleted';
       await tester.pumpWidget(
         MaterialApp(
           home: GeneralCalendarPage(
@@ -270,6 +274,8 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: GeneralCalendarPage(
+            navigationState: CalendarNavigationState()
+              ..range = CalendarRange.month,
             courses: [course('POO')],
             repository: repo,
             location: location,

@@ -1,3 +1,4 @@
+import 'course_visuals.dart';
 import 'package:flutter/material.dart';
 
 @immutable
@@ -52,6 +53,7 @@ class CourseMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final identity = CourseIdentity.fromCode(code);
+    final color = courseColor(context, code, identity.color);
     return Semantics(
       label: '${identity.label}, $code',
       image: true,
@@ -61,14 +63,14 @@ class CourseMark extends StatelessWidget {
           height: size,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: identity.color.withValues(alpha: .14),
+            color: color.withValues(alpha: .14),
             borderRadius: BorderRadius.circular(size * .3),
-            border: Border.all(color: identity.color.withValues(alpha: .35)),
+            border: Border.all(color: color.withValues(alpha: .35)),
           ),
           child: Text(
             identity.symbol,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: identity.color,
+              color: color,
               fontWeight: FontWeight.w800,
             ),
           ),

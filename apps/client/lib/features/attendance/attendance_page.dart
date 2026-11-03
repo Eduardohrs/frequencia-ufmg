@@ -89,6 +89,8 @@ class _AttendancePageState extends State<AttendancePage> {
     barrierDismissible: false,
     builder: (_) => _AttendanceDialog(
       session: session,
+      contextLabel:
+          '${widget.courseName ?? widget.courseCode ?? 'Disciplina'} • ${_dateTime(tz.TZDateTime.from(session.startsAt, widget.location))} – ${_dateTime(tz.TZDateTime.from(session.endsAt, widget.location))}',
       attendanceEvaluator: widget.sessionWritesEnabled
           ? null
           : widget.attendanceEvaluator,
@@ -525,8 +527,10 @@ class _AttendanceDialog extends StatefulWidget {
   const _AttendanceDialog({
     required this.session,
     required this.onSave,
+    required this.contextLabel,
     this.attendanceEvaluator,
   });
+  final String contextLabel;
 
   final SessionRecord session;
   final Future<String?> Function(SituacaoFrequencia, int?) onSave;
@@ -628,7 +632,7 @@ class _AttendanceDialogState extends State<_AttendanceDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Registrar frequência'),
+    title: Text(_editing ? 'Editar frequência' : 'Registrar frequência'),
     content: SizedBox(
       width: 440,
       child: Form(
@@ -636,6 +640,12 @@ class _AttendanceDialogState extends State<_AttendanceDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Text(
+              widget.contextLabel,
+              key: const Key('attendance-dialog-context'),
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 16),
             DropdownButtonFormField<SituacaoFrequencia>(
               key: const Key('attendance-status'),
               initialValue: _status,
