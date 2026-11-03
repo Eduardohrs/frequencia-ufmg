@@ -1,3 +1,5 @@
+import 'automatic_checkpoint_scheduler_test.dart' show Harness;
+import 'first_checkpoint_test.dart' as checkpoint_fixture;
 import 'package:frequencia_ufmg/features/ufmg/academic_sync_host.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
@@ -32,6 +34,8 @@ import 'package:timezone/data/latest.dart' as tz_data;
 void main() {
   tz_data.initializeTimeZones();
   setUp(() {
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.empty();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           FirstCheckpointGateway.channel,
@@ -45,6 +49,57 @@ void main() {
   );
   final now = DateTime.utc(2026, 9, 27, 12);
 
+  for (final injected in [false, true]) {
+    testWidgets(
+      'loading saved sessions automatically schedules without opening diagnostics (injected=$injected)',
+      (tester) async {
+        final h = Harness();
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              FirstCheckpointGateway.channel,
+              (call) => h.scheduler.perform(
+                call.method,
+                Map<String, Object?>.from(call.arguments as Map),
+              ),
+            );
+        final snapshot = AcademicOverviewSnapshot(
+          courses: [checkpoint_fixture.course()],
+          sessionsByCourse: {
+            'poo': [checkpoint_fixture.session('automatic')],
+          },
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            builder: (context, child) => AcademicSyncHost(child: child!),
+            home: CoursePage(
+              repository: _FakeCourseRepository(),
+              meetingRepository: _FakeMeetingRepository(),
+              sessionRepository: _FakeSessionRepository(),
+              user: user,
+              logger: h.logger,
+              onSignOut: () async {},
+              overviewRepository: _FakeOverviewRepository(snapshot),
+              overviewReadsEnabled: true,
+              automaticCheckpointScheduler: injected ? h.scheduler : null,
+              attendancePermissions: h.permissions,
+              now: () => checkpoint_fixture.now,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(h.reports, hasLength(2));
+        expect(find.text('Pings de presença'), findsNothing);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pumpAndSettle();
+        expect(h.calls.where((c) => c.$1 == 'schedule'), hasLength(2));
+        expect(h.logger.errors, isEmpty);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
   testWidgets(
     'hub late sessions and catalog retain terminal telemetry after disposal',
     (tester) async {

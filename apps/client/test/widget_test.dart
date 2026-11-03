@@ -96,7 +96,10 @@ void main() {
 
       expect(find.text('Frequência UFMG'), findsOneWidget);
       expect(find.text('Entrar com Google'), findsOneWidget);
-      expect(logger.events, ['app_started']);
+      expect(
+        logger.events.where((e) => !e.startsWith('automatic_checkpoint_')),
+        ['app_started'],
+      );
     } finally {
       debugDefaultTargetPlatformOverride = null;
       FlutterError.onError = previousFlutterHandler;
@@ -237,10 +240,10 @@ void main() {
       await tester.pump();
 
       expect(verifier.calls, 1);
-      expect(logger.events, [
-        'python_backend_identity_succeeded',
-        'agenda_presented',
-      ]);
+      expect(
+        logger.events.where((e) => !e.startsWith('automatic_checkpoint_')),
+        ['python_backend_identity_succeeded', 'agenda_presented'],
+      );
 
       await tester.pump();
       expect(verifier.calls, 1);
@@ -298,7 +301,7 @@ void main() {
     expect(find.text('Olá, Eduardo'), findsOneWidget);
     expect(find.text('eduardo@ufmg.br'), findsOneWidget);
     expect(find.text('Nenhuma disciplina cadastrada'), findsOneWidget);
-    expect(logger.events, [
+    expect(logger.events.where((e) => !e.startsWith('automatic_checkpoint_')), [
       'auth_google_sign_in_started',
       'auth_google_sign_in_succeeded',
       'agenda_presented',
@@ -327,7 +330,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Entrar com Google'), findsOneWidget);
-    expect(logger.events, [
+    expect(logger.events.where((e) => !e.startsWith('automatic_checkpoint_')), [
       'auth_google_sign_in_started',
       'auth_google_sign_in_failed',
     ]);
@@ -358,7 +361,7 @@ void main() {
 
     expect(gateway.signOutCalls, 1);
     expect(find.text('Entrar com Google'), findsOneWidget);
-    expect(logger.events, [
+    expect(logger.events.where((e) => !e.startsWith('automatic_checkpoint_')), [
       'agenda_presented',
       'auth_logout_started',
       'auth_logout_succeeded',

@@ -7,7 +7,12 @@ import '../observability/app_logger.dart';
 import '../observability/audited_operation.dart';
 
 class FirstCheckpointGateway {
-  FirstCheckpointGateway({required this.accountId, required this.logger});
+  FirstCheckpointGateway({
+    required this.accountId,
+    required this.logger,
+    this.logReports = true,
+  });
+  final bool logReports;
   final String accountId;
   final AppLogger logger;
   static const deliveryChannelName =
@@ -58,10 +63,12 @@ class FirstCheckpointGateway {
         if (report.containsKey('notification_report')) {
           final metadata = report['notification_report'];
           if (metadata is Map && metadata['account_id'] == accountId) {
-            log(
-              'checkpoint_notification_report',
-              Map<String, Object?>.from(metadata),
-            );
+            if (logReports || action == 'read') {
+              log(
+                'checkpoint_notification_report',
+                Map<String, Object?>.from(metadata),
+              );
+            }
           } else {
             log('checkpoint_notification_report_invalid', {
               'stage': action,
@@ -70,7 +77,9 @@ class FirstCheckpointGateway {
           }
         } else {
           captures.add(report);
-          log('first_checkpoint_report', {'stage': action, ...report});
+          if (logReports || action == 'read') {
+            log('first_checkpoint_report', {'stage': action, ...report});
+          }
         }
       }
       log('first_checkpoint_action_succeeded', {
