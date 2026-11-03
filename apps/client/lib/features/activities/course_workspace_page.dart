@@ -836,11 +836,7 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
             overflow: TextOverflow.ellipsis,
           ),
           if (detail.hasDueDate && detail.datesText.trim().isNotEmpty)
-            Text(
-              detail.datesText,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-            ),
+            Text(detail.datesText),
         ],
       ],
     );

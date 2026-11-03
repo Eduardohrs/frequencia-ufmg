@@ -1,3 +1,4 @@
+import 'package:flutter/rendering.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -39,6 +40,63 @@ PythonMoodleDate date(String id, String title) => PythonMoodleDate(
 
 void main() {
   tz.initializeTimeZones();
+  for (final width in [320.0, 390.0, 1200.0]) {
+    testWidgets(
+      'complete opening and deadline remain readable online and from cache at $width',
+      (tester) async {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        SharedPreferencesAsyncPlatform.instance =
+            InMemorySharedPreferencesAsync.empty();
+        const dates =
+            'Aberto: segunda-feira, 2 de novembro de 2026, 00:00\nVencimento: quinta-feira, 5 de novembro de 2026, 23:59';
+        final gateway = _Gateway()
+          ..detail = PythonMoodleActivityDetail(
+            activity: activity,
+            description: 'Enunciado salvo',
+            datesText: dates,
+            hasDueDate: true,
+            submissionState: 'submitted',
+            submissionText: 'Enviado para avaliação',
+            files: [],
+            attachmentCount: 0,
+            term: '2026-2',
+          );
+        final logs = _Logs();
+        for (final offline in [false, true]) {
+          if (offline) {
+            gateway.readError = StateError('unavailable after snapshot');
+          }
+          await tester.pumpWidget(
+            _app(gateway, logs, userId: 'long-deadline-owner'),
+          );
+          await tester.pumpAndSettle();
+          final text = find.text(dates);
+          expect(text, findsOneWidget);
+          final paragraph = tester.renderObject<RenderParagraph>(text);
+          expect(paragraph.didExceedMaxLines, isFalse);
+          expect(
+            paragraph.getBoxesForSelection(
+              const TextSelection(
+                baseOffset: dates.length - 5,
+                extentOffset: dates.length,
+              ),
+            ),
+            isNotEmpty,
+          );
+          expect(
+            find.textContaining(offline ? 'Cópia local:' : 'Atualizado:'),
+            findsOneWidget,
+          );
+          expect(gateway.detailCalls, 0);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        }
+      },
+    );
+  }
   for (final hasDue in [false, true]) {
     testWidgets(
       'activity summary exposes saved submission and known deadline without opening Moodle ($hasDue)',
