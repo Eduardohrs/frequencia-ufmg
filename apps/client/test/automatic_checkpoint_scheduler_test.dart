@@ -282,7 +282,11 @@ void main() {
         perform: (action, fields) async {
           calls.add((action, fields));
           if (action == 'schedule') {
-            confirmed.add({...fields, 'operation_id': 'op${confirmed.length}', 'status': 'scheduled'});
+            confirmed.add({
+              ...fields,
+              'operation_id': 'op${confirmed.length}',
+              'status': 'scheduled',
+            });
           }
           return List.of(confirmed);
         },
