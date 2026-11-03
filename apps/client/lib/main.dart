@@ -1,3 +1,4 @@
+import 'features/navigation/product_navigation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'design/course_visuals.dart';
 import 'features/ufmg/academic_sync_host.dart';
@@ -220,41 +221,46 @@ class FrequenciaUFMGApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Frequência UFMG',
-      locale: const Locale('pt', 'BR'),
-      supportedLocales: const [Locale('pt', 'BR')],
-      localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
-        child: CourseVisualHost(child: AcademicSyncHost(child: child!)),
-      ),
-      theme: AppTheme.light(),
-      darkTheme: AppTheme.dark(),
-      highContrastTheme: AppTheme.light(highContrast: true),
-      highContrastDarkTheme: AppTheme.dark(highContrast: true),
-      themeMode: ThemeMode.system,
-      home: AuthGate(
-        authGateway: authGateway,
-        logger: logger,
-        courseRepositoryFactory: courseRepositoryFactory,
-        fallbackCourseRepositoryFactory: fallbackCourseRepositoryFactory,
-        meetingRepositoryFactory: meetingRepositoryFactory,
-        sessionRepositoryFactory: sessionRepositoryFactory,
-        backendIdentityVerifier: backendIdentityVerifier,
-        attendanceEvaluator: attendanceEvaluator,
-        scheduleGateway: scheduleGateway,
-        sessionGateway: sessionGateway,
-        ufmgSessionGateway: ufmgSessionGateway,
-        ufmgSyncSchedule: ufmgSyncSchedule,
-        academicSyncSchedule: academicSyncSchedule,
-        overviewRepository: overviewRepository,
-        scheduleReadsEnabled: scheduleReadsEnabled,
-        scheduleWritesEnabled: scheduleWritesEnabled,
-        sessionWritesEnabled: sessionWritesEnabled,
-        overviewReadsEnabled: overviewReadsEnabled,
-        androidOfflineQueueEnabled: androidOfflineQueueEnabled,
-        checkpointDeliveryUpdates: checkpointDeliveryUpdates,
+    return ProductNavigation(
+      builder: (navigation) => MaterialApp(
+        navigatorObservers: [navigation.observer],
+        title: 'Frequência UFMG',
+        locale: const Locale('pt', 'BR'),
+        supportedLocales: const [Locale('pt', 'BR')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+          child: CourseVisualHost(
+            child: navigation.frame(context, AcademicSyncHost(child: child!)),
+          ),
+        ),
+        theme: AppTheme.light(),
+        darkTheme: AppTheme.dark(),
+        highContrastTheme: AppTheme.light(highContrast: true),
+        highContrastDarkTheme: AppTheme.dark(highContrast: true),
+        themeMode: ThemeMode.system,
+        home: AuthGate(
+          authGateway: authGateway,
+          logger: logger,
+          courseRepositoryFactory: courseRepositoryFactory,
+          fallbackCourseRepositoryFactory: fallbackCourseRepositoryFactory,
+          meetingRepositoryFactory: meetingRepositoryFactory,
+          sessionRepositoryFactory: sessionRepositoryFactory,
+          backendIdentityVerifier: backendIdentityVerifier,
+          attendanceEvaluator: attendanceEvaluator,
+          scheduleGateway: scheduleGateway,
+          sessionGateway: sessionGateway,
+          ufmgSessionGateway: ufmgSessionGateway,
+          ufmgSyncSchedule: ufmgSyncSchedule,
+          academicSyncSchedule: academicSyncSchedule,
+          overviewRepository: overviewRepository,
+          scheduleReadsEnabled: scheduleReadsEnabled,
+          scheduleWritesEnabled: scheduleWritesEnabled,
+          sessionWritesEnabled: sessionWritesEnabled,
+          overviewReadsEnabled: overviewReadsEnabled,
+          androidOfflineQueueEnabled: androidOfflineQueueEnabled,
+          checkpointDeliveryUpdates: checkpointDeliveryUpdates,
+        ),
       ),
     );
   }

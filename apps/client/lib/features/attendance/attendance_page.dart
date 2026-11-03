@@ -1,3 +1,5 @@
+import '../navigation/product_navigation.dart';
+import '../settings/automatic_attendance_controller.dart';
 import '../../design/app_feedback.dart';
 import 'dart:async';
 
@@ -452,21 +454,75 @@ class _AttendancePageState extends State<AttendancePage> {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Text(_dateTime(local)),
-            if (overdue) const _StatusBadge('Pendente de registro'),
+            if (overdue) const _StatusBadge('Falta informar'),
             if (selected) const _StatusBadge('Selecionada pelo alerta'),
           ],
         ),
-        subtitle: Text(
-          inactive
-              ? _calendarLabel(session.calendarStatus)
-              : _attendanceLabel(session),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              inactive
+                  ? _calendarLabel(session.calendarStatus)
+                  : session.attendanceStatus == null &&
+                        widget.now().isBefore(session.startsAt)
+                  ? 'Aula prevista'
+                  : session.attendanceStatus == null &&
+                        widget.now().isBefore(session.endsAt)
+                  ? 'Em andamento'
+                  : _attendanceLabel(session),
+            ),
+            if (!inactive)
+              Builder(
+                builder: (context) {
+                  final controller = ProductNavigation.of(context)?.attendance;
+                  Widget evidence() {
+                    final hasCapture =
+                        session.firstPing != null ||
+                        session.secondPing != null ||
+                        (controller?.reports.any(
+                              (r) =>
+                                  r['course_id'] == widget.courseId &&
+                                  r['session_id'] == session.id &&
+                                  r['starts_at_ms'] ==
+                                      session.startsAt.millisecondsSinceEpoch &&
+                                  r['ends_at_ms'] ==
+                                      session.endsAt.millisecondsSinceEpoch,
+                            ) ??
+                            false);
+                    if (!overdue && !hasCapture) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        attendanceEvidence(
+                              widget.courseId,
+                              session,
+                              widget.now(),
+                              reports: controller?.reports ?? const [],
+                              localReadFailed: controller?.reportError ?? false,
+                            ) ??
+                            '',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    );
+                  }
+
+                  return controller == null
+                      ? evidence()
+                      : ListenableBuilder(
+                          listenable: controller,
+                          builder: (context, _) => evidence(),
+                        );
+                },
+              ),
+          ],
         ),
         trailing: IconButton(
           tooltip: inactive
               ? session.calendarStatus == SessionCalendarStatus.noCall
                     ? 'Presença garantida'
                     : 'Sessão sem frequência'
-              : 'Registrar frequência de ${_date(local)}',
+              : '${session.attendanceStatus == null ? 'Registrar' : 'Editar'} frequência de ${_date(local)}',
           onPressed: inactive ? null : () => _edit(session),
           icon: const Icon(Icons.edit_outlined),
         ),
@@ -723,7 +779,7 @@ String _statusName(SituacaoFrequencia status) => switch (status) {
   SituacaoFrequencia.arrivedLate => 'Chegou atrasado',
   SituacaoFrequencia.leftEarly => 'Saiu mais cedo',
   SituacaoFrequencia.absent => 'Ausente',
-  SituacaoFrequencia.pending => 'Pendente',
+  SituacaoFrequencia.pending => 'A confirmar',
 };
 
 String _calendarLabel(SessionCalendarStatus status) => switch (status) {

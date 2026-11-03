@@ -1,3 +1,6 @@
+import '../navigation/product_navigation.dart';
+import '../settings/settings_page.dart';
+import '../settings/automatic_attendance_controller.dart';
 import '../../design/course_visuals.dart';
 import '../activities/course_workspace_page.dart';
 import 'dart:convert';
@@ -5,7 +8,6 @@ import '../../data/automatic_checkpoint_scheduler.dart';
 import '../ufmg/academic_sync_host.dart';
 import '../../data/first_checkpoint.dart';
 import '../../data/campus_location.dart';
-import '../attendance/first_checkpoint_page.dart';
 import '../../data/academic_agenda.dart';
 import 'dart:async';
 import 'dart:math';
@@ -34,7 +36,6 @@ import '../../observability/audited_operation.dart';
 import '../../observability/operation_diagnostics.dart';
 import '../attendance/absence_dashboard_page.dart';
 import '../attendance/attendance_page.dart';
-import '../attendance/attendance_permissions_page.dart';
 import '../schedule/general_calendar_page.dart';
 import '../ufmg/ufmg_connection_page.dart';
 import '../ufmg/academic_sync_controller.dart';
@@ -45,13 +46,7 @@ import 'course_hub_page.dart';
 typedef CourseIdGenerator = String Function();
 typedef CurrentTime = DateTime Function();
 
-enum _ProfileAction {
-  ufmgAccount,
-  savedFiles,
-  permissions,
-  firstCheckpoint,
-  signOut,
-}
+enum _ProfileAction { savedFiles, signOut }
 
 enum _CourseTileAction { edit, delete }
 
@@ -81,6 +76,7 @@ class CoursePage extends StatefulWidget {
     this.androidOfflineQueueEnabled = false,
     this.checkpointDeliveryUpdates,
     this.attendancePermissions,
+    this.attendanceExperience,
     this.automaticCheckpointScheduler,
     CourseIdGenerator? idGenerator,
     CurrentTime? now,
@@ -111,6 +107,7 @@ class CoursePage extends StatefulWidget {
   final bool androidOfflineQueueEnabled;
   final Stream<Map<String, Object?>>? checkpointDeliveryUpdates;
   final AttendancePermissionsGateway? attendancePermissions;
+  final AutomaticAttendanceController? attendanceExperience;
   final AutomaticCheckpointScheduler? automaticCheckpointScheduler;
   final CourseIdGenerator idGenerator;
   final CurrentTime now;
@@ -135,7 +132,11 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   ) {
     final scheduler = _automaticCheckpoints;
     if (scheduler == null || !_checkpointSchedulingAllowed || !mounted) return;
-    unawaited(scheduler.reconcile(snapshot, trigger: trigger));
+    unawaited(
+      scheduler
+          .reconcile(snapshot, trigger: trigger)
+          .then((_) => _automaticAttendance?.refresh(afterCurrent: true)),
+    );
   }
 
   void _onDeliveryUpdate(Map<String, Object?> event) {
@@ -157,6 +158,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       return;
     }
     _deliveryRevision = revision;
+    unawaited(_automaticAttendance?.refresh(afterCurrent: true));
     _deliveryDirty = true;
     _refreshDeliveryIfNeeded();
   }
@@ -166,18 +168,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       _noticePending = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _checkpointOpen) return;
-        unawaited(
-          _openCheckpointPage().catchError((Object error, StackTrace stack) {
-            recordOperationalFailure(
-              widget.logger,
-              error,
-              stack,
-              'checkpoint_notification_navigation',
-              {'stage': 'open_checkpoints'},
-              failureCode: 'checkpoint_notification_navigation_failed',
-            );
-          }),
-        );
+        unawaited(_openCheckpointPage());
       });
       WidgetsBinding.instance.ensureVisualUpdate();
     }
@@ -210,6 +201,9 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _deliveryActive = state == AppLifecycleState.resumed;
+    if (_deliveryActive) {
+      unawaited(_automaticAttendance?.refresh(afterCurrent: true));
+    }
     if (_deliveryActive && _usingOverviewSnapshot) {
       _reconcileCheckpoints(
         AcademicOverviewSnapshot(
@@ -221,6 +215,78 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       );
     }
     _refreshDeliveryIfNeeded();
+  }
+
+  ProductNavigationController? _navigation;
+  AutomaticAttendanceController? _automaticAttendance;
+  bool _automationReady = false;
+  void _onAutomaticConfiguration() {
+    final c = _automaticAttendance;
+    final ready = c?.status != null && c!.next == null && !c.permissionError;
+    final becameReady = ready && !_automationReady;
+    _automationReady = ready;
+    if (becameReady) _rescheduleFromSettings();
+  }
+
+  void _rescheduleFromSettings() {
+    if (mounted && _courses.isNotEmpty) {
+      _reconcileCheckpoints(
+        AcademicOverviewSnapshot(
+          courses: _courses,
+          sessionsByCourse: _sessionsByCourse,
+          isLocalCopy: _usingLocalCopy,
+        ),
+        'configuration_changed',
+      );
+    }
+  }
+
+  void _ensureAutomaticAttendance() {
+    if (_automaticAttendance == null && widget.attendanceExperience != null) {
+      _automaticAttendance = widget.attendanceExperience;
+      _automaticAttendance!.addListener(_onAutomaticConfiguration);
+      unawaited(_automaticAttendance!.refresh());
+      return;
+    }
+    if (_automaticAttendance != null ||
+        (widget.attendancePermissions == null &&
+            (kIsWeb || defaultTargetPlatform != TargetPlatform.android))) {
+      return;
+    }
+    final native = FirstCheckpointGateway(
+      accountId: widget.user.id,
+      logger: widget.logger,
+      logReports: false,
+    );
+    _automaticAttendance = AutomaticAttendanceController(
+      accountId: widget.user.id,
+      permissions:
+          widget.attendancePermissions ?? const AndroidAttendancePermissions(),
+      readReports: () => native.perform('read'),
+      nativeAction: (action) async {
+        await native.perform(action);
+      },
+      logger: widget.logger,
+      now: widget.now,
+    );
+    _automaticAttendance!.addListener(_onAutomaticConfiguration);
+    unawaited(_automaticAttendance!.refresh());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final navigation = ProductNavigation.of(context);
+    if (navigation != null) {
+      _ensureAutomaticAttendance();
+      _navigation = navigation;
+      navigation.bind(
+        this,
+        _openDestination,
+        attendance: _automaticAttendance,
+        logger: widget.logger,
+      );
+    }
   }
 
   final _calendarNavigation = CalendarNavigationState();
@@ -338,6 +404,11 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   @override
   void dispose() {
     _checkpointSchedulingAllowed = false;
+    _navigation?.unbind(this);
+    _automaticAttendance?.removeListener(_onAutomaticConfiguration);
+    if (!identical(_automaticAttendance, widget.attendanceExperience)) {
+      _automaticAttendance?.dispose();
+    }
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_deliverySubscription?.cancel());
     final controller = _academicSync;
@@ -810,6 +881,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   Future<void> _openCourseHub(CourseRecord course) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
+        settings: const RouteSettings(name: 'course'),
         builder: (context) => CourseHubPage(
           overviewUpdates: _overviewUpdates,
           refreshOverview: widget.overviewReadsEnabled
@@ -858,6 +930,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         widget.ufmgSessionGateway! as BackendAcademicWorkspaceGateway;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
+        settings: const RouteSettings(name: 'course'),
         builder: (_) => CourseWorkspacePage(
           course: course,
           gateway: gateway,
@@ -903,6 +976,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   Future<void> _openGeneralCalendar() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
+        settings: const RouteSettings(name: 'agenda'),
         builder: (_) => GeneralCalendarPage(
           onOpenActivities:
               widget.ufmgSessionGateway is BackendAcademicWorkspaceGateway
@@ -938,10 +1012,18 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
           userId: widget.user.id,
           syncSchedule: widget.ufmgSyncSchedule,
           onOpenCourses: () async {
-            Navigator.of(context).pop();
+            if (_navigation != null) {
+              await _navigation!.select(0);
+            } else {
+              Navigator.of(context).popUntil((route) => route.isFirst);
+            }
           },
           onOpenCalendar: () async {
-            Navigator.of(context).pop();
+            if (_navigation != null) {
+              await _navigation!.select(1);
+              return;
+            }
+            Navigator.of(context).popUntil((route) => route.isFirst);
             await Future<void>.delayed(Duration.zero);
             if (mounted) await _openGeneralCalendar();
           },
@@ -954,6 +1036,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   Future<void> _openAbsenceDashboard() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
+        settings: const RouteSettings(name: 'absences'),
         builder: (_) => AbsenceDashboardPage(
           logger: widget.logger,
           onOpenCourse: _openCourseHub,
@@ -971,16 +1054,49 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   }
 
   void _selectDestination(int index) {
+    final navigation = _navigation;
+    unawaited(
+      navigation == null ? _openDestination(index) : navigation.select(index),
+    );
+  }
+
+  Future<void> _openDestination(int index) async {
     switch (index) {
-      case 0:
-        return;
       case 1:
-        unawaited(_openGeneralCalendar());
-        return;
+        await _openGeneralCalendar();
       case 2:
-        unawaited(_openAbsenceDashboard());
-        return;
+        await _openAbsenceDashboard();
+      case 3:
+        await _openSettings();
     }
+  }
+
+  Future<void> _openSettings() async {
+    _ensureAutomaticAttendance();
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        settings: const RouteSettings(name: 'settings'),
+        builder: (_) => AppSettingsPage(
+          user: widget.user,
+          logger: widget.logger,
+          attendance: _automaticAttendance,
+          onCampusChanged: _rescheduleFromSettings,
+          onAcademicAccount: widget.ufmgSessionGateway == null
+              ? null
+              : _openUFMGConnection,
+          onSavedFiles:
+              widget.ufmgSessionGateway != null &&
+                  !kIsWeb &&
+                  defaultTargetPlatform == TargetPlatform.android
+              ? () => _selectProfileAction(_ProfileAction.savedFiles)
+              : null,
+          onSignOut: () async {
+            Navigator.of(context).popUntil((route) => route.isFirst);
+            await _selectProfileAction(_ProfileAction.signOut);
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _selectProfileAction(_ProfileAction action) async {
@@ -996,25 +1112,6 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
             ),
           ),
         );
-      case _ProfileAction.ufmgAccount:
-        await _openUFMGConnection();
-      case _ProfileAction.permissions:
-        await runAuditedOperation(
-          logger: widget.logger,
-          operation: AuditedOperation.attendancePermissionsOpen,
-          action: () => Navigator.of(context).push<void>(
-            MaterialPageRoute(
-              builder: (_) => AttendancePermissionsPage(
-                gateway:
-                    widget.attendancePermissions ??
-                    const AndroidAttendancePermissions(),
-                logger: widget.logger,
-              ),
-            ),
-          ),
-        );
-      case _ProfileAction.firstCheckpoint:
-        await _openCheckpointPage();
       case _ProfileAction.signOut:
         _checkpointSchedulingAllowed = false;
         if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
@@ -1043,25 +1140,104 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   Future<void> _openCheckpointPage() async {
     if (_checkpointOpen) return;
     _checkpointOpen = true;
+    final operation = newCorrelationId('checkpoint_result');
+    final watch = Stopwatch()..start();
+    var stage = 'read_receipts';
     try {
+      _ensureAutomaticAttendance();
+      await _automaticAttendance?.refresh(afterCurrent: true);
+      if (!mounted) return;
+      final reports =
+          List<Map<String, Object?>>.of(
+                _automaticAttendance?.reports ?? const [],
+              )
+              .where(
+                (r) => !const {
+                  'scheduled',
+                  'running',
+                  'cancelled',
+                  'superseded',
+                }.contains(r['status']),
+              )
+              .toList()
+            ..sort(
+              (a, b) =>
+                  ((b['delivery_updated_at_ms'] ?? b['scheduled_at_ms'] ?? 0)
+                          as int)
+                      .compareTo(
+                        (a['delivery_updated_at_ms'] ??
+                                a['scheduled_at_ms'] ??
+                                0)
+                            as int,
+                      ),
+            );
+      final report = reports.firstOrNull;
+      final course = _courses
+          .where((c) => c.id == report?['course_id'])
+          .firstOrNull;
+      if (course == null) {
+        stage = 'settings_fallback';
+        emitOperationalEvent(widget.logger, 'checkpoint_result_fallback', {
+          'operation_id': operation,
+          'stage': stage,
+          'reason': _automaticAttendance?.reportError == true
+              ? 'receipt_read_failed'
+              : report == null
+              ? 'no_completed_receipt'
+              : 'course_not_found',
+          'receipt_count': reports.length,
+          'duration_ms': watch.elapsedMilliseconds,
+        });
+        await _openSettings();
+        return;
+      }
+      stage = 'read_sessions';
+      final sessions =
+          _sessionsByCourse[course.id] ??
+          await widget.sessionRepository.listSessions(course.id);
+      if (!mounted) return;
+      emitOperationalEvent(widget.logger, 'checkpoint_result_opened', {
+        'operation_id': operation,
+        'stage': 'attendance',
+        'duration_ms': watch.elapsedMilliseconds,
+        'course_id': course.id,
+        'course_code': course.code,
+        'session_id': report!['session_id'].toString(),
+        'receipt_count': reports.length,
+      });
+      stage = 'attendance_navigation';
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
-          builder: (_) => FirstCheckpointPage(
-            courses: _courses,
-            permissions:
-                widget.attendancePermissions ??
-                const AndroidAttendancePermissions(),
-            sessions: widget.sessionRepository,
-            gateway: FirstCheckpointGateway(
-              accountId: widget.user.id,
-              logger: widget.logger,
-            ),
-            selection: LocalCampusSelection(),
+          settings: const RouteSettings(name: 'course'),
+          builder: (_) => AttendancePage(
+            courseId: course.id,
+            courseCode: course.code,
+            courseName: course.displayName,
+            initialSessionId: report['session_id'] as String?,
+            initialSessions: sessions,
+            repository: widget.sessionRepository,
             logger: widget.logger,
+            location: tz.getLocation('America/Sao_Paulo'),
             now: widget.now,
-            deliveryUpdates: widget.checkpointDeliveryUpdates,
+            attendanceEvaluator: widget.attendanceEvaluator,
+            sessionGateway: widget.sessionGateway,
+            sessionWritesEnabled: widget.sessionWritesEnabled,
+            androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
           ),
         ),
+      );
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'checkpoint_notification_navigation',
+        {
+          'operation_id': operation,
+          'stage': stage,
+          'duration_ms': watch.elapsedMilliseconds,
+        },
+        failureCode: 'checkpoint_notification_navigation_failed',
       );
     } finally {
       _checkpointOpen = false;
@@ -1283,10 +1459,10 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final firstName = widget.user.displayName?.trim().split(' ').first;
-    Widget profileMenu() => PopupMenuButton<_ProfileAction>(
+    Widget profileMenu() => IconButton(
       key: const Key('profile-menu'),
-      tooltip: 'Perfil e configurações',
-      onSelected: (action) => unawaited(_selectProfileAction(action)),
+      tooltip: 'Ajustes',
+      onPressed: _openSettings,
       icon: CircleAvatar(
         child: Text(
           firstName == null || firstName.isEmpty
@@ -1294,64 +1470,9 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
               : firstName.characters.first.toUpperCase(),
         ),
       ),
-      itemBuilder: (context) => [
-        PopupMenuItem<_ProfileAction>(
-          enabled: false,
-          child: Text(widget.user.email),
-        ),
-        if (widget.attendancePermissions != null ||
-            (!kIsWeb && defaultTargetPlatform == TargetPlatform.android))
-          const PopupMenuItem(
-            key: Key('profile-permissions'),
-            value: _ProfileAction.permissions,
-            child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.settings_outlined),
-              title: Text('Permissões do aplicativo'),
-            ),
-          ),
-        if (widget.attendancePermissions != null ||
-            (!kIsWeb && defaultTargetPlatform == TargetPlatform.android))
-          const PopupMenuItem(
-            value: _ProfileAction.firstCheckpoint,
-            child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.schedule),
-              title: Text('Presença automática'),
-            ),
-          ),
-        if (widget.ufmgSessionGateway != null &&
-            !kIsWeb &&
-            defaultTargetPlatform == TargetPlatform.android)
-          const PopupMenuItem(
-            value: _ProfileAction.savedFiles,
-            child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.offline_pin_outlined),
-              title: Text('Arquivos no dispositivo'),
-            ),
-          ),
-        if (widget.ufmgSessionGateway != null)
-          const PopupMenuItem(
-            key: Key('profile-ufmg-account'),
-            value: _ProfileAction.ufmgAccount,
-            child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.account_balance_outlined),
-              title: Text('Conta acadêmica UFMG'),
-            ),
-          ),
-        const PopupMenuItem(
-          value: _ProfileAction.signOut,
-          child: ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.logout),
-            title: Text('Sair'),
-          ),
-        ),
-      ],
     );
     return AdaptiveAppShell(
+      externalNavigation: _navigation != null,
       title: 'Início',
       selectedIndex: 0,
       onDestinationSelected: _selectDestination,
@@ -1386,6 +1507,9 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
             ),
           ),
           const SizedBox(height: 24),
+          if (_automaticAttendance != null &&
+              _courses.any((c) => c.tracksAttendance))
+            AttendanceSetupReminder(controller: _automaticAttendance!),
           if (_ufmgSyncNotice != null) ...[
             Card(
               key: const Key('ufmg-sync-notice'),

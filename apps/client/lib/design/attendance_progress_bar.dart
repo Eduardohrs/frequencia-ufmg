@@ -30,7 +30,7 @@ class AttendanceProgressBar extends StatelessWidget {
 
     return Semantics(
       label:
-          '$present presenças, $unresolved aulas pendentes ou futuras e '
+          '$present presenças, $unresolved aulas futuras ou sem registro e '
           '$absent faltas; limite mínimo de presença em 75%',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -112,7 +112,10 @@ class AttendanceProgressBar extends StatelessWidget {
             runSpacing: 6,
             children: [
               _Legend(color: success, label: '$present presenças'),
-              _Legend(color: neutral, label: '$unresolved pendentes/futuras'),
+              _Legend(
+                color: neutral,
+                label: '$unresolved futuras/sem registro',
+              ),
               _Legend(color: colors.error, label: '$absent faltas'),
             ],
           ),

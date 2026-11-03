@@ -1,3 +1,4 @@
+import 'helpers/calendar_controls.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -123,10 +124,12 @@ void main() {
       await tester.pumpWidget(app());
       await tester.pumpAndSettle();
       Future<void> filter(String label) async {
+        await openCalendarFilters(tester);
         await tester.tap(find.byKey(const Key('calendar-type-filter')));
         await tester.pumpAndSettle();
         await tester.tap(find.text(label).last);
         await tester.pumpAndSettle();
+        await applyCalendarFilters(tester);
       }
 
       await filter('Entregas e prazos');
@@ -147,12 +150,7 @@ void main() {
       await filter('Aulas');
       expect(find.textContaining('Avaliação:'), findsNothing);
       await filter('Todos');
-      await tester.tap(
-        find.descendant(
-          of: find.byType(SegmentedButton<CalendarDisplay>),
-          matching: find.text('Agenda'),
-        ),
-      );
+      await calendarDisplay(tester, 'Agenda');
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Próximo período'));
       await tester.pumpAndSettle();
@@ -164,7 +162,7 @@ void main() {
       expect(
         logs
             .details('calendar_view_changed')
-            .any((row) => row['action'] == 'type_filter'),
+            .any((row) => row['action'] == 'filters'),
         isTrue,
       );
       expect(
