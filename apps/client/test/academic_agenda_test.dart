@@ -56,6 +56,39 @@ SessionRecord session({
 
 void main() {
   test(
+    'compact Moodle titles change presentation only and preserve unknown wording',
+    () {
+      for (final raw in [
+        'Relatório 6: transitórios em circuitos RC está marcado(a) para esta data',
+        'Relatório 6: transitórios em circuitos RC ESTÁ MARCADO(A) PARA ESTA DATA.',
+      ]) {
+        expect(
+          compactAcademicTitle(raw),
+          'Relatório 6: transitórios em circuitos RC',
+        );
+        final source = date(raw, instant);
+        final entries = courseAgenda(course(), [], [source]);
+        expect(entries.single.title, raw);
+        expect(entries.single.date!.title, raw);
+        expect(
+          compactAcademicTitle(entries.single.title!),
+          'Relatório 6: transitórios em circuitos RC',
+        );
+      }
+      for (final unchanged in [
+        '',
+        'Entrega marcada para amanhã',
+        '  Nome oficial  ',
+        'está marcado(a) para esta data',
+        'Prova está marcada para esta data',
+        'Tarefa está marcado(a) para esta data adicional',
+      ]) {
+        expect(compactAcademicTitle(unchanged), unchanged);
+      }
+    },
+  );
+
+  test(
     'agenda diagnostics survive the actual production log serializer',
     () async {
       final store = _ProductionLogStore();

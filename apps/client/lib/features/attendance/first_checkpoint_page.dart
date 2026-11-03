@@ -1,3 +1,4 @@
+import '../../design/app_feedback.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -156,8 +157,8 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
       );
       if (mounted) {
         setState(
-          () =>
-              _error = 'Não foi possível consultar os pings. Tente atualizar.',
+          () => _error =
+              'Não foi possível consultar as capturas. Tente atualizar.',
         );
       }
     } finally {
@@ -409,7 +410,7 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
       title: Text(_showTestTools ? 'Pings de presença' : 'Presença automática'),
       actions: [
         IconButton(
-          tooltip: 'Atualizar pings',
+          tooltip: 'Atualizar capturas',
           onPressed: _busy ? null : _load,
           icon: const Icon(Icons.refresh),
         ),
@@ -442,8 +443,10 @@ class _FirstCheckpointPageState extends State<FirstCheckpointPage>
                   : null,
             ),
           if (!_showTestTools)
-            const Text(
-              'As aulas da grade são acompanhadas automaticamente. Confira a configuração e os resultados abaixo.',
+            const AppPageIntro(
+              title: 'Acompanhamento das aulas',
+              subtitle:
+                  'As aulas da grade são acompanhadas automaticamente. Confira a configuração e os resultados abaixo.',
             ),
           if (_busy) const LinearProgressIndicator(),
           if (_error case final error?)

@@ -130,7 +130,7 @@ abstract final class AppTheme {
     required bool highContrast,
   }) {
     final dark = brightness == Brightness.dark;
-    final scheme = ColorScheme.fromSeed(
+    final seeded = ColorScheme.fromSeed(
       seedColor: _seed,
       brightness: brightness,
       contrastLevel: highContrast ? 1 : .15,
@@ -140,6 +140,8 @@ abstract final class AppTheme {
     final separator = dark
         ? (highContrast ? const Color(0xFF8C958F) : const Color(0xFF343A36))
         : (highContrast ? const Color(0xFF59625C) : const Color(0xFFDCE3DE));
+    // Neutral content surfaces keep green for actions and attendance, not every panel.
+    final scheme = seeded.copyWith(surface: card, surfaceContainerLowest: card);
     final baseText = Typography.material2021(
       platform: TargetPlatform.iOS,
     ).black.apply(bodyColor: scheme.onSurface, displayColor: scheme.onSurface);
@@ -194,7 +196,7 @@ abstract final class AppTheme {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        titleTextStyle: text.titleLarge,
+        titleTextStyle: text.titleMedium,
       ),
       navigationBarTheme: NavigationBarThemeData(
         elevation: 0,
@@ -274,6 +276,28 @@ abstract final class AppTheme {
             borderRadius: BorderRadius.circular(AppRadii.control),
           ),
           textStyle: text.labelLarge,
+        ),
+      ),
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: ButtonStyle(
+          visualDensity: VisualDensity.comfortable,
+          textStyle: WidgetStatePropertyAll(text.labelLarge),
+          side: WidgetStatePropertyAll(BorderSide(color: separator)),
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadii.control),
+            ),
+          ),
+        ),
+      ),
+      listTileTheme: ListTileThemeData(
+        titleTextStyle: text.titleSmall,
+        subtitleTextStyle: text.bodyMedium?.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
+        minVerticalPadding: AppSpacing.sm,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.control),
         ),
       ),
       cardTheme: CardThemeData(

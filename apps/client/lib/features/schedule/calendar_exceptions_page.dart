@@ -1,3 +1,4 @@
+import '../../design/app_feedback.dart';
 import 'dart:async';
 import 'dart:math';
 
@@ -269,7 +270,7 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: const Text('Exceções de calendário'),
+      title: const Text('Aulas e reposições'),
       actions: [
         IconButton(
           tooltip: 'Entenda os tipos de aula',
@@ -304,7 +305,7 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Não foi possível carregar as sessões.'),
+            const Text('Não foi possível carregar as aulas.'),
             const SizedBox(height: 12),
             OutlinedButton(
               onPressed: _load,
@@ -315,7 +316,11 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
       );
     }
     if (_sessions.isEmpty) {
-      return const Center(child: Text('Nenhuma sessão gerada'));
+      return const AppEmptyState(
+        icon: Icons.event_outlined,
+        title: 'Nenhuma aula cadastrada',
+        message: 'Configure sua grade para organizar aulas e reposições.',
+      );
     }
     return ListView.separated(
       itemCount: _sessions.length,

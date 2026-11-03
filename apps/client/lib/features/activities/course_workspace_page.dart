@@ -1,3 +1,5 @@
+import '../../data/academic_agenda.dart';
+import '../../design/app_feedback.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:timezone/timezone.dart' as tz;
@@ -721,7 +723,7 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
                   child: Column(
                     children: [
                       const Text(
-                        'Não foi possível atualizar esta seção. Os outros dados continuam disponíveis.',
+                        'Não foi possível atualizar. Os dados salvos continuam disponíveis.',
                       ),
                       Wrap(
                         children: [
@@ -749,7 +751,7 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
                   subtitle: Text(
                     _planSyncPaused!
                         ? 'Busca pausada por você.'
-                        : 'Use quando já tiver conferido ou preenchido os dados.',
+                        : 'Não buscar atualizações deste plano.',
                   ),
                   value: _planSyncPaused!,
                   onChanged: _policySaving ? null : _setPlanSyncPaused,
@@ -792,18 +794,25 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
         Padding(
           padding: const EdgeInsets.only(bottom: 16),
           child: Text(
-            '${_localSnapshot ? 'Cópia local' : 'Última sincronização'}: ${_displayDate(snapshot.syncedAt)}. Situação de envio registrada nessa data.',
+            '${_localSnapshot ? 'Cópia local' : 'Atualizado'}: ${_displayDate(snapshot.syncedAt)} · Envios podem mudar no Moodle.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
       if (_loaded.contains(_Section.activities) && _activities.isEmpty)
-        const Text('Nenhuma atividade disponível nesta disciplina.'),
+        const AppEmptyState(
+          icon: Icons.assignment_outlined,
+          title: 'Nenhuma atividade disponível nesta disciplina.',
+          message: 'Sincronize o Moodle para buscar atividades.',
+        ),
       for (final activity in _activities)
         ListTile(
           key: Key('workspace-activity-${activity.id}'),
           contentPadding: EdgeInsets.zero,
           title: Text(activity.title),
           subtitle: Text(
-            '${activity.kind == 'assign' ? 'Tarefa · consultar enunciado e envio' : 'Questionário'}${activity.origin == 'metaturma' ? ' · Metaturma' : ''}',
+            '${activity.kind == 'assign' ? 'Tarefa' : 'Questionário'}${activity.origin == 'metaturma' ? ' · Metaturma' : ''}',
           ),
           trailing: const Icon(Icons.chevron_right),
           onTap: _openingActivity == null ? () => _activity(activity) : null,
@@ -814,12 +823,16 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
     padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
     children: [
       if (_loaded.contains(_Section.dates) && _dates.isEmpty)
-        const Text('Nenhum prazo cadastrado.'),
+        const AppEmptyState(
+          icon: Icons.event_outlined,
+          title: 'Nenhum prazo cadastrado.',
+          message: 'Você pode adicionar um prazo ou sincronizar a disciplina.',
+        ),
       for (final date in _dates)
         ListTile(
           key: Key('workspace-date-${date.id}'),
           contentPadding: EdgeInsets.zero,
-          title: Text(date.title),
+          title: Text(compactAcademicTitle(date.title)),
           subtitle: Text(
             '${_displayDate(date.dueAt)} · ${date.id.startsWith('manual-')
                 ? 'Manual'
@@ -843,7 +856,11 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
     if (_plan == null) {
       return const Padding(
         padding: EdgeInsets.all(20),
-        child: Text('Nenhum plano de ensino importado para esta disciplina.'),
+        child: AppEmptyState(
+          icon: Icons.menu_book_outlined,
+          title: 'Nenhum plano de ensino importado para esta disciplina.',
+          message: 'O plano aparece aqui depois da sincronização.',
+        ),
       );
     }
     final criteria = _plan!['criteria']! as List;

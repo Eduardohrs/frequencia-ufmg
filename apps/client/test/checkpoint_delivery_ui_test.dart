@@ -238,7 +238,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Salvo neste aparelho; aguardando envio'), findsOneWidget);
     expect(
-      find.text('Não foi possível consultar os pings. Tente atualizar.'),
+      find.text('Não foi possível consultar as capturas. Tente atualizar.'),
       findsOneWidget,
     );
     expect(logger.errors, isNotEmpty);
@@ -330,14 +330,14 @@ void main() {
       'unknown': 'Salvo neste aparelho; aguardando envio',
     }.entries) {
       delivery = entry.key;
-      await tester.tap(find.byTooltip('Atualizar pings'));
+      await tester.tap(find.byTooltip('Atualizar capturas'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text(entry.value));
       await tester.pumpAndSettle();
       expect(find.text(entry.value), findsOneWidget);
     }
     delivery = 'retry';
-    await tester.tap(find.byTooltip('Atualizar pings'));
+    await tester.tap(find.byTooltip('Atualizar capturas'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Enviar resultados pendentes'));
     await tester.pumpAndSettle();
@@ -375,7 +375,7 @@ void main() {
     logger.failLogging = false;
     final waiting = Completer<List<SessionRecord>>();
     repo.pending = waiting.future;
-    await tester.tap(find.byTooltip('Atualizar pings'));
+    await tester.tap(find.byTooltip('Atualizar capturas'));
     await tester.pump();
     updates.add({'account_id': 'owner', 'revision': 2});
     await tester.pump();

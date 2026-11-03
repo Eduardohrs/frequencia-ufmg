@@ -486,11 +486,11 @@ void main() {
     final repository = _FakeRepository([])..listError = StateError('offline');
     await tester.pumpWidget(_app(repository, _Logger(), location, now));
     await tester.pumpAndSettle();
-    expect(find.text('Não foi possível carregar as sessões.'), findsOneWidget);
+    expect(find.text('Não foi possível carregar as aulas.'), findsOneWidget);
     repository.listError = null;
     await tester.tap(find.text('Tentar novamente'));
     await tester.pumpAndSettle();
-    expect(find.text('Nenhuma sessão gerada'), findsOneWidget);
+    expect(find.text('Nenhuma aula cadastrada'), findsOneWidget);
   });
 }
 

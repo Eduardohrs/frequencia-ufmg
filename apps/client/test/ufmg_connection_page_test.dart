@@ -1113,7 +1113,7 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('ufmg-manage-connection')));
       await tester.pumpAndSettle();
-      expect(find.text('Seus dados manuais são preservados'), findsOneWidget);
+      expect(find.text('Seus registros são preservados'), findsOneWidget);
     },
   );
 

@@ -1684,7 +1684,7 @@ class _UpcomingDateTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    session.title!,
+                    compactAcademicTitle(session.title!),
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                   const SizedBox(height: 2),
@@ -1822,16 +1822,16 @@ class _CourseTile extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(course.code),
+              Wrap(
+                spacing: 6,
+                children: [
+                  Text(course.code),
+                  const Text('·'),
+                  Text(course.term),
+                ],
+              ),
               if (sessions != null) ..._contextLabels(),
               if (!course.tracksAttendance) Text(course.policyLabel),
-              const SizedBox(height: 2),
-              Text(
-                course.term,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
             ],
           ),
         ),

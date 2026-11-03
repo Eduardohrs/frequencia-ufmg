@@ -1,3 +1,4 @@
+import '../../design/app_feedback.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -190,17 +191,13 @@ class _AttendancePermissionsPageState extends State<AttendancePermissionsPage>
           child: ListView(
             padding: const EdgeInsets.all(20),
             children: [
-              Text(
-                s?.locationReady == true
+              AppPageIntro(
+                title: s?.locationReady == true
                     ? 'Acesso à localização pronto'
                     : 'Localização e avisos',
-                style: Theme.of(context).textTheme.headlineSmall,
+                subtitle:
+                    'A localização estima sua presença no campus. Você pode corrigir os registros.',
               ),
-              const SizedBox(height: 12),
-              const Text(
-                'A localização permite estimar a presença no campus. Seus registros podem ser corrigidos manualmente.',
-              ),
-              const SizedBox(height: 12),
               OutlinedButton.icon(
                 key: const Key('open-campus-location'),
                 icon: const Icon(Icons.location_on_outlined),
@@ -329,7 +326,9 @@ class _AttendancePermissionsPageState extends State<AttendancePermissionsPage>
                   ),
                 ),
               ],
-              if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+              if (kDebugMode &&
+                  !kIsWeb &&
+                  defaultTargetPlatform == TargetPlatform.android)
                 BackgroundProofPanel(logger: widget.logger),
             ],
           ),

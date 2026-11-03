@@ -16,6 +16,44 @@ void main() {
   final calculus = _course('calc', 'MAT001', 4, now);
 
   testWidgets(
+    'nickname summaries keep the official name in expandable details',
+    (tester) async {
+      final course = CourseRecord(
+        id: 'poo',
+        code: 'DCC203',
+        name: 'Programação Orientada a Objetos',
+        nickname: 'POO',
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AbsenceDashboardPage(
+            courses: [course],
+            repository: _Repository({
+              'poo': [_session('future', now.add(const Duration(days: 1)))],
+            }),
+            location: location,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('POO'), findsOneWidget);
+      expect(find.text(course.name), findsNothing);
+      await tester.tap(find.text('POO'));
+      await tester.pumpAndSettle();
+      expect(find.text(course.name), findsOneWidget);
+      expect(find.byKey(const Key('attendance-bar-poo')), findsOneWidget);
+      await tester.tap(find.text('POO'));
+      await tester.pumpAndSettle();
+      expect(find.text(course.name), findsNothing);
+    },
+  );
+
+  testWidgets(
     'no-call policy excludes old absences and pending sessions without deleting history',
     (tester) async {
       final course = CourseRecord(

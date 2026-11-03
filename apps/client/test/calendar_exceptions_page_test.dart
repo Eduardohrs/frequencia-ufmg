@@ -386,7 +386,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Nenhuma sessão gerada'), findsOneWidget);
+    expect(find.text('Nenhuma aula cadastrada'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('add-makeup-session')));
     await tester.pumpAndSettle();
@@ -438,7 +438,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Não foi possível carregar as sessões.'), findsOneWidget);
+    expect(find.text('Não foi possível carregar as aulas.'), findsOneWidget);
 
     repository.listError = null;
     await tester.tap(find.text('Tentar novamente'));
