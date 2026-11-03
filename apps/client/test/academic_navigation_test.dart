@@ -199,14 +199,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('POO').first);
+      await tester.tap(find.text('Disciplina POO').first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Fechar'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('+1'));
       await tester.pumpAndSettle();
-      expect(find.text('POO • 15/09/2026'), findsNWidgets(3));
-      await tester.tap(find.text('POO • 15/09/2026').first);
+      expect(find.text('Disciplina POO • 15/09/2026'), findsNWidgets(3));
+      await tester.tap(find.text('Disciplina POO • 15/09/2026').first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Abrir disciplina'));
       await tester.pumpAndSettle();
@@ -347,7 +347,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Online • Disciplina Online'));
+      await tester.tap(find.text('Disciplina Online'));
       await tester.pumpAndSettle();
       expect(
         logs.rows.any((row) => row['errorCode'] == 'absence_navigation_failed'),

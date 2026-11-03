@@ -299,7 +299,11 @@ void main() {
     completer.complete();
     await tester.pumpAndSettle();
     expect(find.text('Olá, Eduardo'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('profile-menu')));
+    await tester.pumpAndSettle();
     expect(find.text('eduardo@ufmg.br'), findsOneWidget);
+    await tester.tapAt(Offset.zero);
+    await tester.pumpAndSettle();
     expect(find.text('Nenhuma disciplina cadastrada'), findsOneWidget);
     expect(logger.events.where((e) => !e.startsWith('automatic_checkpoint_')), [
       'auth_google_sign_in_started',

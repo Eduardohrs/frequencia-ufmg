@@ -396,7 +396,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         (courseId, _) => courses.every((course) => course.id != courseId),
       );
       if (!mounted) return;
-      courses.sort((left, right) => left.code.compareTo(right.code));
+      courses.sort(compareCourseNames);
       setState(() {
         _courses = courses;
         _sessionsByCourse = sessionsByCourse;
@@ -613,8 +613,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   }
 
   void _applyOverviewSnapshot(AcademicOverviewSnapshot snapshot) {
-    final courses = snapshot.courses.toList()
-      ..sort((left, right) => left.code.compareTo(right.code));
+    final courses = snapshot.courses.toList()..sort(compareCourseNames);
     final sessionsByCourse = {
       for (final entry in snapshot.sessionsByCourse.entries)
         entry.key: List<SessionRecord>.of(entry.value),
@@ -786,6 +785,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         ),
       ),
     );
+    if (mounted && widget.overviewReadsEnabled) await _load();
   }
 
   Future<void> _openCourseHub(CourseRecord course) async {
@@ -799,6 +799,10 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
                   if (_loadFailed) throw StateError('overview_refresh_failed');
                 }
               : null,
+          onEdit: (selected) async {
+            await _openEditor(selected);
+            return _courses.where((item) => item.id == selected.id).firstOrNull;
+          },
           calendarNavigation: _calendarNavigation,
           onOpenCourse: _openCourseHub,
           course: course,
@@ -828,6 +832,30 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       ),
     );
     if (mounted) await _load();
+  }
+
+  Future<void> _openUpcomingEntry(
+    CourseRecord course,
+    AgendaEntry entry,
+  ) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => GeneralCalendarPage(
+          logger: widget.logger,
+          onOpenCourse: _openCourseHub,
+          courses: _courses,
+          repository: widget.sessionRepository,
+          location: tz.getLocation('America/Sao_Paulo'),
+          now: widget.now,
+          initialCourseId: course.id,
+          initialDate: entry.startsAt,
+          initialEntryId: entry.session?.id ?? entry.date?.id,
+          datesByCourse: _datesByCourse,
+          unavailableDateCourses: _unavailableDateCourses,
+          initialSessionsByCourse: _sessionsByCourse,
+        ),
+      ),
+    );
   }
 
   Future<void> _openGeneralCalendar() async {
@@ -992,6 +1020,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         builder: (_) => AttendancePage(
           courseId: pending.course.id,
           courseCode: pending.course.code,
+          courseName: pending.course.displayName,
           initialSessionId: pending.session.id,
           initialSessions: _usingOverviewSnapshot
               ? _sessionsByCourse[pending.course.id]
@@ -1022,6 +1051,8 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       unawaited(widget.logger.logEvent('course_${mode}_duplicate_code'));
       return 'Já existe uma disciplina com o código $normalizedCode.';
     }
+    final identityOperationId = newCorrelationId('course_identity');
+    final identityWatch = Stopwatch()..start();
     try {
       final timestamp = widget.now().toUtc();
       final defaultPeriod = AcademicPeriod.forTerm(input.term);
@@ -1035,6 +1066,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         id: existing?.id ?? widget.idGenerator(),
         code: normalizedCode,
         name: input.name,
+        nickname: input.nickname,
         workload: existing?.workload ?? 1,
         term: input.term,
         startsOn: existing == null || movesDefaultPeriod
@@ -1048,30 +1080,61 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       );
       if (existing == null) {
         setState(() {
-          _courses = [..._courses, course]
-            ..sort((left, right) => left.code.compareTo(right.code));
+          _courses = [..._courses, course]..sort(compareCourseNames);
           _savingIds.add(course.id);
         });
         unawaited(_persistCreatedCourse(course));
         return null;
       }
+      emitOperationalEvent(widget.logger, 'course_identity_save_started', {
+        'operation_id': identityOperationId,
+        'stage': 'repository_write',
+        'course_id': course.id,
+        'course_code': course.code,
+        'course_name': course.name,
+        'has_nickname': course.nickname != null,
+      });
       await runAuditedOperation<void>(
         logger: widget.logger,
         operation: AuditedOperation.courseUpdate,
         action: () => widget.repository.saveCourse(course),
       );
+      emitOperationalEvent(widget.logger, 'course_identity_save_succeeded', {
+        'operation_id': identityOperationId,
+        'stage': 'repository_write',
+        'duration_ms': identityWatch.elapsedMilliseconds,
+        'course_id': course.id,
+        'course_code': course.code,
+        'course_name': course.name,
+        'display_name': course.displayName,
+      });
       if (mounted) {
         setState(() {
           _courses = [
             for (final item in _courses)
               if (item.id != course.id) item,
             course,
-          ]..sort((left, right) => left.code.compareTo(right.code));
+          ]..sort(compareCourseNames);
         });
         unawaited(_loadPastPendingCount(_courses));
       }
       return null;
-    } catch (error) {
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'course_identity_save',
+        {
+          'operation_id': identityOperationId,
+          'stage': 'repository_write',
+          'course_id': existing?.id ?? 'new',
+          'course_code': normalizedCode,
+          'course_name': input.name,
+          'duration_ms': identityWatch.elapsedMilliseconds,
+        },
+        failureCode: 'course_identity_save_failed',
+      );
       final code = ErrorLogDetails.from(error).code;
       return code == null
           ? 'Não foi possível salvar a disciplina.'
@@ -1118,7 +1181,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
           destructive: true,
         ),
         content: Text(
-          'Todos os horários e registros de ${course.code} também serão excluídos.',
+          'Todos os horários e registros de ${course.displayName} também serão excluídos.',
         ),
         actions: [
           TextButton(
@@ -1157,7 +1220,6 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final firstName = widget.user.displayName?.trim().split(' ').first;
-    final enlargedText = MediaQuery.textScalerOf(context).scale(14) > 20;
     Widget profileMenu() => PopupMenuButton<_ProfileAction>(
       key: const Key('profile-menu'),
       tooltip: 'Perfil e configurações',
@@ -1170,6 +1232,10 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         ),
       ),
       itemBuilder: (context) => [
+        PopupMenuItem<_ProfileAction>(
+          enabled: false,
+          child: Text(widget.user.email),
+        ),
         if (widget.attendancePermissions != null ||
             (!kIsWeb && defaultTargetPlatform == TargetPlatform.android))
           const PopupMenuItem(
@@ -1227,38 +1293,18 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (!enlargedText) ...[
-                        Text(
-                          _longDate(widget.now()),
-                          style: Theme.of(context).textTheme.labelMedium
-                              ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: .4,
-                              ),
-                        ),
-                        const SizedBox(height: 6),
-                      ],
                       Text(
                         firstName == null || firstName.isEmpty
                             ? 'Suas disciplinas'
                             : 'Olá, $firstName',
-                        style: Theme.of(context).textTheme.headlineMedium,
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
-                      if (!enlargedText) ...[
-                        const SizedBox(height: 4),
+                      const SizedBox(height: 4),
+                      if (MediaQuery.textScalerOf(context).scale(14) <= 20)
                         Text(
-                          widget.user.email,
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
+                          _longDate(widget.now()),
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
-                      ],
                     ],
                   ),
                 ),
@@ -1324,7 +1370,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
                             : '$_pastPendingCount aulas anteriores estão sem frequência',
                       ),
                       subtitle: Text(
-                        'Mais recente: ${_nextPastPending!.course.code} • '
+                        'Mais recente: ${_nextPastPending!.course.displayName} • '
                         '${_shortDate(_nextPastPending!.session.startsAt)}',
                       ),
                       trailing: const Icon(Icons.arrow_forward_rounded),
@@ -1353,6 +1399,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
                 sessionsByCourse: _sessionsByCourse,
                 now: widget.now(),
                 onOpenCalendar: _openGeneralCalendar,
+                onOpenEntry: _openUpcomingEntry,
               );
               if (constraints.maxWidth < 900) {
                 final datesFirst = _courses.any(
@@ -1446,6 +1493,7 @@ class _UpcomingDates extends StatelessWidget {
     required this.unavailableDateCourses,
     required this.now,
     required this.onOpenCalendar,
+    required this.onOpenEntry,
   });
 
   final List<CourseRecord> courses;
@@ -1454,6 +1502,7 @@ class _UpcomingDates extends StatelessWidget {
   final Set<String> unavailableDateCourses;
   final DateTime now;
   final VoidCallback onOpenCalendar;
+  final void Function(CourseRecord, AgendaEntry) onOpenEntry;
 
   @override
   Widget build(BuildContext context) {
@@ -1498,14 +1547,24 @@ class _UpcomingDates extends StatelessWidget {
           )
         else
           for (final entry in entries.take(3))
-            _UpcomingDateTile(course: entry.course, session: entry.session),
+            _UpcomingDateTile(
+              course: entry.course,
+              session: entry.session,
+              onOpen: () => onOpenEntry(entry.course, entry.session),
+            ),
       ],
     );
   }
 }
 
 class _UpcomingDateTile extends StatelessWidget {
-  const _UpcomingDateTile({required this.course, required this.session});
+  const _UpcomingDateTile({
+    required this.course,
+    required this.session,
+    required this.onOpen,
+  });
+
+  final VoidCallback onOpen;
 
   final CourseRecord course;
   final AgendaEntry session;
@@ -1532,51 +1591,58 @@ class _UpcomingDateTile extends StatelessWidget {
     ];
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          Container(
-            width: 54,
-            height: 54,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              border: Border.all(color: Theme.of(context).dividerColor),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  '${date.day}',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                Text(
-                  months[date.month - 1],
-                  style: Theme.of(context).textTheme.labelSmall,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  session.title!,
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  course.code,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+      child: InkWell(
+        key: ValueKey(
+          'upcoming-${course.id}-${session.session?.id ?? session.date?.id}',
+        ),
+        onTap: onOpen,
+        borderRadius: BorderRadius.circular(16),
+        child: Row(
+          children: [
+            Container(
+              width: 54,
+              height: 54,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                border: Border.all(color: Theme.of(context).dividerColor),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    '${date.day}',
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
-                ),
-              ],
+                  Text(
+                    months[date.month - 1],
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    session.title!,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    course.displayName,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1598,7 +1664,7 @@ class _SectionHeader extends StatelessWidget {
           'Minhas disciplinas',
           style: Theme.of(context).textTheme.titleLarge,
         );
-        final action = FilledButton.icon(
+        final action = TextButton.icon(
           key: const Key('add-course'),
           onPressed: onAdd,
           icon: const Icon(Icons.add_rounded),
@@ -1692,7 +1758,7 @@ class _CourseTile extends StatelessWidget {
           code: course.code,
         ),
         title: Text(
-          course.name,
+          course.displayName,
           style: Theme.of(context).textTheme.titleMedium,
         ),
         subtitle: Padding(
@@ -1722,7 +1788,8 @@ class _CourseTile extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   PopupMenuButton<_CourseTileAction>(
-                    tooltip: 'Mais ações de ${course.code}',
+                    key: ValueKey("course-actions-${course.code}"),
+                    tooltip: 'Mais ações de ${course.displayName}',
                     onSelected: (action) {
                       switch (action) {
                         case _CourseTileAction.edit:

@@ -92,3 +92,15 @@ def test_course_accepts_null_date_pair() -> None:
     assert course["ends_on"] is None
     created = datetime.fromisoformat(str(course["created_at"]).replace("Z", "+00:00"))
     assert created.tzinfo == UTC
+
+
+def test_nickname_roundtrip_is_independent_of_official_identity() -> None:
+    course = {**_course(), "nickname": "POO"}
+    assert course_from_firestore("course-1", course_to_firestore(course)) == course
+    assert validate_course({**course, "nickname": None}) == _course()
+
+
+@pytest.mark.parametrize("nickname", ["", " ", " POO", "POO ", "x" * 49, 5, False])
+def test_invalid_nickname_is_rejected(nickname: object) -> None:
+    with pytest.raises(InvalidCourse):
+        validate_course({**_course(), "nickname": nickname})

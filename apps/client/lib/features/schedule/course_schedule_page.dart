@@ -510,6 +510,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       builder: (_) => AttendancePage(
         courseId: widget.course.id,
         courseCode: widget.course.code,
+        courseName: widget.course.displayName,
         repository: widget.sessionRepository,
         logger: widget.logger,
         attendanceEvaluator: widget.attendanceEvaluator,
@@ -552,7 +553,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: Text('Grade • ${_course.code}'),
+      title: Text('Grade • ${_course.displayName}'),
       actions: [
         PopupMenuButton<_ScheduleAction>(
           tooltip: 'Ações da disciplina',
@@ -729,6 +730,7 @@ CourseRecord _courseFromPython(PythonCourse course) => CourseRecord(
   id: course.id,
   code: course.code,
   name: course.name,
+  nickname: course.nickname,
   workload: course.workload,
   term: course.term,
   startsOn: course.startsOn,
@@ -1047,6 +1049,7 @@ CourseRecord _copyCourseWithRange(
   id: course.id,
   code: course.code,
   name: course.name,
+  nickname: course.nickname,
   workload: course.workload,
   term: course.term,
   startsOn: DateTime.utc(range.start.year, range.start.month, range.start.day),

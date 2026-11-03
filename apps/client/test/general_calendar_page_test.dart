@@ -17,6 +17,26 @@ void main() {
     _course('calc', 'MAT001', now),
   ];
 
+  testWidgets('missing Home deep link has an explicit recovery message', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GeneralCalendarPage(
+          courses: courses,
+          repository: _Repository({}),
+          location: location,
+          now: () => now,
+          initialCourseId: 'poo',
+          initialEntryId: 'deleted',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Esta data não está mais disponível.'), findsOneWidget);
+    expect(find.text('Calendário operacional'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets(
     'no-call timetable stays visible with a label and online history stays hidden',
     (tester) async {
@@ -61,7 +81,7 @@ void main() {
         100,
         scrollable: find.byType(Scrollable).last,
       );
-      expect(find.text('DCC203 · Sem chamada'), findsOneWidget);
+      expect(find.text('POO · Sem chamada'), findsOneWidget);
       expect(find.text('MAT001'), findsNothing);
       await tester.tap(find.text('Lista'));
       await tester.pumpAndSettle();

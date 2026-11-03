@@ -39,6 +39,7 @@ class CourseHubPage extends StatefulWidget {
     this.calendarNavigation,
     this.onOpenCourse,
     this.overviewUpdates,
+    this.onEdit,
     this.refreshOverview,
     this.workspaceGateway,
     this.datesByCourse = const {},
@@ -63,6 +64,7 @@ class CourseHubPage extends StatefulWidget {
   final CalendarNavigationState? calendarNavigation;
   final Future<void> Function(CourseRecord)? onOpenCourse;
   final CourseRecord course;
+  final Future<CourseRecord?> Function(CourseRecord)? onEdit;
   final List<CourseRecord> allCourses;
   final CourseRepository courseRepository;
   final MeetingRepository meetingRepository;
@@ -355,6 +357,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
         builder: (_) => AttendancePage(
           courseId: _course.id,
           courseCode: _course.code,
+          courseName: _course.displayName,
           repository: widget.sessionRepository,
           logger: widget.logger,
           location: _location,
@@ -493,6 +496,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
           syncSchedule: widget.ufmgSyncSchedule,
           materialCourseId: manageConnection ? null : _course.id,
           materialCourseCode: manageConnection ? null : _course.code,
+          materialCourseName: manageConnection ? null : _course.displayName,
           materialCourseTerm: manageConnection ? null : _course.term,
         ),
       ),
@@ -500,10 +504,33 @@ class _CourseHubPageState extends State<CourseHubPage> {
     if (mounted) await _load(refresh: true);
   }
 
+  Future<void> _editIdentity() async {
+    final edited = await widget.onEdit!(_course);
+    if (mounted && edited != null) setState(() => _course = edited);
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
       toolbarHeight: 64,
+      actions: [
+        if (widget.onEdit != null)
+          if (MediaQuery.sizeOf(context).width < 500 ||
+              MediaQuery.textScalerOf(context).scale(14) > 20)
+            IconButton(
+              key: const Key('course-hub-edit-name'),
+              tooltip: 'Nome e apelido',
+              onPressed: _editIdentity,
+              icon: const Icon(Icons.edit_outlined),
+            )
+          else
+            TextButton.icon(
+              key: const Key('course-hub-edit-name'),
+              onPressed: _editIdentity,
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              label: const Text('Nome e apelido'),
+            ),
+      ],
       leadingWidth: 76,
       leading: Padding(
         padding: const EdgeInsets.only(left: 18, top: 8, bottom: 8),
@@ -606,7 +633,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
             ),
             const SizedBox(height: 4),
             Text(
-              _course.name,
+              _course.displayName,
               maxLines: compact ? 2 : 1,
               overflow: TextOverflow.ellipsis,
               style:

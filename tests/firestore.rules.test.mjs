@@ -699,3 +699,16 @@ test("activity snapshots remain owned, bounded and cascadeable course content", 
   await assertFails(setDoc(doc(dbFor("alice"),`${coursePath("alice")}/activitySnapshots/wrong`),value));
   await assertSucceeds(deleteDoc(doc(dbFor("alice"),path)));
 });
+
+
+test("personal course names are optional, validated and owner-isolated", async () => {
+  const own = doc(dbFor("alice"), coursePath("alice"));
+  await assertSucceeds(setDoc(own, course({nickname: "Minha POO"})));
+  await assertSucceeds(getDoc(own));
+  await assertFails(getDoc(doc(dbFor("bob"), coursePath("alice"))));
+  for (const nickname of ["", " ", " POO", "POO ", "x".repeat(49), 42, null]) {
+    await assertFails(setDoc(own, course({nickname})));
+  }
+  await assertSucceeds(setDoc(own, course()));
+  await assertSucceeds(setDoc(own, course({nickname: "POO", modality: "in_person", attendancePolicy: "required"})));
+});

@@ -51,6 +51,11 @@ class CourseRepository:
     def save_course(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         course = validate_course(payload)
         existing_courses = self.list_courses()
+        # Older clients and importers omit personal preferences; omission preserves
+        # the saved label, while an explicit null deliberately restores the name.
+        previous = next((c for c in existing_courses if c["id"] == course["id"]), {})
+        if "nickname" not in payload and "nickname" in previous:
+            course["nickname"] = previous["nickname"]
         if any(
             existing["id"] != course["id"] and existing["code"] == course["code"]
             for existing in existing_courses

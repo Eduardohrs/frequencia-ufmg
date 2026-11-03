@@ -936,6 +936,7 @@ abstract interface class BackendOverviewGateway {
 
 final class PythonCourse {
   const PythonCourse({
+    this.nickname,
     this.modality = 'in_person',
     this.attendancePolicy = 'required',
     required this.id,
@@ -963,6 +964,7 @@ final class PythonCourse {
     };
     if (json.keys.toSet().difference({
           ...keys,
+          'nickname',
           'modality',
           'attendance_policy',
         }).isNotEmpty ||
@@ -976,6 +978,14 @@ final class PythonCourse {
     final id = json['id'];
     final code = json['code'];
     final name = json['name'];
+    final nickname = json['nickname'];
+    if (nickname != null &&
+        (nickname is! String ||
+            nickname.isEmpty ||
+            nickname.trim() != nickname ||
+            nickname.length > 48)) {
+      throw const FormatException('Invalid nickname');
+    }
     final workload = json['workload'];
     final term = json['term'];
     final modality = json['modality'] ?? 'in_person';
@@ -1011,6 +1021,7 @@ final class PythonCourse {
       id: id,
       code: code,
       name: name,
+      nickname: nickname as String?,
       workload: workload,
       term: term,
       startsOn: startsOn,
@@ -1025,6 +1036,7 @@ final class PythonCourse {
   final String attendancePolicy;
   final String code;
   final String name;
+  final String? nickname;
   final int workload;
   final String term;
   final DateTime? startsOn;
@@ -1040,6 +1052,7 @@ final class PythonCourse {
     if (includeId) 'id': id,
     'code': code,
     'name': name,
+    'nickname': nickname,
     'workload': workload,
     'term': term,
     'starts_on': startsOn?.toUtc().toIso8601String(),

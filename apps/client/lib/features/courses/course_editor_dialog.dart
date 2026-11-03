@@ -5,6 +5,7 @@ import '../../design/app_feedback.dart';
 
 final class CourseInput {
   const CourseInput({
+    this.nickname,
     this.modality = CourseModality.inPerson,
     this.attendancePolicy = CourseAttendancePolicy.required,
     required this.code,
@@ -16,6 +17,7 @@ final class CourseInput {
   final CourseModality modality;
   final CourseAttendancePolicy attendancePolicy;
   final String name;
+  final String? nickname;
   final String term;
 }
 
@@ -43,6 +45,7 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _code;
   late final TextEditingController _name;
+  late final TextEditingController _nickname;
   late final TextEditingController _term;
   bool _saving = false;
   late CourseModality _modality;
@@ -58,6 +61,7 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
         course?.attendancePolicy ?? CourseAttendancePolicy.required;
     _code = TextEditingController(text: course?.code);
     _name = TextEditingController(text: course?.name);
+    _nickname = TextEditingController(text: course?.nickname);
     _term = TextEditingController(text: widget.initialTerm);
   }
 
@@ -65,6 +69,7 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
   void dispose() {
     _code.dispose();
     _name.dispose();
+    _nickname.dispose();
     _term.dispose();
     super.dispose();
   }
@@ -113,6 +118,7 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
         attendancePolicy: _attendancePolicy,
         code: _code.text.trim(),
         name: _name.text.trim(),
+        nickname: _nickname.text.trim().isEmpty ? null : _nickname.text.trim(),
         term: _term.text.trim(),
       ),
     );
@@ -171,6 +177,22 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
                   ),
                   validator: (value) =>
                       _required(value, 'Informe o nome.', 160),
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  key: const Key('course-nickname'),
+                  controller: _nickname,
+                  enabled: !_saving,
+                  decoration: const InputDecoration(
+                    labelText: 'Apelido (opcional)',
+                    hintText: 'Ex.: POO',
+                    helperText:
+                        'Como você quer ver esta disciplina. Deixe vazio para usar o nome.',
+                    helperMaxLines: 2,
+                  ),
+                  validator: (value) => (value?.trim().length ?? 0) > 48
+                      ? 'Use no máximo 48 caracteres.'
+                      : null,
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<CourseModality>(
