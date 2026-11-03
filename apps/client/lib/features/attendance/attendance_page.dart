@@ -25,6 +25,7 @@ class AttendancePage extends StatefulWidget {
     this.sessionWritesEnabled = false,
     this.androidOfflineQueueEnabled = false,
     this.courseCode,
+    this.courseName,
     this.initialSessionId,
     this.initialSessions,
     super.key,
@@ -44,6 +45,7 @@ class AttendancePage extends StatefulWidget {
   final bool sessionWritesEnabled;
   final bool androidOfflineQueueEnabled;
   final String? courseCode;
+  final String? courseName;
   final String? initialSessionId;
   final List<SessionRecord>? initialSessions;
 
@@ -216,7 +218,7 @@ class _AttendancePageState extends State<AttendancePage> {
       title: Text(
         widget.courseCode == null
             ? 'Frequência por aula'
-            : 'Frequência • ${widget.courseCode}',
+            : 'Frequência • ${widget.courseName ?? widget.courseCode}',
       ),
     ),
     body: SafeArea(

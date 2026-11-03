@@ -586,3 +586,21 @@ def test_import_removes_a_rejected_remote_session() -> None:
         service.import_courses("firebase-user", now=1_760_000_000)
 
     assert store.session is None
+
+
+def test_import_workload_backfill_preserves_personal_name() -> None:
+    class PersonalCourses(_Courses):
+        def list_courses(self) -> list[dict[str, object]]:
+            return [{**course, "nickname": "Meu laboratório", "workload": 1}
+                    for course in super().list_courses()]
+
+    courses = PersonalCourses()
+    service = UFMGCourseImportService(
+        _Store(UFMGSession("private-token", 1_759_990_000, 1_760_022_400)),
+        _Client(), courses, clock=lambda: datetime(2026, 10, 12, 12, tzinfo=UTC),
+    )
+    service.import_courses("firebase-user", now=1_760_000_000)
+    updated = next(course for course in courses.saved if course["id"] == "manual")
+    assert updated["nickname"] == "Meu laboratório"
+    assert updated["name"] == "Nome manual"
+    assert updated["workload"] == 30

@@ -49,6 +49,200 @@ void main() {
   );
   final now = DateTime.utc(2026, 9, 27, 12);
 
+  for (final fails in [false, true]) {
+    testWidgets(
+      'personal label telemetry survives serialization (failure=$fails)',
+      (tester) async {
+        final store = _HubLogStore();
+        final logger = FirestoreAppLogger(
+          store: store,
+          currentUserId: () => user.id,
+          platform: 'web',
+        );
+        final repo = _FakeCourseRepository(
+          courses: [
+            CourseRecord(
+              id: 'course-1',
+              code: 'DCC203',
+              name: 'Programação Orientada a Objetos',
+              workload: 60,
+              term: '2026-2',
+              createdAt: now,
+              updatedAt: now,
+            ),
+          ],
+        );
+        await tester.pumpWidget(_app(repo, user, now, logger: logger));
+        await tester.pumpAndSettle();
+        await _selectCourseAction(tester, 'DCC203', 'Editar');
+        await tester.ensureVisible(find.byKey(const Key('course-nickname')));
+        await tester.enterText(
+          find.byKey(const Key('course-nickname')),
+          'POO pessoal',
+        );
+        if (fails) repo.saveError = StateError('write denied');
+        await tester.tap(find.text('Salvar'));
+        await tester.pumpAndSettle();
+        final start = store.documents.singleWhere(
+          (row) => row['event'] == 'course_identity_save_started',
+        );
+        final end = store.documents.singleWhere(
+          (row) => fails
+              ? row['operation'] == 'course_identity_save'
+              : row['event'] == 'course_identity_save_succeeded',
+        );
+        final details =
+            jsonDecode(end[fails ? 'errorDetails' : 'details']! as String)
+                as Map<String, dynamic>;
+        expect(end['correlationId'], start['correlationId']);
+        expect(end['durationMs'], isA<int>());
+        expect(details['stage'], 'repository_write');
+        expect(details['course_id'], 'course-1');
+        expect(details['course_name'], 'Programação Orientada a Objetos');
+        expect(jsonEncode(details), isNot(contains('password')));
+        expect(repo.courses.single.nickname, fails ? null : 'POO pessoal');
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+  testWidgets(
+    'personal label edits from hub, rejects overflow, persists and reports failure',
+    (tester) async {
+      final stamp = now;
+      final repo = _FakeCourseRepository(
+        courses: [
+          CourseRecord(
+            id: 'course-1',
+            code: 'DCC203',
+            name: 'Programação Orientada a Objetos',
+            workload: 60,
+            term: '2026-2',
+            createdAt: stamp,
+            updatedAt: stamp,
+          ),
+        ],
+      );
+      final logger = _RecordingAppLogger();
+      await tester.pumpWidget(_app(repo, user, now, logger: logger));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('course-card-course-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('course-hub-edit-name')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('course-nickname')));
+      await tester.enterText(
+        find.byKey(const Key('course-nickname')),
+        'x' * 49,
+      );
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+      expect(find.text('Use no máximo 48 caracteres.'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('course-nickname')),
+        'Minha POO',
+      );
+      repo.saveError = StateError('write denied');
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Não foi possível salvar a disciplina.'),
+        findsOneWidget,
+      );
+      expect(repo.courses.single.nickname, isNull);
+      expect(logger.errorContexts, contains('course_identity_save'));
+      repo.saveError = null;
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+      expect(repo.courses.single.nickname, 'Minha POO');
+      expect(repo.courses.single.name, 'Programação Orientada a Objetos');
+      expect(find.text('Minha POO'), findsOneWidget);
+      final started = logger.eventFields['course_identity_save_started']!;
+      final ended = logger.eventFields['course_identity_save_succeeded']!;
+      expect(ended['operation_id'], started['operation_id']);
+      expect(ended['course_id'], 'course-1');
+      expect(ended['duration_ms'], isA<int>());
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Minha POO'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(_app(repo, user, now));
+      await tester.pumpAndSettle();
+      expect(find.text('Minha POO'), findsOneWidget);
+      await _selectCourseAction(tester, 'DCC203', 'Editar');
+      await tester.ensureVisible(find.byKey(const Key('course-nickname')));
+      await tester.enterText(find.byKey(const Key('course-nickname')), '');
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+      expect(repo.courses.single.nickname, isNull);
+      expect(find.text('Programação Orientada a Objetos'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Home date opens the exact event, retains course name and returns',
+    (tester) async {
+      final course = CourseRecord(
+        id: 'course-1',
+        code: 'DCC203',
+        name: 'Programação Orientada a Objetos',
+        nickname: 'POO prática',
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final repo = _FakeCourseRepository(courses: [course]);
+      final session = SessionRecord(
+        id: 'exam',
+        startsAt: now.add(const Duration(days: 1)),
+        endsAt: now.add(const Duration(days: 1, hours: 2)),
+        lessonCount: QuantidadeAulas.two,
+        callCount: NumeroChamadas.one,
+        assessmentTitle: 'Entrega específica',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final logger = _RecordingAppLogger();
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
+          home: CoursePage(
+            repository: repo,
+            overviewReadsEnabled: true,
+            overviewRepository: _FakeOverviewRepository(
+              AcademicOverviewSnapshot(
+                courses: [course],
+                sessionsByCourse: {
+                  'course-1': [session],
+                },
+              ),
+            ),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository({
+              'course-1': [session],
+            }),
+            user: user,
+            logger: logger,
+            onSignOut: () async {},
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('upcoming-course-1-exam')));
+      await tester.pumpAndSettle();
+      expect(find.text('Fechar'), findsOneWidget);
+      expect(find.text('Entrega específica'), findsOneWidget);
+      expect(find.text('POO prática'), findsWidgets);
+      expect(logger.events, contains('calendar_entry_opened'));
+      await tester.tap(find.text('Fechar'));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('upcoming-course-1-exam')), findsOneWidget);
+    },
+  );
+
   for (final injected in [false, true]) {
     testWidgets(
       'loading saved sessions automatically schedules without opening diagnostics (injected=$injected)',
@@ -495,7 +689,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Lista'));
       await tester.pumpAndSettle();
-      expect(find.text('DCC203 • 27/09/2026'), findsOneWidget);
+      expect(find.text('POO • 27/09/2026'), findsOneWidget);
       expect(find.textContaining('22:00 • Prazo'), findsOneWidget);
       expect(find.textContaining('Algumas datas'), findsOneWidget);
       updates.value = AcademicOverviewSnapshot(
@@ -1755,7 +1949,7 @@ void main() {
     await tester.tap(find.byKey(const Key('course-hub-open-calendar')));
     await tester.pumpAndSettle();
     expect(find.text('Calendário operacional'), findsOneWidget);
-    expect(find.text('DCC203'), findsWidgets);
+    expect(find.text('POO'), findsWidgets);
     await tester.pageBack();
     await tester.pumpAndSettle();
 
@@ -1764,7 +1958,7 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('course-hub-open-attendance')));
     await tester.pumpAndSettle();
-    expect(find.text('Frequência • DCC203'), findsOneWidget);
+    expect(find.text('Frequência • POO'), findsOneWidget);
     await tester.pageBack();
     await tester.pumpAndSettle();
 
@@ -1773,7 +1967,7 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('course-hub-open-schedule')));
     await tester.pumpAndSettle();
-    expect(find.text('Grade • DCC203'), findsOneWidget);
+    expect(find.text('Grade • POO'), findsOneWidget);
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.text('DCC203'), findsOneWidget);
@@ -1783,7 +1977,7 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('course-hub-open-materials')));
     await tester.pumpAndSettle();
-    expect(find.text('Materiais • DCC203'), findsOneWidget);
+    expect(find.text('Materiais • POO'), findsOneWidget);
     await tester.tap(find.byKey(const Key('moodle-content-catalog-course')));
     await tester.pumpAndSettle();
     expect(find.text('Plano de ensino'), findsOneWidget);
@@ -2229,7 +2423,7 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('past-attendance-pending-alert')));
     await tester.pumpAndSettle();
-    expect(find.text('Frequência • DCC203'), findsOneWidget);
+    expect(find.text('Frequência • POO'), findsOneWidget);
     expect(directSessions.listedCourseIds, isEmpty);
   });
 
@@ -2439,10 +2633,10 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('1 aula anterior está sem frequência'), findsOneWidget);
-    expect(find.text('Mais recente: DCC203 • 26/09/2026'), findsOneWidget);
+    expect(find.text('Mais recente: POO • 26/09/2026'), findsOneWidget);
     await tester.tap(find.byKey(const Key('past-attendance-pending-alert')));
     await tester.pumpAndSettle();
-    expect(find.text('Frequência • DCC203'), findsOneWidget);
+    expect(find.text('Frequência • POO'), findsOneWidget);
     expect(find.text('Pendências anteriores'), findsOneWidget);
     expect(find.text('Selecionada pelo alerta'), findsOneWidget);
     sessions.sessions['course-1'] = const [];
@@ -2646,7 +2840,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Olá, Eduardo'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('profile-menu')));
+    await tester.pumpAndSettle();
     expect(find.text('eduardo@ufmg.br'), findsOneWidget);
+    await tester.tapAt(Offset.zero);
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Perfil e configurações'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Sair'));
@@ -3163,7 +3361,7 @@ Future<void> _selectCourseAction(
   String courseCode,
   String action,
 ) async {
-  await tester.tap(find.byTooltip('Mais ações de $courseCode'));
+  await tester.tap(find.byKey(ValueKey('course-actions-$courseCode')));
   await tester.pumpAndSettle();
   await tester.tap(find.text(action));
   await tester.pumpAndSettle();
@@ -3426,6 +3624,7 @@ final class _RecordingAppLogger implements AppLogger {
   bool failRecording = false;
   bool failDeliveryLog = false;
   final events = <String>[];
+  final eventFields = <String, Map<String, Object>>{};
   final errorContexts = <String>[];
 
   @override
@@ -3434,6 +3633,7 @@ final class _RecordingAppLogger implements AppLogger {
       throw StateError('logger offline');
     }
     events.add(name);
+    eventFields[name] = parameters ?? {};
   }
 
   @override

@@ -8,6 +8,7 @@ import 'firestore_schema.dart';
 
 final class CourseRecord {
   const CourseRecord({
+    this.nickname,
     this.modality = CourseModality.inPerson,
     this.attendancePolicy = CourseAttendancePolicy.required,
     required this.id,
@@ -36,6 +37,7 @@ final class CourseRecord {
       id: id,
       code: normalized['code']! as String,
       name: normalized['name']! as String,
+      nickname: normalized['nickname'] as String?,
       workload: normalized['workload']! as int,
       term: normalized['term']! as String,
       startsOn: _nullableDate(normalized, 'startsOn'),
@@ -55,6 +57,40 @@ final class CourseRecord {
       modality == CourseModality.online ? 'Online' : attendancePolicy.label;
   final String code;
   final String name;
+  final String? nickname;
+
+  String get displayName => nickname ?? name;
+
+  /// Compact names are presentation only; official codes remain stable keys.
+  String get shortName {
+    if (displayName.length <= 24) return displayName;
+    final words = displayName
+        .split(RegExp(r'\s+'))
+        .where(
+          (word) =>
+              word.isNotEmpty &&
+              !const {
+                'de',
+                'da',
+                'do',
+                'das',
+                'dos',
+                'e',
+                'a',
+                'o',
+              }.contains(word.toLowerCase()),
+        )
+        .toList();
+    if (words.isEmpty) return displayName;
+    return words
+        .map(
+          (word) => RegExp(r'^[0-9IVX]+$').hasMatch(word)
+              ? word
+              : String.fromCharCode(word.runes.first).toUpperCase(),
+        )
+        .join();
+  }
+
   final int workload;
   final String term;
   final DateTime? startsOn;
@@ -71,6 +107,7 @@ final class CourseRecord {
       'schemaVersion': FirestoreSchema.version,
       'code': code,
       'name': name,
+      if (nickname != null) 'nickname': nickname,
       'workload': workload,
       'term': term,
       'startsOn': startsOn == null
@@ -226,3 +263,11 @@ Map<String, Object?> _auditFields(DateTime createdAt, DateTime updatedAt) => {
   'createdAt': Timestamp.fromDate(createdAt.toUtc()),
   'updatedAt': Timestamp.fromDate(updatedAt.toUtc()),
 };
+
+/// Human labels determine order; the official code disambiguates equal names.
+int compareCourseNames(CourseRecord left, CourseRecord right) {
+  final result = left.displayName.toLowerCase().compareTo(
+    right.displayName.toLowerCase(),
+  );
+  return result != 0 ? result : left.code.compareTo(right.code);
+}

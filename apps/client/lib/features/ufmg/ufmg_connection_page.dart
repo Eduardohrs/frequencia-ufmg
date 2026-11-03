@@ -27,6 +27,7 @@ class UFMGConnectionPage extends StatefulWidget {
     this.materialFileCache,
     this.materialCourseId,
     this.materialCourseCode,
+    this.materialCourseName,
     this.materialCourseTerm,
     this.onOpenCourses,
     this.onOpenCalendar,
@@ -42,6 +43,7 @@ class UFMGConnectionPage extends StatefulWidget {
   final MaterialFileCache? materialFileCache;
   final String? materialCourseId;
   final String? materialCourseCode;
+  final String? materialCourseName;
   final String? materialCourseTerm;
   final Future<void> Function()? onOpenCourses;
   final Future<void> Function()? onOpenCalendar;
@@ -1570,7 +1572,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       appBar: AppBar(
         title: Text(
           widget.isMaterialScope
-              ? 'Materiais • ${widget.materialCourseCode}'
+              ? 'Materiais • ${widget.materialCourseName ?? widget.materialCourseCode}'
               : 'Conta acadêmica UFMG',
         ),
       ),
@@ -1638,11 +1640,13 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  widget.materialCourseCode!,
+                  widget.materialCourseName ?? widget.materialCourseCode!,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
+                if (widget.materialCourseName != null)
+                  Text(widget.materialCourseCode!),
                 Text(
                   'Materiais do Moodle',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(

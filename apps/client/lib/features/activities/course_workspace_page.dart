@@ -669,7 +669,7 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(widget.course.code)),
+    appBar: AppBar(title: Text(widget.course.displayName)),
     floatingActionButton: _section == _Section.dates
         ? FloatingActionButton.extended(
             key: const Key('workspace-add-date'),

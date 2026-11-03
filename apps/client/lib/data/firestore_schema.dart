@@ -96,10 +96,16 @@ abstract final class FirestoreSchema {
         policy != CourseAttendancePolicy.noCall) {
       throw const FormatException('Online course cannot require attendance');
     }
+    final nickname = document['nickname'];
+    if (nickname != null) {
+      if (nickname is! String) throw const FormatException('Invalid nickname');
+      _validateText(nickname, 'nickname', 48);
+    }
     course.validateShape(
       {...document}
         ..remove('modality')
-        ..remove('attendancePolicy'),
+        ..remove('attendancePolicy')
+        ..remove('nickname'),
     );
     _validateText(document['code']! as String, 'code', 32);
     _validateText(document['name']! as String, 'name', 160);

@@ -422,7 +422,7 @@ class _SummaryCard extends StatelessWidget {
         child: ListTile(
           onTap: onOpen,
           leading: CourseMark(code: course.code, size: 40),
-          title: Text('${course.code} • ${course.name}'),
+          title: Text(course.displayName),
           subtitle: Text('${course.policyLabel} • Frequência: não se aplica'),
         ),
       );
@@ -436,11 +436,12 @@ class _SummaryCard extends StatelessWidget {
           code: course.code,
           size: 40,
         ),
-        title: Text(course.code),
+        title: Text(course.displayName),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(course.name),
+            Text(course.code),
+            if (course.nickname != null) Text(course.name),
             const SizedBox(height: 4),
             Text(
               '${summary.consumedAbsences} de ${summary.absenceLimit} faltas usadas'

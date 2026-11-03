@@ -25,7 +25,7 @@ class InvalidCourse(Exception):
 def validate_course(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Return a canonical course or reject the entire payload."""
 
-    if set(payload) - {"modality", "attendance_policy"} != COURSE_FIELDS:
+    if set(payload) - {"modality", "attendance_policy", "nickname"} != COURSE_FIELDS:
         raise InvalidCourse("invalid course")
     modality = payload.get("modality", "in_person")
     policy = payload.get("attendance_policy", "no_call" if modality == "online" else "required")
@@ -40,6 +40,9 @@ def validate_course(payload: Mapping[str, Any]) -> dict[str, Any]:
         raise InvalidCourse("invalid course")
     code = _text(payload["code"], 32)
     name = _text(payload["name"], 160)
+    nickname = payload.get("nickname")
+    if nickname is not None:
+        nickname = _text(nickname, 48)
     workload = payload["workload"]
     term = payload["term"]
     if code != code.upper() or type(workload) is not int or workload <= 0:
@@ -62,6 +65,7 @@ def validate_course(payload: Mapping[str, Any]) -> dict[str, Any]:
         "id": course_id,
         "code": code,
         "name": name,
+        **({"nickname": nickname} if nickname is not None else {}),
         "workload": workload,
         "term": term,
         "starts_on": _format_instant(starts_on),
@@ -82,6 +86,7 @@ def course_to_firestore(course: Mapping[str, Any]) -> dict[str, Any]:
            if "modality" in valid else {}),
         "code": {"stringValue": valid["code"]},
         "name": {"stringValue": valid["name"]},
+        **({"nickname": {"stringValue": valid["nickname"]}} if "nickname" in valid else {}),
         "workload": {"integerValue": str(valid["workload"])},
         "term": {"stringValue": valid["term"]},
         "startsOn": _firestore_instant(valid["starts_on"]),
@@ -103,6 +108,7 @@ def course_from_firestore(course_id: str, fields: Mapping[str, Any]) -> dict[str
             **({"attendance_policy": fields["attendancePolicy"]["stringValue"]}
                if "attendancePolicy" in fields else {}),
             "id": course_id,
+            **({"nickname": fields["nickname"]["stringValue"]} if "nickname" in fields else {}),
             "code": fields["code"]["stringValue"],
             "name": fields["name"]["stringValue"],
             "workload": int(fields["workload"]["integerValue"]),

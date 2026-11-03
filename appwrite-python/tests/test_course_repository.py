@@ -159,3 +159,10 @@ def test_repository_rejects_malformed_firestore_documents(document: dict[str, ob
 
     with pytest.raises(InvalidCourse):
         repository.list_courses()
+
+
+def test_old_client_preserves_nickname_but_null_removes_it() -> None:
+    store = FakeFirestore([_document({**_course(), "nickname": "Minha POO"})])
+    repo = CourseRepository(store)  # type: ignore[arg-type]
+    assert repo.save_course(_course())["nickname"] == "Minha POO"
+    assert "nickname" not in repo.save_course({**_course(), "nickname": None})

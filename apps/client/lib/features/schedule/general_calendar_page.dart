@@ -1,3 +1,4 @@
+import 'dart:async';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import '../../observability/operation_diagnostics.dart';
@@ -31,6 +32,7 @@ class GeneralCalendarPage extends StatefulWidget {
     required this.location,
     required this.now,
     this.initialCourseId,
+    this.initialEntryId,
     this.navigationState,
     this.logger,
     this.onOpenCourse,
@@ -48,6 +50,7 @@ class GeneralCalendarPage extends StatefulWidget {
   final tz.Location location;
   final DateTime Function() now;
   final String? initialCourseId;
+  final String? initialEntryId;
   final DateTime? initialDate;
   final CalendarNavigationState? navigationState;
   final AppLogger? logger;
@@ -66,6 +69,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
   late DateTime _month;
   CalendarDisplay _display = CalendarDisplay.month;
   bool _loading = true;
+  bool _initialEntryOpened = false;
   bool _failed = false;
   int _loadVersion = 0;
   CalendarEntryType _type = CalendarEntryType.all;
@@ -171,7 +175,38 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
       final entries = loaded.expand((items) => items).toList()
         ..sort((a, b) => a.session.startsAt.compareTo(b.session.startsAt));
       final applied = mounted && version == _loadVersion;
-      if (applied) setState(() => _entries = entries);
+      if (applied) {
+        setState(() => _entries = entries);
+        if (!_initialEntryOpened && widget.initialEntryId != null) {
+          _initialEntryOpened = true;
+          final entry = entries
+              .where(
+                (item) =>
+                    item.course.id == widget.initialCourseId &&
+                    (item.session.session?.id ?? item.session.date?.id) ==
+                        widget.initialEntryId,
+              )
+              .firstOrNull;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            if (entry != null) {
+              unawaited(_openEntry(entry));
+            } else {
+              _event('calendar_entry_not_found', {
+                'operation_id': operationId,
+                'stage': 'entry_lookup',
+                'course_id': widget.initialCourseId!,
+                'entry_id': widget.initialEntryId!,
+              });
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Esta data não está mais disponível.'),
+                ),
+              );
+            }
+          });
+        }
+      }
       _event('calendar_read_succeeded', {
         'load_version': version,
         'operation_id': operationId,
@@ -255,7 +290,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                             for (final course in widget.courses)
                               DropdownMenuItem(
                                 value: course.id,
-                                child: Text(course.code),
+                                child: Text(course.displayName),
                               ),
                           ],
                           onChanged: (value) =>
@@ -549,10 +584,10 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                entry.session.title ?? 'Aula de ${entry.course.code}',
+                entry.session.title ?? 'Aula de ${entry.course.displayName}',
                 style: Theme.of(sheet).textTheme.titleLarge,
               ),
-              Text(entry.course.name),
+              Text(entry.course.displayName),
               Text(
                 '${_date(tz.TZDateTime.from(entry.session.startsAt, widget.location))} • ${_time(tz.TZDateTime.from(entry.session.startsAt, widget.location))}',
               ),
@@ -609,7 +644,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
           code: entry.course.code,
           size: 40,
         ),
-        title: Text('${entry.course.code} • ${_date(local)}'),
+        title: Text('${entry.course.displayName} • ${_date(local)}'),
         subtitle: Text(
           [
             '${_time(local)} • ${(entry.session.session == null ? 'Prazo' : _status(entry.session.session!.calendarStatus))}',
@@ -648,7 +683,7 @@ class _CalendarEventLabel extends StatelessWidget {
         const SizedBox(width: 4),
         Flexible(
           child: Text(
-            '${entry.course.code}${entry.isNoCall ? ' · Sem chamada' : ''}',
+            '${entry.course.shortName}${entry.isNoCall ? ' · Sem chamada' : ''}',
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: !entry.isNoCall || entry.session.title != null

@@ -128,6 +128,8 @@ void main() {
       await open(null);
       await tester.enterText(find.byKey(const Key('course-code')), 'DCC203');
       await tester.enterText(find.byKey(const Key('course-name')), 'POO');
+      await tester.ensureVisible(find.byKey(const Key('course-modality')));
+      await tester.ensureVisible(find.byKey(const Key('course-modality')));
       await tester.tap(find.byKey(const Key('course-modality')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Online').last);
@@ -140,6 +142,9 @@ void main() {
       saved = null;
       await open(
         _course(CourseModality.inPerson, CourseAttendancePolicy.required),
+      );
+      await tester.ensureVisible(
+        find.byKey(const Key('course-attendance-required')),
       );
       await tester.tap(find.byKey(const Key('course-attendance-required')));
       await tester.pumpAndSettle();
@@ -158,10 +163,15 @@ void main() {
       expect(saved!.attendancePolicy, CourseAttendancePolicy.noCall);
 
       await open(_course(CourseModality.online, CourseAttendancePolicy.noCall));
+      await tester.ensureVisible(find.byKey(const Key('course-modality')));
+      await tester.ensureVisible(find.byKey(const Key('course-modality')));
       await tester.tap(find.byKey(const Key('course-modality')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Presencial').last);
       await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('course-attendance-no_call')),
+      );
       await tester.tap(find.byKey(const Key('course-attendance-no_call')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Com chamada').last);
