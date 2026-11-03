@@ -415,157 +415,255 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     ],
   );
 
+  Future<void> _filters() async {
+    final operationId = newCorrelationId('calendar_filters');
+    final watch = Stopwatch()..start();
+    _event('calendar_filters_opened', {
+      'operation_id': operationId,
+      'stage': 'filters',
+    });
+    var courseId = _courseId;
+    var type = _type;
+    var range = _range;
+    var display = _display;
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheet) => StatefulBuilder(
+        builder: (sheet, refresh) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            16,
+            20,
+            20 + MediaQuery.viewInsetsOf(sheet).bottom,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Sua agenda',
+                        style: Theme.of(sheet).textTheme.titleLarge,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Fechar filtros',
+                      onPressed: () => Navigator.pop(sheet),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String?>(
+                  key: const Key('calendar-course-filter'),
+                  initialValue: courseId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Disciplina'),
+                  items: [
+                    const DropdownMenuItem(value: null, child: Text('Todas')),
+                    for (final course in widget.courses)
+                      DropdownMenuItem(
+                        value: course.id,
+                        child: Text(course.displayName),
+                      ),
+                  ],
+                  onChanged: (value) => refresh(() => courseId = value),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<CalendarEntryType>(
+                  key: const Key('calendar-type-filter'),
+                  initialValue: type,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Tipo'),
+                  items: [
+                    for (final value in CalendarEntryType.values)
+                      DropdownMenuItem(
+                        value: value,
+                        child: Text(_typeLabel(value)),
+                      ),
+                  ],
+                  onChanged: (value) => refresh(() => type = value!),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<CalendarRange>(
+                  key: ValueKey('calendar-range-${range.name}'),
+                  initialValue: range,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Período'),
+                  items: const [
+                    DropdownMenuItem(
+                      value: CalendarRange.week,
+                      child: Text('Semana'),
+                    ),
+                    DropdownMenuItem(
+                      value: CalendarRange.fortnight,
+                      child: Text('2 semanas'),
+                    ),
+                    DropdownMenuItem(
+                      value: CalendarRange.month,
+                      child: Text('Mês'),
+                    ),
+                  ],
+                  onChanged: (value) => refresh(() => range = value!),
+                ),
+                const SizedBox(height: 16),
+                SegmentedButton<CalendarDisplay>(
+                  key: const Key('calendar-display'),
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(
+                      value: CalendarDisplay.month,
+                      label: Text('Agenda'),
+                    ),
+                    ButtonSegment(
+                      value: CalendarDisplay.list,
+                      label: Text('Lista'),
+                    ),
+                  ],
+                  selected: {display},
+                  onSelectionChanged: (value) =>
+                      refresh(() => display = value.single),
+                ),
+                const SizedBox(height: 20),
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  spacing: 12,
+                  children: [
+                    TextButton(
+                      onPressed: () => refresh(() {
+                        courseId = null;
+                        type = CalendarEntryType.all;
+                      }),
+                      child: const Text('Limpar filtros'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(sheet, true),
+                      child: const Text('Aplicar'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (result != true || !mounted) {
+      _event('calendar_filters_closed', {
+        'operation_id': operationId,
+        'stage': 'filters',
+        'outcome': mounted ? 'cancelled' : 'disposed',
+        'duration_ms': watch.elapsedMilliseconds,
+      });
+      return;
+    }
+    _change(() {
+      _courseId = courseId;
+      _type = type;
+      _range = range;
+      _display = display;
+    }, 'filters');
+    _savePreference();
+    _event('calendar_filters_closed', {
+      'operation_id': operationId,
+      'stage': 'filters',
+      'outcome': 'applied',
+      'duration_ms': watch.elapsedMilliseconds,
+    });
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Calendário')),
+    appBar: AppBar(
+      title: const Text('Agenda'),
+      actions: [
+        if (MediaQuery.sizeOf(context).width < 360 ||
+            MediaQuery.textScalerOf(context).scale(14) > 20)
+          IconButton(
+            key: const Key('calendar-filters'),
+            tooltip: 'Filtros e visualização',
+            onPressed: _filters,
+            icon: const Icon(Icons.tune),
+          )
+        else
+          TextButton.icon(
+            key: const Key('calendar-filters'),
+            onPressed: _filters,
+            icon: const Icon(Icons.tune),
+            label: Text(
+              (_courseId != null || _type != CalendarEntryType.all)
+                  ? 'Filtros • ${(_courseId != null ? 1 : 0) + (_type != CalendarEntryType.all ? 1 : 0)}'
+                  : 'Filtros',
+            ),
+          ),
+        const SizedBox(width: 8),
+      ],
+    ),
     body: SafeArea(
+      top: false,
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 980),
           child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final filterWidth = constraints.maxWidth < 332
-                    ? (constraints.maxWidth - 12) / 2
-                    : 160.0;
-                final enlargedText =
-                    MediaQuery.textScalerOf(context).scale(14) > 20;
-                final scrollWholePage =
-                    constraints.maxWidth < 320 ||
-                    constraints.maxHeight < 360 ||
-                    enlargedText;
-                final children = <Widget>[
-                  const AppPageIntro(
-                    title: 'Sua agenda',
-                    subtitle: 'Aulas, provas e entregas.',
-                  ),
-                  if (widget.onOpenActivities != null && _courseId != null)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton.icon(
-                        key: const Key('calendar-open-activities'),
-                        onPressed: () => _openActivities(
-                          widget.courses.firstWhere(
-                            (course) => course.id == _courseId,
-                          ),
-                        ),
-                        icon: const Icon(Icons.assignment_outlined),
-                        label: const Text('Atividades e plano'),
-                      ),
-                    ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _periodBar(),
+                if (_courseId != null || _type != CalendarEntryType.all)
+                  Row(
                     children: [
-                      SizedBox(
-                        width: 260,
-                        child: DropdownButtonFormField<String?>(
-                          key: const Key('calendar-course-filter'),
-                          isExpanded: true,
-                          initialValue: _courseId,
-                          decoration: const InputDecoration(
-                            labelText: 'Disciplina',
-                          ),
-                          items: [
-                            const DropdownMenuItem(
-                              value: null,
-                              child: Text('Todas'),
-                            ),
-                            for (final course in widget.courses)
-                              DropdownMenuItem(
-                                value: course.id,
-                                child: Text(course.displayName),
-                              ),
-                          ],
-                          onChanged: (value) =>
-                              _change(() => _courseId = value, 'course_filter'),
+                      Expanded(
+                        child: Text(
+                          [
+                            if (_courseId != null)
+                              widget.courses
+                                  .firstWhere((c) => c.id == _courseId)
+                                  .displayName,
+                            if (_type != CalendarEntryType.all)
+                              _typeLabel(_type),
+                          ].join(' • '),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
-                      SizedBox(
-                        width: filterWidth,
-                        child: DropdownButtonFormField<CalendarEntryType>(
-                          key: const Key('calendar-type-filter'),
-                          isExpanded: true,
-                          initialValue: _type,
-                          decoration: const InputDecoration(labelText: 'Tipo'),
-                          items: [
-                            for (final type in CalendarEntryType.values)
-                              DropdownMenuItem(
-                                value: type,
-                                child: Text(_typeLabel(type)),
-                              ),
-                          ],
-                          onChanged: (value) =>
-                              _change(() => _type = value!, 'type_filter'),
+                      if (widget.onOpenActivities != null && _courseId != null)
+                        TextButton.icon(
+                          key: const Key('calendar-open-activities'),
+                          onPressed: () => _openActivities(
+                            widget.courses.firstWhere((c) => c.id == _courseId),
+                          ),
+                          icon: const Icon(Icons.assignment_outlined, size: 18),
+                          label: const Text('Atividades'),
                         ),
-                      ),
-                      SizedBox(
-                        width: filterWidth,
-                        child: DropdownButtonFormField<CalendarRange>(
-                          key: ValueKey('calendar-range-${_range.name}'),
-                          initialValue: _range,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Período',
-                          ),
-                          items: const [
-                            DropdownMenuItem(
-                              value: CalendarRange.week,
-                              child: Text('Semana'),
-                            ),
-                            DropdownMenuItem(
-                              value: CalendarRange.fortnight,
-                              child: Text('2 semanas'),
-                            ),
-                            DropdownMenuItem(
-                              value: CalendarRange.month,
-                              child: Text('Mês'),
-                            ),
-                          ],
-                          onChanged: (value) =>
-                              _change(() => _range = value!, 'range'),
-                        ),
-                      ),
-                      SegmentedButton<CalendarDisplay>(
-                        key: const Key('calendar-display'),
-                        showSelectedIcon: false,
-                        segments: const [
-                          ButtonSegment(
-                            value: CalendarDisplay.month,
-                            label: Text('Agenda'),
-                          ),
-                          ButtonSegment(
-                            value: CalendarDisplay.list,
-                            label: Text('Lista'),
-                          ),
-                        ],
-                        selected: {_display},
-                        onSelectionChanged: (value) =>
-                            _change(() => _display = value.single, 'display'),
+                      IconButton(
+                        tooltip: 'Limpar filtros ativos',
+                        onPressed: () => _change(() {
+                          _courseId = null;
+                          _type = CalendarEntryType.all;
+                        }, 'clear_filters'),
+                        icon: const Icon(Icons.close, size: 18),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  _periodBar(),
-                  if (_unavailableDateCourses.isNotEmpty)
-                    const Text(
-                      'Algumas datas não puderam ser atualizadas. As aulas continuam disponíveis.',
-                    ),
-                  if (scrollWholePage)
-                    SizedBox(height: 520, child: _content())
-                  else
-                    Expanded(child: _content()),
-                ];
-                if (scrollWholePage) {
-                  return ListView(children: children);
-                }
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: children,
-                );
-              },
+                if (_unavailableDateCourses.isNotEmpty)
+                  const Text(
+                    'Algumas datas não puderam ser atualizadas. As aulas continuam disponíveis.',
+                  ),
+                const SizedBox(height: 4),
+                Expanded(
+                  child: SizedBox(
+                    key: const Key('calendar-content'),
+                    child: _content(),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -851,41 +949,43 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     final open = await showModalBottomSheet<bool>(
       context: context,
       builder: (sheet) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                entry.session.title ?? 'Aula de ${entry.course.displayName}',
-                style: Theme.of(sheet).textTheme.titleLarge,
-              ),
-              Text(entry.course.displayName),
-              Text(
-                '${_date(tz.TZDateTime.from(entry.session.startsAt, widget.location))} • ${_time(tz.TZDateTime.from(entry.session.startsAt, widget.location))}',
-              ),
-              Text(
-                entry.session.session == null
-                    ? _typeLabel(entry.type)
-                    : _status(entry.session.session!.calendarStatus),
-              ),
-              if (widget.onOpenActivities != null &&
-                  entry.session.title != null)
-                TextButton(
-                  onPressed: () => Navigator.pop(sheet, false),
-                  child: const Text('Ver atividades e plano'),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  entry.session.title ?? 'Aula de ${entry.course.displayName}',
+                  style: Theme.of(sheet).textTheme.titleLarge,
                 ),
-              if (widget.onOpenCourse != null)
-                TextButton(
-                  onPressed: () => Navigator.pop(sheet, true),
-                  child: const Text('Abrir disciplina'),
+                Text(entry.course.displayName),
+                Text(
+                  '${_date(tz.TZDateTime.from(entry.session.startsAt, widget.location))} • ${_time(tz.TZDateTime.from(entry.session.startsAt, widget.location))}',
                 ),
-              TextButton(
-                onPressed: () => Navigator.pop(sheet),
-                child: const Text('Fechar'),
-              ),
-            ],
+                Text(
+                  entry.session.session == null
+                      ? _typeLabel(entry.type)
+                      : _status(entry.session.session!.calendarStatus),
+                ),
+                if (widget.onOpenActivities != null &&
+                    entry.session.title != null)
+                  TextButton(
+                    onPressed: () => Navigator.pop(sheet, false),
+                    child: const Text('Ver atividades e plano'),
+                  ),
+                if (widget.onOpenCourse != null)
+                  TextButton(
+                    onPressed: () => Navigator.pop(sheet, true),
+                    child: const Text('Abrir disciplina'),
+                  ),
+                TextButton(
+                  onPressed: () => Navigator.pop(sheet),
+                  child: const Text('Fechar'),
+                ),
+              ],
+            ),
           ),
         ),
       ),

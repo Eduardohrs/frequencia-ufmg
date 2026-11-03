@@ -7,6 +7,7 @@ class AdaptiveAppShell extends StatelessWidget {
     required this.onDestinationSelected,
     required this.body,
     this.actions = const [],
+    this.externalNavigation = false,
     super.key,
   });
 
@@ -18,6 +19,7 @@ class AdaptiveAppShell extends StatelessWidget {
   final ValueChanged<int> onDestinationSelected;
   final Widget body;
   final List<Widget> actions;
+  final bool externalNavigation;
 
   @override
   Widget build(BuildContext context) {
@@ -38,44 +40,20 @@ class AdaptiveAppShell extends StatelessWidget {
                     child: Divider(color: separator),
                   ),
                 ),
-          bottomNavigationBar: usesRail
+          bottomNavigationBar: usesRail || externalNavigation
               ? null
-              : SafeArea(
-                  minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-                  child: _NavigationMaterial(
-                    rounded: true,
-                    child: NavigationBar(
-                      backgroundColor: Colors.transparent,
-                      selectedIndex: selectedIndex,
-                      onDestinationSelected: onDestinationSelected,
-                      destinations: _bottomDestinations,
-                    ),
-                  ),
+              : AppBottomNavigation(
+                  selectedIndex: selectedIndex,
+                  onSelected: onDestinationSelected,
                 ),
           body: SafeArea(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (usesRail) ...[
-                  _NavigationMaterial(
-                    child: SizedBox(
-                      width: 104,
-                      child: Column(
-                        children: [
-                          const SizedBox(height: 24),
-                          const _BrandMark(),
-                          Expanded(
-                            child: NavigationRail(
-                              backgroundColor: Colors.transparent,
-                              selectedIndex: selectedIndex,
-                              labelType: NavigationRailLabelType.all,
-                              onDestinationSelected: onDestinationSelected,
-                              destinations: _railDestinations,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                if (usesRail && !externalNavigation) ...[
+                  AppSideNavigation(
+                    selectedIndex: selectedIndex,
+                    onSelected: onDestinationSelected,
                   ),
                   VerticalDivider(width: 1, color: separator),
                 ],
@@ -110,6 +88,60 @@ class AdaptiveAppShell extends StatelessWidget {
       },
     );
   }
+}
+
+class AppBottomNavigation extends StatelessWidget {
+  const AppBottomNavigation({
+    required this.selectedIndex,
+    required this.onSelected,
+    super.key,
+  });
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    minimum: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+    child: _NavigationMaterial(
+      rounded: true,
+      child: NavigationBar(
+        backgroundColor: Colors.transparent,
+        selectedIndex: selectedIndex,
+        onDestinationSelected: onSelected,
+        destinations: _bottomDestinations,
+      ),
+    ),
+  );
+}
+
+class AppSideNavigation extends StatelessWidget {
+  const AppSideNavigation({
+    required this.selectedIndex,
+    required this.onSelected,
+    super.key,
+  });
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+  @override
+  Widget build(BuildContext context) => _NavigationMaterial(
+    child: SizedBox(
+      width: 104,
+      child: Column(
+        children: [
+          const SizedBox(height: 24),
+          const _BrandMark(),
+          Expanded(
+            child: NavigationRail(
+              backgroundColor: Colors.transparent,
+              selectedIndex: selectedIndex,
+              labelType: NavigationRailLabelType.all,
+              onDestinationSelected: onSelected,
+              destinations: _railDestinations,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _NavigationMaterial extends StatelessWidget {
@@ -178,13 +210,18 @@ const _bottomDestinations = [
   ),
   NavigationDestination(
     icon: Icon(Icons.calendar_month_outlined, key: Key('nav-general-calendar')),
-    selectedIcon: Icon(Icons.calendar_month),
+    selectedIcon: Icon(Icons.calendar_month, key: Key('nav-general-calendar')),
     label: 'Calendário',
   ),
   NavigationDestination(
     icon: Icon(Icons.donut_small_outlined, key: Key('nav-absence-dashboard')),
-    selectedIcon: Icon(Icons.donut_small),
+    selectedIcon: Icon(Icons.donut_small, key: Key('nav-absence-dashboard')),
     label: 'Faltas',
+  ),
+  NavigationDestination(
+    icon: Icon(Icons.settings_outlined, key: Key('nav-settings')),
+    selectedIcon: Icon(Icons.settings, key: Key('nav-settings')),
+    label: 'Ajustes',
   ),
 ];
 
@@ -196,12 +233,17 @@ const _railDestinations = [
   ),
   NavigationRailDestination(
     icon: Icon(Icons.calendar_month_outlined, key: Key('nav-general-calendar')),
-    selectedIcon: Icon(Icons.calendar_month),
+    selectedIcon: Icon(Icons.calendar_month, key: Key('nav-general-calendar')),
     label: Text('Calendário'),
   ),
   NavigationRailDestination(
     icon: Icon(Icons.donut_small_outlined, key: Key('nav-absence-dashboard')),
-    selectedIcon: Icon(Icons.donut_small),
+    selectedIcon: Icon(Icons.donut_small, key: Key('nav-absence-dashboard')),
     label: Text('Faltas'),
+  ),
+  NavigationRailDestination(
+    icon: Icon(Icons.settings_outlined, key: Key('nav-settings')),
+    selectedIcon: Icon(Icons.settings, key: Key('nav-settings')),
+    label: Text('Ajustes'),
   ),
 ];

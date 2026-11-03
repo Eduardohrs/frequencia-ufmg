@@ -1,3 +1,5 @@
+import 'package:flutter/services.dart';
+import 'fixtures/attendance_permission_fixture.dart';
 import 'package:frequencia_ufmg/data/first_checkpoint.dart';
 import 'dart:async';
 import 'fixtures/academic_sync_fixture.dart';
@@ -56,6 +58,17 @@ void main() {
   );
 
   setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel(
+            'br.ufmg.frequencia.frequencia_ufmg/attendance_permissions',
+          ),
+          (_) async => {
+            ...readyPermissionSnapshot,
+            'battery_unrestricted': true,
+            'exact_alarms': true,
+          },
+        );
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           FirstCheckpointGateway.channel,
@@ -132,7 +145,12 @@ void main() {
       expect(find.text('Frequência UFMG'), findsOneWidget);
       expect(find.text('Entrar com Google'), findsOneWidget);
       expect(
-        logger.events.where((e) => !e.startsWith('automatic_checkpoint_')),
+        logger.events.where(
+          (e) =>
+              !e.startsWith('automatic_checkpoint_') &&
+              !e.startsWith('attendance_setup_') &&
+              !e.startsWith('first_checkpoint_'),
+        ),
         ['app_started'],
       );
     } finally {
@@ -276,7 +294,12 @@ void main() {
 
       expect(verifier.calls, 1);
       expect(
-        logger.events.where((e) => !e.startsWith('automatic_checkpoint_')),
+        logger.events.where(
+          (e) =>
+              !e.startsWith('automatic_checkpoint_') &&
+              !e.startsWith('attendance_setup_') &&
+              !e.startsWith('first_checkpoint_'),
+        ),
         [
           'python_backend_identity_succeeded',
           'course_visuals_updated',
@@ -341,15 +364,23 @@ void main() {
     await tester.tap(find.byKey(const Key('profile-menu')));
     await tester.pumpAndSettle();
     expect(find.text('eduardo@ufmg.br'), findsOneWidget);
-    await tester.tapAt(Offset.zero);
+    await tester.tap(find.byTooltip('Voltar'));
     await tester.pumpAndSettle();
     expect(find.text('Nenhuma disciplina cadastrada'), findsOneWidget);
-    expect(logger.events.where((e) => !e.startsWith('automatic_checkpoint_')), [
-      'auth_google_sign_in_started',
-      'auth_google_sign_in_succeeded',
-      'course_visuals_updated',
-      'agenda_presented',
-    ]);
+    expect(
+      logger.events.where(
+        (e) =>
+            !e.startsWith('automatic_checkpoint_') &&
+            !e.startsWith('attendance_setup_') &&
+            !e.startsWith('first_checkpoint_'),
+      ),
+      [
+        'auth_google_sign_in_started',
+        'auth_google_sign_in_succeeded',
+        'course_visuals_updated',
+        'agenda_presented',
+      ],
+    );
   });
 
   testWidgets('shows a friendly message when sign-in fails', (tester) async {
@@ -374,10 +405,15 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Entrar com Google'), findsOneWidget);
-    expect(logger.events.where((e) => !e.startsWith('automatic_checkpoint_')), [
-      'auth_google_sign_in_started',
-      'auth_google_sign_in_failed',
-    ]);
+    expect(
+      logger.events.where(
+        (e) =>
+            !e.startsWith('automatic_checkpoint_') &&
+            !e.startsWith('attendance_setup_') &&
+            !e.startsWith('first_checkpoint_'),
+      ),
+      ['auth_google_sign_in_started', 'auth_google_sign_in_failed'],
+    );
     expect(logger.errorContexts, ['auth_google_sign_in']);
   });
 
@@ -398,19 +434,28 @@ void main() {
     );
 
     expect(find.text('Suas disciplinas'), findsOneWidget);
-    await tester.tap(find.byTooltip('Perfil e configurações'));
+    await tester.tap(find.byKey(const Key('profile-menu')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Sair'));
+    await tester.ensureVisible(find.text('Sair da conta'));
+    await tester.tap(find.text('Sair da conta'));
     await tester.pumpAndSettle();
 
     expect(gateway.signOutCalls, 1);
     expect(find.text('Entrar com Google'), findsOneWidget);
-    expect(logger.events.where((e) => !e.startsWith('automatic_checkpoint_')), [
-      'course_visuals_updated',
-      'agenda_presented',
-      'auth_logout_started',
-      'auth_logout_succeeded',
-    ]);
+    expect(
+      logger.events.where(
+        (e) =>
+            !e.startsWith('automatic_checkpoint_') &&
+            !e.startsWith('attendance_setup_') &&
+            !e.startsWith('first_checkpoint_'),
+      ),
+      [
+        'course_visuals_updated',
+        'agenda_presented',
+        'auth_logout_started',
+        'auth_logout_succeeded',
+      ],
+    );
   });
 }
 

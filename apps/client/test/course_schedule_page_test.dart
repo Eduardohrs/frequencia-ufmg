@@ -1,3 +1,4 @@
+import 'helpers/calendar_controls.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -1145,7 +1146,8 @@ void main() {
     await tester.pumpAndSettle();
     await _chooseScheduleAction(tester, 'Ver calendário');
     await tester.pumpAndSettle();
-    expect(find.text('Sua agenda'), findsOneWidget);
+    expect(find.text('Agenda'), findsOneWidget);
+    await openCalendarFilters(tester);
     expect(
       tester
           .widget<DropdownButtonFormField<String?>>(

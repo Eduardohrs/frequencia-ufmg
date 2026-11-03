@@ -1,3 +1,6 @@
+import 'fixtures/product_experience_fixture.dart' as experience;
+import 'package:frequencia_ufmg/features/navigation/product_navigation.dart';
+import 'helpers/calendar_controls.dart';
 import 'package:frequencia_ufmg/design/course_visuals.dart';
 import 'automatic_checkpoint_scheduler_test.dart' show Harness;
 import 'first_checkpoint_test.dart' as checkpoint_fixture;
@@ -35,6 +38,17 @@ import 'package:timezone/data/latest.dart' as tz_data;
 void main() {
   tz_data.initializeTimeZones();
   setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel(
+            'br.ufmg.frequencia.frequencia_ufmg/attendance_permissions',
+          ),
+          (_) async => {
+            ...readyPermissionSnapshot,
+            'battery_unrestricted': true,
+            'exact_alarms': true,
+          },
+        );
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -207,7 +221,7 @@ void main() {
       );
       final logger = _RecordingAppLogger();
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: repo,
@@ -282,7 +296,7 @@ void main() {
           ],
         });
         await tester.pumpWidget(
-          MaterialApp(
+          _NavigationApp(
             builder: (context, child) => AcademicSyncHost(child: child!),
             home: CoursePage(
               repository: _FakeCourseRepository(courses: [course]),
@@ -309,20 +323,24 @@ void main() {
         }
         await tester.pumpAndSettle();
         if (!fromHub) {
+          await openCalendarFilters(tester);
           await tester.tap(find.byKey(const Key('calendar-course-filter')));
           await tester.pumpAndSettle();
           await tester.tap(find.text('POO').last);
           await tester.pumpAndSettle();
+          await applyCalendarFilters(tester);
         }
+        await openCalendarFilters(tester);
         await tester.tap(find.byKey(const ValueKey('calendar-range-week')));
         await tester.pumpAndSettle();
         await tester.tap(find.text('Mês').last);
         await tester.pumpAndSettle();
+        await applyCalendarFilters(tester);
         await tester.tap(find.byTooltip('Próximo período'));
         await tester.pumpAndSettle();
         expect(find.text('Outubro 2026'), findsOneWidget);
         if (fromHub) {
-          await tester.tap(find.text('Lista'));
+          await calendarDisplay(tester, 'Lista');
           await tester.pumpAndSettle();
           await tester.tap(
             find.textContaining('Avaliação: Entrega da disciplina'),
@@ -343,12 +361,7 @@ void main() {
         expect(logger.events, contains('calendar_activities_open_succeeded'));
         if (fromHub) {
           expect(find.byKey(const Key('month-calendar-grid')), findsNothing);
-          await tester.tap(
-            find.descendant(
-              of: find.byKey(const Key('calendar-display')),
-              matching: find.text('Agenda'),
-            ),
-          );
+          await calendarDisplay(tester, 'Agenda');
           await tester.pumpAndSettle();
         }
         expect(find.text('Outubro 2026'), findsOneWidget);
@@ -362,7 +375,7 @@ void main() {
     (tester) async {
       final gateway = _UFMGGateway();
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: _FakeCourseRepository(),
@@ -379,7 +392,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('profile-menu')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Arquivos no dispositivo'));
+      await tester.ensureVisible(find.text('Arquivos no aparelho'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Arquivos no aparelho'));
       await tester.pumpAndSettle();
       expect(find.text('Arquivos no dispositivo'), findsOneWidget);
       expect(gateway.statusCalls, 0);
@@ -405,7 +420,7 @@ void main() {
           },
         );
         await tester.pumpWidget(
-          MaterialApp(
+          _NavigationApp(
             builder: (context, child) => AcademicSyncHost(child: child!),
             home: CoursePage(
               repository: _FakeCourseRepository(),
@@ -452,7 +467,7 @@ void main() {
       final catalog = Completer<PythonMoodleContentDiscovery>();
       final store = _HubLogStore();
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CourseHubPage(
             course: course,
@@ -514,7 +529,7 @@ void main() {
         updatedAt: now,
       );
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CourseHubPage(
             course: course,
@@ -564,7 +579,7 @@ void main() {
       for (final explicit in [true, false]) {
         final gateway = _WorkspaceGateway();
         await tester.pumpWidget(
-          MaterialApp(
+          _NavigationApp(
             builder: (context, child) => AcademicSyncHost(child: child!),
             key: UniqueKey(),
             home: CourseHubPage(
@@ -627,7 +642,7 @@ void main() {
       addTearDown(updates.dispose);
       final logger = _RecordingAppLogger();
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CourseHubPage(
             course: repository.courses.single,
@@ -672,7 +687,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Próximo período'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Lista'));
+      await calendarDisplay(tester, 'Lista');
       await tester.pumpAndSettle();
       expect(find.textContaining('Prova nova'), findsOneWidget);
       await tester.pageBack();
@@ -724,7 +739,7 @@ void main() {
       platform: 'web',
     );
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CourseHubPage(
           course: course,
@@ -785,7 +800,7 @@ void main() {
       addTearDown(updates.dispose);
       final logger = _RecordingAppLogger();
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CourseHubPage(
             course: course,
@@ -827,7 +842,7 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('course-hub-open-calendar')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Lista'));
+      await calendarDisplay(tester, 'Lista');
       await tester.pumpAndSettle();
       expect(find.text('POO • 27/09/2026'), findsOneWidget);
       expect(find.textContaining('22:00 • Prazo'), findsOneWidget);
@@ -881,7 +896,7 @@ void main() {
           ),
         ];
         await tester.pumpWidget(
-          MaterialApp(
+          _NavigationApp(
             builder: (context, child) => AcademicSyncHost(child: child!),
             home: CoursePage(
               repository: _FakeCourseRepository(),
@@ -921,7 +936,7 @@ void main() {
         );
         await tester.tap(find.byKey(const Key('course-hub-open-calendar')));
         await tester.pumpAndSettle();
-        await tester.tap(find.text('Lista'));
+        await calendarDisplay(tester, 'Lista');
         await tester.pumpAndSettle();
         expect(find.textContaining('Entrega Parte 2'), findsOneWidget);
         expect(find.textContaining('Prazo'), findsOneWidget);
@@ -950,7 +965,7 @@ void main() {
         );
         final logger = _RecordingAppLogger();
         await tester.pumpWidget(
-          MaterialApp(
+          _NavigationApp(
             builder: (context, child) => AcademicSyncHost(child: child!),
             home: CoursePage(
               repository: _FakeCourseRepository(),
@@ -965,11 +980,10 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        await tester.tap(find.byTooltip('Perfil e configurações'));
+        await tester.tap(find.byKey(const Key('profile-menu')));
         await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const Key('profile-permissions')));
-        await tester.pumpAndSettle();
-        expect(find.text('Acesso à localização pronto'), findsOneWidget);
+        expect(find.byKey(const Key('profile-permissions')), findsNothing);
+        expect(find.text('Ajustes'), findsWidgets);
         await tester.pageBack();
         await tester.pumpAndSettle();
         expect(find.text('Minhas disciplinas'), findsOneWidget);
@@ -1003,7 +1017,7 @@ void main() {
         final logger = _RecordingAppLogger()..failRecording = failure == 2;
         var signedOut = false;
         await tester.pumpWidget(
-          MaterialApp(
+          _NavigationApp(
             builder: (context, child) => AcademicSyncHost(child: child!),
             home: CoursePage(
               attendancePermissions: _PermissionGateway(),
@@ -1020,23 +1034,13 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        await tester.tap(find.byTooltip('Perfil e configurações'));
+        await tester.tap(find.byKey(const Key('profile-menu')));
         await tester.pumpAndSettle();
-        await tester.tap(find.text('Presença automática'));
+        expect(find.text('Histórico de capturas'), findsNothing);
+        await tester.ensureVisible(find.text('Sair da conta'));
+        await tester.tap(find.text('Sair da conta'));
         await tester.pumpAndSettle();
-        await tester.scrollUntilVisible(
-          find.text('Histórico de capturas'),
-          200,
-          scrollable: find.byType(Scrollable).first,
-        );
-        expect(find.text('Histórico de capturas'), findsOneWidget);
-        await tester.pageBack();
-        await tester.pumpAndSettle();
-        await tester.tap(find.byTooltip('Perfil e configurações'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Sair'));
-        await tester.pumpAndSettle();
-        expect(calls, containsAllInOrder(['read', 'deactivate']));
+        expect(calls, contains('deactivate'));
         expect(signedOut, isTrue);
         if (failure > 0) {
           expect(
@@ -1070,7 +1074,7 @@ void main() {
         ),
       );
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: courses,
@@ -1101,32 +1105,68 @@ void main() {
         'open_revision': 1,
       });
       await tester.pump();
-      expect(find.text('Presença automática'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.text('Ajustes'),
+        ),
+        findsNothing,
+      );
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
       courses.pending!.complete([]);
       courses.pending = null;
       await tester.pumpAndSettle();
-      expect(find.text('Presença automática'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.text('Ajustes'),
+        ),
+        findsNothing,
+      );
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pumpAndSettle();
-      expect(find.text('Presença automática'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.text('Ajustes'),
+        ),
+        findsOneWidget,
+      );
       updates.add({
         'action': 'open_checkpoints',
         'account_id': user.id,
         'open_revision': 2,
       });
       await tester.pumpAndSettle();
-      expect(find.text('Presença automática'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.text('Ajustes'),
+        ),
+        findsOneWidget,
+      );
       await tester.pageBack();
       await tester.pumpAndSettle();
-      expect(find.text('Presença automática'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.text('Ajustes'),
+        ),
+        findsNothing,
+      );
       updates.add({
         'action': 'open_checkpoints',
         'account_id': user.id,
         'open_revision': 2,
       });
       await tester.pumpAndSettle();
-      expect(find.text('Presença automática'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.text('Ajustes'),
+        ),
+        findsNothing,
+      );
       updates.add({
         'action': 'open_checkpoints',
         'account_id': user.id,
@@ -1186,7 +1226,7 @@ void main() {
       final courses = _FakeCourseRepository();
       final logger = _RecordingAppLogger();
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: courses,
@@ -1246,7 +1286,7 @@ void main() {
     gateway.progress.response.complete(syncResult());
     final schedule = _FakeUFMGSyncSchedule(due: true);
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
@@ -1291,7 +1331,7 @@ void main() {
       );
       final logger = _RecordingAppLogger();
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: _FakeCourseRepository(),
@@ -1362,7 +1402,7 @@ void main() {
           addTearDown(tester.view.resetDevicePixelRatio);
           final gateway = _ProgressUFMGGateway();
           await tester.pumpWidget(
-            MaterialApp(
+            _NavigationApp(
               builder: (context, child) => AcademicSyncHost(child: child!),
               home: CoursePage(
                 repository: _FakeCourseRepository(),
@@ -1471,7 +1511,7 @@ void main() {
       final gateway = _ProgressUFMGGateway();
       final logger = _RecordingAppLogger();
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: _FakeCourseRepository(),
@@ -1486,9 +1526,9 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Perfil e configurações'));
+      await tester.tap(find.byKey(const Key('profile-menu')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('profile-ufmg-account')));
+      await tester.tap(find.byKey(const Key('settings-academic-account')));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const Key('ufmg-force-refresh')));
       await tester.tap(find.byKey(const Key('ufmg-force-refresh')));
@@ -1561,7 +1601,7 @@ void main() {
       );
       final repository = _FakeCourseRepository(courses: [course]);
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: repository,
@@ -1682,7 +1722,7 @@ void main() {
     final logger = _RecordingAppLogger();
 
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
@@ -2043,7 +2083,7 @@ void main() {
     );
 
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
@@ -2085,7 +2125,7 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('course-hub-open-calendar')));
     await tester.pumpAndSettle();
-    expect(find.text('Sua agenda'), findsOneWidget);
+    expect(find.text('Agenda'), findsOneWidget);
     expect(find.text('POO'), findsWidgets);
     await tester.pageBack();
     await tester.pumpAndSettle();
@@ -2168,7 +2208,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('nav-general-calendar')));
     await tester.pumpAndSettle();
-    expect(find.text('Sua agenda'), findsOneWidget);
+    expect(find.text('Agenda'), findsOneWidget);
   });
 
   testWidgets('shows the compact pending action and segmented absence bar', (
@@ -2197,7 +2237,7 @@ void main() {
     final pending = _session('pending', DateTime.utc(2026, 9, 26, 22));
 
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
@@ -2264,7 +2304,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
@@ -2307,7 +2347,7 @@ void main() {
     final sessions = _FakeSessionRepository()
       ..listError = StateError('session offline');
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
@@ -2361,7 +2401,7 @@ void main() {
     );
 
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: courseRepository,
@@ -2395,7 +2435,7 @@ void main() {
     await tester.tap(find.byKey(const Key('nav-general-calendar')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Sua agenda'), findsOneWidget);
+    expect(find.text('Agenda'), findsOneWidget);
     expect(sessionRepository.listedCourseIds, isEmpty);
     await tester.pageBack();
     await tester.pumpAndSettle();
@@ -2467,7 +2507,7 @@ void main() {
         ),
     ];
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
@@ -2501,7 +2541,7 @@ void main() {
     expect(find.text('Ignorada'), findsNothing);
     await tester.tap(find.text('Ver calendário'));
     await tester.pumpAndSettle();
-    expect(find.text('Sua agenda'), findsOneWidget);
+    expect(find.text('Agenda'), findsOneWidget);
   });
 
   testWidgets('warns when disciplines come from the saved offline copy', (
@@ -2524,7 +2564,7 @@ void main() {
       ..listError = StateError('offline');
 
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
@@ -2594,7 +2634,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) =>
               CourseVisualHost(child: AcademicSyncHost(child: child!)),
           home: CoursePage(
@@ -2650,7 +2690,7 @@ void main() {
     );
 
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: courseRepository,
@@ -2691,7 +2731,7 @@ void main() {
       final logger = _RecordingAppLogger();
 
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: courseRepository,
@@ -2748,7 +2788,7 @@ void main() {
       ],
     });
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
@@ -2802,7 +2842,7 @@ void main() {
       ],
     });
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
@@ -2823,7 +2863,7 @@ void main() {
 
     final logger = _RecordingAppLogger();
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(courses: [course]),
@@ -2958,7 +2998,7 @@ void main() {
     var logoutCalls = 0;
 
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
@@ -2978,11 +3018,12 @@ void main() {
     await tester.tap(find.byKey(const Key('profile-menu')));
     await tester.pumpAndSettle();
     expect(find.text('eduardo@ufmg.br'), findsOneWidget);
-    await tester.tapAt(Offset.zero);
+    await tester.pageBack();
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Perfil e configurações'));
+    await tester.tap(find.byKey(const Key('profile-menu')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Sair'));
+    await tester.ensureVisible(find.text('Sair da conta'));
+    await tester.tap(find.text('Sair da conta'));
     await tester.pumpAndSettle();
     expect(logoutCalls, 1);
   });
@@ -2995,7 +3036,7 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
@@ -3058,7 +3099,7 @@ void main() {
     final repository = _FakeCourseRepository();
 
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
@@ -3144,7 +3185,7 @@ void main() {
   ) async {
     final repository = _FakeCourseRepository();
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
@@ -3159,11 +3200,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Perfil e configurações'));
+    await tester.tap(find.byKey(const Key('profile-menu')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('profile-ufmg-account')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('profile-ufmg-account')));
+    expect(find.byKey(const Key('settings-academic-account')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('settings-academic-account')));
     await tester.pumpAndSettle();
 
     expect(find.text('Conta acadêmica UFMG'), findsOneWidget);
@@ -3173,57 +3214,61 @@ void main() {
     expect(repository.listCalls, 2);
   });
 
-  testWidgets('returns synchronized academic sources to their app sections', (
-    tester,
-  ) async {
-    final gateway = _UFMGGateway(
-      status: const PythonUFMGSessionStatus(
-        connected: true,
-        reauthenticationRequired: false,
-      ),
+  for (final persistent in [false, true]) {
+    testWidgets(
+      'returns synchronized academic sources to their app sections persistent=$persistent',
+      (tester) async {
+        final Widget Function({Widget? home, TransitionBuilder? builder})
+        shell = persistent ? _NavigationApp.new : MaterialApp.new;
+        final gateway = _UFMGGateway(
+          status: const PythonUFMGSessionStatus(
+            connected: true,
+            reauthenticationRequired: false,
+          ),
+        );
+        await tester.pumpWidget(
+          shell(
+            builder: (context, child) => AcademicSyncHost(child: child!),
+            home: CoursePage(
+              repository: _FakeCourseRepository(),
+              meetingRepository: _FakeMeetingRepository(),
+              sessionRepository: _FakeSessionRepository(),
+              user: user,
+              logger: _RecordingAppLogger(),
+              onSignOut: () async {},
+              ufmgSessionGateway: gateway,
+              now: () => now,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        Future<void> openAccount() async {
+          await tester.tap(find.byKey(const Key('profile-menu')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const Key('settings-academic-account')));
+          await tester.pumpAndSettle();
+        }
+
+        await openAccount();
+        await tester.tap(find.byKey(const Key('ufmg-sync-siga')));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.byKey(const Key('ufmg-open-courses')));
+        await tester.tap(find.byKey(const Key('ufmg-open-courses')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('profile-menu')), findsOneWidget);
+        expect(find.text('Conta acadêmica UFMG'), findsNothing);
+
+        await openAccount();
+        await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.byKey(const Key('ufmg-open-calendar')));
+        await tester.tap(find.byKey(const Key('ufmg-open-calendar')));
+        await tester.pumpAndSettle();
+        expect(find.text('Agenda'), findsOneWidget);
+      },
     );
-    await tester.pumpWidget(
-      MaterialApp(
-        builder: (context, child) => AcademicSyncHost(child: child!),
-        home: CoursePage(
-          repository: _FakeCourseRepository(),
-          meetingRepository: _FakeMeetingRepository(),
-          sessionRepository: _FakeSessionRepository(),
-          user: user,
-          logger: _RecordingAppLogger(),
-          onSignOut: () async {},
-          ufmgSessionGateway: gateway,
-          now: () => now,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    Future<void> openAccount() async {
-      await tester.tap(find.byTooltip('Perfil e configurações'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('profile-ufmg-account')));
-      await tester.pumpAndSettle();
-    }
-
-    await openAccount();
-    await tester.tap(find.byKey(const Key('ufmg-sync-siga')));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const Key('ufmg-open-courses')));
-    await tester.tap(find.byKey(const Key('ufmg-open-courses')));
-    await tester.pumpAndSettle();
-    expect(find.byTooltip('Perfil e configurações'), findsOneWidget);
-    expect(find.text('Conta acadêmica UFMG'), findsNothing);
-
-    await openAccount();
-    await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const Key('ufmg-open-calendar')));
-    await tester.tap(find.byKey(const Key('ufmg-open-calendar')));
-    await tester.pumpAndSettle();
-    expect(find.text('Sua agenda'), findsOneWidget);
-  });
-
+  }
   testWidgets('uses a navigation rail when the available width is large', (
     tester,
   ) async {
@@ -3231,7 +3276,7 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
@@ -3268,7 +3313,7 @@ void main() {
     for (final width in [320.0, 768.0, 1024.0, 1440.0]) {
       await tester.binding.setSurfaceSize(Size(width, 900));
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(
               context,
@@ -3356,7 +3401,7 @@ void main() {
     );
     final syncSchedule = _FakeUFMGSyncSchedule(due: true);
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: repository,
@@ -3384,7 +3429,7 @@ void main() {
   ) async {
     final gateway = _UFMGGateway();
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
@@ -3415,7 +3460,7 @@ void main() {
       ),
     );
     await tester.pumpWidget(
-      MaterialApp(
+      _NavigationApp(
         builder: (context, child) => AcademicSyncHost(child: child!),
         home: CoursePage(
           repository: _FakeCourseRepository(),
@@ -3464,7 +3509,7 @@ void main() {
         syncError: failure.$1,
       );
       await tester.pumpWidget(
-        MaterialApp(
+        _NavigationApp(
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: _FakeCourseRepository(),
@@ -3489,6 +3534,176 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     }
   });
+
+  testWidgets(
+    'guided alarm permission invokes the existing native bridge then rechecks',
+    (tester) async {
+      final permissions = experience.ExperiencePermissions();
+      permissions.flags['exact_alarms'] = false;
+      final calls = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(FirstCheckpointGateway.channel, (
+            call,
+          ) async {
+            calls.add(call.method);
+            if (call.method == 'request_alarm_permission') {
+              permissions.flags['exact_alarms'] = true;
+            }
+            return [];
+          });
+      await tester.pumpWidget(
+        _NavigationApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
+          home: CoursePage(
+            user: user,
+            logger: _RecordingAppLogger(),
+            onSignOut: () async {},
+            repository: _FakeCourseRepository(),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            attendancePermissions: permissions,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('nav-settings')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.widgetWithText(TextButton, 'Concluir configuração'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+      expect(calls, contains('request_alarm_permission'));
+      expect(find.text('Tudo pronto'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+  for (final failure in [false, true]) {
+    testWidgets(
+      'result notification opens the owned lesson and reports navigation stage failure=$failure',
+      (tester) async {
+        final h = experience.ExperienceHarness();
+        addTearDown(h.dispose);
+        final course = experience.experienceCourse;
+        final session = experience.experienceSession();
+        h.reports = [
+          experience.experienceReceipt(session),
+          {
+            ...experience.experienceReceipt(session),
+            'moment': 'second',
+            'delivery_updated_at_ms':
+                experience.experienceNow.millisecondsSinceEpoch,
+          },
+        ];
+        final events = StreamController<Map<String, Object?>>.broadcast();
+        addTearDown(events.close);
+        final repo = _FakeSessionRepository({
+          course.id: [session],
+        });
+        final log = _RecordingAppLogger();
+        await tester.pumpWidget(
+          _NavigationApp(
+            builder: (context, child) => AcademicSyncHost(child: child!),
+            home: CoursePage(
+              user: const AuthUser(id: 'owner', email: 'x@ufmg.br'),
+              logger: log,
+              onSignOut: () async {},
+              repository: _FakeCourseRepository(courses: [course]),
+              meetingRepository: _FakeMeetingRepository(),
+              sessionRepository: repo,
+              attendanceExperience: h.controller,
+              checkpointDeliveryUpdates: events.stream,
+              now: () => experience.experienceNow,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        if (failure) repo.listError = StateError('sessions unavailable');
+        events.add({
+          'action': 'open_checkpoints',
+          'account_id': 'owner',
+          'open_revision': 1,
+        });
+        await tester.pumpAndSettle();
+        if (failure) {
+          expect(
+            log.errorContexts,
+            contains('checkpoint_notification_navigation'),
+          );
+          expect(find.text('Selecionada pelo alerta'), findsNothing);
+        } else {
+          expect(find.text('Selecionada pelo alerta'), findsOneWidget);
+          expect(find.textContaining('Início: no campus'), findsOneWidget);
+          expect(log.events, contains('checkpoint_result_opened'));
+          await tester.pageBack();
+          await tester.pumpAndSettle();
+        }
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+  testWidgets(
+    'permission completion and campus edits reconcile existing automation without technical screens',
+    (tester) async {
+      final h = experience.ExperienceHarness();
+      addTearDown(h.dispose);
+      h.permissions.flags['foreground_location'] = false;
+      final scheduler = Harness();
+      final course = experience.experienceCourse;
+      await tester.pumpWidget(
+        _NavigationApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
+          home: CoursePage(
+            user: const AuthUser(id: 'owner', email: 'x@ufmg.br'),
+            logger: h.logger,
+            onSignOut: () async {},
+            repository: _FakeCourseRepository(courses: [course]),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            overviewReadsEnabled: true,
+            overviewRepository: _FakeOverviewRepository(
+              AcademicOverviewSnapshot(
+                courses: [course],
+                sessionsByCourse: {course.id: []},
+              ),
+            ),
+            automaticCheckpointScheduler: scheduler.scheduler,
+            attendanceExperience: h.controller,
+            now: () => experience.experienceNow,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('attendance-setup-reminder')),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Concluir'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+      expect(find.text('Tudo pronto'), findsOneWidget);
+      await tester.tap(find.text('Concluir'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('attendance-setup-reminder')), findsNothing);
+      await tester.tap(find.byKey(const Key('nav-settings')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Local das aulas'));
+      await tester.tap(find.text('Local das aulas'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Campus Pampulha'));
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 Future<void> _selectCourseAction(
@@ -3519,7 +3734,7 @@ Widget _app(
   AuthUser user,
   DateTime now, {
   AppLogger? logger,
-}) => MaterialApp(
+}) => _NavigationApp(
   builder: (context, child) => AcademicSyncHost(child: child!),
   home: CoursePage(
     repository: repository,
@@ -4002,4 +4217,19 @@ final class _RecoveredUFMGGateway extends _ProgressUFMGGateway
     implements BackendResumableAcademicSyncGateway {
   @override
   Future<String?> pendingAcademicSyncId() async => 'old-saved-operation';
+}
+
+class _NavigationApp extends StatelessWidget {
+  const _NavigationApp({this.home, this.builder, super.key});
+  final Widget? home;
+  final TransitionBuilder? builder;
+  @override
+  Widget build(BuildContext context) => ProductNavigation(
+    builder: (n) => MaterialApp(
+      navigatorObservers: [n.observer],
+      builder: (context, child) =>
+          n.frame(context, builder?.call(context, child) ?? child!),
+      home: home,
+    ),
+  );
 }

@@ -1,3 +1,4 @@
+import 'helpers/calendar_controls.dart';
 import 'package:frequencia_ufmg/observability/firestore_app_logger.dart';
 import 'package:frequencia_ufmg/observability/operational_log_store.dart';
 import 'package:flutter/material.dart';
@@ -120,7 +121,7 @@ void main() {
             findsOneWidget,
           );
         }
-        expect(find.text('Sua agenda'), findsOneWidget);
+        expect(find.text('Agenda'), findsOneWidget);
       },
     );
   }
@@ -143,7 +144,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Esta data não está mais disponível.'), findsOneWidget);
-    expect(find.text('Sua agenda'), findsOneWidget);
+    expect(find.text('Agenda'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
   testWidgets(
@@ -194,7 +195,7 @@ void main() {
       );
       expect(find.text('POO · Sem chamada'), findsOneWidget);
       expect(find.text('MAT001'), findsNothing);
-      await tester.tap(find.text('Lista'));
+      await calendarDisplay(tester, 'Lista');
       await tester.pumpAndSettle();
       expect(find.textContaining('Sem chamada'), findsWidgets);
       expect(tester.takeException(), isNull);
@@ -261,7 +262,7 @@ void main() {
     await tester.tap(find.byTooltip('Período anterior'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Lista'));
+    await calendarDisplay(tester, 'Lista');
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('calendar-course-mark-poo')), findsWidgets);
     expect(find.text('DCC203 • 16/09/2026'), findsNWidgets(3));
@@ -280,10 +281,12 @@ void main() {
     );
     expect(find.text('12:00 – 13:40 • Reposição'), findsOneWidget);
 
+    await openCalendarFilters(tester);
     await tester.tap(find.byKey(const Key('calendar-course-filter')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('DCC203').last);
     await tester.pumpAndSettle();
+    await applyCalendarFilters(tester);
     await tester.drag(find.byType(ListView), const Offset(0, 600));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
@@ -318,7 +321,7 @@ void main() {
     repository.error = null;
     await tester.tap(find.text('Tentar novamente'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Lista'));
+    await calendarDisplay(tester, 'Lista');
     await tester.pumpAndSettle();
     expect(find.text('Nenhuma sessão encontrada'), findsOneWidget);
   });
@@ -347,15 +350,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('calendar-course-filter')),
-      200,
-    );
+    await openCalendarFilters(tester);
     expect(find.byKey(const Key('calendar-course-filter')), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('month-calendar-grid')),
-      200,
-    );
+    await tester.tap(find.byTooltip('Fechar filtros'));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('month-calendar-grid')), findsOneWidget);
     await Scrollable.ensureVisible(
       tester.element(find.byTooltip('Período anterior')),

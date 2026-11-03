@@ -1,3 +1,4 @@
+import 'helpers/calendar_controls.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -67,11 +68,13 @@ void main() {
       expect(find.text('POO'), findsOneWidget);
       expect(find.textContaining('Sem aulas ou prazos'), findsWidgets);
       for (final label in ['Avaliações', 'Entregas e prazos', 'Aulas']) {
+        await openCalendarFilters(tester);
         final current = find.byKey(const Key('calendar-type-filter'));
         await tester.tap(current);
         await tester.pumpAndSettle();
         await tester.tap(find.text(label).last);
         await tester.pumpAndSettle();
+        await applyCalendarFilters(tester);
         expect(find.textContaining('Sem aulas ou prazos'), findsNothing);
         expect(
           find.textContaining('Nenhum item para este filtro'),
@@ -82,12 +85,64 @@ void main() {
           label == 'Aulas' ? findsOneWidget : findsNothing,
         );
       }
+      await openCalendarFilters(tester);
       await tester.tap(find.byKey(const Key('calendar-type-filter')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Todos').last);
       await tester.pumpAndSettle();
+      await applyCalendarFilters(tester);
       expect(find.text('POO'), findsOneWidget);
       expect(find.textContaining('Sem aulas ou prazos'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'filters are compact, cancellable and clear without losing the period',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final state = CalendarNavigationState();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GeneralCalendarPage(
+            courses: [course],
+            repository: _Sessions([entry('Nesta semana', 16)]),
+            location: location,
+            now: () => now,
+            navigationState: state,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('calendar-course-filter')), findsNothing);
+      expect(
+        tester.getTopLeft(find.byKey(const Key('calendar-content'))).dy,
+        lessThan(180),
+      );
+      await openCalendarFilters(tester);
+      await tester.tap(find.byKey(const Key('calendar-course-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('POO').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Fechar filtros'));
+      await tester.pumpAndSettle();
+      expect(state.courseId, isNull);
+      await openCalendarFilters(tester);
+      await tester.tap(find.byKey(const Key('calendar-course-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('POO').last);
+      await tester.pumpAndSettle();
+      await applyCalendarFilters(tester);
+      expect(state.courseId, 'poo');
+      await tester.tap(find.byTooltip('Limpar filtros ativos'));
+      await tester.pumpAndSettle();
+      expect(state.courseId, isNull);
+      await openCalendarFilters(tester);
+      await tester.tap(find.text('Limpar filtros'));
+      await applyCalendarFilters(tester);
+      expect(state.range, CalendarRange.week);
       expect(tester.takeException(), isNull);
     },
   );
@@ -130,7 +185,7 @@ void main() {
           find.textContaining('Avaliação: Na próxima'),
           width < 900 ? findsNothing : findsOneWidget,
         );
-        await tester.tap(find.text('Lista'));
+        await calendarDisplay(tester, 'Lista');
         await tester.pumpAndSettle();
         expect(find.textContaining('Avaliação: Antiga'), findsNothing);
         await tester.tap(find.byTooltip('Próximo período'));
@@ -162,7 +217,7 @@ void main() {
       await tester.pumpAndSettle();
       await chooseRange(tester, 'week', 'Mês');
       expect(find.byKey(const Key('month-calendar-grid')), findsOneWidget);
-      await tester.tap(find.text('Lista'));
+      await calendarDisplay(tester, 'Lista');
       await tester.pumpAndSettle();
       expect(find.textContaining('Avaliação: Antiga'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
@@ -261,11 +316,12 @@ void main() {
         await tester.pumpWidget(app());
         await tester.pumpAndSettle();
         await chooseRange(tester, 'week', 'Mês');
-        await tester.tap(find.text('Lista'));
+        await calendarDisplay(tester, 'Lista');
         await tester.pumpAndSettle();
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pumpWidget(app());
         await tester.pumpAndSettle();
+        await openCalendarFilters(tester);
         if (fails) {
           expect(
             find.byKey(const ValueKey('calendar-range-week')),
@@ -337,6 +393,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await openCalendarFilters(tester);
       expect(find.byKey(const ValueKey('calendar-range-week')), findsOneWidget);
       expect(
         store.items.any((e) => e['operation'] == 'calendar_preference_read'),
@@ -374,6 +431,7 @@ void main() {
         prefs.read.complete('fortnight/list');
         await tester.pumpAndSettle();
         if (!dispose) {
+          await openCalendarFilters(tester);
           expect(
             find.byKey(const ValueKey('calendar-range-month')),
             findsOneWidget,
@@ -390,11 +448,14 @@ Future<void> chooseRange(
   String current,
   String choice,
 ) async {
+  await openCalendarFilters(tester);
   await tester.ensureVisible(find.byKey(ValueKey('calendar-range-$current')));
+  await openCalendarFilters(tester);
   await tester.tap(find.byKey(ValueKey('calendar-range-$current')));
   await tester.pumpAndSettle();
   await tester.tap(find.text(choice).last);
   await tester.pumpAndSettle();
+  await applyCalendarFilters(tester);
 }
 
 class _Sessions implements SessionRepository {

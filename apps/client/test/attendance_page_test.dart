@@ -41,7 +41,9 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+        await tester.tap(
+          find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
+        );
         await tester.pumpAndSettle();
         final context = tester
             .widget<Text>(find.byKey(const Key('attendance-dialog-context')))
@@ -77,7 +79,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.byTooltip('Registrar frequência de 01/08/2026'),
+      find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
       findsOneWidget,
     );
     expect(find.text('Não foi possível carregar as aulas.'), findsNothing);
@@ -104,7 +106,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Cancelada/feriado • sem frequência'), findsNWidgets(2));
 
-    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.tap(
+      find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('attendance-status')));
     await tester.pumpAndSettle();
@@ -130,11 +134,13 @@ void main() {
       ]),
     );
 
-    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.tap(
+      find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('attendance-status')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Pendente').last);
+    await tester.tap(find.text('A confirmar').last);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
     await tester.pumpAndSettle();
@@ -143,7 +149,7 @@ void main() {
       SituacaoFrequencia.pending,
     );
     expect(repository.byId('regular').absences, isNull);
-    expect(find.text('Pendente • faltas pendentes'), findsOneWidget);
+    expect(find.text('A confirmar • faltas pendentes'), findsOneWidget);
   });
 
   testWidgets('registers attendance for a session from a previous month', (
@@ -156,7 +162,9 @@ void main() {
 
     await tester.pumpWidget(_app(repository, _Logger(), location, september));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Registrar frequência de 03/08/2026'));
+    await tester.tap(
+      find.byTooltip(RegExp('(Registrar|Editar) frequência de 03/08/2026')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
     await tester.pumpAndSettle();
@@ -202,9 +210,8 @@ void main() {
     expect(find.textContaining('2 pendências'), findsOneWidget);
     expect(find.text('Pendências anteriores'), findsOneWidget);
     expect(find.text('Hoje'), findsOneWidget);
-    expect(find.text('Próximas aulas'), findsOneWidget);
     expect(find.text('Selecionada pelo alerta'), findsOneWidget);
-    expect(find.text('Pendente de registro'), findsNWidgets(2));
+    expect(find.text('Falta informar'), findsNWidgets(2));
     expect(
       tester
           .getTopLeft(
@@ -251,7 +258,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Selecionada pelo alerta'), findsOneWidget);
-    expect(find.text('Pendente de registro'), findsOneWidget);
+    expect(find.text('Falta informar'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -270,7 +277,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.tap(
+      find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('attendance-status')));
     await tester.pumpAndSettle();
@@ -302,7 +311,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.tap(
+      find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
     await tester.pumpAndSettle();
@@ -313,7 +324,9 @@ void main() {
     expect(repository.byId('python').attendanceStatus, isNull);
     expect(find.text('Presente • 0 faltas'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.tap(
+      find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('attendance-status')));
     await tester.pumpAndSettle();
@@ -350,7 +363,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.tap(
+      find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
     await tester.pumpAndSettle();
@@ -395,7 +410,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+      await tester.tap(
+        find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
       await tester.pumpAndSettle();
@@ -436,7 +453,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.tap(
+      find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
     await tester.pumpAndSettle();
@@ -467,7 +486,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.tap(
+      find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
     await tester.pumpAndSettle();
@@ -492,7 +513,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.tap(
+      find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
     await tester.pumpAndSettle();
@@ -515,7 +538,9 @@ void main() {
     ]);
     await tester.pumpWidget(_app(repository, _Logger(), location, now));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+    await tester.tap(
+      find.byTooltip(RegExp('(Registrar|Editar) frequência de 01/08/2026')),
+    );
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('attendance-absences')), '3');
     await tester.tap(find.widgetWithText(FilledButton, 'Salvar'));
