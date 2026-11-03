@@ -11,6 +11,24 @@ class FirstCheckpointPolicyTest {
         .put("starts_at_ms", now).put("ends_at_ms", now + 6000000)
         .put("rectangles", JSONArray().put(JSONObject().put("south", -20.0).put("north", -19.0)
             .put("west", -44.0).put("east", -43.0)))
+    @Test fun automaticCleanupRetainsUnreadReviewAndManualEvidence() {
+        val r = report().put("schedule_origin", "automatic").put("status", "succeeded")
+            .put("operation_id", "op").put("delivery_enabled", true).put("delivery_status", "applied")
+            .put("delivery_attendance_status", "ausente")
+        val ended = now + 99999999L
+        assertFalse(FirstCheckpointPolicy.canClearAutomatic(r, listOf(r), ended, emptySet()))
+        assertTrue(FirstCheckpointPolicy.canClearAutomatic(r, listOf(r), ended, setOf("op")))
+        assertFalse(FirstCheckpointPolicy.canClearAutomatic(JSONObject(r.toString()).put("schedule_origin", "manual"), listOf(r), ended, setOf("op")))
+    }
+    @Test fun onlyUnstartedAutomaticWorkCanBeRemoved() {
+        val automatic = report().put("schedule_origin", "automatic").put("status", "scheduled")
+        assertTrue(FirstCheckpointPolicy.canUnscheduleAutomatic(automatic))
+        assertFalse(FirstCheckpointPolicy.canUnscheduleAutomatic(JSONObject(automatic.toString()).put("alarm_received_at_ms", now)))
+        for (status in listOf("running", "succeeded", "cancelled", "failed")) {
+            assertFalse(FirstCheckpointPolicy.canUnscheduleAutomatic(JSONObject(automatic.toString()).put("status", status)))
+        }
+        assertFalse(FirstCheckpointPolicy.canUnscheduleAutomatic(report().put("status", "scheduled")))
+    }
     @Test fun scheduleUsesStartPlusTwentyMinutes() {
         val r = report(); FirstCheckpointPolicy.validate(r, now)
         assertEquals(now + 1200000, r.getLong("checkpoint_expected_at_ms"))

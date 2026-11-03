@@ -35,13 +35,31 @@ class FirstCheckpointBridge(private val context: Context) {
                     CheckpointNotifications.refresh(context)
                     result.success(reports(account))
                 }
-                "clear_completed" -> {
+                "clear_completed", "clear_automatic_completed" -> {
                     val stores = prefs.getStringSet("stores", emptySet())!!.toMutableSet()
                     val current = stores.associateWith { reconcile(it) }
-                    val ended = stores.filter { FirstCheckpointPolicy.canClear(current.getValue(it), current.values.toList(), System.currentTimeMillis()) }
+                    val ended = stores.filter {
+                        if (method == "clear_completed") FirstCheckpointPolicy.canClear(current.getValue(it), current.values.toList(), System.currentTimeMillis())
+                        else FirstCheckpointPolicy.canClearAutomatic(current.getValue(it), current.values.toList(), System.currentTimeMillis(), CheckpointNotifications.reviewed(context))
+                    }
                     ended.forEach { key -> stores.remove(key); context.getSharedPreferences(key, 0).edit().clear().commit() }
                     check(prefs.edit().putStringSet("stores", stores).commit())
                     CheckpointNotifications.refresh(context)
+                    result.success(reports(account))
+                }
+                "unschedule_automatic" -> {
+                    val id = args["operation_id"] as? String ?: error("operation_required")
+                    val stores = prefs.getStringSet("stores", emptySet())!!.toMutableSet()
+                    val key = stores.firstOrNull { load(it).optString("operation_id") == id }
+                        ?: error("checkpoint_not_found")
+                    val report = load(key)
+                    require(FirstCheckpointPolicy.canUnscheduleAutomatic(report)) { "checkpoint_not_removable" }
+                    alarms.cancel(key); work.cancelUniqueWork(key)
+                    stores.remove(key)
+                    check(prefs.edit().putStringSet("stores", stores).commit())
+                    check(context.getSharedPreferences(key, 0).edit().clear().commit())
+                    BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(report)
+                        .put("status", "unscheduled").put("stage", "automatic_schedule_reconciliation"))
                     result.success(reports(account))
                 }
                 "cancel" -> {

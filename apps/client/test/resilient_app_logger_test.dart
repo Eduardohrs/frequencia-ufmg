@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -6,6 +7,69 @@ import 'package:frequencia_ufmg/observability/app_logger.dart';
 import 'package:frequencia_ufmg/observability/resilient_app_logger.dart';
 
 void main() {
+  test(
+    'late server acknowledgement is correlated and not reported as failure',
+    () async {
+      final delegate = _ControllableLogger();
+      final messages = <String>[];
+      final logger = ResilientAppLogger(
+        delegate,
+        deliveryTimeout: Duration.zero,
+        transport: 'firestore_operational_logs',
+        failureSink: messages.add,
+      );
+      await logger.logEvent(
+        'automatic_checkpoint_reconcile_finished',
+        parameters: {'operation_id': 'pair-1'},
+      );
+      await Future<void>.delayed(Duration.zero);
+      delegate.eventDelivery.complete();
+      await Future<void>.delayed(Duration.zero);
+      final records = messages.map((m) => jsonDecode(m) as Map).toList();
+      expect(records.map((m) => m['event']), [
+        'observability_delivery_pending',
+        'observability_delivery_late_succeeded',
+      ]);
+      expect(records.every((m) => m['operation_id'] == 'pair-1'), isTrue);
+      expect(records.last['elapsed_ms'], isA<int>());
+    },
+  );
+  test(
+    'a real rejection after the deadline is still reported as failure',
+    () async {
+      final delegate = _ControllableLogger();
+      final messages = <String>[];
+      final logger = ResilientAppLogger(
+        delegate,
+        deliveryTimeout: Duration.zero,
+        failureSink: messages.add,
+      );
+      await logger.logEvent('saved');
+      await Future<void>.delayed(Duration.zero);
+      delegate.eventDelivery.completeError(
+        PlatformException(code: 'permission-denied', message: 'write rejected'),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        (jsonDecode(messages.last) as Map)['event'],
+        'observability_delivery_failed',
+      );
+    },
+  );
+  test('fast acknowledgement cancels the pending notice', () async {
+    final delegate = _ControllableLogger();
+    final messages = <String>[];
+    final logger = ResilientAppLogger(
+      delegate,
+      deliveryTimeout: Duration.zero,
+      failureSink: messages.add,
+    );
+    delegate.eventDelivery.complete();
+    await logger.logEvent('saved');
+    await Future<void>.delayed(Duration.zero);
+    expect(messages, isEmpty);
+  });
+
   test('returns immediately while event delivery is pending', () async {
     final delegate = _ControllableLogger();
     final logger = ResilientAppLogger(delegate);
@@ -40,26 +104,32 @@ void main() {
     },
   );
 
-  test('reports a timeout when logging never completes', () async {
-    final messages = <String>[];
-    final logger = ResilientAppLogger(
-      _ControllableLogger(),
-      deliveryTimeout: Duration.zero,
-      failureSink: messages.add,
-    );
+  test(
+    'reports pending acknowledgement when logging exceeds the deadline',
+    () async {
+      final messages = <String>[];
+      final logger = ResilientAppLogger(
+        _ControllableLogger(),
+        deliveryTimeout: Duration.zero,
+        failureSink: messages.add,
+      );
 
-    await logger.recordError(
-      StateError('business failure'),
-      StackTrace.current,
-      context: 'course_save',
-    );
-    await Future<void>.delayed(Duration.zero);
+      await logger.recordError(
+        StateError('business failure'),
+        StackTrace.current,
+        context: 'course_save',
+        parameters: {'operation_id': 'failed-write-1'},
+      );
+      await Future<void>.delayed(Duration.zero);
 
-    final failure = jsonDecode(messages.single) as Map<String, dynamic>;
-    expect(failure['log_kind'], 'error');
-    expect(failure['target'], 'course_save');
-    expect(failure['error_type'], 'TimeoutException');
-  });
+      final failure = jsonDecode(messages.single) as Map<String, dynamic>;
+      expect(failure['log_kind'], 'error');
+      expect(failure['target'], 'course_save');
+      expect(failure['event'], 'observability_delivery_pending');
+      expect(failure['delivery_status'], 'awaiting_transport_ack');
+      expect(failure['operation_id'], 'failed-write-1');
+    },
+  );
 
   test('identifies which transport timed out', () async {
     final messages = <String>[];

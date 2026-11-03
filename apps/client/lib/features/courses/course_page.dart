@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../../data/automatic_checkpoint_scheduler.dart';
 import '../ufmg/academic_sync_host.dart';
 import '../../data/first_checkpoint.dart';
 import '../../data/campus_location.dart';
@@ -72,6 +73,7 @@ class CoursePage extends StatefulWidget {
     this.androidOfflineQueueEnabled = false,
     this.checkpointDeliveryUpdates,
     this.attendancePermissions,
+    this.automaticCheckpointScheduler,
     CourseIdGenerator? idGenerator,
     CurrentTime? now,
     super.key,
@@ -101,6 +103,7 @@ class CoursePage extends StatefulWidget {
   final bool androidOfflineQueueEnabled;
   final Stream<Map<String, Object?>>? checkpointDeliveryUpdates;
   final AttendancePermissionsGateway? attendancePermissions;
+  final AutomaticCheckpointScheduler? automaticCheckpointScheduler;
   final CourseIdGenerator idGenerator;
   final CurrentTime now;
 
@@ -115,6 +118,17 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   bool _noticePending = false, _checkpointOpen = false;
   int _noticeRevision = 0;
   bool _deliveryActive = true;
+  bool _checkpointSchedulingAllowed = true;
+  AutomaticCheckpointScheduler? _automaticCheckpoints;
+
+  void _reconcileCheckpoints(
+    AcademicOverviewSnapshot snapshot,
+    String trigger,
+  ) {
+    final scheduler = _automaticCheckpoints;
+    if (scheduler == null || !_checkpointSchedulingAllowed || !mounted) return;
+    unawaited(scheduler.reconcile(snapshot, trigger: trigger));
+  }
 
   void _onDeliveryUpdate(Map<String, Object?> event) {
     if (event['account_id'] == widget.user.id &&
@@ -188,6 +202,16 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _deliveryActive = state == AppLifecycleState.resumed;
+    if (_deliveryActive && _usingOverviewSnapshot) {
+      _reconcileCheckpoints(
+        AcademicOverviewSnapshot(
+          courses: _courses,
+          sessionsByCourse: _sessionsByCourse,
+          isLocalCopy: _usingLocalCopy,
+        ),
+        'app_resumed',
+      );
+    }
     _refreshDeliveryIfNeeded();
   }
 
@@ -217,6 +241,26 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _automaticCheckpoints = widget.automaticCheckpointScheduler;
+    if (_automaticCheckpoints == null &&
+        !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android) {
+      final gateway = FirstCheckpointGateway(
+        logReports: false,
+        accountId: widget.user.id,
+        logger: widget.logger,
+      );
+      _automaticCheckpoints = AutomaticCheckpointScheduler(
+        permissions:
+            widget.attendancePermissions ??
+            const AndroidAttendancePermissions(),
+        selection: LocalCampusSelection(),
+        logger: widget.logger,
+        now: widget.now,
+        isActive: () => mounted && _checkpointSchedulingAllowed,
+        perform: (action, fields) => gateway.perform(action, fields),
+      );
+    }
     WidgetsBinding.instance.addObserver(this);
     _deliveryActive =
         (WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed) ==
@@ -285,6 +329,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _checkpointSchedulingAllowed = false;
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_deliverySubscription?.cancel());
     final controller = _academicSync;
@@ -369,6 +414,9 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         unavailableDateCourses: _unavailableDateCourses,
         isLocalCopy: _usingLocalCopy,
       );
+      if (snapshot != null) {
+        _reconcileCheckpoints(_overviewUpdates.value!, 'overview_loaded');
+      }
       recordAgendaPresentation(
         logger: widget.logger,
         screen: 'home',
@@ -582,6 +630,14 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       _datesByCourse = snapshot.datesByCourse;
       _unavailableDateCourses = snapshot.unavailableDateCourses;
     });
+    _reconcileCheckpoints(
+      AcademicOverviewSnapshot(
+        courses: courses,
+        sessionsByCourse: sessionsByCourse,
+        isLocalCopy: true,
+      ),
+      'cached_overview',
+    );
     _setPastPending(courses, [
       for (final course in courses)
         sessionsByCourse[course.id] ?? const <SessionRecord>[],
@@ -604,6 +660,19 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         for (final course in courses)
           widget.sessionRepository.listSessions(course.id),
       ]);
+      if (mounted) {
+        _reconcileCheckpoints(
+          AcademicOverviewSnapshot(
+            courses: courses,
+            sessionsByCourse: {
+              for (var i = 0; i < courses.length; i++) courses[i].id: loaded[i],
+            },
+            // Separate reads are not an authoritative atomic overview.
+            isLocalCopy: true,
+          ),
+          'session_catalog_loaded',
+        );
+      }
       _setPastPending(courses, loaded, today: today, location: location);
     } catch (error, stackTrace) {
       unawaited(
@@ -862,6 +931,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       case _ProfileAction.firstCheckpoint:
         await _openCheckpointPage();
       case _ProfileAction.signOut:
+        _checkpointSchedulingAllowed = false;
         if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
           try {
             await FirstCheckpointGateway.deactivate();
