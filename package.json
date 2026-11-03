@@ -3,15 +3,15 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=24.12.0"
   },
   "scripts": {
     "test:firestore": "firebase emulators:exec --project demo-frequencia-ufmg --only auth,firestore \"node --test tests/firestore.rules.test.mjs && cd appwrite-python && uv run pytest -o addopts= tests/test_firestore_rest_emulator.py\""
   },
   "devDependencies": {
-    "@firebase/rules-unit-testing": "5.0.2",
-    "firebase": "12.19.0",
-    "firebase-tools": "15.33.0",
+    "@firebase/rules-unit-testing": "6.0.0",
+    "firebase": "13.1.0",
+    "firebase-tools": "15.34.2",
     "picomatch": "4.0.7"
   },
   "overrides": {
