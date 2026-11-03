@@ -1,3 +1,4 @@
+import '../../design/course_visuals.dart';
 import '../../data/material_scope_cache.dart';
 import '../../observability/operation_diagnostics.dart';
 import 'dart:async';
@@ -1666,7 +1667,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               '${sync.dates.updated} ${_plural(sync.dates.updated, 'data atualizada', 'datas atualizadas')}. '
               '${sync.dates.unchanged} sem alteração. '
               '${sync.dates.unmatched} ${_plural(sync.dates.unmatched, 'data não pôde ser ligada a uma disciplina', 'datas não puderam ser ligadas a uma disciplina')}. '
-              '${sync.candidateTotal} ${_plural(sync.candidateTotal, 'material candidato encontrado', 'materiais candidatos encontrados')}.'
+              '${sync.candidateTotal} ${_plural(sync.candidateTotal, 'item encontrado', 'itens encontrados')}.'
               '$capabilitySummary ${sync.activitySnapshots?.message ?? ''}';
         });
       }
@@ -1787,8 +1788,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     children: [
       const AppPageIntro(
         title: 'Seus materiais',
-        subtitle:
-            'Organizados por disciplina. Os downloads vêm direto da UFMG.',
+        subtitle: 'Escolha a disciplina e abra ou baixe seus materiais.',
       ),
       Wrap(
         spacing: 12,
@@ -1906,8 +1906,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       ),
       const SizedBox(height: 16),
       const Text(
-        'Download direto da UFMG, '
-        'sem armazenar arquivos no nosso servidor.',
+        'Abra páginas no Moodle ou baixe os arquivos desta disciplina.',
       ),
       TextButton(
         onPressed: _openMaterialLibrary,
@@ -1968,7 +1967,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           ),
         ),
       ] else
-        ..._materialSections(includeHeading: false),
+        ..._materialSections(),
     ],
   );
 
@@ -2082,19 +2081,16 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     ),
   );
 
-  List<Widget> _materialSections({bool includeHeading = true}) => [
-    if (includeHeading) ...[
-      const SizedBox(height: 24),
-      Text(
-        'Materiais do Moodle',
-        style: Theme.of(context).textTheme.titleLarge,
-      ),
-      const SizedBox(height: 8),
-      const Text(
-        'Arquivos são baixados diretamente da UFMG sem ocupar espaço no '
-        'nosso servidor. Páginas interativas continuam abrindo no Moodle.',
-      ),
-    ],
+  String _catalogName(PythonMoodleCourseContent course) {
+    final local = CourseVisualHost.of(
+      context,
+    )?.course(id: course.courseId, code: course.courseCode, term: course.term);
+    return local?.displayName ??
+        (widget.isMaterialScope ? widget.materialCourseName : null) ??
+        'Disciplina ${course.courseCode}';
+  }
+
+  List<Widget> _materialSections() => [
     const SizedBox(height: 8),
     if (_materialFileCache.isAvailable &&
         _downloadableMaterials(_contentDiscovery!.courses).isNotEmpty)
@@ -2156,8 +2152,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             code: course.courseCode,
             size: 40,
           ),
-          title: Text(course.courseCode),
-          subtitle: Text(_contentStatus(course)),
+          title: Text(_catalogName(course)),
+          subtitle: Text('${course.courseCode} • ${_contentStatus(course)}'),
           children: [
             if (_materialFileCache.isAvailable &&
                 _downloadableMaterials([course]).isNotEmpty)
@@ -2652,9 +2648,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     PythonMoodleCourseContent course,
   ) => switch (course.status) {
     PythonMoodleContentStatus.found =>
-      '${course.candidates.length} ${_plural(course.candidates.length, 'material candidato', 'materiais candidatos')}',
-    PythonMoodleContentStatus.empty =>
-      'Nenhuma publicação candidata encontrada',
+      '${course.candidates.length} ${_plural(course.candidates.length, 'material', 'materiais')}',
+    PythonMoodleContentStatus.empty => 'Nenhum material encontrado',
     PythonMoodleContentStatus.unmatched =>
       'Disciplina não localizada no Moodle',
     PythonMoodleContentStatus.ambiguous =>

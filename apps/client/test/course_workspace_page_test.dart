@@ -39,6 +39,79 @@ PythonMoodleDate date(String id, String title) => PythonMoodleDate(
 
 void main() {
   tz.initializeTimeZones();
+  for (final hasDue in [false, true]) {
+    testWidgets(
+      'activity summary exposes saved submission and known deadline without opening Moodle ($hasDue)',
+      (tester) async {
+        final gateway = _Gateway()
+          ..detail = PythonMoodleActivityDetail(
+            activity: activity,
+            description: 'Enunciado salvo',
+            datesText: hasDue ? 'Vencimento: 05/11/2026 23:59' : '',
+            hasDueDate: hasDue,
+            submissionState: 'submitted',
+            submissionText: hasDue ? 'Enviado para avaliação' : '',
+            files: [],
+            attachmentCount: 0,
+            term: '2026-2',
+          );
+        await tester.pumpWidget(_app(gateway, _Logs()));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(
+            hasDue ? 'Envio: Enviado para avaliação' : 'Envio: não informado',
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.text('Vencimento: 05/11/2026 23:59'),
+          hasDue ? findsOneWidget : findsNothing,
+        );
+        expect(find.textContaining('Atualizado:'), findsOneWidget);
+        expect(gateway.detailCalls, 0);
+      },
+    );
+  }
+  testWidgets(
+    'first failed sync does not promise a cache and a valid empty snapshot remains valid',
+    (tester) async {
+      SharedPreferencesAsyncPlatform.instance =
+          InMemorySharedPreferencesAsync.empty();
+      final logs = _Logs();
+      final gateway = _Gateway()..readError = StateError('offline');
+      await tester.pumpWidget(_app(gateway, logs, userId: 'new-user'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'Não foi possível carregar. Ainda não há dados salvos desta seção.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('última cópia salva'), findsNothing);
+      gateway.readError = null;
+      gateway.activities = [];
+      await tester.tap(find.text('Tentar novamente'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Nenhuma atividade disponível nesta disciplina.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Não foi possível'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      gateway.readError = StateError('offline again');
+      await tester.pumpWidget(_app(gateway, logs, userId: 'new-user'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Não foi possível atualizar. Exibindo a última cópia salva.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Nenhuma atividade disponível nesta disciplina.'),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('plan cache failure is logged without blocking server plan', (
     tester,
   ) async {
@@ -198,7 +271,7 @@ void main() {
       await tester.pumpWidget(_app(offline, logs, userId: 'different'));
       await tester.pumpAndSettle();
       expect(find.text('Protótipo'), findsNothing);
-      expect(find.textContaining('Não foi possível atualizar'), findsOneWidget);
+      expect(find.textContaining('Não foi possível carregar'), findsOneWidget);
     },
   );
   testWidgets(
@@ -390,7 +463,7 @@ void main() {
       final store = _Logs();
       await tester.pumpWidget(_app(gateway, store));
       await tester.pumpAndSettle();
-      expect(find.textContaining('Não foi possível atualizar'), findsOneWidget);
+      expect(find.textContaining('Não foi possível carregar'), findsOneWidget);
       gateway.readError = null;
       await tester.tap(find.text('Tentar novamente'));
       await tester.pumpAndSettle();

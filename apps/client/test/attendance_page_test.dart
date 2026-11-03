@@ -15,6 +15,56 @@ void main() {
   final location = tz.getLocation('America/Sao_Paulo');
   final now = DateTime.utc(2026, 8, 1, 12);
 
+  for (final editing in [false, true]) {
+    testWidgets(
+      'attendance confirmation identifies the course and full time window ($editing)',
+      (tester) async {
+        final repository = _FakeRepository([
+          _session(
+            'target',
+            now,
+            attendanceStatus: editing ? SituacaoFrequencia.present : null,
+            absences: editing ? 0 : null,
+          ),
+        ]);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: AttendancePage(
+              courseId: 'poo',
+              courseCode: 'DCC203',
+              courseName: 'POO prática',
+              repository: repository,
+              logger: _Logger(),
+              location: location,
+              now: () => now,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Registrar frequência de 01/08/2026'));
+        await tester.pumpAndSettle();
+        final context = tester
+            .widget<Text>(find.byKey(const Key('attendance-dialog-context')))
+            .data!;
+        expect(context, contains('POO prática'));
+        expect(context, contains('01/08/2026'));
+        expect(context, contains('09:00'));
+        expect(context, contains('10:40'));
+        expect(
+          find.text(editing ? 'Editar frequência' : 'Registrar frequência'),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const Key('attendance-absences')),
+          editing ? findsOneWidget : findsNothing,
+        );
+        await tester.tap(find.text('Cancelar'));
+        await tester.pumpAndSettle();
+        expect(repository.saveCalls, isEmpty);
+      },
+    );
+  }
+
   testWidgets('uses saved sessions when the direct repository is offline', (
     tester,
   ) async {

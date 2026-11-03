@@ -1,3 +1,4 @@
+import 'package:frequencia_ufmg/design/course_visuals.dart';
 import 'automatic_checkpoint_scheduler_test.dart' show Harness;
 import 'first_checkpoint_test.dart' as checkpoint_fixture;
 import 'package:frequencia_ufmg/features/ufmg/academic_sync_host.dart';
@@ -72,7 +73,9 @@ void main() {
             ),
           ],
         );
-        await tester.pumpWidget(_app(repo, user, now, logger: logger));
+        await tester.pumpWidget(
+          CourseVisualHost(child: _app(repo, user, now, logger: logger)),
+        );
         await tester.pumpAndSettle();
         await _selectCourseAction(tester, 'DCC203', 'Editar');
         await tester.ensureVisible(find.byKey(const Key('course-nickname')));
@@ -311,7 +314,11 @@ void main() {
           await tester.tap(find.text('POO').last);
           await tester.pumpAndSettle();
         }
-        await tester.tap(find.text('Próximo'));
+        await tester.tap(find.byKey(const ValueKey('calendar-range-week')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Mês').last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Próximo período'));
         await tester.pumpAndSettle();
         expect(find.text('Outubro 2026'), findsOneWidget);
         if (fromHub) {
@@ -339,7 +346,7 @@ void main() {
           await tester.tap(
             find.descendant(
               of: find.byKey(const Key('calendar-display')),
-              matching: find.text('Calendário'),
+              matching: find.text('Agenda'),
             ),
           );
           await tester.pumpAndSettle();
@@ -495,7 +502,7 @@ void main() {
     },
   );
   testWidgets(
-    'hub upcoming row opens the correct calendar month with course filter',
+    'hub upcoming row opens the correct calendar week with course filter',
     (tester) async {
       final course = CourseRecord(
         id: 'poo',
@@ -536,7 +543,7 @@ void main() {
       await tester.ensureVisible(find.text('Entrega futura'));
       await tester.tap(find.text('Entrega futura'));
       await tester.pumpAndSettle();
-      expect(find.text('Outubro 2026'), findsOneWidget);
+      expect(find.text('05/10/2026 – 11/10/2026'), findsOneWidget);
       await tester.pageBack();
       await tester.pumpAndSettle();
       expect(find.text('Entrega futura'), findsOneWidget);
@@ -662,6 +669,8 @@ void main() {
         find.byKey(const Key('course-hub-open-calendar')),
       );
       await tester.tap(find.byKey(const Key('course-hub-open-calendar')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Próximo período'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Lista'));
       await tester.pumpAndSettle();
@@ -2586,7 +2595,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          builder: (context, child) => AcademicSyncHost(child: child!),
+          builder: (context, child) =>
+              CourseVisualHost(child: AcademicSyncHost(child: child!)),
           home: CoursePage(
             repository: _FakeCourseRepository(),
             meetingRepository: _FakeMeetingRepository(),

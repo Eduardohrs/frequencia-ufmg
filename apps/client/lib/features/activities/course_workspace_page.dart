@@ -722,8 +722,10 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: Column(
                     children: [
-                      const Text(
-                        'Não foi possível atualizar. Os dados salvos continuam disponíveis.',
+                      Text(
+                        _loaded.contains(_section)
+                            ? 'Não foi possível atualizar. Exibindo a última cópia salva.'
+                            : 'Não foi possível carregar. Ainda não há dados salvos desta seção.',
                       ),
                       Wrap(
                         children: [
@@ -811,14 +813,39 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
           key: Key('workspace-activity-${activity.id}'),
           contentPadding: EdgeInsets.zero,
           title: Text(activity.title),
-          subtitle: Text(
-            '${activity.kind == 'assign' ? 'Tarefa' : 'Questionário'}${activity.origin == 'metaturma' ? ' · Metaturma' : ''}',
-          ),
+          subtitle: _activitySummary(activity),
           trailing: const Icon(Icons.chevron_right),
           onTap: _openingActivity == null ? () => _activity(activity) : null,
         ),
     ],
   );
+  Widget _activitySummary(PythonMoodleActivity activity) {
+    final detail = _snapshot?.details
+        .where((item) => item.activity.id == activity.id)
+        .firstOrNull;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${activity.kind == 'assign' ? 'Tarefa' : 'Questionário'}${activity.origin == 'metaturma' ? ' · Metaturma' : ''}',
+        ),
+        if (detail != null) ...[
+          Text(
+            'Envio: ${detail.submissionText.trim().isEmpty ? 'não informado' : detail.submissionText}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (detail.hasDueDate && detail.datesText.trim().isNotEmpty)
+            Text(
+              detail.datesText,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+        ],
+      ],
+    );
+  }
+
   Widget _dateList() => ListView(
     padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
     children: [

@@ -1,3 +1,5 @@
+import 'package:shared_preferences/shared_preferences.dart';
+import '../../design/course_visuals.dart';
 import '../../design/app_feedback.dart';
 import 'dart:async';
 import '../../observability/app_logger.dart';
@@ -17,9 +19,12 @@ import '../../design/course_identity.dart';
 
 enum CalendarDisplay { month, list }
 
+enum CalendarRange { week, fortnight, month }
+
 enum CalendarEntryType { all, lesson, assessment, deadline }
 
 class CalendarNavigationState {
+  CalendarRange? range;
   String? courseId;
   DateTime? month;
   CalendarDisplay display = CalendarDisplay.month;
@@ -32,6 +37,7 @@ class GeneralCalendarPage extends StatefulWidget {
     required this.repository,
     required this.location,
     required this.now,
+    this.preferences,
     this.initialCourseId,
     this.initialEntryId,
     this.navigationState,
@@ -46,6 +52,7 @@ class GeneralCalendarPage extends StatefulWidget {
     super.key,
   });
 
+  final SharedPreferencesAsync? preferences;
   final ValueListenable<AcademicOverviewSnapshot?>? overviewUpdates;
   final List<CourseRecord> courses;
   final SessionRepository repository;
@@ -71,6 +78,12 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
   late String? _courseId;
   late DateTime _month;
   CalendarDisplay _display = CalendarDisplay.month;
+  CalendarRange _range = CalendarRange.week;
+  bool _defaultsApplied = false;
+  bool _preferenceTouched = false;
+  String? _owner;
+  late final _preferences = widget.preferences ?? SharedPreferencesAsync();
+  Future<void> _preferenceSave = Future.value();
   bool _loading = true;
   bool _initialEntryOpened = false;
   bool _failed = false;
@@ -89,10 +102,101 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     final localNow = tz.TZDateTime.from(widget.now(), widget.location);
     final date =
         widget.initialDate ?? widget.navigationState?.month ?? localNow;
-    _month = DateTime(date.year, date.month);
-    _remember();
+    _month = DateTime(date.year, date.month, date.day);
     widget.overviewUpdates?.addListener(_overviewChanged);
     _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_defaultsApplied) return;
+    _defaultsApplied = true;
+    final retained = widget.navigationState?.range;
+    _range =
+        retained ??
+        (MediaQuery.sizeOf(context).width >= 900
+            ? CalendarRange.fortnight
+            : CalendarRange.week);
+    _owner = CourseVisualHost.of(context, listen: false)?.owner;
+    _remember();
+    if (retained == null && _owner != null) unawaited(_restorePreference());
+  }
+
+  Future<void> _restorePreference() async {
+    final fields = <String, Object>{
+      'operation_id': newCorrelationId('calendar_preference'),
+      'stage': 'preference_read',
+    };
+    final watch = Stopwatch()..start();
+    try {
+      final stored = await _preferences.getString(
+        'calendar_view.v1.${Uri.encodeComponent(_owner!)}',
+      );
+      if (stored != null) {
+        final parts = stored.split('/');
+        if (parts.length != 2 ||
+            !CalendarRange.values.any((r) => r.name == parts[0]) ||
+            !CalendarDisplay.values.any((d) => d.name == parts[1])) {
+          throw const FormatException('Invalid calendar preference');
+        }
+        if (mounted && !_preferenceTouched) {
+          setState(() {
+            _range = CalendarRange.values.byName(parts[0]);
+            _display = CalendarDisplay.values.byName(parts[1]);
+          });
+          _remember();
+        }
+      }
+      _event('calendar_preference_read_succeeded', {
+        ...fields,
+        'duration_ms': watch.elapsedMilliseconds,
+        'applied_to_view': mounted && !_preferenceTouched,
+      });
+    } catch (error, stack) {
+      if (widget.logger case final logger?) {
+        recordOperationalFailure(
+          logger,
+          error,
+          stack,
+          'calendar_preference_read',
+          {...fields, 'duration_ms': watch.elapsedMilliseconds},
+          failureCode: 'calendar_preference_failed',
+        );
+      }
+    }
+  }
+
+  void _savePreference() {
+    if (_owner == null) return;
+    final key = 'calendar_view.v1.${Uri.encodeComponent(_owner!)}';
+    final value = '${_range.name}/${_display.name}';
+    _preferenceSave = _preferenceSave.then((_) async {
+      final fields = <String, Object>{
+        'operation_id': newCorrelationId('calendar_preference'),
+        'stage': 'preference_write',
+        'selection': value,
+      };
+      final watch = Stopwatch()..start();
+      try {
+        await _preferences.setString(key, value);
+        _event('calendar_preference_write_succeeded', {
+          ...fields,
+          'duration_ms': watch.elapsedMilliseconds,
+        });
+      } catch (error, stack) {
+        if (widget.logger case final logger?) {
+          recordOperationalFailure(
+            logger,
+            error,
+            stack,
+            'calendar_preference_write',
+            {...fields, 'duration_ms': watch.elapsedMilliseconds},
+            failureCode: 'calendar_preference_failed',
+          );
+        }
+      }
+    });
   }
 
   @override
@@ -118,6 +222,10 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
         'screen': 'calendar',
         'operation_id': newCorrelationId('calendar'),
         'course_id': _courseId ?? 'all',
+        'range': _range.name,
+        'range_start': _rangeStart.toIso8601String(),
+        'range_end_exclusive': _rangeEnd.toIso8601String(),
+        'visible_entry_count': _windowEntries.length,
         ...fields,
       });
     }
@@ -126,6 +234,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
   void _remember() {
     final state = widget.navigationState;
     if (state != null) {
+      state.range = _range;
       state.courseId = _courseId;
       state.month = _month;
       state.display = _display;
@@ -134,12 +243,15 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
   }
 
   void _change(VoidCallback update, String action) {
+    _preferenceTouched = true;
     setState(update);
     _remember();
+    if (action == 'range' || action == 'display') _savePreference();
     _event('calendar_view_changed', {
       'action': action,
       'month': _month.toIso8601String(),
       'display': _display.name,
+      'range': _range.name,
       'type': _type.name,
     });
   }
@@ -239,9 +351,68 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
         (_type == CalendarEntryType.all || entry.type == _type);
   }).toList();
 
-  void _moveMonth(int delta) => _change(
-    () => _month = DateTime(_month.year, _month.month + delta),
-    'month',
+  DateTime get _rangeStart {
+    if (_range == CalendarRange.month) {
+      return DateTime(_month.year, _month.month);
+    }
+    return DateTime(
+      _month.year,
+      _month.month,
+      _month.day,
+    ).subtract(Duration(days: _month.weekday - 1));
+  }
+
+  DateTime get _rangeEnd => _range == CalendarRange.month
+      ? DateTime(_month.year, _month.month + 1)
+      : _rangeStart.add(Duration(days: _range == CalendarRange.week ? 7 : 14));
+  List<_CalendarEntry> get _windowEntries => _filtered.where((entry) {
+    final local = tz.TZDateTime.from(entry.session.startsAt, widget.location);
+    final day = DateTime(local.year, local.month, local.day);
+    return !day.isBefore(_rangeStart) && day.isBefore(_rangeEnd);
+  }).toList();
+  void _moveMonth(int delta) => _change(() {
+    _month = _range == CalendarRange.month
+        ? DateTime(_month.year, _month.month + delta)
+        : _month.add(
+            Duration(days: delta * (_range == CalendarRange.week ? 7 : 14)),
+          );
+  }, 'period');
+  void _today() => _change(() {
+    final local = tz.TZDateTime.from(widget.now(), widget.location);
+    _month = DateTime(local.year, local.month, local.day);
+  }, 'today');
+  Widget _periodBar() => Row(
+    children: [
+      IconButton(
+        tooltip: 'Período anterior',
+        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+        onPressed: () => _moveMonth(-1),
+        icon: const Icon(Icons.chevron_left_rounded),
+      ),
+      Expanded(
+        child: Text(
+          _range == CalendarRange.month
+              ? '${_monthName(_month.month)} ${_month.year}'
+              : '${_date(_rangeStart)} – ${_date(_rangeEnd.subtract(const Duration(days: 1)))}',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+      ),
+      TextButton(
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          minimumSize: const Size(40, 40),
+        ),
+        onPressed: _today,
+        child: const Text('Hoje'),
+      ),
+      IconButton(
+        tooltip: 'Próximo período',
+        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+        onPressed: () => _moveMonth(1),
+        icon: const Icon(Icons.chevron_right_rounded),
+      ),
+    ],
   );
 
   @override
@@ -255,10 +426,15 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
             padding: const EdgeInsets.all(20),
             child: LayoutBuilder(
               builder: (context, constraints) {
+                final filterWidth = constraints.maxWidth < 332
+                    ? (constraints.maxWidth - 12) / 2
+                    : 160.0;
                 final enlargedText =
                     MediaQuery.textScalerOf(context).scale(14) > 20;
                 final scrollWholePage =
-                    constraints.maxWidth < 320 || enlargedText;
+                    constraints.maxWidth < 320 ||
+                    constraints.maxHeight < 360 ||
+                    enlargedText;
                 final children = <Widget>[
                   const AppPageIntro(
                     title: 'Sua agenda',
@@ -308,7 +484,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                         ),
                       ),
                       SizedBox(
-                        width: 200,
+                        width: filterWidth,
                         child: DropdownButtonFormField<CalendarEntryType>(
                           key: const Key('calendar-type-filter'),
                           isExpanded: true,
@@ -325,41 +501,54 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                               _change(() => _type = value!, 'type_filter'),
                         ),
                       ),
+                      SizedBox(
+                        width: filterWidth,
+                        child: DropdownButtonFormField<CalendarRange>(
+                          key: ValueKey('calendar-range-${_range.name}'),
+                          initialValue: _range,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Período',
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: CalendarRange.week,
+                              child: Text('Semana'),
+                            ),
+                            DropdownMenuItem(
+                              value: CalendarRange.fortnight,
+                              child: Text('2 semanas'),
+                            ),
+                            DropdownMenuItem(
+                              value: CalendarRange.month,
+                              child: Text('Mês'),
+                            ),
+                          ],
+                          onChanged: (value) =>
+                              _change(() => _range = value!, 'range'),
+                        ),
+                      ),
                       SegmentedButton<CalendarDisplay>(
                         key: const Key('calendar-display'),
                         showSelectedIcon: false,
-                        segments:
-                            MediaQuery.sizeOf(context).width < 420 ||
-                                MediaQuery.textScalerOf(context).scale(14) > 20
-                            ? const [
-                                ButtonSegment(
-                                  value: CalendarDisplay.month,
-                                  icon: Icon(Icons.calendar_month_outlined),
-                                  label: Text('Mês'),
-                                ),
-                                ButtonSegment(
-                                  value: CalendarDisplay.list,
-                                  icon: Icon(Icons.view_agenda_outlined),
-                                  label: Text('Lista'),
-                                ),
-                              ]
-                            : const [
-                                ButtonSegment(
-                                  value: CalendarDisplay.month,
-                                  label: Text('Calendário'),
-                                ),
-                                ButtonSegment(
-                                  value: CalendarDisplay.list,
-                                  label: Text('Lista'),
-                                ),
-                              ],
+                        segments: const [
+                          ButtonSegment(
+                            value: CalendarDisplay.month,
+                            label: Text('Agenda'),
+                          ),
+                          ButtonSegment(
+                            value: CalendarDisplay.list,
+                            label: Text('Lista'),
+                          ),
+                        ],
                         selected: {_display},
                         onSelectionChanged: (value) =>
                             _change(() => _display = value.single, 'display'),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
+                  _periodBar(),
                   if (_unavailableDateCourses.isNotEmpty)
                     const Text(
                       'Algumas datas não puderam ser atualizadas. As aulas continuam disponíveis.',
@@ -402,11 +591,72 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
       );
     }
     if (_display == CalendarDisplay.list) return _list();
-    return _calendar();
+    return _range == CalendarRange.month ? _calendar() : _weeks();
+  }
+
+  Widget _weeks() => LayoutBuilder(
+    builder: (context, constraints) {
+      final weeks = _range == CalendarRange.fortnight ? 2 : 1;
+      final columns = weeks == 2 && constraints.maxWidth >= 850;
+      final window = _windowEntries;
+      Widget days(int offset, int count) => ListView(
+        children: [
+          for (var i = offset; i < offset + count; i++)
+            _dayAgenda(_rangeStart.add(Duration(days: i)), window),
+        ],
+      );
+      return columns
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: days(0, 7)),
+                const SizedBox(width: 16),
+                Expanded(child: days(7, 7)),
+              ],
+            )
+          : days(0, weeks * 7);
+    },
+  );
+  Widget _dayAgenda(DateTime day, List<_CalendarEntry> window) {
+    final entries = window.where((e) {
+      final local = tz.TZDateTime.from(e.session.startsAt, widget.location);
+      return local.year == day.year &&
+          local.month == day.month &&
+          local.day == day.day;
+    }).toList();
+    final today = DateUtils.isSameDay(
+      day,
+      tz.TZDateTime.from(widget.now(), widget.location),
+    );
+    if (entries.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Text(
+          '${const ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'][day.weekday - 1]} • ${_date(day)} • Sem aulas ou prazos',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '${const ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'][day.weekday - 1]} • ${_date(day)}${today ? ' • Hoje' : ''}',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          for (final entry in entries) _entryTile(entry, showDate: false),
+        ],
+      ),
+    );
   }
 
   Widget _list() {
-    final entries = _filtered;
+    final entries = _windowEntries;
     if (entries.isEmpty) {
       return const AppEmptyState(
         icon: Icons.event_available_outlined,
@@ -429,40 +679,6 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
         MediaQuery.sizeOf(context).width < 420 || textScale > 1.4;
     return Column(
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (compactDays)
-              IconButton(
-                tooltip: 'Mês anterior',
-                onPressed: () => _moveMonth(-1),
-                icon: const Icon(Icons.chevron_left_rounded),
-              )
-            else
-              TextButton(
-                onPressed: () => _moveMonth(-1),
-                child: const Text('Anterior'),
-              ),
-            Expanded(
-              child: Text(
-                '${_monthName(_month.month)} ${_month.year}',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            if (compactDays)
-              IconButton(
-                tooltip: 'Próximo mês',
-                onPressed: () => _moveMonth(1),
-                icon: const Icon(Icons.chevron_right_rounded),
-              )
-            else
-              TextButton(
-                onPressed: () => _moveMonth(1),
-                child: const Text('Próximo'),
-              ),
-          ],
-        ),
         Row(
           children: [
             for (final day in ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'])
@@ -545,9 +761,13 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                                       width: 5,
                                       height: 5,
                                       decoration: BoxDecoration(
-                                        color: CourseIdentity.fromCode(
+                                        color: courseColor(
+                                          context,
                                           entry.course.code,
-                                        ).color,
+                                          CourseIdentity.fromCode(
+                                            entry.course.code,
+                                          ).color,
+                                        ),
                                         shape: BoxShape.circle,
                                       ),
                                     ),
@@ -736,7 +956,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     }
   }
 
-  Widget _entryTile(_CalendarEntry entry) {
+  Widget _entryTile(_CalendarEntry entry, {bool showDate = true}) {
     final local = tz.TZDateTime.from(entry.session.startsAt, widget.location);
     return Card(
       elevation: 0,
@@ -747,10 +967,14 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
           code: entry.course.code,
           size: 40,
         ),
-        title: Text('${entry.course.displayName} • ${_date(local)}'),
+        title: Text(
+          showDate
+              ? '${entry.course.displayName} • ${_date(local)}'
+              : entry.course.displayName,
+        ),
         subtitle: Text(
           [
-            '${_time(local)} • ${(entry.session.session == null ? 'Prazo' : _status(entry.session.session!.calendarStatus))}',
+            '${_time(local)}${entry.session.session == null ? '' : ' – ${_time(tz.TZDateTime.from(entry.session.session!.endsAt, widget.location))}'} • ${(entry.session.session == null ? 'Prazo' : _status(entry.session.session!.calendarStatus))}',
             if (entry.session.session != null && !entry.course.tracksAttendance)
               'Sem chamada',
             if (entry.session.title case final title?)
@@ -779,7 +1003,7 @@ class _CalendarEventLabel extends StatelessWidget {
           width: 4,
           height: 14,
           decoration: BoxDecoration(
-            color: identity.color,
+            color: courseColor(context, entry.course.code, identity.color),
             borderRadius: BorderRadius.circular(2),
           ),
         ),

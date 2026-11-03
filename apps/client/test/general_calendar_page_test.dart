@@ -36,6 +36,8 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: GeneralCalendarPage(
+            navigationState: CalendarNavigationState()
+              ..range = CalendarRange.month,
             courses: named,
             repository: _Repository({
               'poo': [_session('a', DateTime.utc(2026, 9, 16, 11))],
@@ -48,16 +50,18 @@ void main() {
       );
       await tester.pumpAndSettle();
       final lastDay = find.byKey(const ValueKey('calendar-day-2026-10-11'));
-      expect(
-        tester.getBottomRight(lastDay).dy,
-        lessThanOrEqualTo(
-          tester
-              .getBottomRight(find.byKey(const Key('month-calendar-grid')))
-              .dy,
-        ),
+      await tester.scrollUntilVisible(
+        lastDay,
+        150,
+        scrollable: find.byType(Scrollable).last,
       );
+      expect(lastDay, findsOneWidget);
       final count = find.byKey(const Key('calendar-count-2026-09-16'));
-      await tester.ensureVisible(count);
+      await tester.scrollUntilVisible(
+        count,
+        -150,
+        scrollable: find.byType(Scrollable).last,
+      );
       await tester.tap(count);
       await tester.pumpAndSettle();
       expect(find.text('POO • 16/09/2026'), findsOneWidget);
@@ -75,6 +79,8 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             home: GeneralCalendarPage(
+              navigationState: CalendarNavigationState()
+                ..range = CalendarRange.month,
               courses: courses,
               repository: _Repository({}),
               location: location,
@@ -124,6 +130,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: GeneralCalendarPage(
+          navigationState: CalendarNavigationState()
+            ..range = CalendarRange.month,
           courses: courses,
           repository: _Repository({}),
           location: location,
@@ -165,6 +173,8 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: GeneralCalendarPage(
+            navigationState: CalendarNavigationState()
+              ..range = CalendarRange.month,
             courses: [course, online],
             repository: _Repository({}),
             location: location,
@@ -224,6 +234,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: GeneralCalendarPage(
+          navigationState: CalendarNavigationState()
+            ..range = CalendarRange.month,
           courses: courses,
           repository: repository,
           location: location,
@@ -243,10 +255,10 @@ void main() {
     expect(find.text('MAT001'), findsNothing);
     expect(find.text('+1'), findsOneWidget);
     expect(find.byIcon(Icons.assignment_outlined), findsOneWidget);
-    await tester.tap(find.text('Próximo'));
+    await tester.tap(find.byTooltip('Próximo período'));
     await tester.pumpAndSettle();
     expect(find.text('Outubro 2026'), findsOneWidget);
-    await tester.tap(find.text('Anterior'));
+    await tester.tap(find.byTooltip('Período anterior'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Lista'));
@@ -262,11 +274,11 @@ void main() {
     expect(find.text('DCC203 • 18/09/2026'), findsOneWidget);
     expect(find.textContaining('Aula sem chamada'), findsWidgets);
     await tester.scrollUntilVisible(
-      find.text('12:00 • Reposição'),
+      find.text('12:00 – 13:40 • Reposição'),
       -100,
       scrollable: find.byType(Scrollable).last,
     );
-    expect(find.text('12:00 • Reposição'), findsOneWidget);
+    expect(find.text('12:00 – 13:40 • Reposição'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('calendar-course-filter')));
     await tester.pumpAndSettle();
@@ -288,6 +300,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: GeneralCalendarPage(
+          navigationState: CalendarNavigationState()
+            ..range = CalendarRange.month,
           courses: courses,
           repository: repository,
           location: location,
@@ -321,6 +335,8 @@ void main() {
           child: child!,
         ),
         home: GeneralCalendarPage(
+          navigationState: CalendarNavigationState()
+            ..range = CalendarRange.month,
           courses: courses,
           repository: _Repository({}),
           location: location,
@@ -341,9 +357,19 @@ void main() {
       200,
     );
     expect(find.byKey(const Key('month-calendar-grid')), findsOneWidget);
-    await tester.tap(find.byTooltip('Mês anterior'));
+    await Scrollable.ensureVisible(
+      tester.element(find.byTooltip('Período anterior')),
+      alignment: .5,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Período anterior'));
     await tester.pump();
-    await tester.tap(find.byTooltip('Próximo mês'));
+    await Scrollable.ensureVisible(
+      tester.element(find.byTooltip('Próximo período')),
+      alignment: .5,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Próximo período'));
     await tester.pump();
     expect(find.text('Setembro 2026'), findsOneWidget);
     expect(tester.takeException(), isNull);

@@ -1,3 +1,5 @@
+import 'package:frequencia_ufmg/design/course_visuals.dart';
+import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:frequencia_ufmg/data/material_scope_cache.dart';
@@ -22,6 +24,55 @@ void main() {
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();
   });
+
+  testWidgets(
+    'global material catalog identifies courses by local nickname and keeps code secondary',
+    (tester) async {
+      final model = CourseVisualCatalog();
+      final now = DateTime.utc(2026);
+      await model.update('owner', [
+        CourseRecord(
+          id: 'local-poo',
+          code: 'DCC203',
+          name: 'Programação Orientada a Objetos',
+          nickname: 'POO prática',
+          workload: 60,
+          term: '2026-2',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      ]);
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      );
+      gateway.materialCatalog = await gateway.discoverMoodleContent();
+      await tester.pumpWidget(
+        CourseVisualHost(
+          catalog: model,
+          child: MaterialApp(
+            home: UFMGConnectionPage(
+              view: UFMGView.materials,
+              gateway: gateway,
+              logger: _Logger(),
+              userId: 'owner',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('POO prática'), findsOneWidget);
+      expect(find.textContaining('DCC203 • 3 materiais'), findsOneWidget);
+      expect(find.text('Materiais do Moodle'), findsNothing);
+      expect(
+        find.textContaining('Arquivos são baixados diretamente'),
+        findsNothing,
+      );
+      expect(find.text('Disciplina MAT001'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'local library ignores expired UFMG and can recover its own cache',
@@ -1598,17 +1649,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gateway.contentDiscoveryCalls, 1);
-    expect(
-      find.textContaining('3 materiais candidatos encontrados'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('3 itens encontrados'), findsOneWidget);
     expect(find.byKey(const Key('ufmg-academic-agenda')), findsNothing);
     expect(find.textContaining('Download direto disponível'), findsOneWidget);
-    expect(find.text('3 materiais candidatos'), findsOneWidget);
-    expect(
-      find.text('Nenhuma publicação candidata encontrada'),
-      findsOneWidget,
-    );
+    expect(find.text('DCC203 • 3 materiais'), findsOneWidget);
+    expect(find.text('MAT001 • Nenhum material encontrado'), findsOneWidget);
     await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
     await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
     await tester.pumpAndSettle();
@@ -1623,9 +1668,12 @@ void main() {
       Uri.parse('https://virtual.ufmg.br/20262/mod/page/view.php?id=101'),
     ]);
     expect(logger.events, contains('moodle_material_open_succeeded'));
-    expect(find.text('Disciplina não localizada no Moodle'), findsOneWidget);
     expect(
-      find.text('Mais de uma disciplina correspondente no Moodle'),
+      find.textContaining('Disciplina não localizada no Moodle'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Mais de uma disciplina correspondente no Moodle'),
       findsOneWidget,
     );
     expect(logger.events, contains('moodle_sync_succeeded'));
@@ -2030,7 +2078,7 @@ void main() {
 
     expect(gateway.materialCatalogCalls, 1);
     expect(gateway.contentDiscoveryCalls, 0);
-    expect(find.text('Materiais do Moodle'), findsOneWidget);
+    expect(find.text('Seus materiais'), findsOneWidget);
     expect(find.byKey(const Key('moodle-content-dcc203')), findsOneWidget);
   });
 
@@ -2061,10 +2109,7 @@ void main() {
         find.textContaining('Não foi possível validar o download direto agora'),
         findsOneWidget,
       );
-      expect(
-        find.textContaining('3 materiais candidatos encontrados'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('3 itens encontrados'), findsOneWidget);
     },
   );
 
@@ -3585,10 +3630,7 @@ void main() {
 
       expect(gateway.contentDiscoveryCalls, 2);
       expect(gateway.materialCatalogCalls, 2);
-      expect(
-        find.textContaining('3 materiais candidatos encontrados'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('3 itens encontrados'), findsOneWidget);
       expect(
         find.text('Não foi possível sincronizar os dados do Moodle.'),
         findsNothing,

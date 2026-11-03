@@ -1,3 +1,4 @@
+import '../design/course_visuals.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -159,8 +160,12 @@ class _AuthGateState extends State<AuthGate> {
             overviewReadsEnabled: widget.overviewReadsEnabled,
             androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
             checkpointDeliveryUpdates: widget.checkpointDeliveryUpdates,
-            onSignOut: () =>
-                _run(AuditedOperation.logout, widget.authGateway.signOut),
+            onSignOut: () async {
+              await _run(AuditedOperation.logout, widget.authGateway.signOut);
+              if (context.mounted && widget.authGateway.currentUser == null) {
+                CourseVisualHost.of(context, listen: false)?.clear();
+              }
+            },
           );
         }
         _verifiedBackendUserId = null;

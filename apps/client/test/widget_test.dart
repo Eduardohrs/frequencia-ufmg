@@ -20,6 +20,41 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'package:timezone/data/latest.dart' as tz_data;
 
 void main() {
+  testWidgets(
+    'production application uses Portuguese material controls and 24-hour times',
+    (tester) async {
+      final gateway = _FakeAuthGateway();
+      addTearDown(gateway.close);
+      await tester.pumpWidget(
+        app.FrequenciaUFMGApp(
+          authGateway: gateway,
+          logger: _FakeAppLogger(),
+          courseRepositoryFactory: (_) => _FakeCourseRepository(),
+          meetingRepositoryFactory: (_) => _FakeMeetingRepository(),
+          sessionRepositoryFactory: (_) => _FakeSessionRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final context = tester.element(find.text('Entrar com Google'));
+      expect(Localizations.localeOf(context), const Locale('pt', 'BR'));
+      expect(const TimeOfDay(hour: 23, minute: 59).format(context), '23:59');
+      expect(MaterialLocalizations.of(context).cancelButtonLabel, 'Cancelar');
+      unawaited(
+        showDatePicker(
+          context: context,
+          initialDate: DateTime(2026, 11, 3),
+          firstDate: DateTime(2026),
+          lastDate: DateTime(2027),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('novembro'), findsWidgets);
+      expect(find.text('Cancel'), findsNothing);
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
+    },
+  );
+
   setUp(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
@@ -242,7 +277,11 @@ void main() {
       expect(verifier.calls, 1);
       expect(
         logger.events.where((e) => !e.startsWith('automatic_checkpoint_')),
-        ['python_backend_identity_succeeded', 'agenda_presented'],
+        [
+          'python_backend_identity_succeeded',
+          'course_visuals_updated',
+          'agenda_presented',
+        ],
       );
 
       await tester.pump();
@@ -308,6 +347,7 @@ void main() {
     expect(logger.events.where((e) => !e.startsWith('automatic_checkpoint_')), [
       'auth_google_sign_in_started',
       'auth_google_sign_in_succeeded',
+      'course_visuals_updated',
       'agenda_presented',
     ]);
   });
@@ -366,6 +406,7 @@ void main() {
     expect(gateway.signOutCalls, 1);
     expect(find.text('Entrar com Google'), findsOneWidget);
     expect(logger.events.where((e) => !e.startsWith('automatic_checkpoint_')), [
+      'course_visuals_updated',
       'agenda_presented',
       'auth_logout_started',
       'auth_logout_succeeded',
