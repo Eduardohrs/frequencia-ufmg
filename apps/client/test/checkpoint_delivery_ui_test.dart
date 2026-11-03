@@ -65,6 +65,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: FirstCheckpointPage(
+          showTestTools: true,
           courses: [course()],
           sessions: Sessions()..values = [session('s')],
           gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
@@ -116,6 +117,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: FirstCheckpointPage(
+            showTestTools: true,
             courses: [],
             sessions: Sessions(),
             gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
@@ -219,6 +221,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: FirstCheckpointPage(
+          showTestTools: true,
           courses: [course()],
           sessions: repo,
           gateway: FirstCheckpointGateway(accountId: 'owner', logger: logger),
@@ -294,6 +297,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: FirstCheckpointPage(
+          showTestTools: true,
           courses: [course()],
           deliveryUpdates: updates.stream,
           sessions: repo,

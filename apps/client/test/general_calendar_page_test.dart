@@ -1,3 +1,5 @@
+import 'package:frequencia_ufmg/observability/firestore_app_logger.dart';
+import 'package:frequencia_ufmg/observability/operational_log_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
@@ -17,6 +19,96 @@ void main() {
     _course('calc', 'MAT001', now),
   ];
 
+  testWidgets(
+    'compact month opens a readable day instead of abbreviated codes',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final named = [
+        for (final entry in [(courses[0], 'POO'), (courses[1], 'Cálculo 3')])
+          CourseRecord.fromFirestore(entry.$1.id, {
+            ...entry.$1.toFirestore(),
+            'nickname': entry.$2,
+          }),
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GeneralCalendarPage(
+            courses: named,
+            repository: _Repository({
+              'poo': [_session('a', DateTime.utc(2026, 9, 16, 11))],
+              'calc': [_session('b', DateTime.utc(2026, 9, 16, 13))],
+            }),
+            location: location,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final count = find.byKey(const Key('calendar-count-2026-09-16'));
+      await tester.ensureVisible(count);
+      await tester.tap(count);
+      await tester.pumpAndSettle();
+      expect(find.text('POO • 16/09/2026'), findsOneWidget);
+      expect(find.text('Cálculo 3 • 16/09/2026'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final fails in [false, true]) {
+    testWidgets(
+      'activities route completion and failure preserve calendar recovery ($fails)',
+      (tester) async {
+        var opened = false;
+        final store = _CalendarLogStore();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GeneralCalendarPage(
+              courses: courses,
+              repository: _Repository({}),
+              location: location,
+              now: () => now,
+              initialCourseId: 'poo',
+              logger: FirestoreAppLogger(
+                store: store,
+                currentUserId: () => 'owner',
+                platform: 'web',
+              ),
+              onOpenActivities: (course) async {
+                expect(course.id, 'poo');
+                if (fails) {
+                  throw StateError('route unavailable');
+                }
+                opened = true;
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('calendar-open-activities')));
+        await tester.pumpAndSettle();
+        expect(opened, !fails);
+        if (fails) {
+          final failure = store.records.lastWhere(
+            (e) => e['operation'] == 'calendar_activities_navigation',
+          );
+          final details = failure['errorDetails'].toString();
+          expect(details, contains('activities_navigation'));
+          expect(details, contains('poo'));
+          expect(failure['correlationId'], isNotEmpty);
+        }
+        if (fails) {
+          expect(
+            find.text('Não foi possível abrir as atividades. Tente novamente.'),
+            findsOneWidget,
+          );
+        }
+        expect(find.text('Calendário operacional'), findsOneWidget);
+      },
+    );
+  }
   testWidgets('missing Home deep link has an explicit recovery message', (
     tester,
   ) async {
@@ -290,4 +382,12 @@ final class _Repository implements SessionRepository {
 
   @override
   Future<void> saveSession(String courseId, SessionRecord session) async {}
+}
+
+class _CalendarLogStore implements OperationalLogStore {
+  final records = <Map<String, Object?>>[];
+  @override
+  Future<void> add(String userId, Map<String, Object?> data) async {
+    records.add(data);
+  }
 }

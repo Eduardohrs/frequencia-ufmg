@@ -1,3 +1,8 @@
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:frequencia_ufmg/data/material_scope_cache.dart';
+import 'package:frequencia_ufmg/observability/firestore_app_logger.dart';
+import 'package:frequencia_ufmg/observability/operational_log_store.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -18,6 +23,343 @@ void main() {
         InMemorySharedPreferencesAsync.empty();
   });
 
+  testWidgets(
+    'local library ignores expired UFMG and can recover its own cache',
+    (tester) async {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: false,
+          reauthenticationRequired: true,
+        ),
+      )..statusError = StateError('must not consult');
+      final cache = _MaterialCache()..listError = StateError('disk busy');
+      final logger = _Logger();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(
+            gateway: gateway,
+            logger: logger,
+            view: UFMGView.savedFiles,
+            materialFileCache: cache,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Não foi possível ler os arquivos salvos.'),
+        findsOneWidget,
+      );
+      expect(logger.events, isNot(contains('ufmg_session_status_started')));
+      expect(gateway.materialCatalogCalls, 0);
+      cache.listError = null;
+      cache.files.add(
+        const CachedMaterialFile(
+          id: 'legacy',
+          name: 'Anterior.pdf',
+          size: 10,
+          mimeType: 'application/pdf',
+        ),
+      );
+      await tester.tap(find.text('Tentar novamente'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ListTile, 'Anterior.pdf'));
+      await tester.pumpAndSettle();
+      expect(cache.opened, ['legacy']);
+    },
+  );
+
+  testWidgets(
+    'course file scope survives offline and clearing preserves other courses',
+    (tester) async {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: false,
+          reauthenticationRequired: true,
+        ),
+      )..statusError = StateError('do not consult');
+      gateway.materialCatalog = await gateway.discoverMoodleContent();
+      final cache = _MaterialCache()
+        ..files.addAll([
+          const CachedMaterialFile(
+            id: '2026-2/3701/102/one',
+            name: 'Minha.pdf',
+            size: 10,
+            mimeType: 'application/pdf',
+          ),
+          const CachedMaterialFile(
+            id: '2026-2/8888/1/other',
+            name: 'Outra.pdf',
+            size: 20,
+            mimeType: 'application/pdf',
+          ),
+        ]);
+      final logger = _Logger();
+      Future<void> open() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: UFMGConnectionPage(
+              gateway: gateway,
+              logger: logger,
+              userId: 'owner',
+              materialCourseId: 'local-poo',
+              materialCourseCode: 'DCC203',
+              materialCourseTerm: '2026-2',
+              materialFileCache: cache,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await open();
+      expect(find.text('Minha.pdf'), findsOneWidget);
+      expect(find.text('Outra.pdf'), findsNothing);
+      expect(
+        await MaterialScopeCache().read('owner', 'local-poo'),
+        contains('2026-2/3701/'),
+      );
+      expect(await MaterialScopeCache().read('other', 'local-poo'), isEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
+      gateway.materialCatalogError = StateError('offline catalog');
+      await open();
+      expect(find.text('Minha.pdf'), findsOneWidget);
+      expect(
+        find.textContaining('Os arquivos salvos continuam disponíveis'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('cached-material-clear')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remover todas'));
+      await tester.pumpAndSettle();
+      expect(cache.clearCalls, 0);
+      expect(cache.removed, ['2026-2/3701/102/one']);
+      expect(cache.files.single.name, 'Outra.pdf');
+      await tester.ensureVisible(find.text('Todos os arquivos do dispositivo'));
+      await tester.tap(find.text('Todos os arquivos do dispositivo'));
+      await tester.pumpAndSettle();
+      expect(find.text('Outra.pdf'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Outra.pdf'), findsNothing);
+      gateway.materialCatalogError = null;
+      await tester.tap(find.text('Tentar novamente'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Não foi possível atualizar o catálogo'),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'course materials retain active queues and can reach account and full library',
+    (tester) async {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: false,
+          reauthenticationRequired: true,
+        ),
+      );
+      gateway.materialCatalog = await gateway.discoverMoodleContent();
+      final cache = _BackgroundMaterialCache();
+      for (final entry in [
+        ('2026-2/3701/1/active', MaterialDownloadState.running),
+        ('2026-2/3701/1/waiting', MaterialDownloadState.enqueued),
+        ('2026-2/3701/1/fail', MaterialDownloadState.failed),
+        ('2026-2/8888/1/fail', MaterialDownloadState.failed),
+      ]) {
+        cache.progress.add(
+          MaterialDownloadProgress(
+            id: entry.$1,
+            name: entry.$1,
+            state: entry.$2,
+            downloaded: 0,
+            total: 10,
+          ),
+        );
+      }
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(
+            gateway: gateway,
+            logger: _Logger(),
+            userId: 'owner',
+            materialFileCache: cache,
+            materialCourseId: 'local-poo',
+            materialCourseCode: 'DCC203',
+            materialCourseTerm: '2026-2',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('cached-material-clear')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remover todas'));
+      await tester.pumpAndSettle();
+      expect(
+        cache.progress.map((p) => p.id),
+        containsAll([
+          '2026-2/3701/1/active',
+          '2026-2/3701/1/waiting',
+          '2026-2/8888/1/fail',
+        ]),
+      );
+      expect(
+        cache.progress.map((p) => p.id),
+        isNot(contains('2026-2/3701/1/fail')),
+      );
+      expect(cache.clearCalls, 0);
+      await tester.ensureVisible(
+        find.text('Materiais de todas as disciplinas'),
+      );
+      await tester.tap(find.text('Materiais de todas as disciplinas'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Gerenciar conexão'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('ufmg-username')), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'unmapped local files explain recovery and catalog retry is independent',
+    (tester) async {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: false,
+          reauthenticationRequired: true,
+        ),
+      )..materialCatalogError = StateError('catalog offline');
+      final cache = _BackgroundMaterialCache()
+        ..files.add(
+          const CachedMaterialFile(
+            id: 'legacy',
+            name: 'Antigo.pdf',
+            size: 10,
+            mimeType: 'application/pdf',
+          ),
+        );
+      cache.progress.add(
+        const MaterialDownloadProgress(
+          id: 'failed',
+          name: 'Falhou.pdf',
+          state: MaterialDownloadState.failed,
+          downloaded: 0,
+          total: 10,
+        ),
+      );
+      Future<void> open(UFMGView view, {bool scoped = false}) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: UFMGConnectionPage(
+              view: view,
+              gateway: gateway,
+              logger: _Logger(),
+              materialFileCache: cache,
+              materialCourseId: scoped ? 'local-poo' : null,
+              materialCourseCode: scoped ? 'DCC203' : null,
+              materialCourseTerm: scoped ? '2026-2' : null,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await open(UFMGView.materials, scoped: true);
+      expect(find.textContaining('As cópias anteriores'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      cache.listError = StateError('disk');
+      await open(UFMGView.materials, scoped: true);
+      expect(
+        find.text('Não foi possível ler os arquivos salvos agora.'),
+        findsOneWidget,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      cache.listError = null;
+      await open(UFMGView.savedFiles);
+      expect(
+        find.textContaining('Para tentar baixar novamente'),
+        findsOneWidget,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await open(UFMGView.materials);
+      gateway.materialCatalogError = null;
+      await tester.tap(
+        find.text('Não foi possível ler o catálogo. Tentar novamente'),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Não foi possível ler o catálogo. Tentar novamente'),
+        findsNothing,
+      );
+    },
+  );
+
+  for (final writeFails in [false, true]) {
+    testWidgets(
+      'scope failures are serialized and never hide material content ($writeFails)',
+      (tester) async {
+        final gateway = _Gateway(
+          status: const PythonUFMGSessionStatus(
+            connected: false,
+            reauthenticationRequired: true,
+          ),
+        );
+        gateway.materialCatalog = await gateway.discoverMoodleContent();
+        final store = _ScopeLogStore();
+        final logger = FirestoreAppLogger(
+          store: store,
+          currentUserId: () => 'owner',
+          platform: 'android',
+        );
+        if (!writeFails) {
+          await SharedPreferencesAsync().setString(
+            'material_scope.v1.owner.local-poo',
+            'broken JSON',
+          );
+        }
+        final scope = MaterialScopeCache(
+          preferences: writeFails
+              ? _FailingScopePreferences()
+              : SharedPreferencesAsync(),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: UFMGConnectionPage(
+              gateway: gateway,
+              logger: logger,
+              userId: 'owner',
+              materialCourseId: 'local-poo',
+              materialCourseCode: 'DCC203',
+              materialCourseTerm: '2026-2',
+              materialScopeCache: scope,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('material-scope-header')), findsOneWidget);
+        final failure = store.documents.singleWhere(
+          (row) =>
+              row['operation'] ==
+              (writeFails ? 'material_scope_write' : 'material_scope_read'),
+        );
+        final details =
+            jsonDecode(failure['errorDetails']! as String)
+                as Map<String, dynamic>;
+        expect(
+          details['stage'],
+          writeFails ? 'scope_cache_write' : 'scope_cache_read',
+        );
+        expect(details['course_id'], 'local-poo');
+        expect(failure['durationMs'], isA<int>());
+        expect(failure['correlationId'], isNotEmpty);
+      },
+    );
+  }
   testWidgets(
     'reviews unmatched dates and failed courses without losing successful imports',
     (tester) async {
@@ -278,7 +620,7 @@ void main() {
 
     expect(find.text('UFMG conectada'), findsOneWidget);
     expect(find.byKey(const Key('ufmg-sync-moodle')), findsOneWidget);
-    expect(logger.events, contains('moodle_date_list_failed'));
+    expect(logger.events, isNot(contains('moodle_date_list_started')));
   });
 
   testWidgets('syncs courses and schedules and exposes preserved conflicts', (
@@ -339,7 +681,8 @@ void main() {
       findsOneWidget,
     );
     expect(logger.events, contains('moodle_sync_succeeded'));
-    expect(find.text('Trabalho prático'), findsOneWidget);
+    expect(find.text('Trabalho prático'), findsNothing);
+    expect(find.byKey(const Key('ufmg-open-materials')), findsOneWidget);
     expect(logger.events, contains('moodle_date_list_succeeded'));
   });
 
@@ -377,8 +720,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.byIcon(Icons.quiz_outlined), findsOneWidget);
-    expect(find.byIcon(Icons.event_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.quiz_outlined), findsNothing);
+    expect(find.byIcon(Icons.event_outlined), findsNothing);
 
     final cases = <(Object, String)>[
       (
@@ -1237,6 +1580,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: logger,
           openExternalUri: (uri) async {
@@ -1258,7 +1602,7 @@ void main() {
       find.textContaining('3 materiais candidatos encontrados'),
       findsOneWidget,
     );
-    expect(find.byKey(const Key('ufmg-academic-agenda')), findsOneWidget);
+    expect(find.byKey(const Key('ufmg-academic-agenda')), findsNothing);
     expect(find.textContaining('Download direto disponível'), findsOneWidget);
     expect(find.text('3 materiais candidatos'), findsOneWidget);
     expect(
@@ -1332,7 +1676,11 @@ void main() {
     final logger = _Logger();
     await tester.pumpWidget(
       MaterialApp(
-        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+        home: UFMGConnectionPage(
+          view: UFMGView.materials,
+          gateway: gateway,
+          logger: logger,
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -1443,7 +1791,11 @@ void main() {
       final logger = _Logger();
       await tester.pumpWidget(
         MaterialApp(
-          home: UFMGConnectionPage(gateway: gateway, logger: logger),
+          home: UFMGConnectionPage(
+            view: UFMGView.materials,
+            gateway: gateway,
+            logger: logger,
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -1533,7 +1885,11 @@ void main() {
     final logger = _Logger();
     await tester.pumpWidget(
       MaterialApp(
-        home: UFMGConnectionPage(gateway: gateway, logger: logger),
+        home: UFMGConnectionPage(
+          view: UFMGView.materials,
+          gateway: gateway,
+          logger: logger,
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -1595,7 +1951,11 @@ void main() {
           );
     await tester.pumpWidget(
       MaterialApp(
-        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        home: UFMGConnectionPage(
+          view: UFMGView.materials,
+          gateway: gateway,
+          logger: _Logger(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -1659,7 +2019,11 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        home: UFMGConnectionPage(
+          view: UFMGView.materials,
+          gateway: gateway,
+          logger: _Logger(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -1717,6 +2081,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           openExternalUri: (uri) async {
@@ -1756,6 +2121,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: logger,
           materialFileCache: cache,
@@ -1812,6 +2178,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: logger,
           materialFileCache: cache,
@@ -1862,6 +2229,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: _Gateway(
             status: const PythonUFMGSessionStatus(
               connected: true,
@@ -1917,6 +2285,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: _Gateway(
             status: const PythonUFMGSessionStatus(
               connected: true,
@@ -1954,6 +2323,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           materialFileCache: cache,
@@ -2021,6 +2391,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           materialFileCache: cache,
@@ -2070,6 +2441,7 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             home: UFMGConnectionPage(
+              view: UFMGView.materials,
               gateway: gateway,
               logger: logger,
               materialFileCache: cache,
@@ -2135,6 +2507,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           materialFileCache: cache,
@@ -2191,6 +2564,7 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             home: UFMGConnectionPage(
+              view: UFMGView.materials,
               gateway: gateway,
               logger: _Logger(),
               materialFileCache: cache,
@@ -2222,6 +2596,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           materialFileCache: cache,
@@ -2256,6 +2631,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: logger,
           materialFileCache: cache,
@@ -2302,6 +2678,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: logger,
           materialFileCache: cache,
@@ -2333,6 +2710,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: _Gateway(
             status: const PythonUFMGSessionStatus(
               connected: true,
@@ -2364,6 +2742,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: _Gateway(
             status: const PythonUFMGSessionStatus(
               connected: true,
@@ -2403,6 +2782,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           materialFileCache: queue,
@@ -2431,6 +2811,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           materialFileCache: local,
@@ -2474,6 +2855,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           materialFileCache: queue,
@@ -2510,6 +2892,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: _Gateway(
             status: const PythonUFMGSessionStatus(
               connected: true,
@@ -2556,6 +2939,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           materialFileCache: cache,
@@ -2588,6 +2972,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           materialFileCache: _BackgroundMaterialCache(),
@@ -2624,6 +3009,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           materialFileCache: cache,
@@ -2681,6 +3067,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: _Gateway(
             status: const PythonUFMGSessionStatus(
               connected: false,
@@ -2706,7 +3093,7 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('cached-material-clear')));
     await tester.tap(find.byKey(const Key('cached-material-clear')));
     await tester.pumpAndSettle();
-    expect(find.text('Remover todas as cópias?'), findsOneWidget);
+    expect(find.text('Remover as cópias listadas?'), findsOneWidget);
     await tester.tap(find.text('Remover todas'));
     await tester.pumpAndSettle();
     expect(cache.clearCalls, 1);
@@ -2723,6 +3110,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: _Gateway(
             status: const PythonUFMGSessionStatus(
               connected: true,
@@ -2771,6 +3159,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: _Gateway(
             status: const PythonUFMGSessionStatus(
               connected: false,
@@ -2829,6 +3218,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: _Gateway(
             status: const PythonUFMGSessionStatus(
               connected: false,
@@ -2842,7 +3232,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Conectar à UFMG'), findsOneWidget);
+    expect(find.text('Gerenciar conexão'), findsOneWidget);
     expect(logger.events, contains('moodle_material_cache_list_failed'));
   });
 
@@ -2868,6 +3258,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           materialFileCache: cache,
@@ -2876,7 +3267,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Conferindo a conexão com a UFMG…'), findsOneWidget);
+    expect(find.text('Conferindo a conexão com a UFMG…'), findsNothing);
     expect(find.text('Offline.pdf'), findsOneWidget);
     await tester.tap(find.widgetWithText(ListTile, 'Offline.pdf'));
     await tester.pump();
@@ -2905,6 +3296,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: gateway,
           logger: _Logger(),
           materialFileCache: const DisabledMaterialFileCache(),
@@ -2952,7 +3344,11 @@ void main() {
           );
     await tester.pumpWidget(
       MaterialApp(
-        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        home: UFMGConnectionPage(
+          view: UFMGView.materials,
+          gateway: gateway,
+          logger: _Logger(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -2991,7 +3387,11 @@ void main() {
     )..materialFilesCompleter = Completer<List<PythonMoodleMaterialFile>>();
     await tester.pumpWidget(
       MaterialApp(
-        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+        home: UFMGConnectionPage(
+          view: UFMGView.materials,
+          gateway: gateway,
+          logger: _Logger(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -3023,6 +3423,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: UFMGConnectionPage(
+            view: UFMGView.materials,
             gateway: gateway,
             logger: _Logger(),
             materialFileCache: const DisabledMaterialFileCache(),
@@ -3051,6 +3452,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: _Gateway(
             status: const PythonUFMGSessionStatus(
               connected: true,
@@ -3093,6 +3495,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: UFMGConnectionPage(
+          view: UFMGView.materials,
           gateway: _Gateway(
             status: const PythonUFMGSessionStatus(
               connected: true,
@@ -3168,7 +3571,11 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: UFMGConnectionPage(gateway: gateway, logger: logger),
+          home: UFMGConnectionPage(
+            view: UFMGView.materials,
+            gateway: gateway,
+            logger: logger,
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -3261,6 +3668,7 @@ class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
   PythonMoodleDateImportResult? importResult;
   Object? connectError;
   Object? statusError;
+  Object? materialCatalogError;
   Completer<PythonUFMGSessionStatus>? statusCompleter;
   Object? disconnectError;
   Object? importError;
@@ -3311,6 +3719,7 @@ class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
   @override
   Future<PythonMoodleContentDiscovery> listMoodleMaterialCatalog() async {
     materialCatalogCalls++;
+    if (materialCatalogError case final error?) throw error;
     return materialCatalog;
   }
 
@@ -3875,5 +4284,19 @@ final class _BackgroundMaterialCache extends _MaterialCache
     enqueueAttempts++;
     if (enqueueError case final error?) throw error;
     queued.add(download);
+  }
+}
+
+class _FailingScopePreferences extends SharedPreferencesAsync {
+  @override
+  Future<void> setString(String key, String value) async =>
+      throw StateError('scope disk write');
+}
+
+class _ScopeLogStore implements OperationalLogStore {
+  final documents = <Map<String, Object?>>[];
+  @override
+  Future<void> add(String userId, Map<String, Object?> document) async {
+    documents.add(document);
   }
 }

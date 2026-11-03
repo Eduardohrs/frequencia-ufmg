@@ -208,6 +208,7 @@ void main() {
           builder: (context, child) => AcademicSyncHost(child: child!),
           home: CoursePage(
             repository: repo,
+            ufmgSessionGateway: _WorkspaceGateway(),
             overviewReadsEnabled: true,
             overviewRepository: _FakeOverviewRepository(
               AcademicOverviewSnapshot(
@@ -243,6 +244,136 @@ void main() {
     },
   );
 
+  for (final fromHub in [false, true]) {
+    testWidgets(
+      'agenda and activities preserve discipline, view and month (hub=$fromHub)',
+      (tester) async {
+        final course = CourseRecord(
+          id: 'course-1',
+          code: 'DCC203',
+          name: 'Programação Orientada a Objetos',
+          nickname: 'POO',
+          workload: 60,
+          term: '2026-2',
+          createdAt: now,
+          updatedAt: now,
+        );
+        final gateway = _WorkspaceGateway();
+        final logger = _RecordingAppLogger();
+        final sessions = _FakeSessionRepository({
+          'course-1': [
+            SessionRecord(
+              id: 'delivery',
+              startsAt: DateTime.utc(2026, 10, 19, 22),
+              endsAt: DateTime.utc(2026, 10, 20),
+              lessonCount: QuantidadeAulas.two,
+              callCount: NumeroChamadas.one,
+              assessmentTitle: 'Entrega da disciplina',
+              createdAt: now,
+              updatedAt: now,
+            ),
+          ],
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            builder: (context, child) => AcademicSyncHost(child: child!),
+            home: CoursePage(
+              repository: _FakeCourseRepository(courses: [course]),
+              meetingRepository: _FakeMeetingRepository(),
+              sessionRepository: sessions,
+              user: user,
+              logger: logger,
+              onSignOut: () async {},
+              now: () => now,
+              ufmgSessionGateway: gateway,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        if (fromHub) {
+          await tester.tap(find.byKey(const Key('course-card-course-1')));
+          await tester.pumpAndSettle();
+          await tester.ensureVisible(
+            find.byKey(const Key('course-hub-open-calendar')),
+          );
+          await tester.tap(find.byKey(const Key('course-hub-open-calendar')));
+        } else {
+          await tester.tap(find.byKey(const Key('nav-general-calendar')));
+        }
+        await tester.pumpAndSettle();
+        if (!fromHub) {
+          await tester.tap(find.byKey(const Key('calendar-course-filter')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('POO').last);
+          await tester.pumpAndSettle();
+        }
+        await tester.tap(find.text('Próximo'));
+        await tester.pumpAndSettle();
+        expect(find.text('Outubro 2026'), findsOneWidget);
+        if (fromHub) {
+          await tester.tap(find.text('Lista'));
+          await tester.pumpAndSettle();
+          await tester.tap(
+            find.textContaining('Avaliação: Entrega da disciplina'),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Ver atividades e plano'));
+        } else {
+          await tester.tap(find.byKey(const Key('calendar-open-activities')));
+        }
+        await tester.pumpAndSettle();
+        expect(gateway.requested, 'course-1');
+        expect(
+          find.byKey(const Key('workspace-open-calendar')),
+          findsOneWidget,
+        );
+        await tester.tap(find.byKey(const Key('workspace-open-calendar')));
+        await tester.pumpAndSettle();
+        expect(logger.events, contains('calendar_activities_open_succeeded'));
+        if (fromHub) {
+          expect(find.byKey(const Key('month-calendar-grid')), findsNothing);
+          await tester.tap(
+            find.descendant(
+              of: find.byKey(const Key('calendar-display')),
+              matching: find.text('Calendário'),
+            ),
+          );
+          await tester.pumpAndSettle();
+        }
+        expect(find.text('Outubro 2026'), findsOneWidget);
+        expect(find.text('POO'), findsWidgets);
+      },
+    );
+  }
+
+  testWidgets(
+    'saved files are reachable from the profile without asking UFMG status',
+    (tester) async {
+      final gateway = _UFMGGateway();
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
+          home: CoursePage(
+            repository: _FakeCourseRepository(),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            user: user,
+            logger: _RecordingAppLogger(),
+            onSignOut: () async {},
+            now: () => now,
+            ufmgSessionGateway: gateway,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('profile-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Arquivos no dispositivo'));
+      await tester.pumpAndSettle();
+      expect(find.text('Arquivos no dispositivo'), findsOneWidget);
+      expect(gateway.statusCalls, 0);
+    },
+  );
   for (final injected in [false, true]) {
     testWidgets(
       'loading saved sessions automatically schedules without opening diagnostics (injected=$injected)',
@@ -282,7 +413,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(h.reports, hasLength(2));
-        expect(find.text('Pings de presença'), findsNothing);
+        expect(find.text('Presença automática'), findsNothing);
         tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
         tester.binding.handleAppLifecycleStateChanged(
           AppLifecycleState.resumed,
@@ -554,11 +685,7 @@ void main() {
       expect(find.byKey(const Key('course-hub-retry')), findsNothing);
       expect(
         logger.errorContexts,
-        containsAll([
-          'course_hub_sessions_failed',
-          'course_hub_course_failed',
-          'course_hub_meetings_failed',
-        ]),
+        containsAll(['course_hub_sessions_failed', 'course_hub_course_failed']),
       );
     },
   );
@@ -882,17 +1009,14 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.byTooltip('Perfil e configurações'));
         await tester.pumpAndSettle();
-        await tester.tap(find.text('Pings de presença'));
+        await tester.tap(find.text('Presença automática'));
         await tester.pumpAndSettle();
         await tester.scrollUntilVisible(
-          find.text('Nenhuma sessão elegível para agendar.'),
+          find.text('Histórico de capturas'),
           200,
           scrollable: find.byType(Scrollable).first,
         );
-        expect(
-          find.text('Nenhuma sessão elegível para agendar.'),
-          findsOneWidget,
-        );
+        expect(find.text('Histórico de capturas'), findsOneWidget);
         await tester.pageBack();
         await tester.pumpAndSettle();
         await tester.tap(find.byTooltip('Perfil e configurações'));
@@ -964,32 +1088,32 @@ void main() {
         'open_revision': 1,
       });
       await tester.pump();
-      expect(find.text('Pings de presença'), findsNothing);
+      expect(find.text('Presença automática'), findsNothing);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
       courses.pending!.complete([]);
       courses.pending = null;
       await tester.pumpAndSettle();
-      expect(find.text('Pings de presença'), findsNothing);
+      expect(find.text('Presença automática'), findsNothing);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pumpAndSettle();
-      expect(find.text('Pings de presença'), findsOneWidget);
+      expect(find.text('Presença automática'), findsOneWidget);
       updates.add({
         'action': 'open_checkpoints',
         'account_id': user.id,
         'open_revision': 2,
       });
       await tester.pumpAndSettle();
-      expect(find.text('Pings de presença'), findsOneWidget);
+      expect(find.text('Presença automática'), findsOneWidget);
       await tester.pageBack();
       await tester.pumpAndSettle();
-      expect(find.text('Pings de presença'), findsNothing);
+      expect(find.text('Presença automática'), findsNothing);
       updates.add({
         'action': 'open_checkpoints',
         'account_id': user.id,
         'open_revision': 2,
       });
       await tester.pumpAndSettle();
-      expect(find.text('Pings de presença'), findsNothing);
+      expect(find.text('Presença automática'), findsNothing);
       updates.add({
         'action': 'open_checkpoints',
         'account_id': user.id,
@@ -1935,13 +2059,13 @@ void main() {
     expect(find.byKey(const Key('course-hub-section-grid')), findsOneWidget);
     expect(find.byKey(const Key('course-hub-frequency')), findsOneWidget);
     expect(find.byKey(const Key('course-hub-agenda')), findsOneWidget);
-    expect(find.byKey(const Key('course-hub-schedule')), findsOneWidget);
+    expect(find.byKey(const Key('course-hub-open-schedule')), findsOneWidget);
     expect(find.byKey(const Key('course-hub-materials')), findsOneWidget);
     expect(sessions.listedCourseIds, contains('course-1'));
     expect(find.textContaining('Trabalho prático'), findsOneWidget);
-    expect(find.textContaining('Segunda'), findsNWidgets(2));
+    expect(find.textContaining('Segunda'), findsNothing);
     expect(find.text('1 material disponível'), findsOneWidget);
-    expect(meetingRepository.listedCourseIds, ['course-1']);
+    expect(meetingRepository.listedCourseIds, isEmpty);
 
     await tester.ensureVisible(
       find.byKey(const Key('course-hub-open-calendar')),
@@ -2191,10 +2315,7 @@ void main() {
       find.text('Não foi possível carregar a frequência agora.'),
       findsOneWidget,
     );
-    expect(
-      find.text('Não foi possível carregar a grade agora.'),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('course-hub-open-schedule')), findsOneWidget);
     expect(
       find.text('Nenhum material sincronizado para esta disciplina.'),
       findsOneWidget,
@@ -3169,7 +3290,7 @@ void main() {
       await tester.ensureVisible(find.byKey(const Key('course-hub-materials')));
       expect(find.byKey(const Key('course-hub-frequency')), findsOneWidget);
       expect(find.byKey(const Key('course-hub-agenda')), findsOneWidget);
-      expect(find.byKey(const Key('course-hub-schedule')), findsOneWidget);
+      expect(find.byKey(const Key('course-hub-open-schedule')), findsOneWidget);
       expect(find.byKey(const Key('course-hub-materials')), findsOneWidget);
       expect(tester.takeException(), isNull, reason: 'width $width');
       await tester.pageBack();

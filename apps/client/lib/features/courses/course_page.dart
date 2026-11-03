@@ -1,3 +1,4 @@
+import '../activities/course_workspace_page.dart';
 import 'dart:convert';
 import '../../data/automatic_checkpoint_scheduler.dart';
 import '../ufmg/academic_sync_host.dart';
@@ -43,7 +44,13 @@ import 'course_hub_page.dart';
 typedef CourseIdGenerator = String Function();
 typedef CurrentTime = DateTime Function();
 
-enum _ProfileAction { ufmgAccount, permissions, firstCheckpoint, signOut }
+enum _ProfileAction {
+  ufmgAccount,
+  savedFiles,
+  permissions,
+  firstCheckpoint,
+  signOut,
+}
 
 enum _CourseTileAction { edit, delete }
 
@@ -834,6 +841,25 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     if (mounted) await _load();
   }
 
+  Future<void> _openCourseActivities(CourseRecord course) async {
+    final gateway =
+        widget.ufmgSessionGateway! as BackendAcademicWorkspaceGateway;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => CourseWorkspacePage(
+          course: course,
+          gateway: gateway,
+          logger: widget.logger,
+          now: widget.now,
+          userId: widget.user.id,
+          onOpenCalendar: () async => Navigator.of(context).pop(),
+          onConnect: _openUFMGConnection,
+        ),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
   Future<void> _openUpcomingEntry(
     CourseRecord course,
     AgendaEntry entry,
@@ -841,6 +867,10 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => GeneralCalendarPage(
+          onOpenActivities:
+              widget.ufmgSessionGateway is BackendAcademicWorkspaceGateway
+              ? _openCourseActivities
+              : null,
           logger: widget.logger,
           onOpenCourse: _openCourseHub,
           courses: _courses,
@@ -862,6 +892,10 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => GeneralCalendarPage(
+          onOpenActivities:
+              widget.ufmgSessionGateway is BackendAcademicWorkspaceGateway
+              ? _openCourseActivities
+              : null,
           navigationState: _calendarNavigation,
           logger: widget.logger,
           onOpenCourse: _openCourseHub,
@@ -939,6 +973,17 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
 
   Future<void> _selectProfileAction(_ProfileAction action) async {
     switch (action) {
+      case _ProfileAction.savedFiles:
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => UFMGConnectionPage(
+              gateway: widget.ufmgSessionGateway!,
+              logger: widget.logger,
+              userId: widget.user.id,
+              view: UFMGView.savedFiles,
+            ),
+          ),
+        );
       case _ProfileAction.ufmgAccount:
         await _openUFMGConnection();
       case _ProfileAction.permissions:
@@ -1254,7 +1299,18 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
             child: ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.schedule),
-              title: Text('Pings de presença'),
+              title: Text('Presença automática'),
+            ),
+          ),
+        if (widget.ufmgSessionGateway != null &&
+            !kIsWeb &&
+            defaultTargetPlatform == TargetPlatform.android)
+          const PopupMenuItem(
+            value: _ProfileAction.savedFiles,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.offline_pin_outlined),
+              title: Text('Arquivos no dispositivo'),
             ),
           ),
         if (widget.ufmgSessionGateway != null)

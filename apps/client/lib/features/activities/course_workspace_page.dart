@@ -21,6 +21,7 @@ class CourseWorkspacePage extends StatefulWidget {
     required this.now,
     this.userId,
     this.onConnect,
+    this.onOpenCalendar,
     this.materialFileCache,
     this.openExternalUri,
     this.snapshotCache,
@@ -33,6 +34,7 @@ class CourseWorkspacePage extends StatefulWidget {
   final DateTime Function() now;
   final String? userId;
   final Future<void> Function()? onConnect;
+  final Future<void> Function()? onOpenCalendar;
   final MaterialFileCache? materialFileCache;
   final Future<bool> Function(Uri)? openExternalUri;
   @override
@@ -669,7 +671,18 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(widget.course.displayName)),
+    appBar: AppBar(
+      title: Text(widget.course.displayName),
+      actions: [
+        if (widget.onOpenCalendar != null)
+          IconButton(
+            key: const Key('workspace-open-calendar'),
+            tooltip: 'Voltar ao calendário',
+            onPressed: widget.onOpenCalendar,
+            icon: const Icon(Icons.calendar_month_outlined),
+          ),
+      ],
+    ),
     floatingActionButton: _section == _Section.dates
         ? FloatingActionButton.extended(
             key: const Key('workspace-add-date'),
