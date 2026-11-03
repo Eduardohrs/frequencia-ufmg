@@ -29,6 +29,7 @@ final class ResilientAppLogger implements AppLogger {
       () => _delegate.logEvent(name, parameters: parameters),
       kind: 'event',
       target: name,
+      operationId: parameters?['operation_id'],
     );
   }
 
@@ -50,6 +51,7 @@ final class ResilientAppLogger implements AppLogger {
       ),
       kind: 'error',
       target: context,
+      operationId: parameters?['operation_id'],
     );
   }
 
@@ -57,35 +59,52 @@ final class ResilientAppLogger implements AppLogger {
     Future<void> Function() send, {
     required String kind,
     required String target,
+    Object? operationId,
   }) {
-    try {
-      unawaited(
-        send().timeout(_deliveryTimeout).catchError((Object error) {
-          _reportFailure(error, kind: kind, target: target);
+    final watch = Stopwatch()..start();
+    var overdue = false;
+    void report(String event, String status, [Object? error]) {
+      final details = error == null ? null : ErrorLogDetails.from(error);
+      _failureSink(
+        jsonEncode({
+          'event': event,
+          'delivery_status': status,
+          'log_kind': kind,
+          'target': target,
+          if (transport != null) 'transport': transport,
+          if (operationId is String) 'operation_id': operationId,
+          'elapsed_ms': watch.elapsedMilliseconds,
+          if (details != null) 'error_type': details.type,
+          if (details?.code != null) 'error_code': details!.code,
+          if (details?.message != null) 'error_message': details!.message,
+          'occurred_at': DateTime.now().toUtc().toIso8601String(),
         }),
       );
-    } catch (error) {
-      _reportFailure(error, kind: kind, target: target);
     }
-  }
 
-  void _reportFailure(
-    Object error, {
-    required String kind,
-    required String target,
-  }) {
-    final details = ErrorLogDetails.from(error);
-    _failureSink(
-      jsonEncode({
-        'event': 'observability_delivery_failed',
-        'log_kind': kind,
-        'target': target,
-        if (transport != null) 'transport': transport,
-        'error_type': details.type,
-        if (details.code != null) 'error_code': details.code,
-        if (details.message != null) 'error_message': details.message,
-        'occurred_at': DateTime.now().toUtc().toIso8601String(),
-      }),
-    );
+    // A deadline does not cancel a Firestore write queued by its SDK.
+    final timer = Timer(_deliveryTimeout, () {
+      overdue = true;
+      report('observability_delivery_pending', 'awaiting_transport_ack');
+    });
+    try {
+      unawaited(
+        send().then<void>(
+          (_) {
+            timer.cancel();
+            if (overdue) {
+              report('observability_delivery_late_succeeded', 'acknowledged');
+            }
+          },
+          onError: (Object error) {
+            timer.cancel();
+            report('observability_delivery_failed', 'rejected', error);
+          },
+        ),
+      );
+    } catch (error) {
+      timer.cancel();
+      report('observability_delivery_failed', 'rejected', error);
+    }
   }
 }
