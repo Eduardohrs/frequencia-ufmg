@@ -19,6 +19,7 @@ object CheckpointNotifications {
     const val ID=48002
     const val TEST_ID=48003
     private const val STORE="checkpoint_notices"
+    fun reviewed(c:Context):Set<String> = prefs(c).getStringSet("reviewed",emptySet())!!.toSet()
     private fun prefs(c:Context)=c.getSharedPreferences(STORE,0)
     private fun manager(c:Context)=c.getSystemService(NotificationManager::class.java)
     private fun channel(c:Context):Boolean {

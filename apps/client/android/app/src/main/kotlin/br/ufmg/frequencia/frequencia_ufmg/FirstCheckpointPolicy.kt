@@ -46,6 +46,14 @@ object FirstCheckpointPolicy {
         listOf("course_id", "session_id", "starts_at_ms", "ends_at_ms", "campus_id", "lesson_count", "call_count")
             .all { a.optString(it) == b.optString(it) }
 
+    fun canUnscheduleAutomatic(report: JSONObject): Boolean =
+        report.optString("schedule_origin") == "automatic" && report.optString("status") == "scheduled" &&
+            !report.has("alarm_received_at_ms")
+
+    fun canClearAutomatic(report: JSONObject, peers: List<JSONObject>, now: Long, reviewed: Set<String>): Boolean =
+        report.optString("schedule_origin") == "automatic" && canClear(report, peers, now) &&
+            CheckpointNotificationPolicy.select(report.optString("account_id"), listOf(report), reviewed) == null
+
     fun canClear(report: JSONObject, peers: List<JSONObject>, now: Long): Boolean {
         if (report.optBoolean("delivery_enabled") && !CheckpointDeliveryPolicy.acknowledged(report)) return false
         val active = listOf("scheduled", "running")
