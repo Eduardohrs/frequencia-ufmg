@@ -31,6 +31,7 @@ object MaterialDownloadNotifications {
         var lastPosted = 0L
         var deferred: Runnable? = null
         var denialLogged = false
+        var revision = 0L
     }
     fun id(namespace: String): Int = MaterialDownloadSpec.notificationId(namespace)
     fun preparation(context: Context): Notification = builder(context)
@@ -48,7 +49,7 @@ object MaterialDownloadNotifications {
             } catch (error: Exception) { log(namespace, "queue_observation_failed", error) }
         }
     }
-    private fun render(queue: Queue, work: List<WorkInfo>) {
+    private fun render(queue: Queue, work: List<WorkInfo>, confirmedEmpty: Boolean = false) {
         if (queues[queue.namespace] !== queue) return
         val view = MaterialDownloadNotificationPolicy.view(work.map { info ->
             MaterialDownloadNotificationPolicy.Item(info.id.toString(), info.progress.getString("name")
@@ -56,6 +57,19 @@ object MaterialDownloadNotifications {
                 info.state.name.lowercase())
         }, MaterialPreparationService.pendingCount(queue.namespace))
         if (view == null) {
+            if (!confirmedEmpty) {
+                // LiveData can still hold the empty snapshot from before enqueue.
+                // Confirm against the committed queue before removing the handover notification.
+                val revision = queue.revision
+                val fresh = WorkManager.getInstance(queue.context)
+                    .getWorkInfosByTag(MaterialDownloadBridge.namespaceTag(queue.namespace))
+                fresh.addListener({
+                    try {
+                        if (queue.revision == revision) render(queue, fresh.get(), true)
+                    } catch (error: Exception) { log(queue.namespace, "queue_confirmation_failed", error) }
+                }, androidx.core.content.ContextCompat.getMainExecutor(queue.context))
+                return
+            }
             queue.deferred?.let(handler::removeCallbacks)
             queue.source.removeObserver(queue.observer)
             queues.remove(queue.namespace)
@@ -63,6 +77,7 @@ object MaterialDownloadNotifications {
             log(queue.namespace, "queue_finished")
             return
         }
+        queue.revision++
         if (view == queue.lastView) return
         val now = SystemClock.elapsedRealtime()
         val wait = UPDATE_INTERVAL_MS - (now - queue.lastPosted)

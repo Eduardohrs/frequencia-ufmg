@@ -3480,6 +3480,22 @@ void main() {
       findsOneWidget,
     );
     expect(gateway.syncCalls, 0);
+    await tester.tap(find.byKey(const Key('nav-settings')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Conta acadêmica UFMG'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('ufmg-username')), 'student');
+    await tester.enterText(
+      find.byKey(const Key('ufmg-password')),
+      'test-password',
+    );
+    await tester.tap(find.byKey(const Key('ufmg-connect')));
+    await tester.pumpAndSettle();
+    Navigator.of(tester.element(find.text('Conta acadêmica UFMG'))).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('nav-home')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('ufmg-sync-notice')), findsNothing);
   });
 
   testWidgets('keeps local data available when automatic sync fails', (
@@ -4103,7 +4119,10 @@ class _UFMGGateway implements BackendUFMGSessionGateway {
   Future<PythonUFMGSessionStatus> connectUFMG({
     required String username,
     required String password,
-  }) => throw UnimplementedError();
+  }) async => const PythonUFMGSessionStatus(
+    connected: true,
+    reauthenticationRequired: false,
+  );
 
   @override
   Future<PythonUFMGSessionStatus> disconnectUFMG() =>

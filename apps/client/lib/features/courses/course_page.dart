@@ -1004,6 +1004,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => UFMGConnectionPage(
+          onConnected: () => _ufmgSyncNotice = null,
           academicSync: _academicSync,
           gateway: gateway,
           logger: widget.logger,

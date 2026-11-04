@@ -39,6 +39,7 @@ class UFMGConnectionPage extends StatefulWidget {
     this.materialCourseTerm,
     this.onOpenCourses,
     this.onOpenCalendar,
+    this.onConnected,
     super.key,
   }) : assert(view != UFMGView.savedFiles || materialCourseId == null);
 
@@ -59,6 +60,7 @@ class UFMGConnectionPage extends StatefulWidget {
   final String? materialCourseTerm;
   final Future<void> Function()? onOpenCourses;
   final Future<void> Function()? onOpenCalendar;
+  final VoidCallback? onConnected;
 
   bool get isMaterialScope => materialCourseId != null;
 
@@ -458,9 +460,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       if (imported.notPublished) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'O plano de ensino ainda não foi publicado. Seus dados foram mantidos.',
-            ),
+            content: Text('O plano de ensino ainda não foi publicado.'),
           ),
         );
         return;
@@ -1115,12 +1115,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         title: const AppDialogHeader(
           icon: Icons.delete_sweep_outlined,
           title: 'Remover as cópias listadas?',
-          subtitle: 'Os arquivos originais continuarão disponíveis no Moodle.',
           destructive: true,
         ),
         content: const Text(
-          'Os arquivos deixarão de abrir offline e as falhas serão removidas da lista. '
-          'Os originais permanecem no Moodle.',
+          'As cópias offline e as falhas listadas serão removidas.',
         ),
         actions: [
           TextButton(
@@ -1230,6 +1228,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           _status = status;
           _showReconnectForm = false;
         });
+        if (status.connected) widget.onConnected?.call();
       }
     } catch (error) {
       if (mounted) setState(() => _error = _messageFor(error));
@@ -1247,11 +1246,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         title: const AppDialogHeader(
           icon: Icons.link_off_outlined,
           title: 'Desconectar da UFMG?',
-          subtitle: 'Seus registros pessoais não serão apagados.',
           destructive: true,
         ),
         content: const Text(
-          'A sessão acadêmica salva será apagada. Seus registros de frequência permanecem intactos.',
+          'Você precisará entrar novamente para sincronizar.',
         ),
         actions: [
           TextButton(

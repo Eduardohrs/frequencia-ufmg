@@ -33,8 +33,24 @@ class MaterialDownloadBridge(private val context: Context) {
                     result.success(null)
                 }
                 "enqueue" -> {
-                    enqueue(MaterialDownloadSpec.from(arguments))
-                    result.success(null)
+                    val spec = MaterialDownloadSpec.from(arguments)
+                    val persisted = enqueue(spec).result
+                    persisted.addListener({
+                        try {
+                            persisted.get()
+                            MaterialDownloadNotifications.refresh(context, spec.namespace)
+                            result.success(null)
+                        } catch (error: Exception) {
+                            val cause = error.cause ?: error
+                            android.util.Log.e("MaterialDownload", org.json.JSONObject()
+                                .put("event", "material_download_enqueue_failed")
+                                .put("file_id", spec.id).put("namespace", spec.namespace)
+                                .put("error_type", cause.javaClass.simpleName)
+                                .put("stage", "queue_commit")
+                                .put("error_message", cause.message?.take(600)).toString())
+                            result.error("material_download_enqueue_failed", "Não foi possível incluir o arquivo na fila.", null)
+                        }
+                    }, ContextCompat.getMainExecutor(context))
                 }
                 "listQueue" -> listQueue(arguments, result)
                 "dismiss" -> {
@@ -154,7 +170,7 @@ class MaterialDownloadBridge(private val context: Context) {
         )
     }
 
-    private fun enqueue(spec: MaterialDownloadSpec) {
+    private fun enqueue(spec: MaterialDownloadSpec): androidx.work.Operation {
         setDismissed(spec.namespace, spec.id, dismissed = false)
         val request = OneTimeWorkRequestBuilder<MaterialDownloadWorker>()
             .setInputData(
@@ -179,7 +195,7 @@ class MaterialDownloadBridge(private val context: Context) {
             .addTag("material-id-${spec.id}")
             .addTag("material-name-${spec.name}")
             .build()
-        workManager.beginUniqueWork(
+        return workManager.beginUniqueWork(
             spec.queueWorkName,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
             request,
