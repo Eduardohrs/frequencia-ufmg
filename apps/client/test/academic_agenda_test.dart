@@ -153,12 +153,13 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       final presentation = store.documents.last;
       final raw = presentation['details']! as String;
-      expect(raw.length, lessThanOrEqualTo(500));
+      expect(raw.length, lessThanOrEqualTo(8192));
       final counts = jsonDecode(raw) as Map<String, dynamic>;
       expect(counts['unavailable_count'], 50);
       expect(counts['imported_count'], 4);
       expect(counts['is_local_copy'], isTrue);
-      expect(counts['truncated'], isTrue);
+      expect(counts['details_truncated'], isNot(true));
+      expect(raw, contains('course-49-'));
       expect(presentation['screen'], 'home');
       emitOperationalEvent(_SynchronousFailureLogger(), 'unavailable_logger', {
         'stage': 'read',

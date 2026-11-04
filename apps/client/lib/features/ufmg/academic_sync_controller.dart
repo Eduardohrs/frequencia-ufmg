@@ -1,3 +1,4 @@
+import 'academic_sync_feedback.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
@@ -36,9 +37,9 @@ final class AcademicSyncController extends ChangeNotifier {
   String get title {
     if (error != null) return 'Não foi possível concluir a sincronização';
     if (!isRunning && result != null) {
-      return result!.exceptions.isEmpty
+      return unifiedSyncIssues(result!).isEmpty
           ? 'Sincronização concluída'
-          : 'Concluída com avisos para revisar';
+          : 'Confira as pendências da sincronização';
     }
     if (progressUnavailable) return 'Sincronizando • progresso indisponível';
     if (!receivedProgress) return 'Iniciando sincronização…';
@@ -106,11 +107,12 @@ final class AcademicSyncController extends ChangeNotifier {
         action: () => gateway.syncWithProgress(id, force: force),
       );
       result = completed;
+      visible = unifiedSyncIssues(completed).isNotEmpty;
       progress = AcademicSyncProgress(
         operationId: id,
         completed: 3,
-        status: completed.exceptions.isEmpty ? 'succeeded' : 'partial',
-        reviewRequired: completed.exceptions.length,
+        status: unifiedSyncIssues(completed).isEmpty ? 'succeeded' : 'partial',
+        reviewRequired: unifiedSyncIssues(completed).length,
       );
       return completed;
     } catch (failure) {

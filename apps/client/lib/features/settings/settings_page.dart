@@ -132,10 +132,6 @@ class _AttendanceSetupState extends State<_AttendanceSetup> {
                     : c.instruction,
               ),
               const SizedBox(height: 12),
-              if (c.next != null)
-                const Text(
-                  'Você pode continuar registrando sua frequência manualmente.',
-                ),
               if (_hint != null && c.next == _hintNeed) Text(_hint!),
               if (_error != null && c.next != null)
                 Text(
@@ -183,7 +179,6 @@ class AppSettingsPage extends StatelessWidget {
     required this.onSignOut,
     this.attendance,
     this.onAcademicAccount,
-    this.onSavedFiles,
     this.campusSelection,
     this.onCampusChanged,
     super.key,
@@ -192,7 +187,7 @@ class AppSettingsPage extends StatelessWidget {
   final AppLogger logger;
   final AutomaticAttendanceController? attendance;
   final Future<void> Function() onSignOut;
-  final Future<void> Function()? onAcademicAccount, onSavedFiles;
+  final Future<void> Function()? onAcademicAccount;
   final CampusSelectionGateway? campusSelection;
   final VoidCallback? onCampusChanged;
   @override
@@ -214,54 +209,25 @@ class AppSettingsPage extends StatelessWidget {
               ListenableBuilder(
                 listenable: c,
                 builder: (context, _) => Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              c.status != null &&
-                                      c.next == null &&
-                                      !c.permissionError
-                                  ? Icons.check_circle_outline
-                                  : Icons.info_outline,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                'Presença nas aulas',
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(c.title),
-                        const SizedBox(height: 4),
-                        Text(c.instruction),
-                        if (c.next != null || c.permissionError)
-                          TextButton(
-                            onPressed: () => showAttendanceSetup(context, c),
-                            child: const Text('Concluir configuração'),
-                          ),
-                        if (c.reportError)
-                          const Text(
-                            'Não foi possível conferir os últimos resultados neste aparelho.',
-                          )
-                        else
-                          Text(
-                            c.busy
-                                ? 'Conferindo resultados…'
-                                : c.reports.any(
-                                    (r) => r['status'] == 'succeeded',
-                                  )
-                                ? 'Os resultados estão na frequência de cada disciplina.'
-                                : 'Ainda não há verificações concluídas neste aparelho.',
-                          ),
-                      ],
+                  child: ListTile(
+                    leading: Icon(
+                      c.next == null && c.status != null && !c.permissionError
+                          ? Icons.check_circle_outline
+                          : Icons.info_outline,
                     ),
+                    title: const Text('Presença nas aulas'),
+                    subtitle: Text(c.title),
+                    trailing: c.busy
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : c.next != null || c.permissionError
+                        ? const Icon(Icons.chevron_right)
+                        : null,
+                    onTap: c.next != null || c.permissionError
+                        ? () => showAttendanceSetup(context, c)
+                        : null,
                   ),
                 ),
               ),
@@ -269,7 +235,6 @@ class AppSettingsPage extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.location_on_outlined),
                 title: const Text('Local das aulas'),
-                subtitle: const Text('Campus usado na presença automática'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => Navigator.of(context).push<void>(
                   MaterialPageRoute(
@@ -286,16 +251,8 @@ class AppSettingsPage extends StatelessWidget {
                 leading: const Icon(Icons.account_balance_outlined),
                 key: const Key('settings-academic-account'),
                 title: const Text('Conta acadêmica UFMG'),
-                subtitle: const Text('Acesso e sincronização'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: onAcademicAccount,
-              ),
-            if (onSavedFiles != null)
-              ListTile(
-                leading: const Icon(Icons.offline_pin_outlined),
-                title: const Text('Arquivos no aparelho'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: onSavedFiles,
               ),
             const SizedBox(height: 24),
             TextButton.icon(
@@ -400,9 +357,6 @@ class _CampusPickerState extends State<_CampusPicker> {
         : ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              const Text(
-                'Escolha onde você tem aulas. A área é aproximada; estar no campus não comprova participação.',
-              ),
               for (final campus in CampusAreas.values)
                 ListTile(
                   title: Text(campus.name),

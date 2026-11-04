@@ -49,7 +49,7 @@ class AcademicSyncBanner extends StatelessWidget {
                                 ? Icons.error_outline
                                 : controller.isRunning
                                 ? Icons.sync
-                                : Icons.check_circle_outline,
+                                : Icons.info_outline,
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -125,14 +125,6 @@ class AcademicSyncBanner extends StatelessWidget {
                               : Icons.radio_button_unchecked,
                         ),
                         title: Text(AcademicSyncController.stages[index]),
-                      ),
-                    if (controller.isRunning)
-                      const Text(
-                        'Você pode continuar usando o aplicativo. O resultado ficará salvo mesmo se você fechar o aplicativo.',
-                      ),
-                    if (controller.error != null)
-                      const Text(
-                        'As etapas já concluídas foram mantidas. Confira seus dados antes de tentar novamente.',
                       ),
                     if (controller.result != null || controller.error != null)
                       FilledButton(

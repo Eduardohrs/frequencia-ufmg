@@ -45,10 +45,13 @@ class CourseVisualCatalog extends ChangeNotifier {
   CourseRecord? course({
     required String id,
     required String code,
-    required String term,
+    String? term,
   }) {
     final matches = _courses
-        .where((c) => c.term == term && _code(c.code) == _code(code))
+        .where(
+          (c) =>
+              (term == null || c.term == term) && _code(c.code) == _code(code),
+        )
         .toList();
     return matches.where((c) => c.id == id).firstOrNull ??
         (matches.length == 1 ? matches.single : null);

@@ -1,9 +1,7 @@
 package br.ufmg.frequencia.frequencia_ufmg
 
-import android.app.NotificationChannel
 import android.app.ActivityManager
 import android.app.KeyguardManager
-import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -15,7 +13,6 @@ import android.os.PowerManager
 import android.os.ResultReceiver
 import android.os.SystemClock
 import android.util.Log
-import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import org.json.JSONObject
 
@@ -24,6 +21,7 @@ class MaterialPreparationService : Service() {
     private data class Scope(val namespace: String, val operation: String, val count: Int, val started: Long)
     private val scopes = mutableMapOf<String, Scope>()
     private val handler = Handler(Looper.getMainLooper())
+    private val namespaces = mutableSetOf<String>()
     private var wakeLock: PowerManager.WakeLock? = null
     private val expire = Runnable { stopScopes("lease_timeout") }
 
@@ -48,29 +46,18 @@ class MaterialPreparationService : Service() {
             SystemClock.elapsedRealtime(),
         )
         try {
-            val manager = getSystemService(NotificationManager::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                manager.createNotificationChannel(NotificationChannel(
-                    CHANNEL, "Downloads de materiais", NotificationManager.IMPORTANCE_LOW,
-                ))
-            }
-            val notification = NotificationCompat.Builder(this, CHANNEL)
-                .setSmallIcon(applicationInfo.icon)
-                .setContentTitle("Preparando materiais da UFMG")
-                .setContentText("Obtendo os arquivos para download. Você pode sair do aplicativo.")
-                .setProgress(0, 0, true)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .build()
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification,
+            val notification = MaterialDownloadNotifications.preparation(this)
+            ServiceCompat.startForeground(this, MaterialDownloadNotifications.id(scope.namespace), notification,
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0,
             )
+            namespaces.add(scope.namespace)
             if (wakeLock == null) {
                 wakeLock = getSystemService(PowerManager::class.java)
                     .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "frequencia:material_preparation")
                     .apply { setReferenceCounted(false); acquire(MAX_DURATION_MS) }
             }
             scopes[session] = scope
+            MaterialDownloadNotifications.refresh(this,scope.namespace)
             log(session, scope, "ready")
             // The Dart requests must not run until Android has accepted foreground execution.
             receiver?.send(0, null)
@@ -87,7 +74,7 @@ class MaterialPreparationService : Service() {
     }
 
     private fun finish(session: String) {
-        scopes.remove(session)?.let { log(session, it, "released") }
+        scopes.remove(session)?.let { log(session, it, "released"); MaterialDownloadNotifications.refresh(this,it.namespace) }
         if (scopes.isEmpty()) stopSelf()
     }
 
@@ -107,7 +94,8 @@ class MaterialPreparationService : Service() {
         handler.removeCallbacks(expire)
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopForeground(STOP_FOREGROUND_DETACH)
+        namespaces.forEach { MaterialDownloadNotifications.refresh(this,it) }
         if (instance === this) instance = null
         super.onDestroy()
     }
@@ -136,11 +124,9 @@ class MaterialPreparationService : Service() {
     }
 
     companion object {
-        private const val CHANNEL = "material_downloads"
-        // File notifications use only 28 bits; reserve a separate positive ID.
-        private const val NOTIFICATION_ID = 0x40000000
         private const val MAX_DURATION_MS = 10L * 60L * 1000L
         private var instance: MaterialPreparationService? = null
         fun finish(session: String) { instance?.finish(session) }
+        fun pendingCount(namespace: String): Int = instance?.scopes?.values?.filter { it.namespace == namespace }?.sumOf { it.count } ?: 0
     }
 }

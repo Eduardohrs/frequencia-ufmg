@@ -46,8 +46,6 @@ import 'course_hub_page.dart';
 typedef CourseIdGenerator = String Function();
 typedef CurrentTime = DateTime Function();
 
-enum _ProfileAction { savedFiles, signOut }
-
 enum _CourseTileAction { edit, delete }
 
 class CoursePage extends StatefulWidget {
@@ -1006,6 +1004,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => UFMGConnectionPage(
+          onConnected: () => _ufmgSyncNotice = null,
           academicSync: _academicSync,
           gateway: gateway,
           logger: widget.logger,
@@ -1084,57 +1083,37 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
           onAcademicAccount: widget.ufmgSessionGateway == null
               ? null
               : _openUFMGConnection,
-          onSavedFiles:
-              widget.ufmgSessionGateway != null &&
-                  !kIsWeb &&
-                  defaultTargetPlatform == TargetPlatform.android
-              ? () => _selectProfileAction(_ProfileAction.savedFiles)
-              : null,
           onSignOut: () async {
             Navigator.of(context).popUntil((route) => route.isFirst);
-            await _selectProfileAction(_ProfileAction.signOut);
+            await _signOut();
           },
         ),
       ),
     );
   }
 
-  Future<void> _selectProfileAction(_ProfileAction action) async {
-    switch (action) {
-      case _ProfileAction.savedFiles:
-        await Navigator.of(context).push<void>(
-          MaterialPageRoute(
-            builder: (_) => UFMGConnectionPage(
-              gateway: widget.ufmgSessionGateway!,
-              logger: widget.logger,
-              userId: widget.user.id,
-              view: UFMGView.savedFiles,
-            ),
-          ),
+  Future<void> _signOut() async {
+    _checkpointSchedulingAllowed = false;
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await FirstCheckpointGateway.deactivate();
+      } catch (error, stack) {
+        unawaited(
+          widget.logger
+              .recordError(
+                error,
+                stack,
+                context: 'first_checkpoint_logout_cleanup',
+              )
+              .catchError((Object e) {
+                debugPrint(
+                  'first_checkpoint_log_delivery_failed type=${e.runtimeType}',
+                );
+              }),
         );
-      case _ProfileAction.signOut:
-        _checkpointSchedulingAllowed = false;
-        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-          try {
-            await FirstCheckpointGateway.deactivate();
-          } catch (error, stack) {
-            unawaited(
-              widget.logger
-                  .recordError(
-                    error,
-                    stack,
-                    context: 'first_checkpoint_logout_cleanup',
-                  )
-                  .catchError((Object e) {
-                    debugPrint(
-                      'first_checkpoint_log_delivery_failed type=${e.runtimeType}',
-                    );
-                  }),
-            );
-          }
-        }
-        await widget.onSignOut();
+      }
     }
+    await widget.onSignOut();
   }
 
   Future<void> _openCheckpointPage() async {

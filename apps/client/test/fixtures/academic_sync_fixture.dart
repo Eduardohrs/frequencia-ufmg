@@ -45,7 +45,7 @@ PythonUnifiedAcademicSyncResult syncResult({bool partial = false}) =>
           const PythonAcademicSyncException(
             courseId: 'esa019',
             courseCode: 'ESA019',
-            reason: 'teaching_plan_not_published',
+            reason: 'teaching_plan_unavailable',
             candidateCount: 1,
             changes: [],
             conflicting: 0,

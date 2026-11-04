@@ -43,21 +43,7 @@ String _operationalDetails(Map<String, Object> fields) {
     ..remove('operation_id')
     ..remove('duration_ms')
     ..remove('screen');
-  var encoded = jsonEncode(details);
-  if (encoded.length <= 500) return encoded;
-  details['truncated'] = true;
-  // Shrink values before encoding; never cut the serialized JSON in the store.
-  while ((encoded = jsonEncode(details)).length > 500) {
-    final longest = details.entries
-        .where((e) => e.value is String)
-        .reduce(
-          (a, b) =>
-              (a.value as String).length >= (b.value as String).length ? a : b,
-        );
-    final value = longest.value as String;
-    details[longest.key] = value.substring(0, value.length ~/ 2);
-  }
-  return encoded;
+  return sanitizeDiagnosticDetails(jsonEncode(details))!;
 }
 
 final class _OperationalFailure implements StructuredAppError {

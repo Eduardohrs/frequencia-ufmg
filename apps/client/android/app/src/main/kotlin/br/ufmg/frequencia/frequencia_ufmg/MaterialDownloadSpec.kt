@@ -15,7 +15,7 @@ data class MaterialDownloadSpec(
     val uniqueWorkName: String = uniqueWorkName(namespace, id)
     val queueWorkName: String = "moodle-material-queue-$namespace"
     val itemTag: String = uniqueWorkName
-    val notificationId: Int = sha256(namespace).take(7).toInt(16)
+    val notificationId: Int = notificationId(namespace)
 
     // Prerequisite output is merged into the next WorkManager request.
     // Keep immutable request fields distinct from reported progress/output.
@@ -29,6 +29,7 @@ data class MaterialDownloadSpec(
     )
 
     companion object {
+        fun notificationId(namespace: String): Int = sha256(namespace).take(7).toInt(16)
         const val MAX_FILE_BYTES = 100L * 1024L * 1024L
 
         fun fromWorkerInput(input: Map<*, *>): MaterialDownloadSpec = from(

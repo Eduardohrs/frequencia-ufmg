@@ -175,7 +175,7 @@ void main() {
       await open();
       expect(find.text('Minha.pdf'), findsOneWidget);
       expect(
-        find.textContaining('Os arquivos salvos continuam disponíveis'),
+        find.text('Não foi possível atualizar o catálogo.'),
         findsOneWidget,
       );
       await tester.tap(find.byKey(const Key('cached-material-clear')));
@@ -321,7 +321,10 @@ void main() {
       }
 
       await open(UFMGView.materials, scoped: true);
-      expect(find.textContaining('As cópias anteriores'), findsOneWidget);
+      expect(
+        find.textContaining('Há arquivos sem disciplina identificada'),
+        findsOneWidget,
+      );
       await tester.pumpWidget(const SizedBox.shrink());
       cache.listError = StateError('disk');
       await open(UFMGView.materials, scoped: true);
@@ -511,8 +514,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Conectar à UFMG'), findsOneWidget);
-    expect(find.textContaining('senha não é armazenada'), findsOneWidget);
+    expect(find.byKey(const Key('ufmg-username')), findsOneWidget);
+    expect(find.textContaining('senha não é armazenada'), findsNothing);
     final autofillGroup = tester.widget<AutofillGroup>(
       find.byType(AutofillGroup),
     );
@@ -646,7 +649,7 @@ void main() {
       find.textContaining(
         '2 disciplinas importadas. 3 já estavam cadastradas.',
       ),
-      findsOneWidget,
+      findsNothing,
     );
     expect(logger.events, contains('ufmg_sync_succeeded'));
   });
@@ -695,9 +698,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gateway.syncCalls, 1);
-    expect(find.textContaining('2 grades atualizadas'), findsOneWidget);
-    expect(find.textContaining('1 conflito preservado'), findsOneWidget);
-    expect(find.textContaining('3 já estavam cadastradas'), findsOneWidget);
+    expect(find.textContaining('2 grades atualizadas'), findsNothing);
+    expect(find.textContaining('1 conflito preservado'), findsNothing);
+    expect(find.textContaining('3 já estavam cadastradas'), findsNothing);
     expect(logger.events, contains('ufmg_sync_succeeded'));
   });
 
@@ -725,16 +728,16 @@ void main() {
 
     expect(gateway.dateImportCalls, 1);
     expect(gateway.contentDiscoveryCalls, 1);
-    expect(find.textContaining('2 datas do Moodle importadas'), findsOneWidget);
-    expect(find.textContaining('1 data atualizada'), findsOneWidget);
+    expect(find.textContaining('2 datas do Moodle importadas'), findsNothing);
+    expect(find.textContaining('1 data atualizada'), findsNothing);
     expect(
       find.textContaining('1 data não pôde ser ligada a uma disciplina'),
-      findsOneWidget,
+      findsNothing,
     );
     expect(logger.events, contains('moodle_sync_succeeded'));
     expect(find.text('Trabalho prático'), findsNothing);
-    expect(find.byKey(const Key('ufmg-open-materials')), findsOneWidget);
-    expect(logger.events, contains('moodle_date_list_succeeded'));
+    expect(find.byKey(const Key('ufmg-open-materials')), findsNothing);
+    expect(logger.events, isNot(contains('moodle_date_list_started')));
   });
 
   testWidgets('shows every Moodle date kind and maps import failures', (
@@ -851,6 +854,65 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'keeps completed synchronization distinct from local summary failures',
+    (tester) async {
+      final gateway = _UnifiedGateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      );
+      gateway.issueWithoutCourse = true;
+      final schedule = _FailingSummarySchedule();
+      final logger = _Logger()..failErrorWrite = true;
+      await tester.pumpWidget(
+        CourseVisualHost(
+          catalog: CourseVisualCatalog(),
+          child: MaterialApp(
+            home: UFMGConnectionPage(
+              gateway: gateway,
+              logger: logger,
+              userId: 'owner',
+              syncSchedule: schedule,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ufmg-sync-all')));
+      await tester.pumpAndSettle();
+      expect(gateway.unifiedSyncCalls, 1);
+      expect(
+        find.textContaining('não foi possível atualizar o resumo'),
+        findsOneWidget,
+      );
+      expect(logger.errorContexts, contains('academic_sync_result_refresh'));
+      expect(find.text('Revisar última sincronização'), findsOneWidget);
+      schedule.fail = false;
+      await tester.tap(find.byKey(const Key('ufmg-sync-all')));
+      await tester.pumpAndSettle();
+      schedule.fail = true;
+      await tester.ensureVisible(find.text('Revisar última sincronização'));
+      await tester.tap(find.text('Revisar última sincronização'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('não foi possível carregar a revisão'),
+        findsOneWidget,
+      );
+      expect(logger.errorContexts, contains('academic_sync_result_review'));
+      schedule.fail = false;
+      await tester.ensureVisible(find.text('Revisar última sincronização'));
+      await tester.tap(find.text('Revisar última sincronização'));
+      await tester.pumpAndSettle();
+      expect(find.text('Dados acadêmicos'), findsWidgets);
+      await tester.tap(find.text('Entendi'));
+      await tester.pumpAndSettle();
+      expect(gateway.unifiedSyncCalls, 2);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('runs every ready SIGA stage through one synchronization', (
     tester,
   ) async {
@@ -880,9 +942,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gateway.syncCalls, 1);
-    expect(find.textContaining('2 disciplinas importadas'), findsOneWidget);
-    expect(find.textContaining('2 grades atualizadas'), findsOneWidget);
-    expect(find.textContaining('1 conflito preservado'), findsOneWidget);
+    expect(find.textContaining('2 disciplinas importadas'), findsNothing);
+    expect(find.textContaining('2 grades atualizadas'), findsNothing);
+    expect(find.textContaining('1 conflito preservado'), findsNothing);
     expect(logger.events, contains('ufmg_sync_succeeded'));
     expect(await schedule.isDue('user-1'), isFalse);
   });
@@ -949,24 +1011,26 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gateway.unifiedSyncCalls, 1);
+    expect(find.text('Pendências da sincronização'), findsNothing);
+    await tester.ensureVisible(find.text('Revisar última sincronização'));
+    await tester.tap(find.text('Revisar última sincronização'));
+    await tester.pumpAndSettle();
     expect(find.text('Pendências da sincronização'), findsOneWidget);
     expect(find.text('ELE028'), findsWidgets);
     expect(find.textContaining('24/10 · 19:00 · Circuitos'), findsOneWidget);
     expect(find.text('MAT001'), findsWidgets);
-    expect(find.text('2 planos de ensino possíveis.'), findsOneWidget);
+    expect(
+      find.text('Escolha o plano de ensino na disciplina.'),
+      findsOneWidget,
+    );
     expect(find.text('ESA019'), findsWidgets);
     expect(
       find.text(
         'Plano de ensino ainda não publicado. Seus dados foram mantidos.',
       ),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(
-      find.text(
-        'O plano não pôde ser processado; as outras disciplinas continuaram normalmente.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('Não foi possível atualizar ESA019.'), findsWidgets);
     expect(logger.events, contains('academic_sync_succeeded'));
     expect(await schedule.isDue('user-1'), isFalse);
     await tester.tap(find.text('Entendi'));
@@ -976,7 +1040,7 @@ void main() {
   });
 
   testWidgets(
-    'result refresh failure is distinct from synchronization failure',
+    'account synchronization does not depend on another date or catalog read',
     (tester) async {
       final gateway = _UnifiedGateway(
         status: const PythonUFMGSessionStatus(
@@ -998,10 +1062,13 @@ void main() {
         find.textContaining(
           'A sincronização terminou, mas não foi possível atualizar o resumo',
         ),
-        findsOneWidget,
+        findsNothing,
       );
       expect(gateway.unifiedSyncCalls, 1);
-      expect(logger.errorContexts, contains('academic_sync_result_refresh'));
+      expect(
+        logger.errorContexts,
+        isNot(contains('academic_sync_result_refresh')),
+      );
     },
   );
 
@@ -1072,8 +1139,6 @@ void main() {
 
       await tester.tap(find.byKey(const Key('ufmg-sync-all')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Entendi'));
-      await tester.pumpAndSettle();
 
       expect(find.text('Atualizar feriados oficiais?'), findsOneWidget);
       expect(find.text('ELE028'), findsWidgets);
@@ -1117,8 +1182,6 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('ufmg-sync-all')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Entendi'));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Agora não'));
     await tester.pumpAndSettle();
     expect(gateway.officialCalendarApplyCalls, 0);
@@ -1127,8 +1190,6 @@ void main() {
       PythonBackendError.unavailable,
     );
     await tester.tap(find.byKey(const Key('ufmg-sync-all')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Entendi'));
     await tester.pumpAndSettle();
     expect(logger.errorContexts, contains('official_calendar_sync'));
     expect(logger.errorContexts, contains('official_calendar_preview'));
@@ -1164,7 +1225,7 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('ufmg-manage-connection')));
       await tester.pumpAndSettle();
-      expect(find.text('Seus registros são preservados'), findsOneWidget);
+      expect(find.text('Seus registros são preservados'), findsNothing);
     },
   );
 
@@ -1463,7 +1524,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(gateway.disconnectCalls, 1);
-      expect(find.text('Conectar à UFMG'), findsOneWidget);
+      expect(find.byKey(const Key('ufmg-username')), findsOneWidget);
     },
   );
 
@@ -1649,9 +1710,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gateway.contentDiscoveryCalls, 1);
-    expect(find.textContaining('3 itens encontrados'), findsOneWidget);
+    expect(find.textContaining('3 itens encontrados'), findsNothing);
     expect(find.byKey(const Key('ufmg-academic-agenda')), findsNothing);
-    expect(find.textContaining('Download direto disponível'), findsOneWidget);
+    expect(find.textContaining('Download direto disponível'), findsNothing);
     expect(find.text('DCC203 • 3 materiais'), findsOneWidget);
     expect(find.text('MAT001 • Nenhum material encontrado'), findsOneWidget);
     await tester.ensureVisible(find.byKey(const Key('moodle-content-dcc203')));
@@ -2107,9 +2168,9 @@ void main() {
 
       expect(
         find.textContaining('Não foi possível validar o download direto agora'),
-        findsOneWidget,
+        findsNothing,
       );
-      expect(find.textContaining('3 itens encontrados'), findsOneWidget);
+      expect(find.textContaining('3 itens encontrados'), findsNothing);
     },
   );
 
@@ -2242,7 +2303,7 @@ void main() {
 
     expect(cache.queued.single.name, 'Cronograma.pdf');
     expect(cache.saved, isEmpty);
-    expect(find.text('Download iniciado em segundo plano.'), findsOneWidget);
+    expect(find.text('Download iniciado.'), findsOneWidget);
     expect(
       logger.events,
       contains('moodle_material_download_enqueue_succeeded'),
@@ -3630,7 +3691,7 @@ void main() {
 
       expect(gateway.contentDiscoveryCalls, 2);
       expect(gateway.materialCatalogCalls, 2);
-      expect(find.textContaining('3 itens encontrados'), findsOneWidget);
+      expect(find.textContaining('3 itens encontrados'), findsNothing);
       expect(
         find.text('Não foi possível sincronizar os dados do Moodle.'),
         findsNothing,
@@ -4109,6 +4170,7 @@ final class _UnifiedGateway extends _Gateway
 
   int unifiedSyncCalls = 0;
   Object? unifiedSyncError;
+  bool issueWithoutCourse = false;
   List<PythonOfficialCalendarChange> officialCalendarChanges = const [];
   int officialCalendarApplyCalls = 0;
   Object? officialCalendarError;
@@ -4145,6 +4207,16 @@ final class _UnifiedGateway extends _Gateway
         reviewRequired: 4,
       ),
       exceptions: [
+        if (issueWithoutCourse)
+          const PythonAcademicSyncException(
+            courseId: "",
+            courseCode: "",
+            reason: "update_failed",
+            candidateCount: 0,
+            changes: [],
+            conflicting: 0,
+            assessmentConflicts: 0,
+          ),
         const PythonAcademicSyncException(
           courseId: 'uni001',
           courseCode: 'UNI001',
@@ -4195,6 +4267,7 @@ final class _UnifiedGateway extends _Gateway
 }
 
 final class _Logger implements AppLogger {
+  bool failErrorWrite = false;
   final events = <String>[];
   final parameters = <Map<String, Object>?>[];
   final errorContexts = <String>[];
@@ -4219,6 +4292,7 @@ final class _Logger implements AppLogger {
   }) async {
     errorContexts.add(context);
     errors.add(error);
+    if (failErrorWrite) throw StateError("logger unavailable");
   }
 }
 
@@ -4340,5 +4414,15 @@ class _ScopeLogStore implements OperationalLogStore {
   @override
   Future<void> add(String userId, Map<String, Object?> document) async {
     documents.add(document);
+  }
+}
+
+final class _FailingSummarySchedule implements UFMGSyncScheduleGateway {
+  bool fail = true;
+  @override
+  Future<bool> isDue(String userId) async => false;
+  @override
+  Future<void> record(String userId, DateTime nextAutomaticSyncAt) async {
+    if (fail) throw StateError('local preferences unavailable');
   }
 }

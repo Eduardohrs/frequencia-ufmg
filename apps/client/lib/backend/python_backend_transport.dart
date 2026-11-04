@@ -222,6 +222,7 @@ final class PythonActivitySyncSummary {
     required this.updated,
     required this.failed,
     this.reused = 0,
+    this.failedCourses = const [],
   });
   factory PythonActivitySyncSummary.fromJson(Map<String, Object?> value) {
     final updated = value['updated'],
@@ -243,16 +244,21 @@ final class PythonActivitySyncSummary {
         failed < 0 ||
         updated + failed + reused > 50 ||
         issues is! List ||
-        issues.length > 50) {
+        issues.length > 50 ||
+        issues.any((item) => item is! Map)) {
       throw const FormatException();
     }
     return PythonActivitySyncSummary(
       updated: updated,
       failed: failed,
       reused: reused,
+      failedCourses: [
+        for (final issue in issues) Map<String, Object?>.from(issue as Map),
+      ],
     );
   }
   final int updated, failed, reused;
+  final List<Map<String, Object?>> failedCourses;
   String get message =>
       'Atividades: $updated atualizadas, $reused reutilizadas e $failed com falha.'
       '${failed > 0 ? ' Cópias anteriores preservadas.' : ''}';
