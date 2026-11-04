@@ -370,36 +370,32 @@ void main() {
     );
   }
 
-  testWidgets(
-    'saved files are reachable from the profile without asking UFMG status',
-    (tester) async {
-      final gateway = _UFMGGateway();
-      await tester.pumpWidget(
-        _NavigationApp(
-          builder: (context, child) => AcademicSyncHost(child: child!),
-          home: CoursePage(
-            repository: _FakeCourseRepository(),
-            meetingRepository: _FakeMeetingRepository(),
-            sessionRepository: _FakeSessionRepository(),
-            user: user,
-            logger: _RecordingAppLogger(),
-            onSignOut: () async {},
-            now: () => now,
-            ufmgSessionGateway: gateway,
-          ),
+  testWidgets('settings keeps files in courses without asking UFMG status', (
+    tester,
+  ) async {
+    final gateway = _UFMGGateway();
+    await tester.pumpWidget(
+      _NavigationApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
+        home: CoursePage(
+          repository: _FakeCourseRepository(),
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => now,
+          ufmgSessionGateway: gateway,
         ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('profile-menu')));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Arquivos no aparelho'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Arquivos no aparelho'));
-      await tester.pumpAndSettle();
-      expect(find.text('Arquivos no dispositivo'), findsOneWidget);
-      expect(gateway.statusCalls, 0);
-    },
-  );
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('profile-menu')));
+    await tester.pumpAndSettle();
+    expect(find.text('Arquivos no aparelho'), findsNothing);
+    expect(find.text('Arquivos no dispositivo'), findsNothing);
+    expect(gateway.statusCalls, 0);
+  });
   for (final injected in [false, true]) {
     testWidgets(
       'loading saved sessions automatically schedules without opening diagnostics (injected=$injected)',
@@ -608,7 +604,7 @@ void main() {
         if (!explicit) {
           await tester.tap(find.text('Sincronizar Moodle'));
           await tester.pumpAndSettle();
-          expect(find.text('Conectar à UFMG'), findsOneWidget);
+          expect(find.byKey(const Key('ufmg-username')), findsOneWidget);
           await tester.pageBack();
           await tester.pumpAndSettle();
         }
@@ -1283,7 +1279,7 @@ void main() {
     tester,
   ) async {
     final gateway = _RecoveredUFMGGateway();
-    gateway.progress.response.complete(syncResult());
+    gateway.progress.response.complete(syncResult(partial: true));
     final schedule = _FakeUFMGSyncSchedule(due: true);
     await tester.pumpWidget(
       _NavigationApp(
@@ -1360,7 +1356,7 @@ void main() {
             StateError('worker unavailable'),
           );
         } else {
-          gateway.progress.response.complete(syncResult());
+          gateway.progress.response.complete(syncResult(partial: true));
         }
       }
       await tester.pumpAndSettle();
@@ -1466,7 +1462,7 @@ void main() {
           await tester.pumpAndSettle();
           for (final completed in [false, true]) {
             if (completed) {
-              gateway.progress.response.complete(syncResult());
+              gateway.progress.response.complete(syncResult(partial: true));
               await tester.pumpAndSettle();
             }
             final indicator = tester.getRect(
@@ -1530,6 +1526,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('settings-academic-account')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ufmg-manage-connection')));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const Key('ufmg-force-refresh')));
       await tester.tap(find.byKey(const Key('ufmg-force-refresh')));
       await tester.pump();
@@ -1554,7 +1552,7 @@ void main() {
       await tester.pump();
       expect(find.text('Datas e materiais'), findsOneWidget);
       expect(find.text('Calendário'), findsWidgets);
-      gateway.progress.response.complete(syncResult());
+      gateway.progress.response.complete(syncResult(partial: true));
       await tester.pumpAndSettle();
       expect(gateway.progress.calls, 1);
       await tester.tap(find.byKey(const Key('academic-sync-indicator')));
@@ -1566,17 +1564,17 @@ void main() {
       await tester.tap(find.text('Revisar última sincronização'));
       await tester.pumpAndSettle();
       expect(gateway.progress.calls, 1);
-      gateway.failDates = true;
-      logger.failRecording = true;
-      await tester.ensureVisible(find.text('Revisar última sincronização'));
+      await tester.tap(find.text('Entendi'));
       await tester.pumpAndSettle();
+      gateway.failDates = true;
+      await tester.ensureVisible(find.text('Revisar última sincronização'));
       await tester.tap(find.text('Revisar última sincronização'));
       await tester.pumpAndSettle();
       expect(
         find.textContaining('não foi possível carregar a revisão'),
-        findsOneWidget,
+        findsNothing,
       );
-      expect(logger.errorContexts, contains('academic_sync_result_review'));
+      expect(gateway.progress.calls, 1);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
 
@@ -3208,8 +3206,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Conta acadêmica UFMG'), findsOneWidget);
-    expect(find.text('Conectar à UFMG'), findsOneWidget);
-    Navigator.of(tester.element(find.text('Conectar à UFMG'))).pop();
+    expect(find.byKey(const Key('ufmg-username')), findsOneWidget);
+    Navigator.of(tester.element(find.byKey(const Key('ufmg-username')))).pop();
     await tester.pumpAndSettle();
     expect(repository.listCalls, 2);
   });
@@ -3569,9 +3567,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('nav-settings')));
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.widgetWithText(TextButton, 'Concluir configuração'),
-      );
+      await tester.tap(find.text('Presença nas aulas'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();

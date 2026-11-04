@@ -124,7 +124,7 @@ void main() {
       expect(controller.progress!.completed, 3);
       gateway.response.complete(syncResult(partial: true));
       await first;
-      expect(controller.title, 'Concluída com avisos para revisar');
+      expect(controller.title, 'Confira as pendências da sincronização');
       expect(controller.result!.exceptions.single.courseCode, 'ESA019');
       controller.dismiss();
       expect(controller.visible, isFalse);
@@ -286,7 +286,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         find.textContaining('As etapas já concluídas foram mantidas'),
-        findsOneWidget,
+        findsNothing,
       );
       await tester.tap(find.text('Abrir conexão'));
       await tester.pumpAndSettle();
@@ -358,7 +358,7 @@ void main() {
       await tester.tap(find.text('Ver resultado'));
       await tester.pumpAndSettle();
       expect(reviewed, isTrue);
-      await tester.tap(find.byTooltip('Ocultar sincronização'));
+      expect(controller.visible, isFalse);
       await tester.pump();
       expect(find.byKey(const Key('academic-sync-indicator')), findsNothing);
       expect(tester.takeException(), isNull);

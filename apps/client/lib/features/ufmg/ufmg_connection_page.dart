@@ -1,3 +1,4 @@
+import 'academic_sync_feedback.dart';
 import '../../design/course_visuals.dart';
 import '../../data/material_scope_cache.dart';
 import '../../observability/operation_diagnostics.dart';
@@ -77,13 +78,13 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   bool _showReconnectForm = false;
   String? _error;
   String? _sigaSummary;
+  PythonUnifiedAcademicSyncResult? _lastSyncResult;
   String? _moodleSummary;
   PythonMoodleDateImportResult? _dateImportResult;
   String? _sigaError;
   String? _moodleError;
   bool _sigaBusy = false;
   bool _moodleBusy = false;
-  List<PythonMoodleDate> _dates = const [];
   PythonMoodleContentDiscovery? _contentDiscovery;
   late final MaterialFileCache _materialFileCache;
   late final bool _ownsMaterialFileCache;
@@ -747,9 +748,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         rethrow;
       }
       if (mounted && announce) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Download iniciado em segundo plano.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Download iniciado.')));
       }
       unawaited(_loadMaterialDownloadProgress(pollAgain: true));
       return;
@@ -766,9 +767,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
     await _loadCachedMaterials();
     if (mounted && announce) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Arquivo salvo para uso offline.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Arquivo baixado.')));
     }
   }
 
@@ -806,8 +807,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       builder: (context) => AlertDialog(
         title: Text(title),
         content: Text(
-          '${materials.length} ${_plural(materials.length, 'material será preparado', 'materiais serão preparados')} para uso offline. '
-          'O download usa sua conexão e o armazenamento deste dispositivo.',
+          '${materials.length} ${_plural(materials.length, 'material selecionado', 'materiais selecionados')}.',
         ),
         actions: [
           TextButton(
@@ -1310,14 +1310,14 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       if (userId != null && schedule != null) {
         await schedule.record(userId, result.nextAutomaticSyncAt);
       }
+      logSyncFeedback(widget.logger, 'siga', sigaSyncDetails(result), const []);
       if (mounted) {
         setState(() {
           _sigaSummary =
-              '${result.courses.created} ${_plural(result.courses.created, 'disciplina importada', 'disciplinas importadas')}. '
-              '${result.courses.existing} já ${result.courses.existing == 1 ? 'estava cadastrada' : 'estavam cadastradas'}. '
-              '${result.schedules.updated} ${_plural(result.schedules.updated, 'grade atualizada', 'grades atualizadas')}. '
-              '${result.schedules.unchanged} ${_plural(result.schedules.unchanged, 'grade sem alteração', 'grades sem alteração')}. '
-              '${result.schedules.conflicts} ${_plural(result.schedules.conflicts, 'conflito preservado', 'conflitos preservados')}.';
+              result.schedules.conflicts > 0 ||
+                  result.schedules.missingCourses > 0
+              ? 'Confira os horários de algumas disciplinas.'
+              : null;
         });
       }
     } catch (error) {
@@ -1364,10 +1364,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
               action: unifiedGateway.syncAllAcademicData,
             );
       synchronized = true;
-      await _presentAcademicSyncResult(
-        result,
-        review: widget.academicSync == null,
-      );
+      await _presentAcademicSyncResult(result, review: false);
+      if (widget.academicSync == null && mounted) {
+        await _offerOfficialCalendar();
+      }
     } catch (error, stack) {
       if (synchronized) {
         unawaited(
@@ -1415,33 +1415,41 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     PythonUnifiedAcademicSyncResult result, {
     bool review = true,
   }) async {
+    _lastSyncResult = result;
     final userId = widget.userId;
     final schedule = widget.syncSchedule;
     if (userId != null && schedule != null) {
       await schedule.record(userId, result.siga.nextAutomaticSyncAt);
     }
     if (!mounted) return;
-    final supplementary = await Future.wait<Object>([
-      widget.gateway.listMoodleDates(),
-      widget.gateway.listMoodleMaterialCatalog(),
-    ]);
-    if (!mounted) return;
+    final issues = unifiedSyncIssues(result);
+    logSyncFeedback(
+      widget.logger,
+      'all',
+      {
+        ...sigaSyncDetails(result.siga),
+        ...moodleSyncDetails(result.moodle),
+        'plans_available': result.teachingPlans.available,
+        'plans_imported': result.teachingPlans.imported,
+        'plans_applied': result.teachingPlans.applied,
+        'plans_unchanged': result.teachingPlans.unchanged,
+        'plans_review_required': result.teachingPlans.reviewRequired,
+        'plans_not_published': result.exceptions
+            .where((e) => e.reason == 'teaching_plan_not_published')
+            .length,
+      },
+      issues,
+      operationId: widget.academicSync?.progress?.operationId,
+    );
     setState(() {
       _dateImportResult = result.moodle.dates;
-      _dates = supplementary[0] as List<PythonMoodleDate>;
-      _contentDiscovery = supplementary[1] as PythonMoodleContentDiscovery;
-      _sigaSummary =
-          '${result.siga.courses.created} ${_plural(result.siga.courses.created, 'disciplina importada', 'disciplinas importadas')}. '
-          '${result.siga.schedules.updated} ${_plural(result.siga.schedules.updated, 'grade atualizada', 'grades atualizadas')}. '
-          '${result.moodle.dates.created} ${_plural(result.moodle.dates.created, 'data importada', 'datas importadas')}. '
-          '${result.teachingPlans.applied} ${_plural(result.teachingPlans.applied, 'alteração de plano aplicada', 'alterações de plano aplicadas')}. '
-          '${result.teachingPlans.reviewRequired} ${_plural(result.teachingPlans.reviewRequired, 'exceção para revisar', 'exceções para revisar')}. ${result.moodle.activitySnapshots?.message ?? ''}';
+      _sigaSummary = _syncIssueSummary(issues);
       _sigaBusy = false;
       _moodleBusy = false;
     });
     if (!review) return;
-    if (result.exceptions.isNotEmpty) {
-      await _showAcademicSyncExceptions(result.exceptions);
+    if (issues.isNotEmpty) {
+      await _showAcademicSyncExceptions(issues);
     }
     await _offerOfficialCalendar();
   }
@@ -1471,8 +1479,27 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
+  String _syncCourseLabel(AcademicSyncIssue issue) =>
+      CourseVisualHost.of(
+        context,
+      )?.course(id: issue.courseId, code: issue.courseCode)?.displayName ??
+      (issue.courseCode.isEmpty ? 'Dados acadêmicos' : issue.courseCode);
+  String _syncIssueMessage(AcademicSyncIssue issue) => switch (issue.reason) {
+    'ambiguous_teaching_plan' => 'Escolha o plano de ensino na disciplina.',
+    'schedule_review' => 'Confira os horários das disciplinas.',
+    'unmatched_dates' => 'Algumas datas não têm uma disciplina correspondente.',
+    _ => 'Não foi possível atualizar ${_syncCourseLabel(issue)}.',
+  };
+  String? _syncIssueSummary(List<AcademicSyncIssue> issues) {
+    final messages = issues.map(_syncIssueMessage).toSet().toList();
+    if (messages.isEmpty) return null;
+    return messages.length == 1
+        ? messages.single
+        : '${messages.first} Mais ${messages.length - 1} ${messages.length == 2 ? 'pendência' : 'pendências'} para revisar.';
+  }
+
   Future<void> _showAcademicSyncExceptions(
-    List<PythonAcademicSyncException> exceptions,
+    List<AcademicSyncIssue> exceptions,
   ) => showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
@@ -1484,24 +1511,12 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'A sincronização terminou. Confira estas disciplinas:',
-              ),
-              const SizedBox(height: 12),
               for (final exception in exceptions) ...[
                 Text(
-                  exception.courseCode,
+                  _syncCourseLabel(exception),
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
-                Text(
-                  exception.reason == 'ambiguous_teaching_plan'
-                      ? '${exception.candidateCount} planos de ensino possíveis.'
-                      : exception.reason == 'teaching_plan_not_published'
-                      ? 'Plano de ensino ainda não publicado. Seus dados foram mantidos.'
-                      : exception.reason == 'teaching_plan_unavailable'
-                      ? 'O plano não pôde ser processado; as outras disciplinas continuaram normalmente.'
-                      : '${exception.conflicting + exception.assessmentConflicts} conflito(s) com dados existentes.',
-                ),
+                Text(_syncIssueMessage(exception)),
                 for (final change in exception.changes)
                   Text(
                     '${change.date.day.toString().padLeft(2, '0')}/'
@@ -1645,30 +1660,20 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
           },
         );
       }
-      final discovery = await runAuditedOperation(
-        logger: widget.logger,
-        operation: AuditedOperation.moodleMaterialCatalogList,
-        action: widget.gateway.listMoodleMaterialCatalog,
-      );
-      final capabilities = sync.capabilities;
-      final capabilitySummary = capabilities == null
-          ? ' Não foi possível validar o download direto agora.'
-          : capabilities.directDownloadSupported
-          ? ' Download direto disponível.'
-          : ' Download direto ainda não disponível.';
-      final dates = await _listDates();
+      final discovery = widget.isMaterialView
+          ? await runAuditedOperation(
+              logger: widget.logger,
+              operation: AuditedOperation.moodleMaterialCatalogList,
+              action: widget.gateway.listMoodleMaterialCatalog,
+            )
+          : null;
+      final issues = moodleSyncIssues(sync);
+      logSyncFeedback(widget.logger, 'moodle', moodleSyncDetails(sync), issues);
       if (mounted) {
         setState(() {
           _dateImportResult = sync.dates;
-          _dates = dates;
-          _contentDiscovery = discovery;
-          _moodleSummary =
-              '${sync.dates.created} ${_plural(sync.dates.created, 'data do Moodle importada', 'datas do Moodle importadas')}. '
-              '${sync.dates.updated} ${_plural(sync.dates.updated, 'data atualizada', 'datas atualizadas')}. '
-              '${sync.dates.unchanged} sem alteração. '
-              '${sync.dates.unmatched} ${_plural(sync.dates.unmatched, 'data não pôde ser ligada a uma disciplina', 'datas não puderam ser ligadas a uma disciplina')}. '
-              '${sync.candidateTotal} ${_plural(sync.candidateTotal, 'item encontrado', 'itens encontrados')}.'
-              '$capabilitySummary ${sync.activitySnapshots?.message ?? ''}';
+          if (discovery != null) _contentDiscovery = discovery;
+          _moodleSummary = _syncIssueSummary(issues);
         });
       }
     } catch (error) {
@@ -1693,12 +1698,6 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
-  Future<List<PythonMoodleDate>> _listDates() => runAuditedOperation(
-    logger: widget.logger,
-    operation: AuditedOperation.moodleDateList,
-    action: widget.gateway.listMoodleDates,
-  );
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1714,7 +1713,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         ),
       ),
       body: SafeArea(
-        child: Center(
+        child: Align(
+          alignment: Alignment.topCenter,
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
@@ -1753,7 +1753,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             : 'Conferindo a conexão com a UFMG…',
         textAlign: TextAlign.center,
       ),
-      if (_materialFileCache.isAvailable) ...[
+      if ((widget.isMaterialView || widget.savedFilesOnly) &&
+          _materialFileCache.isAvailable) ...[
         const SizedBox(height: 20),
         MaterialCacheCard(
           files: _visibleFiles,
@@ -1838,10 +1839,6 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   Widget _savedFilesContent() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      const AppPageIntro(
-        title: 'Arquivos salvos neste dispositivo',
-        subtitle: 'Abra suas cópias mesmo sem internet.',
-      ),
       if (_cacheReadFailed) ...[
         const Text('Não foi possível ler os arquivos salvos.'),
         TextButton(
@@ -1905,17 +1902,13 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         ],
       ),
       const SizedBox(height: 16),
-      const Text(
-        'Abra páginas no Moodle ou baixe os arquivos desta disciplina.',
-      ),
+
       TextButton(
         onPressed: _openMaterialLibrary,
         child: const Text('Materiais de todas as disciplinas'),
       ),
       if (_materialPrefixes.isEmpty && _cachedMaterials.isNotEmpty)
-        const Text(
-          'As cópias anteriores estão na lista completa do dispositivo até o catálogo desta disciplina ser atualizado.',
-        ),
+        const Text('Há arquivos sem disciplina identificada.'),
       if (_cacheReadFailed)
         const Text('Não foi possível ler os arquivos salvos agora.'),
       if (_materialFileCache.isAvailable) ...[
@@ -1948,9 +1941,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         ),
       ],
       if (_materialCatalogFailed) ...[
-        const Text(
-          'Não foi possível atualizar o catálogo. Os arquivos salvos continuam disponíveis.',
-        ),
+        const Text('Não foi possível atualizar o catálogo.'),
         TextButton(
           onPressed: _loadMaterialCatalog,
           child: const Text('Tentar novamente'),
@@ -1977,7 +1968,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _accountOverview(status, connected),
+        if (connected || status?.reauthenticationRequired == true)
+          _accountOverview(status, connected),
         if (_error != null) ...[
           const SizedBox(height: 16),
           Semantics(
@@ -1989,97 +1981,27 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
             ),
           ),
         ],
-        const SizedBox(height: 16),
-        TextButton.icon(
-          key: const Key('ufmg-open-materials'),
-          onPressed: _openMaterialLibrary,
-          icon: const Icon(Icons.folder_outlined),
-          label: const Text('Abrir materiais'),
-        ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 12),
         if (!connected || _showReconnectForm)
           _connectionForm()
         else
           _syncActions(),
-        if (_dates.isNotEmpty && widget.onOpenCalendar != null)
-          TextButton.icon(
-            onPressed: widget.onOpenCalendar,
-            icon: const Icon(Icons.calendar_month_outlined),
-            label: const Text('Ver datas no calendário'),
-          ),
       ],
     );
   }
 
-  Widget _accountOverview(
-    PythonUFMGSessionStatus? status,
-    bool connected,
-  ) => Card(
-    key: const Key('ufmg-account-overview'),
-    margin: EdgeInsets.zero,
-    child: Padding(
-      padding: const EdgeInsets.all(18),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: connected
-                  ? Theme.of(
-                      context,
-                    ).colorScheme.primaryContainer.withValues(alpha: .65)
-                  : Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(
-              connected
-                  ? Icons.verified_user_outlined
-                  : Icons.account_balance_outlined,
-              color: connected
-                  ? Theme.of(context).colorScheme.primary
-                  : Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  connected
-                      ? 'UFMG conectada'
-                      : status?.reauthenticationRequired == true
-                      ? 'Sua sessão expirou'
-                      : 'Conectar à UFMG',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  connected
-                      ? 'Suas fontes acadêmicas estão prontas para sincronizar.'
-                      : 'Sua senha não é armazenada; ela é usada somente para conectar.',
-                ),
-                if (connected && status?.expiresAt != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'Sessão válida até ${_formattedExpiry(status!.expiresAt!)}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
+  Widget _accountOverview(PythonUFMGSessionStatus? status, bool connected) =>
+      Card(
+        key: const Key('ufmg-account-overview'),
+        margin: EdgeInsets.zero,
+        child: ListTile(
+          leading: Icon(connected ? Icons.link : Icons.link_off),
+          title: Text(connected ? 'UFMG conectada' : 'Sua sessão expirou'),
+          subtitle: connected && status?.expiresAt != null
+              ? Text('Válida até ${_formattedExpiry(status!.expiresAt!)}')
+              : null,
+        ),
+      );
 
   String _catalogName(PythonMoodleCourseContent course) {
     final local = CourseVisualHost.of(
@@ -2255,9 +2177,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                 title: Text(
                   'Não foi possível atualizar ${issue['course_code'] ?? issue['course_id']}',
                 ),
-                subtitle: const Text(
-                  'Os dados anteriores foram preservados. Sincronize novamente para tentar esta disciplina.',
-                ),
+                subtitle: const Text('Tente sincronizar novamente.'),
               ),
           ],
         ),
@@ -2268,11 +2188,6 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'Dados acadêmicos',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 8),
           _academicSourceCard(
             key: const Key('ufmg-source-all'),
             icon: Icons.sync_outlined,
@@ -2297,28 +2212,9 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                     await widget.onOpenCalendar!();
                   },
           ),
-          if (widget.academicSync != null)
-            CheckboxListTile(
-              key: const Key('ufmg-force-refresh'),
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Consultar novamente todas as fontes'),
-              subtitle: const Text(
-                'Ignora os intervalos e revisa também os planos já completos.',
-              ),
-              value: _forceSync,
-              onChanged: widget.academicSync!.isRunning
-                  ? null
-                  : (value) {
-                      _logInteraction(
-                        value == true
-                            ? 'ufmg_force_refresh_enabled'
-                            : 'ufmg_force_refresh_disabled',
-                      );
-                      setState(() => _forceSync = value ?? false);
-                    },
-            ),
           const SizedBox(height: 12),
-          if (widget.academicSync?.result case final result?)
+          if ((_lastSyncResult ?? widget.academicSync?.result)
+              case final result?)
             TextButton.icon(
               onPressed: _reviewingSyncResult
                   ? null
@@ -2421,15 +2317,24 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       title: const Text('Gerenciar conexão'),
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       children: [
-        const ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.shield_outlined),
-          title: Text('Seus registros são preservados'),
-          subtitle: Text(
-            'Sincronizações complementam seus registros. Sua senha não '
-            'é armazenada e os arquivos vêm direto da UFMG.',
+        if (widget.academicSync != null)
+          CheckboxListTile(
+            key: const Key('ufmg-force-refresh'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Consultar novamente todas as fontes'),
+            value: _forceSync,
+            onChanged: widget.academicSync!.isRunning
+                ? null
+                : (value) {
+                    _logInteraction(
+                      value == true
+                          ? 'ufmg_force_refresh_enabled'
+                          : 'ufmg_force_refresh_disabled',
+                    );
+                    setState(() => _forceSync = value ?? false);
+                  },
           ),
-        ),
+
         SizedBox(
           width: double.infinity,
           child: TextButton.icon(
@@ -2527,26 +2432,19 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                 ),
               ),
               const SizedBox(height: 4),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  'Dados já cadastrados, correções manuais e registros de '
-                  'frequência foram preservados.',
-                ),
-              ),
-              if (onOpenResult != null)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    key: resultActionKey,
-                    onPressed: onOpenResult,
-                    icon: const Icon(Icons.arrow_forward),
-                    label: Text(resultActionLabel),
-                  ),
-                )
-              else
-                const SizedBox(height: 12),
             ],
+            if (onOpenResult != null)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  key: resultActionKey,
+                  onPressed: onOpenResult,
+                  icon: const Icon(Icons.arrow_forward),
+                  label: Text(resultActionLabel),
+                ),
+              )
+            else
+              const SizedBox(height: 12),
           ],
         );
       },

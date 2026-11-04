@@ -58,8 +58,7 @@ class MaterialDownloadWorker(
         val directory = File(applicationContext.filesDir, "moodle_materials/${spec.namespace}")
         if (!directory.exists() && !directory.mkdirs()) {
             log("directory_failure")
-            applicationContext.getSystemService(NotificationManager::class.java)
-                .cancel(spec.notificationId)
+            MaterialDownloadNotifications.refresh(applicationContext,spec.namespace)
             return failure(spec, "directory_failure")
         }
         val destination = File(directory, spec.storedName)
@@ -151,8 +150,7 @@ class MaterialDownloadWorker(
         } finally {
             connection?.disconnect()
             temporary.delete()
-            applicationContext.getSystemService(NotificationManager::class.java)
-                .cancel(spec.notificationId)
+            MaterialDownloadNotifications.refresh(applicationContext,spec.namespace)
         }
     }
 
@@ -168,8 +166,7 @@ class MaterialDownloadWorker(
     override fun onStopped() {
         log("stopped")
         activeSpec?.let {
-            applicationContext.getSystemService(NotificationManager::class.java)
-                .cancel(it.notificationId)
+            MaterialDownloadNotifications.refresh(applicationContext,it.namespace)
         }
         super.onStopped()
     }
@@ -186,17 +183,15 @@ class MaterialDownloadWorker(
     }
 
     private fun updateNotification(spec: MaterialDownloadSpec, downloaded: Long, total: Long) {
-        val info = foregroundInfo(spec, downloaded, total)
         // Android 12+ runs expedited work through JobScheduler, without a service.
         // Starting an FGS here is illegal once the user leaves the app, including
         // between chained files. Notifications do not require starting a service.
         MaterialDownloadExecution.updateNotification(
             Build.VERSION.SDK_INT,
             notify = {
-                applicationContext.getSystemService(NotificationManager::class.java)
-                    .notify(spec.notificationId, info.notification)
+                MaterialDownloadNotifications.refresh(applicationContext,spec.namespace)
             },
-            startForeground = { setForegroundAsync(info).get() },
+            startForeground = { setForegroundAsync(foregroundInfo(spec,downloaded,total)).get() },
             notificationDenied = { error ->
                 log("notification_denied", error)
             },
@@ -239,7 +234,7 @@ class MaterialDownloadWorker(
         val progress = if (knownTotal) ((downloaded * 100) / total).coerceIn(0, 100).toInt() else 0
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(applicationContext.applicationInfo.icon)
-            .setContentTitle("Baixando material da UFMG")
+            .setContentTitle("Baixando materiais")
             .setContentText(if (knownTotal) "${spec.name} · $progress%" else spec.name)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

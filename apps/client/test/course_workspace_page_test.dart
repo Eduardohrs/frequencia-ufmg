@@ -281,7 +281,7 @@ void main() {
       await tester.tap(find.text('Sincronizar Moodle'));
       await tester.pumpAndSettle();
       expect(
-        find.textContaining('A cópia salva continua disponível'),
+        find.textContaining('Não foi possível abrir a sincronização'),
         findsOneWidget,
       );
       expect(find.text('Protótipo'), findsOneWidget);
@@ -342,9 +342,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Protótipo'), findsOneWidget);
       expect(
-        find.textContaining(
-          'Não foi possível salvar esta cópia no dispositivo',
-        ),
+        find.textContaining('Não foi possível salvar no aparelho'),
         findsOneWidget,
       );
       final errors = logs.documents
@@ -422,7 +420,7 @@ void main() {
       await tester.tap(find.text('instructions.pdf'));
       await tester.pumpAndSettle();
       expect(
-        find.textContaining('Não foi possível autorizar os anexos.'),
+        find.textContaining('Não foi possível baixar os anexos.'),
         findsOneWidget,
       );
       await tester.tap(find.byTooltip('Fechar atividade'));

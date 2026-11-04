@@ -330,7 +330,7 @@ void main() {
         final h = ExperienceHarness();
         addTearDown(h.dispose);
         final campus = _Campus();
-        var saved = 0, account = 0, files = 0, logout = 0;
+        var saved = 0, account = 0, logout = 0;
         if (fails) {
           h.reportError = StateError('read failed');
           campus.readError = true;
@@ -349,9 +349,6 @@ void main() {
               onAcademicAccount: () async {
                 account++;
               },
-              onSavedFiles: () async {
-                files++;
-              },
               onSignOut: () async {
                 logout++;
               },
@@ -360,14 +357,7 @@ void main() {
         );
         await t.pumpAndSettle();
         expect(find.text('Configuração pronta'), findsOneWidget);
-        expect(
-          find.text(
-            fails
-                ? 'Não foi possível conferir os últimos resultados neste aparelho.'
-                : 'Os resultados estão na frequência de cada disciplina.',
-          ),
-          findsOneWidget,
-        );
+        expect(find.textContaining('Os resultados estão'), findsNothing);
         await t.ensureVisible(find.text('Local das aulas'));
         await t.tap(find.text('Local das aulas'));
         await t.pumpAndSettle();
@@ -398,9 +388,7 @@ void main() {
         );
         await t.tap(find.byKey(const Key('settings-academic-account')));
         expect(account, 1);
-        await t.ensureVisible(find.text('Arquivos no aparelho'));
-        await t.tap(find.text('Arquivos no aparelho'));
-        expect(files, 1);
+        expect(find.text('Arquivos no aparelho'), findsNothing);
         await t.pump(const Duration(seconds: 5));
         await t.pumpAndSettle();
         await t.ensureVisible(find.text('Sair da conta'));
@@ -431,7 +419,7 @@ void main() {
         ),
       ),
     );
-    await t.tap(find.widgetWithText(TextButton, 'Concluir configuração'));
+    await t.tap(find.text('Presença nas aulas'));
     await t.pumpAndSettle();
     expect(find.textContaining('Permita notificações'), findsWidgets);
     await t.tap(find.text('Agora não'));

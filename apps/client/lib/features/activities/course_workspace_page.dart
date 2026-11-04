@@ -362,9 +362,7 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
         failureCode: 'course_activity_sync_navigation_failed',
       );
       if (mounted) {
-        _message(
-          'Não foi possível abrir a sincronização. A cópia salva continua disponível.',
-        );
+        _message('Não foi possível abrir a sincronização.');
       }
     }
   }
@@ -607,9 +605,7 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
         failureCode: 'saved_attachment_authorization_failed',
       );
       if (mounted) {
-        _message(
-          'Não foi possível autorizar os anexos. O enunciado salvo continua disponível.',
-        );
+        _message('Não foi possível baixar os anexos. Tente novamente.');
       }
     }
   }
@@ -654,7 +650,7 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
       if (mounted) {
         _message(
           _files.isAvailable
-              ? 'Download iniciado. O arquivo ficará disponível offline.'
+              ? 'Download iniciado.'
               : 'Download aberto no navegador.',
         );
       }
@@ -788,15 +784,13 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
       if (_cacheWriteFailed)
         const Padding(
           padding: EdgeInsets.only(bottom: 16),
-          child: Text(
-            'Não foi possível salvar esta cópia no dispositivo. Ela continua disponível no servidor.',
-          ),
+          child: Text('Não foi possível salvar no aparelho.'),
         ),
       if (_snapshot case final snapshot?)
         Padding(
           padding: const EdgeInsets.only(bottom: 16),
           child: Text(
-            '${_localSnapshot ? 'Cópia local' : 'Atualizado'}: ${_displayDate(snapshot.syncedAt)} · Envios podem mudar no Moodle.',
+            '${_localSnapshot ? 'Cópia local' : 'Atualizado'}: ${_displayDate(snapshot.syncedAt)}',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
