@@ -4,7 +4,7 @@ annotated-types==0.8.0
     # via pydantic
 appwrite==27.1.0
     # via frequencia-ufmg-api
-certifi==2026.10.19
+certifi==2026.10.23
     # via requests
 cffi==2.1.1 ; platform_python_implementation != 'PyPy'
     # via cryptography
