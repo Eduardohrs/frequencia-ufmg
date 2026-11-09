@@ -15,7 +15,7 @@ cryptography==50.0.2
     #   frequencia-ufmg-api
     #   google-auth
     #   pyjwt
-google-auth==2.62.0
+google-auth==2.62.1
     # via frequencia-ufmg-api
 idna==3.20
     # via requests
