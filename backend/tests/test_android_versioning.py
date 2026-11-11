@@ -36,7 +36,12 @@ def _version(tmp_path: Path, timestamp: int) -> subprocess.CompletedProcess[str]
     action = (ROOT / ".github/actions/android-version/action.yml").read_text()
     script = textwrap.dedent(action.split("run: |\n", 1)[1])
     git = Path(shutil.which("git") or "git")
-    bash = str(git.parent.parent / "bin/bash.exe") if os.name == "nt" else "bash"
+    if os.name == "nt":
+        # No Windows, use bash from PATH or default location
+        bash_path = shutil.which("bash") or str(git.parent.parent / "bin/bash.exe")
+        bash = bash_path
+    else:
+        bash = "bash"
     return subprocess.run(
         [bash, "-c", script], cwd=tmp_path, env=env, text=True, capture_output=True, check=False
     )

@@ -662,6 +662,14 @@ class TestCentralPendencias:
         assert removido is True
         assert central.get_pendencia(pendencia_id) is None
 
+    def test_remover_pendencia_inexistente(self) -> None:
+        """Remover pendência inexistente retorna False."""
+
+        central = CentralPendencias()
+
+        removido = central.remover_pendencia("inexistente")
+        assert removido is False
+
     def test_limpar_pendencias_resolvidas(self) -> None:
         """Pendências com decisão != PENDENTE são removidas."""
 
@@ -681,6 +689,22 @@ class TestCentralPendencias:
         assert central.get_pendencia(id1) is None
         assert central.get_pendencia(id2) is pendencia2
 
+    def test_limpar_pendencias_resolvidas_com_id_nao_na_pendencias(self) -> None:
+        """Limpar pendências resolvidas quando pid não existe em _pendencias."""
+
+        central = CentralPendencias()
+        pendencia1 = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo1")
+
+        id1 = central.adicionar_pendencia(pendencia1)
+        # Registrar decisão
+        central.registrar_decisao(id1, DecisaoHorario.APLICAR_MUDANCA)
+        # Remover a pendência manualmente
+        central.remover_pendencia(id1)
+
+        # Agora limpar - não deve causar erro
+        removidas = central.limpar_pendencias_resolvidas()
+        assert removidas == 0
+
     def test_decisao_persiste_ao_reabrir(self) -> None:
         """A decisão persiste ao reabrir (simulado)."""
 
@@ -692,6 +716,21 @@ class TestCentralPendencias:
 
         # Simula reabertura - a decisão deve ainda estar lá
         assert central.get_decisao(pendencia_id) == DecisaoHorario.MANTER_ATUAL
+
+    def test_get_todas_pendencias(self) -> None:
+        """Todas as pendências ativas podem ser recuperadas."""
+
+        central = CentralPendencias()
+        pendencia1 = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo1")
+        pendencia2 = PendenciaHorario("DCC204", "ED", "10:00", "11:00", "motivo2")
+
+        central.adicionar_pendencia(pendencia1)
+        central.adicionar_pendencia(pendencia2)
+
+        todas = central.get_todas_pendencias()
+        assert len(todas) == 2
+        assert pendencia1 in todas
+        assert pendencia2 in todas
 
 
 class TestRascunhoCadastro:
@@ -783,3 +822,11 @@ class TestGerenciadorRascunhos:
         gerenciador = GerenciadorRascunhos()
 
         assert gerenciador.recuperar_rascunho("inexistente") is None
+
+    def test_remover_rascunho_inexistente(self) -> None:
+        """Remover rascunho inexistente retorna False."""
+
+        gerenciador = GerenciadorRascunhos()
+
+        removido = gerenciador.remover_rascunho("inexistente")
+        assert removido is False
