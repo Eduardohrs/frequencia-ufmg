@@ -1,6 +1,6 @@
 """Tests for the object-oriented academic domain structure."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 
@@ -14,9 +14,9 @@ from frequencia_ufmg.models import (
     NumeroChamadas,
     PendenciaHorario,
     QuantidadeAulas,
+    RascunhoCadastro,
     RegistroFrequencia,
     ResumoDisciplina,
-    RascunhoCadastro,
     SessaoAula,
     SituacaoFrequencia,
 )

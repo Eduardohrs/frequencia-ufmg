@@ -13,8 +13,6 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from frequencia_ufmg.logging_config import (
-    TelemetryRecorder,
-    TelemetryDeduplicator,
     configure_logging,
     telemetry_recorder,
 )

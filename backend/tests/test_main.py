@@ -81,11 +81,11 @@ def test_request_failures_are_logged_without_request_content(
 def test_non_429_http_exception_is_handled() -> None:
     """HTTP exceptions other than 429 are handled correctly."""
 
-    from starlette.requests import Request
-    from starlette.responses import Response
-    from fastapi import HTTPException
     import asyncio
     import json
+
+    from starlette.requests import Request
+    from starlette.responses import Response
 
     middleware = RequestLoggingMiddleware(app)
 
@@ -115,11 +115,11 @@ def test_non_429_http_exception_is_handled() -> None:
 def test_429_http_exception_is_handled() -> None:
     """HTTP 429 exceptions are handled and diagnosed."""
 
-    from starlette.requests import Request
-    from starlette.responses import Response
-    from fastapi import HTTPException
     import asyncio
     import json
+
+    from starlette.requests import Request
+    from starlette.responses import Response
 
     middleware = RequestLoggingMiddleware(app)
 

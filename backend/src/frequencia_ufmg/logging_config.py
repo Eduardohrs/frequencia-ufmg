@@ -87,9 +87,7 @@ class TelemetryRecorder:
     ) -> bool:
         """Grava telemetria se não for duplicata. Retorna True se gravado."""
         key = TelemetryKey(category, action, entity_type, entity_id)
-        if not self._deduplicator.should_report(key):
-            return False
-        return True
+        return self._deduplicator.should_report(key)
 
     def record_429(
         self,

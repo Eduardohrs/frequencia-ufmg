@@ -77,7 +77,7 @@ class TestSession55_35:
 
     def test_protecao_gravacao_telemetria_repetida(self) -> None:
         """Proteção de gravação contra telemetria repetida funciona."""
-        from frequencia_ufmg.logging_config import TelemetryRecorder, TelemetryKey
+        from frequencia_ufmg.logging_config import TelemetryKey, TelemetryRecorder
 
         recorder = TelemetryRecorder()
         
@@ -151,7 +151,7 @@ class TestSession55_35:
 
     def test_central_acionavel_comparacao_horario(self) -> None:
         """Central acionável com comparação de horário funciona."""
-        from frequencia_ufmg.models import CentralPendencias, PendenciaHorario, DecisaoHorario
+        from frequencia_ufmg.models import CentralPendencias, DecisaoHorario, PendenciaHorario
 
         central = CentralPendencias()
         
@@ -178,7 +178,7 @@ class TestSession55_35:
 
     def test_decisao_persistida(self) -> None:
         """Decisão persistida ao reabrir."""
-        from frequencia_ufmg.models import CentralPendencias, PendenciaHorario, DecisaoHorario
+        from frequencia_ufmg.models import CentralPendencias, DecisaoHorario, PendenciaHorario
 
         central = CentralPendencias()
         pendencia = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo")
@@ -192,8 +192,12 @@ class TestSession55_35:
     def test_frequencia_preservada(self) -> None:
         """Registros de frequência são preservados."""
         from frequencia_ufmg.models import (
-            Disciplina, SessaoAula, ConfiguracaoSessao,
-            QuantidadeAulas, NumeroChamadas, SituacaoFrequencia
+            ConfiguracaoSessao,
+            Disciplina,
+            NumeroChamadas,
+            QuantidadeAulas,
+            SessaoAula,
+            SituacaoFrequencia,
         )
 
         disciplina = Disciplina("DCC203", "POO", 60)
@@ -216,7 +220,7 @@ class TestSession55_35:
 
     def test_pendencia_some_apos_confirmacao(self) -> None:
         """Pendência some após confirmação real."""
-        from frequencia_ufmg.models import CentralPendencias, PendenciaHorario, DecisaoHorario
+        from frequencia_ufmg.models import CentralPendencias, DecisaoHorario, PendenciaHorario
 
         central = CentralPendencias()
         pendencia = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo")
@@ -234,7 +238,7 @@ class TestSession55_35:
 
     def test_escolha_manual_respeitada(self) -> None:
         """Escolha manual respeitada não reaparece sem mudança da fonte."""
-        from frequencia_ufmg.models import CentralPendencias, PendenciaHorario, DecisaoHorario
+        from frequencia_ufmg.models import CentralPendencias, DecisaoHorario, PendenciaHorario
 
         central = CentralPendencias()
         pendencia = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo")

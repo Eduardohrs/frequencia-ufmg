@@ -1,9 +1,9 @@
 """Modelo de domínio avaliável da frequência acadêmica."""
 
-from abc import ABC, abstractmethod
 import copy
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import datetime
 from enum import IntEnum, StrEnum
 from typing import Any
 
