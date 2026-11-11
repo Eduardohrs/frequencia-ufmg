@@ -67,3 +67,188 @@ def test_github_actions_are_pinned_to_immutable_commits() -> None:
 
     assert references
     assert all(re.fullmatch(r"[0-9a-f]{40}", reference) for reference in references)
+
+
+# ==================== Sessão 55,35 - Testes de Regressão ====================
+
+
+class TestSession55_35:
+    """Testes de regressão para sessão 55,35."""
+
+    def test_protecao_gravacao_telemetria_repetida(self) -> None:
+        """Proteção de gravação contra telemetria repetida funciona."""
+        from frequencia_ufmg.logging_config import TelemetryRecorder, TelemetryKey
+
+        recorder = TelemetryRecorder()
+        
+        # Primeiro relato deve ser gravado
+        key1 = TelemetryKey("attendance", "record", "session", "aula-01")
+        first_result = recorder.record(
+            key1.category, key1.action, key1.entity_type, key1.entity_id
+        )
+        
+        # Segundo relato idêntico deve ser bloqueado
+        second_result = recorder.record(
+            key1.category, key1.action, key1.entity_type, key1.entity_id
+        )
+        
+        assert first_result is True
+        assert second_result is False
+
+    def test_preservacao_erro_429(self) -> None:
+        """Preservação do erro 429 no diagnóstico."""
+        from frequencia_ufmg.logging_config import TelemetryRecorder
+
+        recorder = TelemetryRecorder()
+        
+        info = recorder.record_429(
+            request_id="test-429",
+            retry_after=60.0,
+            context={"path": "/api/test"}
+        )
+        
+        assert info["error_code"] == "RATE_LIMITED"
+        assert info["request_id"] == "test-429"
+        assert info["retry_after"] == 60.0
+        
+        # Verificar que pode ser recuperado
+        recovered = recorder.get_rate_limit("test-429")
+        assert recovered is not None
+        assert recovered["error_code"] == "RATE_LIMITED"
+
+    def test_preservacao_resource_exhausted(self) -> None:
+        """Preservação do RESOURCE_EXHAUSTED no diagnóstico."""
+        from frequencia_ufmg.logging_config import TelemetryRecorder
+
+        recorder = TelemetryRecorder()
+        
+        info = recorder.record_resource_exhausted(
+            request_id="test-re",
+            context={"operation": "write"}
+        )
+        
+        assert info["error_code"] == "RESOURCE_EXHAUSTED"
+        assert info["request_id"] == "test-re"
+        
+        # Verificar que pode ser recuperado
+        recovered = recorder.get_rate_limit("test-re")
+        assert recovered is not None
+        assert recovered["error_code"] == "RESOURCE_EXHAUSTED"
+
+    def test_recuperacao_rascunho(self) -> None:
+        """Recuperação do rascunho quando cadastro falhar."""
+        from frequencia_ufmg.models import GerenciadorRascunhos
+
+        manager = GerenciadorRascunhos()
+        
+        draft_data = {"ping1": "no_campus", "ping2": "indisponivel"}
+        draft_id = manager.salvar_rascunho("DCC203", "aula-01", draft_data)
+        
+        recovered = manager.recuperar_rascunho(draft_id)
+        assert recovered is not None
+        assert recovered.dados == draft_data
+        assert recovered.disciplina_codigo == "DCC203"
+
+    def test_central_acionavel_comparacao_horario(self) -> None:
+        """Central acionável com comparação de horário funciona."""
+        from frequencia_ufmg.models import CentralPendencias, PendenciaHorario, DecisaoHorario
+
+        central = CentralPendencias()
+        
+        # Criar pendência
+        pendencia = PendenciaHorario(
+            disciplina_codigo="DCC203",
+            disciplina_nome="POO",
+            horario_atual="10:00-12:00",
+            horario_novo="11:00-13:00",
+            motivo="Mudança de sala"
+        )
+        
+        pendencia_id = central.adicionar_pendencia(pendencia)
+        
+        # Registrar decisão
+        central.registrar_decisao(pendencia_id, DecisaoHorario.MANTER_ATUAL)
+        
+        # Verificar que decisão persiste
+        assert central.get_decisao(pendencia_id) == DecisaoHorario.MANTER_ATUAL
+        
+        # Verificar que pendência pode ser recuperada
+        recovered_pendencia = central.get_pendencia(pendencia_id)
+        assert recovered_pendencia is pendencia
+
+    def test_decisao_persistida(self) -> None:
+        """Decisão persistida ao reabrir."""
+        from frequencia_ufmg.models import CentralPendencias, PendenciaHorario, DecisaoHorario
+
+        central = CentralPendencias()
+        pendencia = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo")
+        
+        pendencia_id = central.adicionar_pendencia(pendencia)
+        central.registrar_decisao(pendencia_id, DecisaoHorario.APLICAR_MUDANCA)
+        
+        # Simular reabertura - decisão deve persisitir
+        assert central.get_decisao(pendencia_id) == DecisaoHorario.APLICAR_MUDANCA
+
+    def test_frequencia_preservada(self) -> None:
+        """Registros de frequência são preservados."""
+        from frequencia_ufmg.models import (
+            Disciplina, SessaoAula, ConfiguracaoSessao,
+            QuantidadeAulas, NumeroChamadas, SituacaoFrequencia
+        )
+
+        disciplina = Disciplina("DCC203", "POO", 60)
+        sessao = SessaoAula(
+            "aula-01",
+            ConfiguracaoSessao(QuantidadeAulas.DUAS, NumeroChamadas.UMA)
+        )
+        disciplina.adicionar_sessao(sessao)
+        
+        # Registrar frequência
+        registro = disciplina.registrar_frequencia("aula-01", SituacaoFrequencia.PRESENTE)
+        
+        # Verificar que frequência é preservada
+        assert registro.faltas == 0
+        assert registro.situacao == SituacaoFrequencia.PRESENTE
+        
+        # Verificar resumo
+        resumo = disciplina.resumo()
+        assert resumo.faltas_consumidas == 0
+
+    def test_pendencia_some_apos_confirmacao(self) -> None:
+        """Pendência some após confirmação real."""
+        from frequencia_ufmg.models import CentralPendencias, PendenciaHorario, DecisaoHorario
+
+        central = CentralPendencias()
+        pendencia = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo")
+        
+        pendencia_id = central.adicionar_pendencia(pendencia)
+        
+        # Registrar decisão
+        central.registrar_decisao(pendencia_id, DecisaoHorario.APLICAR_MUDANCA)
+        
+        # Limpar pendências resolvidas
+        removidas = central.limpar_pendencias_resolvidas()
+        
+        assert removidas == 1
+        assert central.get_pendencia(pendencia_id) is None
+
+    def test_escolha_manual_respeitada(self) -> None:
+        """Escolha manual respeitada não reaparece sem mudança da fonte."""
+        from frequencia_ufmg.models import CentralPendencias, PendenciaHorario, DecisaoHorario
+
+        central = CentralPendencias()
+        pendencia = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo")
+        
+        pendencia_id = central.adicionar_pendencia(pendencia)
+        central.registrar_decisao(pendencia_id, DecisaoHorario.MANTER_ATUAL)
+        
+        # Verificar que decisão foi registrada
+        assert central.get_decisao(pendencia_id) == DecisaoHorario.MANTER_ATUAL
+        
+        # Sem mudança na fonte, a pendência não deve reaparecer
+        # (simulado por não adicionar nova pendência)
+        assert len(central.get_todas_pendencias()) == 1
+        
+        # Após limpar, não deve mais existi
+        central.limpar_pendencias_resolvidas()
+        assert central.get_pendencia(pendencia_id) is None

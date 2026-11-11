@@ -6,13 +6,18 @@ from time import monotonic
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
 
-from frequencia_ufmg.logging_config import configure_logging
+from frequencia_ufmg.logging_config import (
+    TelemetryRecorder,
+    TelemetryDeduplicator,
+    configure_logging,
+    telemetry_recorder,
+)
 
 APP_VERSION = "0.1.0"
 configure_logging()
@@ -41,6 +46,29 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         request.state.request_id = request_id
         try:
             response = await call_next(request)
+        except HTTPException as http_exc:
+            # Tratar erro 429 (Too Many Requests) e preservar para diagnóstico
+            if http_exc.status_code == 429:
+                retry_after = float(http_exc.headers.get("retry-after", 0)) if http_exc.headers.get("retry-after") else None
+                telemetry_recorder.record_429(
+                    request_id=request_id,
+                    retry_after=retry_after,
+                    context={
+                        "path": request.url.path,
+                        "method": request.method,
+                        "status_code": 429,
+                    },
+                )
+            logger.exception(
+                "request_failed",
+                extra=_request_fields(request, request_id, http_exc.status_code, started_at),
+            )
+            return Response(
+                content=f'{{ "detail": "{http_exc.detail}" }}',
+                status_code=http_exc.status_code,
+                media_type="application/json",
+                headers={"x-request-id": request_id},
+            )
         except Exception:
             logger.exception(
                 "request_failed",

@@ -1,8 +1,11 @@
 """Modelo de domínio avaliável da frequência acadêmica."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+import copy
+from dataclasses import dataclass, field
+from datetime import datetime, time
 from enum import IntEnum, StrEnum
+from typing import Any
 
 
 class QuantidadeAulas(IntEnum):
@@ -391,3 +394,174 @@ def _classificar_pings_validos(
     if segundo_ping is EstadoPing.NO_CAMPUS:
         return SituacaoFrequencia.CHEGOU_ATRASADO
     return SituacaoFrequencia.AUSENTE
+
+
+class DecisaoHorario(StrEnum):
+    """DecisãoTomada pelo usuário em relação a uma pendência de horário."""
+
+    MANTER_ATUAL = "manter_atual"
+    APLICAR_MUDANCA = "aplicar_mudanca"
+    PENDENTE = "pendente"
+
+
+@dataclass(frozen=True, slots=True)
+class PendenciaHorario:
+    """Pendência de horário que precisa de decisão do usuário."""
+
+    disciplina_codigo: str
+    disciplina_nome: str
+    horario_atual: str
+    horario_novo: str
+    motivo: str
+    data_criacao: datetime = field(default_factory=lambda: datetime.now())
+
+    def to_dict(self) -> dict[str, Any]:
+        """Converte para dicionário para serialização."""
+        return {
+            "disciplina_codigo": self.disciplina_codigo,
+            "disciplina_nome": self.disciplina_nome,
+            "horario_atual": self.horario_atual,
+            "horario_novo": self.horario_novo,
+            "motivo": self.motivo,
+            "data_criacao": self.data_criacao.isoformat(),
+        }
+
+
+class RascunhoCadastro:
+    """Rascunho de cadastro que pode ser recuperado em caso de falha."""
+
+    __slots__ = ("_disciplina", "_sessao", "_dados", "_timestamp")
+
+    def __init__(
+        self,
+        disciplina_codigo: str,
+        sessao_identificador: str,
+        dados: dict[str, Any],
+    ) -> None:
+        self._disciplina = disciplina_codigo
+        self._sessao = sessao_identificador
+        self._dados = copy.deepcopy(dados)
+        self._timestamp = datetime.now()
+
+    @property
+    def disciplina_codigo(self) -> str:
+        return self._disciplina
+
+    @property
+    def sessao_identificador(self) -> str:
+        return self._sessao
+
+    @property
+    def dados(self) -> dict[str, Any]:
+        return self._dados.copy()
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
+    def to_dict(self) -> dict[str, Any]:
+        """Converte para dicionário para serialização."""
+        return {
+            "disciplina_codigo": self._disciplina,
+            "sessao_identificador": self._sessao,
+            "dados": self._dados,
+            "timestamp": self._timestamp.isoformat(),
+        }
+
+
+class CentralPendencias:
+    """Central acionável para gerenciamento de pendências de horário."""
+
+    __slots__ = ("_pendencias", "_decisoes")
+
+    def __init__(self) -> None:
+        self._pendencias: dict[str, PendenciaHorario] = {}
+        self._decisoes: dict[str, DecisaoHorario] = {}
+
+    def adicionar_pendencia(self, pendencia: PendenciaHorario) -> str:
+        """Adiciona uma pendência de horário e retorna um ID único."""
+        pendencia_id = f"{pendencia.disciplina_codigo}-{len(self._pendencias)}"
+        self._pendencias[pendencia_id] = pendencia
+        return pendencia_id
+
+    def registrar_decisao(
+        self,
+        pendencia_id: str,
+        decisao: DecisaoHorario,
+    ) -> None:
+        """Registra a decisão do usuário para uma pendência."""
+        if pendencia_id not in self._pendencias:
+            raise ValueError(f"Pendência {pendencia_id} não encontrada")
+        self._decisoes[pendencia_id] = decisao
+
+    def get_pendencia(self, pendencia_id: str) -> PendenciaHorario | None:
+        """Recupera uma pendência pelo ID."""
+        return self._pendencias.get(pendencia_id)
+
+    def get_decisao(self, pendencia_id: str) -> DecisaoHorario | None:
+        """Recupera a decisão para uma pendência."""
+        return self._decisoes.get(pendencia_id)
+
+    def get_todas_pendencias(self) -> list[PendenciaHorario]:
+        """Retorna todas as pendências ativas."""
+        return list(self._pendencias.values())
+
+    def remover_pendencia(self, pendencia_id: str) -> bool:
+        """Remove uma pendência após resolução. Retorna True se removida."""
+        if pendencia_id in self._pendencias:
+            del self._pendencias[pendencia_id]
+            return True
+        return False
+
+    def limpar_pendencias_resolvidas(self) -> int:
+        """Remove pendências com decisão diferente de PENDENTE. Retorna quantidade removida."""
+        removidas = 0
+        ids_para_remover = [
+            pid for pid, decisao in self._decisoes.items()
+            if decisao != DecisaoHorario.PENDENTE
+        ]
+        for pid in ids_para_remover:
+            if pid in self._pendencias:
+                del self._pendencias[pid]
+                removidas += 1
+        return removidas
+
+
+class GerenciadorRascunhos:
+    """Gerenciador de rascunhos para recuperação em caso de falha."""
+
+    __slots__ = ("_rascunhos",)
+
+    def __init__(self) -> None:
+        self._rascunhos: dict[str, RascunhoCadastro] = {}
+
+    def salvar_rascunho(
+        self,
+        disciplina_codigo: str,
+        sessao_identificador: str,
+        dados: dict[str, Any],
+    ) -> str:
+        """Salva um rascunho e retorna um ID único."""
+        rascunho_id = f"{disciplina_codigo}-{sessao_identificador}-{len(self._rascunhos)}"
+        self._rascunhos[rascunho_id] = RascunhoCadastro(
+            disciplina_codigo, sessao_identificador, dados
+        )
+        return rascunho_id
+
+    def recuperar_rascunho(self, rascunho_id: str) -> RascunhoCadastro | None:
+        """Recupera um rascunho pelo ID."""
+        return self._rascunhos.get(rascunho_id)
+
+    def remover_rascunho(self, rascunho_id: str) -> bool:
+        """Remove um rascunho após uso. Retorna True se removido."""
+        if rascunho_id in self._rascunhos:
+            del self._rascunhos[rascunho_id]
+            return True
+        return False
+
+    def listar_rascunhos(self, disciplina_codigo: str) -> list[RascunhoCadastro]:
+        """Lista todos os rascunhos para uma disciplina."""
+        return [
+            r for r in self._rascunhos.values()
+            if r.disciplina_codigo == disciplina_codigo
+        ]

@@ -1,15 +1,22 @@
 """Tests for the object-oriented academic domain structure."""
 
+from datetime import datetime, timedelta
+
 import pytest
 
 from frequencia_ufmg.models import (
+    CentralPendencias,
     ConfiguracaoSessao,
+    DecisaoHorario,
     Disciplina,
     EstadoPing,
+    GerenciadorRascunhos,
     NumeroChamadas,
+    PendenciaHorario,
     QuantidadeAulas,
     RegistroFrequencia,
     ResumoDisciplina,
+    RascunhoCadastro,
     SessaoAula,
     SituacaoFrequencia,
 )
@@ -543,3 +550,236 @@ def test_course_finds_a_later_session_and_rejects_non_text_identity() -> None:
     assert registro.sessao is segunda_sessao
     with pytest.raises(TypeError, match="identificador"):
         disciplina.registrar_frequencia(2, SituacaoFrequencia.PRESENTE)  # type: ignore[arg-type]
+
+
+# ==================== Sessão 55,35 - Novos Testes ====================
+
+
+class TestPendenciaHorario:
+    """Testes para a classe PendenciaHorario."""
+
+    def test_pendencia_horario_criacao(self) -> None:
+        """Uma pendência de horário é criado com os dados corretos."""
+
+        pendencia = PendenciaHorario(
+            disciplina_codigo="DCC203",
+            disciplina_nome="POO",
+            horario_atual="10:00-12:00",
+            horario_novo="11:00-13:00",
+            motivo="Mudança de sala",
+        )
+
+        assert pendencia.disciplina_codigo == "DCC203"
+        assert pendencia.disciplina_nome == "POO"
+        assert pendencia.horario_atual == "10:00-12:00"
+        assert pendencia.horario_novo == "11:00-13:00"
+        assert pendencia.motivo == "Mudança de sala"
+        assert isinstance(pendencia.data_criacao, datetime)
+
+    def test_pendencia_horario_to_dict(self) -> None:
+        """Uma pendência pode ser serializada para dicionário."""
+
+        pendencia = PendenciaHorario(
+            disciplina_codigo="DCC203",
+            disciplina_nome="POO",
+            horario_atual="10:00-12:00",
+            horario_novo="11:00-13:00",
+            motivo="Mudança de sala",
+        )
+
+        result = pendencia.to_dict()
+
+        assert result["disciplina_codigo"] == "DCC203"
+        assert result["disciplina_nome"] == "POO"
+        assert result["horario_atual"] == "10:00-12:00"
+        assert result["horario_novo"] == "11:00-13:00"
+        assert result["motivo"] == "Mudança de sala"
+        assert "data_criacao" in result
+
+
+class TestCentralPendencias:
+    """Testes para a CentralPendencias."""
+
+    def test_adicionar_e_recuperar_pendencia(self) -> None:
+        """Pendências podem ser adicionadas e recuperadas."""
+
+        central = CentralPendencias()
+        pendencia = PendenciaHorario(
+            disciplina_codigo="DCC203",
+            disciplina_nome="POO",
+            horario_atual="10:00-12:00",
+            horario_novo="11:00-13:00",
+            motivo="Mudança de sala",
+        )
+
+        pendencia_id = central.adicionar_pendencia(pendencia)
+        recuperada = central.get_pendencia(pendencia_id)
+
+        assert recuperada is pendencia
+
+    def test_registrar_e_recuperar_decisao(self) -> None:
+        """Decisões podem ser registradas e recuperadas."""
+
+        central = CentralPendencias()
+        pendencia = PendenciaHorario(
+            disciplina_codigo="DCC203",
+            disciplina_nome="POO",
+            horario_atual="10:00-12:00",
+            horario_novo="11:00-13:00",
+            motivo="Mudança de sala",
+        )
+
+        pendencia_id = central.adicionar_pendencia(pendencia)
+        central.registrar_decisao(pendencia_id, DecisaoHorario.APLICAR_MUDANCA)
+        decisao = central.get_decisao(pendencia_id)
+
+        assert decisao == DecisaoHorario.APLICAR_MUDANCA
+
+    def test_registrar_decisao_inexistente_falha(self) -> None:
+        """Registrar decisão para pendência inexistente levanta erro."""
+
+        central = CentralPendencias()
+
+        with pytest.raises(ValueError, match="não encontrada"):
+            central.registrar_decisao("inexistente", DecisaoHorario.APLICAR_MUDANCA)
+
+    def test_remover_pendencia(self) -> None:
+        """Pendências podem ser removidas."""
+
+        central = CentralPendencias()
+        pendencia = PendenciaHorario(
+            disciplina_codigo="DCC203",
+            disciplina_nome="POO",
+            horario_atual="10:00-12:00",
+            horario_novo="11:00-13:00",
+            motivo="Mudança de sala",
+        )
+
+        pendencia_id = central.adicionar_pendencia(pendencia)
+        assert central.get_pendencia(pendencia_id) is not None
+
+        removido = central.remover_pendencia(pendencia_id)
+        assert removido is True
+        assert central.get_pendencia(pendencia_id) is None
+
+    def test_limpar_pendencias_resolvidas(self) -> None:
+        """Pendências com decisão != PENDENTE são removidas."""
+
+        central = CentralPendencias()
+        pendencia1 = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo1")
+        pendencia2 = PendenciaHorario("DCC204", "ED", "10:00", "11:00", "motivo2")
+
+        id1 = central.adicionar_pendencia(pendencia1)
+        id2 = central.adicionar_pendencia(pendencia2)
+
+        central.registrar_decisao(id1, DecisaoHorario.APLICAR_MUDANCA)
+        central.registrar_decisao(id2, DecisaoHorario.PENDENTE)
+
+        removidas = central.limpar_pendencias_resolvidas()
+
+        assert removidas == 1
+        assert central.get_pendencia(id1) is None
+        assert central.get_pendencia(id2) is pendencia2
+
+    def test_decisao_persiste_ao_reabrir(self) -> None:
+        """A decisão persiste ao reabrir (simulado)."""
+
+        central = CentralPendencias()
+        pendencia = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo")
+
+        pendencia_id = central.adicionar_pendencia(pendencia)
+        central.registrar_decisao(pendencia_id, DecisaoHorario.MANTER_ATUAL)
+
+        # Simula reabertura - a decisão deve ainda estar lá
+        assert central.get_decisao(pendencia_id) == DecisaoHorario.MANTER_ATUAL
+
+
+class TestRascunhoCadastro:
+    """Testes para RascunhoCadastro."""
+
+    def test_rascunho_criacao(self) -> None:
+        """Um rascunho é criado com os dados corretos."""
+
+        dados = {"ping1": "no_campus", "ping2": "fora"}
+        rascunho = RascunhoCadastro("DCC203", "aula-01", dados)
+
+        assert rascunho.disciplina_codigo == "DCC203"
+        assert rascunho.sessao_identificador == "aula-01"
+        assert rascunho.dados == dados
+        assert isinstance(rascunho.timestamp, datetime)
+
+    def test_rascunho_dados_nao_sao_modificados(self) -> None:
+        """Os dados do rascunho não são modificados externamente."""
+
+        dados = {"ping1": "no_campus"}
+        rascunho = RascunhoCadastro("DCC203", "aula-01", dados)
+
+        # Modificar o dicionário original
+        dados["ping1"] = "fora"
+
+        # O rascunho deve manter os dados originais
+        assert rascunho.dados["ping1"] == "no_campus"
+
+    def test_rascunho_to_dict(self) -> None:
+        """Um rascunho pode ser serializado para dicionário."""
+
+        dados = {"ping1": "no_campus", "ping2": "fora"}
+        rascunho = RascunhoCadastro("DCC203", "aula-01", dados)
+
+        result = rascunho.to_dict()
+
+        assert result["disciplina_codigo"] == "DCC203"
+        assert result["sessao_identificador"] == "aula-01"
+        assert result["dados"] == dados
+        assert "timestamp" in result
+
+
+class TestGerenciadorRascunhos:
+    """Testes para GerenciadorRascunhos."""
+
+    def test_salvar_e_recuperar_rascunho(self) -> None:
+        """Rascunhos podem ser salvos e recuperados."""
+
+        gerenciador = GerenciadorRascunhos()
+        dados = {"ping1": "no_campus", "ping2": "fora"}
+
+        rascunho_id = gerenciador.salvar_rascunho("DCC203", "aula-01", dados)
+        recuperado = gerenciador.recuperar_rascunho(rascunho_id)
+
+        assert recuperado is not None
+        assert recuperado.disciplina_codigo == "DCC203"
+        assert recuperado.sessao_identificador == "aula-01"
+        assert recuperado.dados == dados
+
+    def test_remover_rascunho(self) -> None:
+        """Rascunhos podem ser removidos."""
+
+        gerenciador = GerenciadorRascunhos()
+        dados = {"ping1": "no_campus"}
+
+        rascunho_id = gerenciador.salvar_rascunho("DCC203", "aula-01", dados)
+        assert gerenciador.recuperar_rascunho(rascunho_id) is not None
+
+        removido = gerenciador.remover_rascunho(rascunho_id)
+        assert removido is True
+        assert gerenciador.recuperar_rascunho(rascunho_id) is None
+
+    def test_listar_rascunhos_por_disciplina(self) -> None:
+        """Rascunhos podem ser listados por disciplina."""
+
+        gerenciador = GerenciadorRascunhos()
+        gerenciador.salvar_rascunho("DCC203", "aula-01", {"dado": "1"})
+        gerenciador.salvar_rascunho("DCC203", "aula-02", {"dado": "2"})
+        gerenciador.salvar_rascunho("DCC204", "aula-01", {"dado": "3"})
+
+        rascunhos_dcc203 = gerenciador.listar_rascunhos("DCC203")
+
+        assert len(rascunhos_dcc203) == 2
+        assert all(r.disciplina_codigo == "DCC203" for r in rascunhos_dcc203)
+
+    def test_recuperar_rascunho_inexistente(self) -> None:
+        """Recuperar rascunho inexistente retorna None."""
+
+        gerenciador = GerenciadorRascunhos()
+
+        assert gerenciador.recuperar_rascunho("inexistente") is None
