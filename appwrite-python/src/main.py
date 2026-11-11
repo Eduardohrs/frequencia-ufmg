@@ -24,7 +24,6 @@ module_search_path.insert(0, str(development_domain))
 # Importar telemetria de deduplicação
 try:
     from frequencia_ufmg.telemetry_integration import production_telemetry
-    from frequencia_ufmg.logging_config import TelemetryKey
     _telemetry_available = True
 except ImportError:
     _telemetry_available = False
@@ -2510,7 +2509,9 @@ def _log(context: Any, event: str, **fields: Any) -> None:
             category = fields.get("category", "general")
             action = fields.get("action", event)
             entity_type = fields.get("entity_type", "log")
-            entity_id = fields.get("entity_id", fields.get("session_id", fields.get("course_id", "global")))
+            entity_id = fields.get(
+                "entity_id", fields.get("session_id", fields.get("course_id", "global"))
+            )
             if not production_telemetry.record_production_report(
                 category, action, entity_type, entity_id
             ):
@@ -2527,7 +2528,9 @@ def _error(context: Any, event: str, **fields: Any) -> None:
             category = "error"
             action = event
             entity_type = fields.get("entity_type", "error")
-            entity_id = fields.get("entity_id", fields.get("session_id", fields.get("course_id", "global")))
+            entity_id = fields.get(
+                "entity_id", fields.get("session_id", fields.get("course_id", "global"))
+            )
             # Para erros 429/RESOURCE_EXHAUSTED, registrar para diagnóstico
             if event in ("rate_limit_exceeded", "resource_exhausted"):
                 production_telemetry.record_429(

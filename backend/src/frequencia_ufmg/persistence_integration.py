@@ -1,8 +1,5 @@
 """Integração de persistência para CentralPendencias e GerenciadorRascunhos."""
 
-import copy
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Protocol
 
 from frequencia_ufmg.models import (
@@ -245,5 +242,6 @@ class PersistentGerenciadorRascunhos(GerenciadorRascunhos):
         
         if removed and self._storage:
             self._storage.delete_draft(rascunho_id)
+        return removed
         
         

@@ -14,7 +14,7 @@ class ProductionTelemetryRecorder(TelemetryRecorder):
     """Gravador de telemetria integrado aos emissores de produção."""
 
     _instance: "ProductionTelemetryRecorder | None" = None
-    _lock = threading.Lock()
+    _lock = threading.RLock()
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "ProductionTelemetryRecorder":
         """Singleton para garantir uma única instância global."""

@@ -1,6 +1,5 @@
 """Repositório de persistência para rascunhos de cadastro."""
 
-import copy
 import json
 from datetime import datetime
 from typing import Any
