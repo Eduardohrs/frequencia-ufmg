@@ -21,6 +21,15 @@ module_search_path.insert(0, str(Path(__file__).resolve().parent))
 development_domain = Path(__file__).resolve().parents[2] / "backend" / "src"
 module_search_path.insert(0, str(development_domain))
 
+# Importar telemetria de deduplicação
+try:
+    from frequencia_ufmg.telemetry_integration import production_telemetry
+    from frequencia_ufmg.logging_config import TelemetryKey
+    _telemetry_available = True
+except ImportError:
+    _telemetry_available = False
+    production_telemetry = None
+
 from academic_date_repository import (  # noqa: E402
     AcademicDateRepository,
     InvalidAcademicDate,
@@ -2496,6 +2505,16 @@ def _route_name(path: str) -> str:
 
 def _log(context: Any, event: str, **fields: Any) -> None:
     try:
+        # Verificar deduplicação de telemetria
+        if _telemetry_available and production_telemetry:
+            category = fields.get("category", "general")
+            action = fields.get("action", event)
+            entity_type = fields.get("entity_type", "log")
+            entity_id = fields.get("entity_id", fields.get("session_id", fields.get("course_id", "global")))
+            if not production_telemetry.record_production_report(
+                category, action, entity_type, entity_id
+            ):
+                return
         context.log(json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True))
     except Exception:
         _fallback_delivery(context.error, "log")
@@ -2503,6 +2522,22 @@ def _log(context: Any, event: str, **fields: Any) -> None:
 
 def _error(context: Any, event: str, **fields: Any) -> None:
     try:
+        # Verificar deduplicação de telemetria para erros
+        if _telemetry_available and production_telemetry:
+            category = "error"
+            action = event
+            entity_type = fields.get("entity_type", "error")
+            entity_id = fields.get("entity_id", fields.get("session_id", fields.get("course_id", "global")))
+            # Para erros 429/RESOURCE_EXHAUSTED, registrar para diagnóstico
+            if event in ("rate_limit_exceeded", "resource_exhausted"):
+                production_telemetry.record_429(
+                    request_id=fields.get("request_id", "unknown"),
+                    context=fields,
+                )
+            else:
+                production_telemetry.record(
+                    category, action, entity_type, entity_id
+                )
         context.error(json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True))
     except Exception:
         _fallback_delivery(context.log, "error")
