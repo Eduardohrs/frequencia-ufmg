@@ -49,7 +49,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         except HTTPException as http_exc:
             # Tratar erro 429 (Too Many Requests) e preservar para diagnóstico
             if http_exc.status_code == 429:
-                retry_after = float(http_exc.headers.get("retry-after", 0)) if http_exc.headers.get("retry-after") else None
+                headers = http_exc.headers or {}
+                retry_after_value = headers.get("retry-after")
+                retry_after = float(retry_after_value) if retry_after_value else None
                 telemetry_recorder.record_429(
                     request_id=request_id,
                     retry_after=retry_after,

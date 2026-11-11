@@ -75,6 +75,7 @@ class TelemetryRecorder:
         """Inicializa com deduplicador opcional."""
         self._deduplicator = deduplicator or TelemetryDeduplicator()
         self._lock = threading.RLock()
+        self._rate_limits: dict[str, dict[str, Any]] = {}
 
     def record(
         self,
@@ -97,7 +98,7 @@ class TelemetryRecorder:
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Registra ocorrência de HTTP 429 para diagnóstico."""
-        info = {
+        info: dict[str, Any] = {
             "error_code": "RATE_LIMITED",
             "request_id": request_id,
             "retry_after": retry_after,
@@ -106,9 +107,6 @@ class TelemetryRecorder:
         if context:
             info["context"] = context
         with self._lock:
-            # Armazenar para diagnóstico posterior
-            if not hasattr(self, "_rate_limits"):
-                self._rate_limits: dict[str, dict[str, Any]] = {}
             self._rate_limits[request_id] = info
         return info
 
@@ -118,7 +116,7 @@ class TelemetryRecorder:
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Registra ocorrência de RESOURCE_EXHAUSTED para diagnóstico."""
-        info = {
+        info: dict[str, Any] = {
             "error_code": "RESOURCE_EXHAUSTED",
             "request_id": request_id,
             "timestamp": datetime.now(UTC).isoformat(),
@@ -126,8 +124,6 @@ class TelemetryRecorder:
         if context:
             info["context"] = context
         with self._lock:
-            if not hasattr(self, "_rate_limits"):
-                self._rate_limits: dict[str, dict[str, Any]] = {}
             self._rate_limits[request_id] = info
         return info
 
