@@ -567,6 +567,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Nenhuma aula cadastrada'), findsOneWidget);
   });
+
+  testWidgets(
+    'resolved session opened from the alert keeps a contextual, non-pending highlight (CW16)',
+    (tester) async {
+      final repository = _FakeRepository([
+        _session(
+          'resolved',
+          DateTime.utc(2026, 7, 31, 12),
+          attendanceStatus: SituacaoFrequencia.present,
+          absences: 0,
+        ),
+      ]);
+      await tester.pumpWidget(
+        _app(
+          repository,
+          _Logger(),
+          location,
+          now,
+          courseCode: 'DCC203',
+          initialSessionId: 'resolved',
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Aberta pelo alerta'), findsOneWidget);
+      expect(find.text('Selecionada pelo alerta'), findsNothing);
+      expect(find.text('Falta informar'), findsNothing);
+    },
+  );
 }
 
 Widget _app(
