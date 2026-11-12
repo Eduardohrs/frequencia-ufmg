@@ -11,10 +11,11 @@ the attributes and indexes the repositories require, idempotently, and
 """
 
 from collections.abc import Mapping
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 from appwrite.enums.databases_index_type import DatabasesIndexType
 from appwrite.exception import AppwriteException
+from appwrite.models import Document
 from appwrite.query import Query
 
 DATABASE_ID = "frequencia_ufmg"
@@ -91,6 +92,20 @@ def classify_error(error: AppwriteException, *, operation: str, document_level: 
     return StorageUnavailable(f"{operation}: appwrite error {code} ({error_type})")
 
 
+def normalize_document(document: Document[dict[str, Any]]) -> dict[str, Any]:
+    """Flatten one SDK 27.x ``Document`` model into a plain dict.
+
+    ``Databases.get_document``/``create_document``/``update_document`` return
+    ``Document.with_data(http_json, dict)`` whose ``to_dict()`` nests the
+    business fields under ``data``. This merges them back next to the
+    ``$``-prefixed metadata (``$id``, ``$permissions``, ``$createdAt``, ...).
+    """
+    as_dict = dict(document.to_dict())
+    payload = as_dict.pop("data", {})
+    as_dict.update(payload)
+    return as_dict
+
+
 def list_all_documents(
     databases: _Databases,
     database_id: str,
@@ -110,7 +125,7 @@ def list_all_documents(
             )
         except AppwriteException as error:
             raise classify_error(error, operation="list_documents", document_level=False) from None
-        page = list(_as_mapping(response).get("documents", []))
+        page = [normalize_document(doc) for doc in response.documents]
         documents.extend(page)
         if len(page) < LIST_PAGE_SIZE:
             return documents
@@ -118,10 +133,9 @@ def list_all_documents(
     raise StorageUnavailable("list_documents exceeded the pagination budget")
 
 
-def _as_mapping(response: Any) -> Mapping[str, Any]:
-    if isinstance(response, Mapping):
-        return response
-    return cast(Mapping[str, Any], response.to_dict())
+def _as_mapping(response: Any) -> dict[str, Any]:
+    """Flatten one real SDK response model (``AttributeList``, ``IndexList``, ...)."""
+    return dict(response.to_dict())
 
 
 def _string_attribute(key: str, size: float, required: bool) -> dict[str, Any]:
@@ -196,25 +210,58 @@ def validate_appwrite_storage(
     database_id: str = DATABASE_ID,
     collections: Mapping[str, Mapping[str, Any]] = COLLECTION_SPECS,
 ) -> dict[str, Any]:
-    """Fail loudly when the database or any required collection is missing."""
+    """Fail loudly when the database, collections, attributes, or indexes are missing."""
     try:
         databases.get(database_id)
     except AppwriteException as error:
         raise classify_error(error, operation="get_database", document_level=False) from None
     missing: list[str] = []
-    for collection_id in collections:
+    for collection_id, spec in collections.items():
         try:
             databases.get_collection(database_id, collection_id)
         except AppwriteException as error:
             if error.code == 404:
                 missing.append(collection_id)
-            else:
-                raise classify_error(
-                    error, operation="get_collection", document_level=False
-                ) from None
+                continue
+            raise classify_error(
+                error, operation="get_collection", document_level=False
+            ) from None
+        missing.extend(_missing_spec_entries(databases, database_id, collection_id, spec))
     if missing:
-        raise StorageNotProvisioned(f"missing collections: {', '.join(sorted(missing))}")
+        raise StorageNotProvisioned(f"missing storage spec: {', '.join(sorted(missing))}")
     return {"database": database_id, "collections": sorted(collections)}
+
+
+def _missing_spec_entries(
+    databases: _Databases,
+    database_id: str,
+    collection_id: str,
+    spec: Mapping[str, Any],
+) -> list[str]:
+    """Return the spec attributes/indexes absent from the live collection."""
+    try:
+        attributes = databases.list_attributes(database_id, collection_id)
+    except AppwriteException as error:
+        raise classify_error(error, operation="list_attributes", document_level=False) from None
+    try:
+        indexes = databases.list_indexes(database_id, collection_id)
+    except AppwriteException as error:
+        raise classify_error(error, operation="list_indexes", document_level=False) from None
+    existing_attributes = {
+        str(item.get("key")) for item in attributes.to_dict().get("attributes", [])
+    }
+    existing_indexes = {str(item.get("key")) for item in indexes.to_dict().get("indexes", [])}
+    missing = [
+        f"{collection_id}: attribute '{attribute['key']}'"
+        for attribute in spec["attributes"]
+        if str(attribute["key"]) not in existing_attributes
+    ]
+    missing.extend(
+        f"{collection_id}: index '{index['key']}'"
+        for index in spec["indexes"]
+        if str(index["key"]) not in existing_indexes
+    )
+    return missing
 
 
 def _ensure_database(databases: _Databases, database_id: str) -> str:

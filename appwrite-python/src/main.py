@@ -14,7 +14,6 @@ from typing import Any, cast
 
 from appwrite.client import Client
 from appwrite.enums.execution_method import ExecutionMethod
-from appwrite.services.databases import Databases
 from appwrite.services.functions import Functions
 from appwrite.services.tables_db import TablesDB
 
@@ -35,12 +34,7 @@ from activity_snapshot_repository import (  # noqa: E402
     ActivitySnapshotRepository,
     InvalidActivitySnapshot,
 )
-from appwrite_storage import (  # noqa: E402
-    StorageNotProvisioned,
-    StorageUnavailable,
-    ensure_appwrite_storage,
-    validate_appwrite_storage,
-)
+from appwrite_storage import StorageNotProvisioned, StorageUnavailable  # noqa: E402
 from attendance_service import InvalidAttendanceRequest, evaluate_attendance  # noqa: E402
 from checkpoint_service import validate_checkpoint_payload  # noqa: E402
 from course_activities import CourseActivityService, CourseMoodleNotLinked  # noqa: E402
@@ -276,8 +270,6 @@ def _dispatch(context: Any) -> Any:
     headers = context.req.headers
     if method == "POST" and path == "/internal/academic-sync":
         return _academic_sync_worker(context)
-    if method == "POST" and path == "/internal/storage/ensure":
-        return _storage_ensure(context)
     origin = _header(headers, "origin")
     allowed_origin = _allowed_origin(origin)
 
@@ -466,23 +458,6 @@ def _pendency_repository(headers: dict[str, str]) -> PendencyRepository:
 
 def _draft_repository(headers: dict[str, str]) -> DraftRepository:
     return DraftRepository(_appwrite_client(headers))
-
-
-def _storage_ensure(context: Any) -> Any:
-    """Idempotently provision and validate the Appwrite storage used by the API."""
-    try:
-        client = _appwrite_client(context.req.headers)
-    except SecurityStoreUnavailable:
-        return _respond(context, {"error": "storage_store_unavailable"}, 503)
-    databases = Databases(client)
-    try:
-        summary = ensure_appwrite_storage(databases)
-        validate_appwrite_storage(databases)
-    except (StorageNotProvisioned, StorageUnavailable):
-        _error(context, "storage_ensure_failed")
-        return _respond(context, {"error": "storage_ensure_failed"}, 503)
-    _log(context, "storage_ensure_succeeded")
-    return _respond(context, {"storage": summary}, 200)
 
 
 def _public_pendency(document: Mapping[str, Any]) -> dict[str, Any]:

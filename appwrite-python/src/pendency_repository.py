@@ -23,6 +23,7 @@ from appwrite_storage import (
     StorageNotFound,
     classify_error,
     list_all_documents,
+    normalize_document,
 )
 from course_repository import validate_course_id
 
@@ -108,7 +109,7 @@ class PendencyRepository:
             if isinstance(translated, StorageNotFound):
                 return None
             raise translated from None
-        document = cast(dict[str, Any], response)
+        document = normalize_document(response)
         if document.get("user_id") != user_id:
             return None
         return document

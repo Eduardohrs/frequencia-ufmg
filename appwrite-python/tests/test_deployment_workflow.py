@@ -72,3 +72,37 @@ def test_every_flutter_action_step_pins_the_toolchain_validated_by_ci() -> None:
             block = step.split("\n      - ", maxsplit=1)[0]
             assert "flutter-version: '3.47.9'" in block, name
             assert "channel:" not in block, name
+
+
+def test_deploy_provisions_appwrite_storage_with_a_separate_admin_key() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "deploy-production.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "Provision Appwrite storage (idempotent)" in workflow
+    assert "python appwrite-python/setup_storage.py" in workflow
+    assert "APPWRITE_ADMIN_API_KEY: ${{ secrets.APPWRITE_ADMIN_API_KEY }}" in workflow
+    assert 'test -n "$APPWRITE_ADMIN_API_KEY"' in workflow
+    # Provisioning runs in the deploy pipeline with the administrative key,
+    # after the function deploy and before any client-facing publish; it is
+    # never exposed through the public API.
+    assert workflow.index("Deploy Appwrite and roll back a failed activation") < workflow.index(
+        "Provision Appwrite storage (idempotent)"
+    )
+    assert workflow.index("Provision Appwrite storage (idempotent)") < workflow.index(
+        "Publish Firebase Hosting after database rules"
+    )
+    # The runtime function key keeps its existing scopes: storage creation is
+    # authorized by the admin key, not by widening required_scopes.
+    scopes_block = workflow.split("required_scopes=(")[1].split(")")[0]
+    for creation_scope in (
+        "databases.write",
+        "databases.read",
+        "collections.write",
+        "collections.read",
+        "attributes.write",
+        "attributes.read",
+        "indexes.write",
+        "indexes.read",
+    ):
+        assert creation_scope not in scopes_block

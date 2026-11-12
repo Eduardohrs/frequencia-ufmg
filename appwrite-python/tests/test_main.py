@@ -4325,57 +4325,6 @@ def test_registration_drafts_list_fails_closed_on_storage_failure(
     assert result["body"]["error"] == "draft_store_unavailable"
 
 
-def test_storage_ensure_route_provisions_and_validates(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
-
-    def fake_client(_headers: dict[str, str]) -> object:
-        return object()
-
-    def fake_ensure(databases: object) -> dict[str, Any]:
-        calls.append("ensure")
-        return {"database": "created", "collections": {}}
-
-    def fake_validate(databases: object) -> dict[str, Any]:
-        calls.append("validate")
-        return {"database": "frequencia_ufmg", "collections": []}
-
-    monkeypatch.setattr(function, "_appwrite_client", fake_client)
-    monkeypatch.setattr(function, "Databases", lambda client: object())
-    monkeypatch.setattr(function, "ensure_appwrite_storage", fake_ensure)
-    monkeypatch.setattr(function, "validate_appwrite_storage", fake_validate)
-
-    context = FakeContext(FakeRequest("POST", "/internal/storage/ensure"))
-    result = function.main(context)
-
-    assert result["status"] == 200
-    assert result["body"]["storage"]["database"] == "created"
-    assert calls == ["ensure", "validate"]
-    assert json.loads(context.logs[0])["event"] == "storage_ensure_succeeded"
-
-
-def test_storage_ensure_route_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    def no_client(_headers: dict[str, str]) -> object:
-        raise SecurityStoreUnavailable("down")
-
-    monkeypatch.setattr(function, "_appwrite_client", no_client)
-    result = function.main(FakeContext(FakeRequest("POST", "/internal/storage/ensure")))
-    assert result["status"] == 503
-    assert result["body"]["error"] == "storage_store_unavailable"
-
-    monkeypatch.setattr(function, "_appwrite_client", lambda _h: object())
-    monkeypatch.setattr(function, "Databases", lambda client: object())
-
-    def failing_ensure(databases: object) -> dict[str, Any]:
-        raise StorageUnavailable("down")
-
-    monkeypatch.setattr(function, "ensure_appwrite_storage", failing_ensure)
-    context = FakeContext(FakeRequest("POST", "/internal/storage/ensure"))
-    result = function.main(context)
-    assert result["status"] == 503
-    assert result["body"]["error"] == "storage_ensure_failed"
-    assert json.loads(context.errors[0])["event"] == "storage_ensure_failed"
-
-
 def _real_schedule_factories(monkeypatch: pytest.MonkeyPatch, store: Any) -> None:
     from test_schedule_repository import NOW
 
@@ -4388,6 +4337,20 @@ def _real_schedule_factories(monkeypatch: pytest.MonkeyPatch, store: Any) -> Non
     monkeypatch.setattr(
         function, "_schedule_repository", lambda _h, _u: ScheduleRepository(store, now=lambda: NOW)
     )
+
+
+def test_internal_storage_ensure_route_is_not_exposed_publicly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The provisioner runs in the deploy pipeline (setup_storage.py), never via
+    # the public function API: the route must 404 before any SDK client is built.
+    def forbidden_client(_headers: dict[str, str]) -> object:
+        raise AssertionError("public calls must not build an Appwrite client")
+
+    monkeypatch.setattr(function, "_appwrite_client", forbidden_client)
+    result = function.main(FakeContext(FakeRequest("POST", "/internal/storage/ensure")))
+    assert result["status"] == 404
+    assert result["body"] == {"error": "not_found"}
 
 
 def test_pendency_apply_rejects_overlap_with_another_course_and_keeps_state(
