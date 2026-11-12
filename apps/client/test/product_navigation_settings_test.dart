@@ -289,11 +289,11 @@ void main() {
       expect(find.text('Histórico de capturas'), findsNothing);
       expect(find.textContaining('Permita a localização'), findsWidgets);
       h.permissions.grant = false;
-      await t.tap(find.text('Continuar'));
+      await t.tap(find.byKey(const Key('attendance-setup-continue')));
       await t.pumpAndSettle();
       expect(find.textContaining('ainda não foi ativado'), findsOneWidget);
       h.permissions.actionError = StateError('settings failed');
-      await t.tap(find.text('Continuar'));
+      await t.tap(find.byKey(const Key('attendance-setup-continue')));
       await t.pumpAndSettle();
       expect(find.textContaining('Não foi possível abrir'), findsOneWidget);
       await t.tap(find.text('Agora não').last);
@@ -303,7 +303,7 @@ void main() {
       await t.pumpAndSettle();
       h.permissions.actionError = null;
       h.permissions.grant = true;
-      await t.tap(find.text('Continuar'));
+      await t.tap(find.byKey(const Key('attendance-setup-continue')));
       await t.pumpAndSettle();
       expect(find.text('Tudo pronto'), findsOneWidget);
       await t.tap(find.text('Concluir'));

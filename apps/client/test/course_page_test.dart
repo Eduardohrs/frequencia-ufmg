@@ -3637,7 +3637,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Presença nas aulas'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Continuar'));
+      await tester.tap(find.byKey(const Key('attendance-setup-continue')));
       await tester.pumpAndSettle();
       expect(calls, contains('request_alarm_permission'));
       expect(find.text('Tudo pronto'), findsOneWidget);
@@ -3750,7 +3750,7 @@ void main() {
       );
       await tester.tap(find.text('Concluir'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Continuar'));
+      await tester.tap(find.byKey(const Key('attendance-setup-continue')));
       await tester.pumpAndSettle();
       expect(find.text('Tudo pronto'), findsOneWidget);
       await tester.tap(find.text('Concluir'));

@@ -159,6 +159,7 @@ class _AttendanceSetupState extends State<_AttendanceSetup> {
                 )
               else if (c.next != null)
                 FilledButton(
+                  key: const Key('attendance-setup-continue'),
                   onPressed: c.acting ? null : _resolve,
                   // CW24: contextualiza o destino antes de abrir as
                   // configuracoes do app no Android.
