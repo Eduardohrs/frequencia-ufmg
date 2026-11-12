@@ -13,11 +13,14 @@ from typing import Any
 
 import pytest
 from appwrite.exception import AppwriteException
-from appwrite.models import Document
+from appwrite.models import Row
 from appwrite.query import Query
-from appwrite.services.databases import Databases
+from appwrite.services.tables_db import TablesDB
 from test_pendency_repository import (
     FakeTransport,
+    _translate_tablesdb_error,
+    _translate_tablesdb_path,
+    _translate_tablesdb_response,
     document_json,
     make_client,
     parse_queries,
@@ -30,8 +33,8 @@ from appwrite_storage import (
     StorageNotProvisioned,
     StorageUnavailable,
     classify_error,
-    list_all_documents,
-    normalize_document,
+    list_all_rows,
+    normalize_row,
 )
 
 STAMP = "2025-01-01T00:00:00.000+00:00"
@@ -104,6 +107,8 @@ def index_json(
     }
 
 
+
+
 class StorageServer:
     """Provisioning + document endpoints served as canned ``client.call`` HTTP JSON."""
 
@@ -154,6 +159,20 @@ class StorageServer:
         self.documents[collection_id] = {}
 
     def __call__(self, method: str, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        is_tables = path.startswith("/tablesdb/")
+        if is_tables:
+            path, params = _translate_tablesdb_path(path, params)
+        try:
+            resp = self._handle(method, path, params)
+        except AppwriteException as error:
+            if is_tables:
+                raise _translate_tablesdb_error(error) from None
+            raise
+        if is_tables:
+            return _translate_tablesdb_response(resp)
+        return resp
+
+    def _handle(self, method: str, path: str, params: dict[str, Any]) -> dict[str, Any]:
         prefix = f"/databases/{self.database_id}"
         if path == "/databases" and method == "post":
             self._fail(self.fail_create_db)
@@ -289,10 +308,10 @@ class StorageServer:
 
 
 @pytest.fixture()
-def harness(monkeypatch: pytest.MonkeyPatch) -> tuple[Databases, StorageServer, FakeTransport]:
+def harness(monkeypatch: pytest.MonkeyPatch) -> tuple[TablesDB, StorageServer, FakeTransport]:
     server = StorageServer()
     client, transport = make_client(monkeypatch, server)
-    return Databases(client), server, transport
+    return TablesDB(client), server, transport
 
 
 def _err(code: int, type: str | None = None) -> AppwriteException:
@@ -301,7 +320,7 @@ def _err(code: int, type: str | None = None) -> AppwriteException:
 
 def test_classify_error_covers_the_whole_taxonomy() -> None:
     assert isinstance(
-        classify_error(_err(404, "collection_not_found"), operation="op", document_level=True),
+        classify_error(_err(404, "table_not_found"), operation="op", document_level=True),
         StorageNotProvisioned,
     )
     assert isinstance(
@@ -309,14 +328,14 @@ def test_classify_error_covers_the_whole_taxonomy() -> None:
         StorageNotProvisioned,
     )
     assert isinstance(
-        classify_error(_err(404, "document_not_found"), operation="op", document_level=True),
+        classify_error(_err(404, "row_not_found"), operation="op", document_level=True),
         StorageNotFound,
     )
     assert isinstance(
         classify_error(_err(404, None), operation="op", document_level=True), StorageNotFound
     )
     assert isinstance(
-        classify_error(_err(404, "document_not_found"), operation="op", document_level=False),
+        classify_error(_err(404, "row_not_found"), operation="op", document_level=False),
         StorageNotProvisioned,
     )
     assert isinstance(
@@ -338,10 +357,10 @@ def test_classify_error_covers_the_whole_taxonomy() -> None:
     )
 
 
-def test_normalize_document_flattens_a_real_sdk_document() -> None:
-    document = Document.with_data(
+def test_normalize_row_flattens_a_real_sdk_row() -> None:
+    row = Row.with_data(
         {
-            "$id": "doc-1",
+            "$id": "row-1",
             "$permissions": ['read("user:user-1")'],
             "$createdAt": STAMP,
             "user_id": "user-1",
@@ -349,11 +368,11 @@ def test_normalize_document_flattens_a_real_sdk_document() -> None:
         },
         dict,
     )
-    assert document.to_dict()["data"] == {"user_id": "user-1", "course_id": "course-1"}
+    assert row.to_dict()["data"] == {"user_id": "user-1", "course_id": "course-1"}
 
-    flat = normalize_document(document)
+    flat = normalize_row(row)
 
-    assert flat["$id"] == "doc-1"
+    assert flat["$id"] == "row-1"
     assert flat["$permissions"] == ['read("user:user-1")']
     assert flat["$createdAt"] == STAMP
     assert flat["user_id"] == "user-1"
@@ -361,10 +380,10 @@ def test_normalize_document_flattens_a_real_sdk_document() -> None:
     assert "data" not in flat
 
 
-def test_list_all_documents_paginates_and_applies_sdk_queries(
-    harness: tuple[Databases, StorageServer, FakeTransport],
+def test_list_all_rows_paginates_and_applies_sdk_queries(
+    harness: tuple[TablesDB, StorageServer, FakeTransport],
 ) -> None:
-    databases, server, transport = harness
+    tables, server, transport = harness
     server.databases.add(TEST_DATABASE_ID)
     server.add_collection(PENDENCY_COLLECTION_ID)
     total = 2 * LIST_PAGE_SIZE + 50
@@ -377,8 +396,8 @@ def test_list_all_documents_paginates_and_applies_sdk_queries(
             database_id=TEST_DATABASE_ID,
         )
 
-    result = list_all_documents(
-        databases, TEST_DATABASE_ID, PENDENCY_COLLECTION_ID, [Query.equal("user_id", "user-1")]
+    result = list_all_rows(
+        tables, TEST_DATABASE_ID, PENDENCY_COLLECTION_ID, [Query.equal("user_id", "user-1")]
     )
 
     assert len(result) == sum(1 for index in range(total) if index % 2)  # 125 of 250
@@ -387,7 +406,7 @@ def test_list_all_documents_paginates_and_applies_sdk_queries(
     list_calls = [
         call
         for call in transport.calls
-        if call["method"] == "get" and call["path"].endswith("/documents")
+        if call["method"] == "get" and call["path"].endswith("/rows")
     ]
     assert len(list_calls) == 2  # one full page + one short page
     offsets = [
@@ -401,24 +420,24 @@ def test_list_all_documents_paginates_and_applies_sdk_queries(
     assert {"method": "equal", "attribute": "user_id", "values": ["user-1"]} in first_queries
 
 
-def test_list_all_documents_raises_on_service_failure_and_missing_collection(
-    harness: tuple[Databases, StorageServer, FakeTransport],
+def test_list_all_rows_raises_on_service_failure_and_missing_table(
+    harness: tuple[TablesDB, StorageServer, FakeTransport],
 ) -> None:
-    databases, server, _ = harness
+    tables, server, _ = harness
     server.databases.add(TEST_DATABASE_ID)
     server.add_collection(PENDENCY_COLLECTION_ID)
     server.fail_list_documents = _err(500, "general")
     with pytest.raises(StorageUnavailable):
-        list_all_documents(databases, TEST_DATABASE_ID, PENDENCY_COLLECTION_ID, [])
-    server.fail_list_documents = _err(404, "collection_not_found")
+        list_all_rows(tables, TEST_DATABASE_ID, PENDENCY_COLLECTION_ID, [])
+    server.fail_list_documents = _err(404, "table_not_found")
     with pytest.raises(StorageNotProvisioned):
-        list_all_documents(databases, TEST_DATABASE_ID, PENDENCY_COLLECTION_ID, [])
+        list_all_rows(tables, TEST_DATABASE_ID, PENDENCY_COLLECTION_ID, [])
 
 
-def test_list_all_documents_budgets_infinite_pages(
-    harness: tuple[Databases, StorageServer, FakeTransport],
+def test_list_all_rows_budgets_infinite_pages(
+    harness: tuple[TablesDB, StorageServer, FakeTransport],
 ) -> None:
-    databases, server, _ = harness
+    tables, server, _ = harness
     server.databases.add(TEST_DATABASE_ID)
     server.add_collection(PENDENCY_COLLECTION_ID)
     for index in range(LIST_PAGE_SIZE):
@@ -430,6 +449,6 @@ def test_list_all_documents_budgets_infinite_pages(
         )
     server.full_pages_only = True  # every page is full, so the budget must trip
     with pytest.raises(StorageUnavailable):
-        list_all_documents(databases, TEST_DATABASE_ID, PENDENCY_COLLECTION_ID, [])
+        list_all_rows(tables, TEST_DATABASE_ID, PENDENCY_COLLECTION_ID, [])
 
 

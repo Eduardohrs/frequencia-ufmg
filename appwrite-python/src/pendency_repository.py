@@ -18,14 +18,14 @@ from appwrite.id import ID
 from appwrite.permission import Permission
 from appwrite.query import Query
 from appwrite.role import Role
-from appwrite.services.databases import Databases
+from appwrite.services.tables_db import TablesDB
 
 from appwrite_storage import (
     PENDENCY_COLLECTION_ID,
     StorageNotFound,
     classify_error,
-    list_all_documents,
-    normalize_document,
+    list_all_rows,
+    normalize_row,
 )
 from course_repository import validate_course_id
 
@@ -41,7 +41,7 @@ class PendencyRepository:
     ) -> None:
         """Inicializa o repositório de pendências."""
         self._client = client
-        self._db = Databases(client)
+        self._tables = TablesDB(client)
         self._database_id = database_id
         self._collection_id = collection_id
 
@@ -83,10 +83,10 @@ class PendencyRepository:
             data["payload"] = json.dumps(payload, ensure_ascii=False)
 
         try:
-            self._db.create_document(
+            self._tables.create_row(
                 database_id=self._database_id,
-                collection_id=self._collection_id,
-                document_id=document_id,
+                table_id=self._collection_id,
+                row_id=document_id,
                 data=data,
                 permissions=[
                     Permission.read(Role.user(user_id)),
@@ -96,25 +96,25 @@ class PendencyRepository:
             )
             return cast(str, document_id)
         except AppwriteException as error:
-            raise classify_error(error, operation="create_document", document_level=False) from None
+            raise classify_error(error, operation="create_row", document_level=False) from None
 
     def get_pendency(self, pendency_id: str, user_id: str) -> dict[str, Any] | None:
         """Recupera uma pendência do usuário; devolve None se não for do usuário."""
         try:
-            response = self._db.get_document(
+            response = self._tables.get_row(
                 database_id=self._database_id,
-                collection_id=self._collection_id,
-                document_id=pendency_id,
+                table_id=self._collection_id,
+                row_id=pendency_id,
             )
         except AppwriteException as error:
-            translated = classify_error(error, operation="get_document", document_level=True)
+            translated = classify_error(error, operation="get_row", document_level=True)
             if isinstance(translated, StorageNotFound):
                 return None
             raise translated from None
-        document = normalize_document(response)
-        if document.get("user_id") != user_id:
+        row = normalize_row(response)
+        if row.get("user_id") != user_id:
             return None
-        return document
+        return row
 
     def update_decision(
         self,
@@ -127,10 +127,10 @@ class PendencyRepository:
         if self.get_pendency(pendency_id, user_id) is None:
             return False
         try:
-            self._db.update_document(
+            self._tables.update_row(
                 database_id=self._database_id,
-                collection_id=self._collection_id,
-                document_id=pendency_id,
+                table_id=self._collection_id,
+                row_id=pendency_id,
                 data={
                     "decision": decision,
                     "updated_at": datetime.utcnow().isoformat(),
@@ -139,7 +139,7 @@ class PendencyRepository:
             )
             return True
         except AppwriteException as error:
-            translated = classify_error(error, operation="update_document", document_level=True)
+            translated = classify_error(error, operation="update_row", document_level=True)
             if isinstance(translated, StorageNotFound):
                 return False
             raise translated from None
@@ -158,21 +158,21 @@ class PendencyRepository:
             queries.append(Query.equal("course_id", course_id))
         if status:
             queries.append(Query.equal("status", status))
-        return list_all_documents(self._db, self._database_id, self._collection_id, queries)
+        return list_all_rows(self._tables, self._database_id, self._collection_id, queries)
 
     def delete_pendency(self, pendency_id: str, user_id: str) -> bool:
         """Remove uma pendência do usuário."""
         if self.get_pendency(pendency_id, user_id) is None:
             return False
         try:
-            self._db.delete_document(
+            self._tables.delete_row(
                 database_id=self._database_id,
-                collection_id=self._collection_id,
-                document_id=pendency_id,
+                table_id=self._collection_id,
+                row_id=pendency_id,
             )
             return True
         except AppwriteException as error:
-            translated = classify_error(error, operation="delete_document", document_level=True)
+            translated = classify_error(error, operation="delete_row", document_level=True)
             if isinstance(translated, StorageNotFound):
                 return False
             raise translated from None

@@ -99,6 +99,45 @@ def document_json(
     }
 
 
+
+
+def _translate_tablesdb_path(path: str, params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Map a TablesDB row path onto the legacy shape this fake handles."""
+    rest = path[len("/tablesdb/"):]
+    db, _, tail = rest.partition("/tables/")
+    table, _, resource = tail.partition("/rows")
+    if resource == "":
+        legacy = f"/databases/{db}/collections/{table}/documents"
+    else:
+        legacy = f"/databases/{db}/collections/{table}/documents/{resource.lstrip('/')}"
+    params = dict(params)
+    if "rowId" in params:
+        params["documentId"] = params.pop("rowId")
+    return legacy, params
+
+
+def _translate_tablesdb_response(resp: Any) -> Any:
+    """RowList expects ``rows``; Row metadata uses ``$tableId``."""
+    if isinstance(resp, dict):
+        resp = dict(resp)
+        if "documents" in resp:
+            resp["rows"] = [
+                {("$tableId" if k == "$collectionId" else k): v for k, v in doc.items()}
+                for doc in resp.pop("documents")
+            ]
+        elif "$collectionId" in resp:
+            resp = {("$tableId" if k == "$collectionId" else k): v for k, v in resp.items()}
+    return resp
+
+
+def _translate_tablesdb_error(error: AppwriteException) -> AppwriteException:
+    if error.code == 404 and getattr(error, "type", None) == "document_not_found":
+        return AppwriteException(error.message, code=404, type="row_not_found")
+    if error.code == 404 and getattr(error, "type", None) == "collection_not_found":
+        return AppwriteException(error.message, code=404, type="table_not_found")
+    return error
+
+
 class DocumentServer:
     """In-memory document store served as canned ``client.call`` HTTP JSON."""
 
@@ -129,6 +168,20 @@ class DocumentServer:
         return f"/databases/{self.database_id}/collections/{self.collection_id}/documents"
 
     def __call__(self, method: str, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        is_tables = path.startswith("/tablesdb/")
+        if is_tables:
+            path, params = _translate_tablesdb_path(path, params)
+        try:
+            resp = self._handle(method, path, params)
+        except AppwriteException as error:
+            if is_tables:
+                raise _translate_tablesdb_error(error) from None
+            raise
+        if is_tables:
+            return _translate_tablesdb_response(resp)
+        return resp
+
+    def _handle(self, method: str, path: str, params: dict[str, Any]) -> dict[str, Any]:
         docs = self.documents_path
         if path == docs and method == "post":
             self._fail(self.fail_create)
@@ -209,7 +262,8 @@ def test_save_pendency_persists_owner_fields_payload_and_permissions(
 
     assert pendency_id
     assert transport.calls[0]["method"] == "post"
-    assert transport.calls[0]["path"] == server.documents_path
+    rows_path = f"/tablesdb/{TEST_DATABASE_ID}/tables/{PENDENCY_COLLECTION_ID}/rows"
+    assert transport.calls[0]["path"] == rows_path
     created = server.created[0]
     assert created["documentId"] == pendency_id
     assert created["data"]["user_id"] == "user-1"
@@ -275,7 +329,7 @@ def test_get_pendency_enforces_ownership_and_merges_sdk_document(
     assert fetched is not None
     # metadata is preserved and the SDK-nested data is merged at the top level
     assert fetched["$id"] == pendency_id
-    assert fetched["$collectionId"] == PENDENCY_COLLECTION_ID
+    assert fetched["$tableId"] == PENDENCY_COLLECTION_ID
     assert fetched["$databaseId"] == TEST_DATABASE_ID
     assert fetched["$permissions"] == [
         'read("user:user-1")',

@@ -18,14 +18,14 @@ from appwrite.id import ID
 from appwrite.permission import Permission
 from appwrite.query import Query
 from appwrite.role import Role
-from appwrite.services.databases import Databases
+from appwrite.services.tables_db import TablesDB
 
 from appwrite_storage import (
     DRAFT_COLLECTION_ID,
     StorageNotFound,
     classify_error,
-    list_all_documents,
-    normalize_document,
+    list_all_rows,
+    normalize_row,
 )
 from course_repository import validate_course_id
 
@@ -41,7 +41,7 @@ class DraftRepository:
     ) -> None:
         """Inicializa o repositório de rascunhos."""
         self._client = client
-        self._db = Databases(client)
+        self._tables = TablesDB(client)
         self._database_id = database_id
         self._collection_id = collection_id
 
@@ -76,10 +76,10 @@ class DraftRepository:
         }
 
         try:
-            self._db.create_document(
+            self._tables.create_row(
                 database_id=self._database_id,
-                collection_id=self._collection_id,
-                document_id=document_id,
+                table_id=self._collection_id,
+                row_id=document_id,
                 data=data,
                 permissions=[
                     Permission.read(Role.user(user_id)),
@@ -89,27 +89,27 @@ class DraftRepository:
             )
             return cast(str, document_id)
         except AppwriteException as error:
-            raise classify_error(error, operation="create_document", document_level=False) from None
+            raise classify_error(error, operation="create_row", document_level=False) from None
 
     def get_draft(self, draft_id: str, user_id: str) -> dict[str, Any] | None:
         """Recupera um rascunho do usuário; devolve None se não for do usuário."""
         try:
-            response = self._db.get_document(
+            response = self._tables.get_row(
                 database_id=self._database_id,
-                collection_id=self._collection_id,
-                document_id=draft_id,
+                table_id=self._collection_id,
+                row_id=draft_id,
             )
         except AppwriteException as error:
-            translated = classify_error(error, operation="get_document", document_level=True)
+            translated = classify_error(error, operation="get_row", document_level=True)
             if isinstance(translated, StorageNotFound):
                 return None
             raise translated from None
-        document = normalize_document(response)
-        if document.get("user_id") != user_id:
+        row = normalize_row(response)
+        if row.get("user_id") != user_id:
             return None
-        if "form_data" in document:
-            document["form_data"] = json.loads(document["form_data"])
-        return document
+        if "form_data" in row:
+            row["form_data"] = json.loads(row["form_data"])
+        return row
 
     def update_draft(
         self,
@@ -133,15 +133,15 @@ class DraftRepository:
             data["attempt_count"] = attempt_count
 
         try:
-            self._db.update_document(
+            self._tables.update_row(
                 database_id=self._database_id,
-                collection_id=self._collection_id,
-                document_id=draft_id,
+                table_id=self._collection_id,
+                row_id=draft_id,
                 data=data,
             )
             return True
         except AppwriteException as error:
-            translated = classify_error(error, operation="update_document", document_level=True)
+            translated = classify_error(error, operation="update_row", document_level=True)
             if isinstance(translated, StorageNotFound):
                 return False
             raise translated from None
@@ -160,7 +160,7 @@ class DraftRepository:
             queries.append(Query.equal("course_id", course_id))
         if session_id:
             queries.append(Query.equal("session_id", session_id))
-        drafts = list_all_documents(self._db, self._database_id, self._collection_id, queries)
+        drafts = list_all_rows(self._tables, self._database_id, self._collection_id, queries)
         for draft in drafts:
             if "form_data" in draft:
                 draft["form_data"] = json.loads(draft["form_data"])
@@ -171,14 +171,14 @@ class DraftRepository:
         if self.get_draft(draft_id, user_id) is None:
             return False
         try:
-            self._db.delete_document(
+            self._tables.delete_row(
                 database_id=self._database_id,
-                collection_id=self._collection_id,
-                document_id=draft_id,
+                table_id=self._collection_id,
+                row_id=draft_id,
             )
             return True
         except AppwriteException as error:
-            translated = classify_error(error, operation="delete_document", document_level=True)
+            translated = classify_error(error, operation="delete_row", document_level=True)
             if isinstance(translated, StorageNotFound):
                 return False
             raise translated from None
