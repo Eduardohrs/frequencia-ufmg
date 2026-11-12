@@ -515,6 +515,54 @@ void main() {
       expect(repository.sessions.single.lessonCount, QuantidadeAulas.four);
     },
   );
+
+  testWidgets('rejects makeup sessions overlapping an active session', (
+    tester,
+  ) async {
+    final weekly = _session('weekly', DateTime.utc(2099, 1, 5, 11), now);
+    final cancelled = _session(
+      'cancelled',
+      DateTime.utc(2099, 1, 6, 11),
+      now,
+      status: SessionCalendarStatus.cancelled,
+    );
+    final repository = _FakeSessionRepository([weekly, cancelled]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CalendarExceptionsPage(
+          courseId: courseId,
+          repository: repository,
+          logger: _RecordingAppLogger(),
+          location: location,
+          now: () => now,
+          idGenerator: () => 'makeup-1',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('add-makeup-session')));
+    await tester.pumpAndSettle();
+    // 09:00 BRT (12:00Z) conflita com a aula das 08:00-09:40 BRT (11:00-12:40Z)
+    await tester.enterText(find.byKey(const Key('makeup-date')), '2099-01-05');
+    await tester.enterText(find.byKey(const Key('makeup-start')), '09:00');
+    await tester.tap(find.widgetWithText(FilledButton, 'Adicionar'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Conflita com programada de 05/01/2099 às 08:00.'),
+      findsOneWidget,
+    );
+    expect(repository.sessions.length, 2); // apenas as iniciais, nada salvo
+
+    // 10:00 BRT em outro dia nao conflita (a sessao cancelada nao bloqueia)
+    await tester.enterText(find.byKey(const Key('makeup-date')), '2099-01-06');
+    await tester.enterText(find.byKey(const Key('makeup-start')), '10:00');
+    await tester.tap(find.widgetWithText(FilledButton, 'Adicionar'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Conflita com'), findsNothing);
+    expect(repository.sessions.length, 3);
+    expect(repository.sessions.last.id, 'makeup-1');
+  });
 }
 
 SessionRecord _session(

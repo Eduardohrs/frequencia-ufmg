@@ -233,12 +233,17 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
     if (startsAt.isBefore(tz.TZDateTime.from(widget.now(), widget.location))) {
       return 'A reposição precisa estar no futuro.';
     }
+    final endsAt = startsAt
+        .add(Duration(minutes: input.lessonCount.value * 50))
+        .toUtc();
+    final conflict = _overlapConflict(startsAt.toUtc(), endsAt);
+    if (conflict != null) {
+      return conflict;
+    }
     final session = SessionRecord(
       id: widget.idGenerator(),
       startsAt: startsAt.toUtc(),
-      endsAt: startsAt
-          .add(Duration(minutes: input.lessonCount.value * 50))
-          .toUtc(),
+      endsAt: endsAt,
       lessonCount: input.lessonCount,
       callCount: input.callCount,
       calendarStatus: SessionCalendarStatus.makeup,
@@ -258,6 +263,22 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
     } catch (_) {
       return 'Não foi possível adicionar a reposição.';
     }
+  }
+
+  String? _overlapConflict(DateTime startsAt, DateTime endsAt) {
+    for (final existing in _sessions) {
+      if (existing.calendarStatus == SessionCalendarStatus.cancelled ||
+          existing.calendarStatus == SessionCalendarStatus.holiday) {
+        continue;
+      }
+      if (startsAt.isBefore(existing.endsAt) &&
+          existing.startsAt.isBefore(endsAt)) {
+        final local = tz.TZDateTime.from(existing.startsAt, widget.location);
+        return 'Conflita com ${_statusLabel(existing.calendarStatus).toLowerCase()} '
+            'de ${_date(local)} às ${_time(local)}.';
+      }
+    }
+    return null;
   }
 
   void _message(String value) {

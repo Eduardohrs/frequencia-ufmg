@@ -1,0 +1,2 @@
+"""Frequência UFMG backend package."""
+

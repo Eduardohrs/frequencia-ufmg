@@ -126,6 +126,8 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   bool _deliveryActive = true;
   bool _checkpointSchedulingAllowed = true;
   AutomaticCheckpointScheduler? _automaticCheckpoints;
+  Timer? _dayWatchTimer;
+  DateTime? _lastLocalDay;
 
   void _reconcileCheckpoints(
     AcademicOverviewSnapshot snapshot,
@@ -199,10 +201,28 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     unawaited(_load());
   }
 
+  DateTime _localDay(DateTime value) {
+    final local = tz.TZDateTime.from(
+      value,
+      tz.getLocation('America/Sao_Paulo'),
+    );
+    return DateTime(local.year, local.month, local.day);
+  }
+
+  void _watchDay() {
+    if (!mounted) return;
+    final day = _localDay(widget.now());
+    if (_lastLocalDay != null && day != _lastLocalDay) {
+      _lastLocalDay = day;
+      unawaited(_load());
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _deliveryActive = state == AppLifecycleState.resumed;
     if (_deliveryActive) {
+      _watchDay();
       unawaited(_automaticAttendance?.refresh(afterCurrent: true));
     }
     if (_deliveryActive && _usingOverviewSnapshot) {
@@ -337,6 +357,8 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       );
     }
     WidgetsBinding.instance.addObserver(this);
+    _lastLocalDay = _localDay(widget.now());
+    _dayWatchTimer = Timer.periodic(const Duration(minutes: 1), (_) => _watchDay());
     _deliveryActive =
         (WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed) ==
         AppLifecycleState.resumed;
@@ -405,6 +427,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   @override
   void dispose() {
     _checkpointSchedulingAllowed = false;
+    _dayWatchTimer?.cancel();
     _navigation?.unbind(this);
     _automaticAttendance?.removeListener(_onAutomaticConfiguration);
     if (!identical(_automaticAttendance, widget.attendanceExperience)) {

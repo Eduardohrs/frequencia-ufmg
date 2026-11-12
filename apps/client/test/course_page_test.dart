@@ -65,6 +65,52 @@ void main() {
   );
   final now = DateTime.utc(2026, 9, 27, 12);
 
+  testWidgets('home reloads when the local day changes while open (CW29)', (
+    tester,
+  ) async {
+    var current = DateTime.utc(2026, 9, 27, 12); // 27/09 09:00 BRT
+    final repo = _FakeCourseRepository(
+      courses: [
+        CourseRecord(
+          id: 'course-1',
+          code: 'DCC203',
+          name: 'Programação Orientada a Objetos',
+          workload: 60,
+          term: '2026-2',
+          createdAt: current,
+          updatedAt: current,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      _NavigationApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
+        home: CoursePage(
+          repository: repo,
+          meetingRepository: _FakeMeetingRepository(),
+          sessionRepository: _FakeSessionRepository(),
+          user: user,
+          logger: _RecordingAppLogger(),
+          onSignOut: () async {},
+          now: () => current,
+          idGenerator: () => 'course-1',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('27 de setembro'), findsOneWidget);
+    final callsBefore = repo.listCalls;
+
+    // vira a meia-noite no horario local (28/09 00:30 BRT = 03:30Z)
+    current = DateTime.utc(2026, 9, 28, 3, 30);
+    await tester.pump(const Duration(minutes: 2));
+    await tester.pumpAndSettle();
+
+    expect(repo.listCalls, greaterThan(callsBefore));
+    expect(find.textContaining('28 de setembro'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   for (final fails in [false, true]) {
     testWidgets(
       'personal label telemetry survives serialization (failure=$fails)',
