@@ -64,7 +64,8 @@ class GeneralCalendarPage extends StatefulWidget {
   final CalendarNavigationState? navigationState;
   final AppLogger? logger;
   final Future<void> Function(CourseRecord)? onOpenCourse;
-  final Future<void> Function(CourseRecord)? onOpenActivities;
+  final Future<void> Function(CourseRecord, {String? activityTitle})?
+  onOpenActivities;
   final Map<String, List<SessionRecord>>? initialSessionsByCourse;
   final Map<String, List<PythonMoodleDate>> datesByCourse;
   final Set<String> unavailableDateCourses;
@@ -993,7 +994,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     _event('calendar_entry_closed', {...fields, 'open_course': open == true});
     if (!mounted) return;
     if (open == false) {
-      await _openActivities(entry.course);
+      await _openActivities(entry.course, activityTitle: entry.session.title);
       return;
     }
     if (open != true) return;
@@ -1018,7 +1019,10 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     }
   }
 
-  Future<void> _openActivities(CourseRecord course) async {
+  Future<void> _openActivities(
+    CourseRecord course, {
+    String? activityTitle,
+  }) async {
     final fields = <String, Object>{
       'operation_id': newCorrelationId('calendar_activities'),
       'course_id': course.id,
@@ -1027,7 +1031,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     };
     _event('calendar_activities_open_started', fields);
     try {
-      await widget.onOpenActivities!(course);
+      await widget.onOpenActivities!(course, activityTitle: activityTitle);
       _event('calendar_activities_open_succeeded', {
         ...fields,
         'applied_to_view': mounted,

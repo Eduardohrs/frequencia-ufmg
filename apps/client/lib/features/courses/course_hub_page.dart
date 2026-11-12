@@ -386,7 +386,11 @@ class _CourseHubPageState extends State<CourseHubPage> {
           onOpenCourse: widget.onOpenCourse,
           onOpenActivities: _workspaceGateway == null
               ? null
-              : (_) => _openWorkspace(_workspaceGateway!, fromCalendar: true),
+              : (_, {String? activityTitle}) => _openWorkspace(
+                  _workspaceGateway!,
+                  fromCalendar: true,
+                  activityTitle: activityTitle,
+                ),
           initialDate: event?.startsAt,
           logger: widget.logger,
           overviewUpdates: _localSessionsRefreshed
@@ -452,6 +456,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
   Future<void> _openWorkspace(
     BackendAcademicWorkspaceGateway gateway, {
     bool fromCalendar = false,
+    String? activityTitle,
   }) async {
     _logNavigation('activities_and_plan');
     await Navigator.of(context).push<void>(
@@ -462,6 +467,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
           logger: widget.logger,
           now: widget.now,
           userId: widget.userId,
+          focusActivityTitle: activityTitle,
           onOpenCalendar: fromCalendar
               ? () async => Navigator.of(context).pop()
               : null,

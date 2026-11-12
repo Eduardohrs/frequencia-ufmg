@@ -27,6 +27,7 @@ class CourseWorkspacePage extends StatefulWidget {
     this.materialFileCache,
     this.openExternalUri,
     this.snapshotCache,
+    this.focusActivityTitle,
     super.key,
   });
   final CourseActivitySnapshotCache? snapshotCache;
@@ -39,6 +40,7 @@ class CourseWorkspacePage extends StatefulWidget {
   final Future<void> Function()? onOpenCalendar;
   final MaterialFileCache? materialFileCache;
   final Future<bool> Function(Uri)? openExternalUri;
+  final String? focusActivityTitle;
   @override
   State<CourseWorkspacePage> createState() => _CourseWorkspacePageState();
 }
@@ -71,7 +73,17 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
   void initState() {
     super.initState();
     _files = widget.materialFileCache ?? createMaterialFileCache(widget.userId);
-    unawaited(_load(_section));
+    unawaited(_load(_section).then((_) => _openFocusActivity()));
+  }
+
+  Future<void> _openFocusActivity() async {
+    final title = widget.focusActivityTitle?.trim();
+    if (!mounted || title == null || title.isEmpty) return;
+    final wanted = title.toLowerCase();
+    final match = _activities
+        .where((a) => a.title.trim().toLowerCase() == wanted)
+        .firstOrNull;
+    if (match != null) await _activity(match);
   }
 
   @override
@@ -383,6 +395,39 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
       ..showSnackBar(SnackBar(content: Text(text)));
   }
 
+  Future<void> _showPlanSyncDialog() async {
+    if (_planSyncPaused == null || !mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Sincronização do plano'),
+        content: SwitchListTile(
+          key: const Key('course-plan-sync-paused'),
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Pausar busca do plano'),
+          subtitle: Text(
+            _planSyncPaused!
+                ? 'Busca pausada por você.'
+                : 'Não buscar atualizações deste plano.',
+          ),
+          value: _planSyncPaused!,
+          onChanged: _policySaving
+              ? null
+              : (value) {
+                  Navigator.pop(dialog);
+                  _setPlanSyncPaused(value);
+                },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Fechar'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _editDate([PythonMoodleDate? date]) async {
     final fields = {..._fields('date_editor'), 'date_id': date?.id ?? 'new'};
     emitOperationalEvent(widget.logger, 'course_date_editor_opened', fields);
@@ -679,6 +724,23 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
             onPressed: widget.onOpenCalendar,
             icon: const Icon(Icons.calendar_month_outlined),
           ),
+        if (_section == _Section.plan && _planSyncPaused != null)
+          PopupMenuButton<String>(
+            key: const Key('workspace-plan-menu'),
+            tooltip: 'Sincronização do plano',
+            itemBuilder: (context) => [
+              PopupMenuItem<String>(
+                key: const Key('workspace-plan-toggle-sync-pause'),
+                value: 'sync',
+                child: Text(
+                  _planSyncPaused!
+                      ? 'Retomar busca do plano'
+                      : 'Pausar busca do plano',
+                ),
+              ),
+            ],
+            onSelected: (_) => _showPlanSyncDialog(),
+          ),
       ],
     ),
     floatingActionButton: _section == _Section.dates
@@ -741,19 +803,6 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
                 ),
               if (_section == _Section.plan && _localPlan)
                 const Text('Cópia local do plano de ensino.'),
-              if (_section == _Section.plan && _planSyncPaused != null)
-                SwitchListTile(
-                  key: const Key('course-plan-sync-paused'),
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Pausar busca do plano'),
-                  subtitle: Text(
-                    _planSyncPaused!
-                        ? 'Busca pausada por você.'
-                        : 'Não buscar atualizações deste plano.',
-                  ),
-                  value: _planSyncPaused!,
-                  onChanged: _policySaving ? null : _setPlanSyncPaused,
-                ),
 
               Expanded(
                 child: _section == _Section.activities
@@ -836,38 +885,119 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
     );
   }
 
-  Widget _dateList() => ListView(
-    padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
-    children: [
-      if (_loaded.contains(_Section.dates) && _dates.isEmpty)
-        const AppEmptyState(
-          icon: Icons.event_outlined,
-          title: 'Nenhum prazo cadastrado.',
-          message: 'Você pode adicionar um prazo ou sincronizar a disciplina.',
-        ),
-      for (final date in _dates)
-        ListTile(
-          key: Key('workspace-date-${date.id}'),
-          contentPadding: EdgeInsets.zero,
-          title: Text(compactAcademicTitle(date.title)),
-          subtitle: Text(
-            '${_displayDate(date.dueAt)} · ${date.id.startsWith('manual-')
-                ? 'Manual'
-                : date.id.startsWith('diario-')
-                ? 'Plano de ensino'
-                : 'Moodle'}',
+  Widget _dateList() {
+    final nowUtc = widget.now().toUtc();
+    final upcoming = [
+      for (final d in _dates)
+        if (!d.dueAt.toUtc().isBefore(nowUtc)) d,
+    ]..sort((a, b) => a.dueAt.compareTo(b.dueAt));
+    final past = [
+      for (final d in _dates)
+        if (d.dueAt.toUtc().isBefore(nowUtc)) d,
+    ]..sort((a, b) => b.dueAt.compareTo(a.dueAt));
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+      children: [
+        if (_loaded.contains(_Section.dates) && _dates.isEmpty)
+          const AppEmptyState(
+            icon: Icons.event_outlined,
+            title: 'Nenhum prazo cadastrado.',
+            message:
+                'Você pode adicionar um prazo ou sincronizar a disciplina.',
           ),
-          onTap: _saving ? null : () => _editDate(date),
-          trailing: date.id.startsWith('manual-')
-              ? IconButton(
-                  tooltip: 'Excluir prazo',
-                  onPressed: _saving ? null : () => _deleteDate(date),
+        for (final date in upcoming) _dateTile(date),
+        if (past.isNotEmpty)
+          ExpansionTile(
+            key: const Key('workspace-dates-history'),
+            title: Text('Histórico (${past.length})'),
+            children: [for (final date in past) _dateTile(date)],
+          ),
+      ],
+    );
+  }
+
+  Widget _dateTile(PythonMoodleDate date) {
+    final submission = _submissionForDate(date);
+    return ListTile(
+      key: Key('workspace-date-${date.id}'),
+      contentPadding: EdgeInsets.zero,
+      title: Text(compactAcademicTitle(date.title)),
+      subtitle: Text(
+        '${_displayDate(date.dueAt)} · ${_dateOrigin(date)}'
+        '${submission == null ? '' : ' · Envio: $submission'}',
+      ),
+      onTap: _saving ? null : () => _showDateDetail(date),
+      trailing: const Icon(Icons.chevron_right),
+    );
+  }
+
+  String _dateOrigin(PythonMoodleDate date) => date.id.startsWith('manual-')
+      ? 'Manual'
+      : date.id.startsWith('diario-')
+      ? 'Plano de ensino'
+      : 'Moodle';
+
+  String? _submissionForDate(PythonMoodleDate date) {
+    final wanted = date.title.trim().toLowerCase();
+    for (final detail
+        in _snapshot?.details ?? const <PythonMoodleActivityDetail>[]) {
+      if (detail.activity.title.trim().toLowerCase() == wanted) {
+        final text = detail.submissionText.trim();
+        return text.isEmpty ? null : text;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _showDateDetail(PythonMoodleDate date) async {
+    final submission = _submissionForDate(date);
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                compactAcademicTitle(date.title),
+                style: Theme.of(sheet).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              Text('${_displayDate(date.dueAt)} · ${_dateOrigin(date)}'),
+              if (submission != null) ...[
+                const SizedBox(height: 4),
+                Text('Envio: $submission'),
+              ],
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                key: const Key('workspace-date-edit'),
+                onPressed: () {
+                  Navigator.pop(sheet);
+                  _editDate(date);
+                },
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Editar prazo'),
+              ),
+              if (date.id.startsWith('manual-'))
+                TextButton.icon(
+                  key: const Key('workspace-date-delete'),
+                  onPressed: () {
+                    Navigator.pop(sheet);
+                    _deleteDate(date);
+                  },
                   icon: const Icon(Icons.delete_outline),
-                )
-              : const Icon(Icons.edit_outlined),
+                  label: const Text('Excluir prazo'),
+                ),
+            ],
+          ),
         ),
-    ],
-  );
+      ),
+    );
+  }
+
   Widget _planView() {
     if (!_loaded.contains(_Section.plan)) return const SizedBox.shrink();
     if (_plan == null) {
@@ -902,30 +1032,32 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
             title: Text('${(raw as Map)['description']}'),
             trailing: Text('${raw['value']}'),
           ),
-        ExpansionTile(
-          title: Text('Avaliações (${assessments.length})'),
-          children: [
-            for (final raw in assessments)
-              ListTile(
-                title: Text('${(raw as Map)['title']}'),
-                subtitle: Text(
-                  '${_planDate(raw['scheduled_at'] as String)} · Valor: ${raw['value']}',
+        if (assessments.isNotEmpty)
+          ExpansionTile(
+            title: Text('Avaliações (${assessments.length})'),
+            children: [
+              for (final raw in assessments)
+                ListTile(
+                  title: Text('${(raw as Map)['title']}'),
+                  subtitle: Text(
+                    '${_planDate(raw['scheduled_at'] as String)} · Valor: ${raw['value']}',
+                  ),
                 ),
-              ),
-          ],
-        ),
-        ExpansionTile(
-          title: Text('Cronograma (${schedule.length})'),
-          children: [
-            for (final raw in schedule)
-              ListTile(
-                title: Text('${(raw as Map)['subject']}'),
-                subtitle: Text(
-                  '${_planDate(raw['date'] as String)} · ${raw['starts_at'] ?? raw['time'] ?? ''}',
+            ],
+          ),
+        if (schedule.isNotEmpty)
+          ExpansionTile(
+            title: Text('Cronograma (${schedule.length})'),
+            children: [
+              for (final raw in schedule)
+                ListTile(
+                  title: Text('${(raw as Map)['subject']}'),
+                  subtitle: Text(
+                    '${_planDate(raw['date'] as String)} · ${raw['starts_at'] ?? raw['time'] ?? ''}',
+                  ),
                 ),
-              ),
-          ],
-        ),
+            ],
+          ),
       ],
     );
   }

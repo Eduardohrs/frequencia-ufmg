@@ -358,7 +358,10 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     }
     WidgetsBinding.instance.addObserver(this);
     _lastLocalDay = _localDay(widget.now());
-    _dayWatchTimer = Timer.periodic(const Duration(minutes: 1), (_) => _watchDay());
+    _dayWatchTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _watchDay(),
+    );
     _deliveryActive =
         (WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed) ==
         AppLifecycleState.resumed;
@@ -1098,7 +1101,10 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     if (mounted) await _load();
   }
 
-  Future<void> _openCourseActivities(CourseRecord course) async {
+  Future<void> _openCourseActivities(
+    CourseRecord course, {
+    String? activityTitle,
+  }) async {
     final gateway =
         widget.ufmgSessionGateway! as BackendAcademicWorkspaceGateway;
     await Navigator.of(context).push<void>(
@@ -1110,6 +1116,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
           logger: widget.logger,
           now: widget.now,
           userId: widget.user.id,
+          focusActivityTitle: activityTitle,
           onOpenCalendar: () async => Navigator.of(context).pop(),
           onConnect: _openUFMGConnection,
         ),

@@ -92,7 +92,7 @@ void main() {
                 currentUserId: () => 'owner',
                 platform: 'web',
               ),
-              onOpenActivities: (course) async {
+              onOpenActivities: (course, {String? activityTitle}) async {
                 expect(course.id, 'poo');
                 if (fails) {
                   throw StateError('route unavailable');
