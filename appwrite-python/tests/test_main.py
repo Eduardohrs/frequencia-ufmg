@@ -4360,8 +4360,8 @@ def _real_schedule_factories(monkeypatch: pytest.MonkeyPatch, store: Any) -> Non
 def test_internal_storage_ensure_route_is_not_exposed_publicly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The provisioner runs in the deploy pipeline (setup_storage.py), never via
-    # the public function API: the route must 404 before any SDK client is built.
+    # The provisioner is operator-run only (setup_storage.py, outside CI/deploy),
+    # never via the public function API: the route must 404 before any SDK client is built.
     def forbidden_client(_headers: dict[str, str]) -> object:
         raise AssertionError("public calls must not build an Appwrite client")
 
