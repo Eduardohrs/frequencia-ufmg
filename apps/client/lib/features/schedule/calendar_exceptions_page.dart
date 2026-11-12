@@ -28,6 +28,7 @@ class CalendarExceptionsPage extends StatefulWidget {
     this.sessionWritesEnabled = false,
     this.androidOfflineQueueEnabled = false,
     this.initialSessions,
+    this.courseName,
     ExceptionIdGenerator? idGenerator,
     ExceptionCurrentTime? now,
     super.key,
@@ -40,6 +41,7 @@ class CalendarExceptionsPage extends StatefulWidget {
        );
 
   final String courseId;
+  final String? courseName;
   final SessionRepository repository;
   final AppLogger logger;
   final tz.Location location;
@@ -194,9 +196,14 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
   );
 
   Future<void> _editAssessment(SessionRecord session) async {
+    final local = tz.TZDateTime.from(session.startsAt, widget.location);
     final title = await showDialog<String?>(
       context: context,
-      builder: (_) => _AssessmentDialog(initialTitle: session.assessmentTitle),
+      builder: (_) => _AssessmentDialog(
+        initialTitle: session.assessmentTitle,
+        courseName: widget.courseName,
+        dateLabel: '${_date(local)} • ${_time(local)}',
+      ),
     );
     if (title == null || !mounted) return;
     setState(() => _savingId = session.id);
@@ -480,9 +487,11 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
 }
 
 class _AssessmentDialog extends StatefulWidget {
-  const _AssessmentDialog({this.initialTitle});
+  const _AssessmentDialog({this.initialTitle, this.courseName, this.dateLabel});
 
   final String? initialTitle;
+  final String? courseName;
+  final String? dateLabel;
 
   @override
   State<_AssessmentDialog> createState() => _AssessmentDialogState();
@@ -506,16 +515,32 @@ class _AssessmentDialogState extends State<_AssessmentDialog> {
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: const Text('Atividade avaliativa'),
-    content: TextField(
-      key: const Key('assessment-title'),
-      controller: _controller,
-      autofocus: true,
-      maxLength: 120,
-      decoration: const InputDecoration(
-        labelText: 'Título',
-        hintText: 'Ex.: Prova 1, seminário ou entrega',
-        helperText: 'Deixe vazio para remover a avaliação.',
-      ),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.courseName != null && widget.dateLabel != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              '${widget.courseName} • ${widget.dateLabel}',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        TextField(
+          key: const Key('assessment-title'),
+          controller: _controller,
+          autofocus: true,
+          maxLength: 120,
+          decoration: const InputDecoration(
+            labelText: 'Título',
+            hintText: 'Ex.: Prova 1, seminário ou entrega',
+            helperText: 'Deixe vazio para remover a avaliação.',
+          ),
+        ),
+      ],
     ),
     actions: [
       TextButton(

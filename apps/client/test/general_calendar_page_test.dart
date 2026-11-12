@@ -372,6 +372,59 @@ void main() {
     expect(find.text('Setembro 2026'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'lesson detail separates type from attendance and changes status in place (CW07/CW13)',
+    (tester) async {
+      String? changedCourse, changedSession;
+      SessionCalendarStatus? changedStatus;
+      final session = SessionRecord(
+        id: 'a',
+        startsAt: DateTime.utc(2026, 9, 16, 11),
+        endsAt: DateTime.utc(2026, 9, 16, 12, 40),
+        lessonCount: QuantidadeAulas.two,
+        callCount: NumeroChamadas.one,
+        attendanceStatus: SituacaoFrequencia.absent,
+        absences: 2,
+        calendarStatus: SessionCalendarStatus.scheduled,
+        createdAt: DateTime.utc(2026, 9, 16, 11),
+        updatedAt: DateTime.utc(2026, 9, 16, 11),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GeneralCalendarPage(
+            navigationState: CalendarNavigationState()
+              ..range = CalendarRange.month,
+            courses: courses,
+            repository: _Repository({
+              'poo': [session],
+            }),
+            location: location,
+            now: () => now,
+            onChangeSessionStatus: (courseId, sessionId, status) async {
+              changedCourse = courseId;
+              changedSession = sessionId;
+              changedStatus = status;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await calendarDisplay(tester, 'Lista');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('08:00 – 09:40 • Programada'));
+      await tester.pumpAndSettle();
+      expect(find.text('Tipo: Programada'), findsOneWidget);
+      expect(find.text('Frequência: Ausente • 2 faltas'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('calendar-entry-mark-cancelled')));
+      await tester.pumpAndSettle();
+      expect(changedCourse, 'poo');
+      expect(changedSession, 'a');
+      expect(changedStatus, SessionCalendarStatus.cancelled);
+      expect(find.text('Status da aula atualizado.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 CourseRecord _course(String id, String code, DateTime now) => CourseRecord(

@@ -1101,6 +1101,34 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     if (mounted) await _load();
   }
 
+  Future<void> _changeSessionStatus(
+    String courseId,
+    String sessionId,
+    SessionCalendarStatus status,
+  ) async {
+    final current = (_sessionsByCourse[courseId] ?? const <SessionRecord>[])
+        .firstWhere((s) => s.id == sessionId);
+    await widget.sessionRepository.saveSession(
+      courseId,
+      SessionRecord(
+        id: current.id,
+        startsAt: current.startsAt,
+        endsAt: current.endsAt,
+        lessonCount: current.lessonCount,
+        callCount: current.callCount,
+        firstPing: current.firstPing,
+        secondPing: current.secondPing,
+        attendanceStatus: current.attendanceStatus,
+        absences: current.absences,
+        calendarStatus: status,
+        assessmentTitle: current.assessmentTitle,
+        createdAt: current.createdAt,
+        updatedAt: widget.now().toUtc(),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
   Future<void> _openCourseActivities(
     CourseRecord course, {
     String? activityTitle,
@@ -1136,6 +1164,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
               widget.ufmgSessionGateway is BackendAcademicWorkspaceGateway
               ? _openCourseActivities
               : null,
+          onChangeSessionStatus: _changeSessionStatus,
           logger: widget.logger,
           onOpenCourse: _openCourseHub,
           courses: _courses,
@@ -1162,6 +1191,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
               widget.ufmgSessionGateway is BackendAcademicWorkspaceGateway
               ? _openCourseActivities
               : null,
+          onChangeSessionStatus: _changeSessionStatus,
           navigationState: _calendarNavigation,
           logger: widget.logger,
           onOpenCourse: _openCourseHub,

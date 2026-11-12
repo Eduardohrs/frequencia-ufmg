@@ -494,6 +494,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     MaterialPageRoute(
       builder: (_) => CalendarExceptionsPage(
         courseId: widget.course.id,
+        courseName: widget.course.displayName,
         repository: widget.sessionRepository,
         logger: widget.logger,
         location: _generator.location,

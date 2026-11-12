@@ -304,6 +304,11 @@ void main() {
       );
       expect(find.text('POO prática'), findsWidgets);
       expect(logger.events, contains('calendar_entry_opened'));
+      await tester.scrollUntilVisible(
+        find.text('Fechar'),
+        60,
+        scrollable: find.byType(Scrollable).last,
+      );
       await tester.tap(find.text('Fechar'));
       await tester.pumpAndSettle();
       await tester.pageBack();

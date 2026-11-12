@@ -15,6 +15,7 @@ import 'package:timezone/timezone.dart' as tz;
 import '../../data/academic_records.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/calendar_status.dart';
+import '../../domain/attendance.dart';
 import '../../design/course_identity.dart';
 
 enum CalendarDisplay { month, list }
@@ -44,6 +45,7 @@ class GeneralCalendarPage extends StatefulWidget {
     this.logger,
     this.onOpenCourse,
     this.onOpenActivities,
+    this.onChangeSessionStatus,
     this.initialDate,
     this.initialSessionsByCourse,
     this.overviewUpdates,
@@ -66,6 +68,12 @@ class GeneralCalendarPage extends StatefulWidget {
   final Future<void> Function(CourseRecord)? onOpenCourse;
   final Future<void> Function(CourseRecord, {String? activityTitle})?
   onOpenActivities;
+  final Future<void> Function(
+    String courseId,
+    String sessionId,
+    SessionCalendarStatus status,
+  )?
+  onChangeSessionStatus;
   final Map<String, List<SessionRecord>>? initialSessionsByCourse;
   final Map<String, List<PythonMoodleDate>> datesByCourse;
   final Set<String> unavailableDateCourses;
@@ -965,11 +973,21 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                 Text(
                   '${_date(tz.TZDateTime.from(entry.session.startsAt, widget.location))} • ${_time(tz.TZDateTime.from(entry.session.startsAt, widget.location))}',
                 ),
-                Text(
-                  entry.session.session == null
-                      ? _typeLabel(entry.type)
-                      : _status(entry.session.session!.calendarStatus),
-                ),
+                if (entry.session.session case final session?)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Tipo: ${_status(session.calendarStatus)}'),
+                      Text(
+                        session.attendanceStatus == null
+                            ? 'Frequência: sem registro'
+                            : 'Frequência: ${_attendanceName(session.attendanceStatus!)}'
+                                  '${session.absences == null ? '' : ' • ${session.absences} faltas'}',
+                      ),
+                    ],
+                  )
+                else
+                  Text(_typeLabel(entry.type)),
                 if (widget.onOpenActivities != null &&
                     entry.session.title != null)
                   TextButton(
@@ -981,6 +999,36 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                     onPressed: () => Navigator.pop(sheet, true),
                     child: const Text('Abrir disciplina'),
                   ),
+                if (widget.onChangeSessionStatus != null &&
+                    entry.session.session != null) ...[
+                  if (entry.session.session!.calendarStatus ==
+                      SessionCalendarStatus.scheduled) ...[
+                    TextButton(
+                      key: const Key('calendar-entry-mark-cancelled'),
+                      onPressed: () => _changeEntryStatus(
+                        entry,
+                        SessionCalendarStatus.cancelled,
+                      ),
+                      child: const Text('Marcar cancelada/feriado'),
+                    ),
+                    TextButton(
+                      key: const Key('calendar-entry-mark-no-call'),
+                      onPressed: () => _changeEntryStatus(
+                        entry,
+                        SessionCalendarStatus.noCall,
+                      ),
+                      child: const Text('Marcar aula sem chamada'),
+                    ),
+                  ] else
+                    TextButton(
+                      key: const Key('calendar-entry-restore'),
+                      onPressed: () => _changeEntryStatus(
+                        entry,
+                        SessionCalendarStatus.scheduled,
+                      ),
+                      child: const Text('Restaurar aula'),
+                    ),
+                ],
                 TextButton(
                   onPressed: () => Navigator.pop(sheet),
                   child: const Text('Fechar'),
@@ -1014,6 +1062,49 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
           'calendar_course_navigation',
           fields,
           failureCode: 'calendar_navigation_failed',
+        );
+      }
+    }
+  }
+
+  Future<void> _changeEntryStatus(
+    _CalendarEntry entry,
+    SessionCalendarStatus status,
+  ) async {
+    final change = widget.onChangeSessionStatus;
+    final session = entry.session.session;
+    if (change == null || session == null) return;
+    _event('calendar_entry_status_change_requested', {
+      'operation_id': newCorrelationId('calendar_entry'),
+      'course_id': entry.course.id,
+      'entry_id': session.id,
+      'status': status.name,
+    });
+    Navigator.pop(context);
+    try {
+      await change(entry.course.id, session.id, status);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Status da aula atualizado.')),
+        );
+      }
+    } catch (error, stack) {
+      final logger = widget.logger;
+      if (logger != null) {
+        recordOperationalFailure(
+          logger,
+          error,
+          stack,
+          'calendar_entry_status_change',
+          {'course_id': entry.course.id, 'entry_id': session.id},
+          failureCode: 'calendar_entry_status_change_failed',
+        );
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Não foi possível atualizar o status da aula.'),
+          ),
         );
       }
     }
@@ -1154,6 +1245,14 @@ String _date(DateTime value) =>
     '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
 String _time(DateTime value) =>
     '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+String _attendanceName(SituacaoFrequencia status) => switch (status) {
+  SituacaoFrequencia.present => 'Presente',
+  SituacaoFrequencia.arrivedLate => 'Chegou atrasado',
+  SituacaoFrequencia.leftEarly => 'Saiu mais cedo',
+  SituacaoFrequencia.absent => 'Ausente',
+  SituacaoFrequencia.pending => 'A confirmar',
+};
+
 String _status(SessionCalendarStatus status) => switch (status) {
   SessionCalendarStatus.scheduled => 'Programada',
   SessionCalendarStatus.cancelled ||

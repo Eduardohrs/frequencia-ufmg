@@ -621,41 +621,66 @@ void main() {
     );
   });
 
-  testWidgets('jump-to-next-session scrolls the list to the upcoming class (CW21)', (
+  testWidgets(
+    'jump-to-next-session scrolls the list to the upcoming class (CW21)',
+    (tester) async {
+      final currentNow = DateTime.utc(2026, 8, 20, 12); // 20/08 09:00 BRT
+      final sessions = [
+        for (var day = 1; day <= 30; day++)
+          _session('s$day', DateTime.utc(2026, 8, day, 11), currentNow),
+      ];
+      final repository = _FakeSessionRepository(sessions);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CalendarExceptionsPage(
+            courseId: courseId,
+            repository: repository,
+            logger: _RecordingAppLogger(),
+            location: location,
+            now: () => currentNow,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // proxima aula: 21/08 (a de 20/08 11:00Z ja passou); ListView lazy -> ainda nao buildada
+      final target = find.text('21/08/2026 • 08:00');
+      expect(target, findsNothing);
+
+      await tester.tap(find.byKey(const Key('jump-to-next-session')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+
+      expect(target, findsOneWidget);
+      final top = tester.getTopLeft(target).dy;
+      expect(top, greaterThanOrEqualTo(0));
+      expect(top, lessThan(600));
+    },
+  );
+
+  testWidgets('assessment editor shows course and date context (CW14)', (
     tester,
   ) async {
-    final currentNow = DateTime.utc(2026, 8, 20, 12); // 20/08 09:00 BRT
-    final sessions = [
-      for (var day = 1; day <= 30; day++)
-        _session('s$day', DateTime.utc(2026, 8, day, 11), currentNow),
-    ];
-    final repository = _FakeSessionRepository(sessions);
+    final repository = _FakeSessionRepository([
+      _session('first', DateTime.utc(2026, 8, 3, 11), now),
+    ]);
     await tester.pumpWidget(
       MaterialApp(
         home: CalendarExceptionsPage(
           courseId: courseId,
+          courseName: 'POO',
           repository: repository,
           logger: _RecordingAppLogger(),
           location: location,
-          now: () => currentNow,
+          now: () => now,
         ),
       ),
     );
     await tester.pumpAndSettle();
-
-    // proxima aula: 21/08 (a de 20/08 11:00Z ja passou); ListView lazy -> ainda nao buildada
-    final target = find.text('21/08/2026 • 08:00');
-    expect(target, findsNothing);
-
-    await tester.tap(find.byKey(const Key('jump-to-next-session')));
+    await tester.tap(find.byTooltip('Editar avaliação de 03/08/2026'));
     await tester.pumpAndSettle();
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pumpAndSettle();
-
-    expect(target, findsOneWidget);
-    final top = tester.getTopLeft(target).dy;
-    expect(top, greaterThanOrEqualTo(0));
-    expect(top, lessThan(600));
+    expect(find.text('POO • 03/08/2026 • 08:00'), findsOneWidget);
   });
 }
 
