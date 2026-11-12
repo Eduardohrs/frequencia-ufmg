@@ -24,6 +24,7 @@ import '../../data/attendance_permissions.dart';
 import '../../data/academic_repositories.dart';
 import '../../data/academic_period.dart';
 import '../../data/calendar_status.dart';
+import '../../data/course_draft_store.dart';
 import '../../data/python_overview_repository.dart';
 import '../../data/ufmg_sync_schedule.dart';
 import '../../design/adaptive_app_shell.dart';
@@ -66,6 +67,7 @@ class CoursePage extends StatefulWidget {
     this.ufmgSessionGateway,
     this.ufmgSyncSchedule,
     this.academicSyncSchedule,
+    this.draftStore,
     this.overviewRepository,
     this.scheduleReadsEnabled = true,
     this.scheduleWritesEnabled = false,
@@ -97,6 +99,7 @@ class CoursePage extends StatefulWidget {
   final BackendUFMGSessionGateway? ufmgSessionGateway;
   final UFMGSyncScheduleGateway? ufmgSyncSchedule;
   final UFMGSyncScheduleGateway? academicSyncSchedule;
+  final CourseDraftStore? draftStore;
   final AcademicOverviewRepository? overviewRepository;
   final bool scheduleReadsEnabled;
   final bool scheduleWritesEnabled;
@@ -858,12 +861,32 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
 
   static const String _courseDraftSession = 'course-create';
 
+  CourseDraftStore? _lazyDraftStore;
+
+  CourseDraftStore get _draftStore {
+    final provided = widget.draftStore;
+    if (provided != null) return provided;
+    return _lazyDraftStore ??= SharedPreferencesCourseDraftStore();
+  }
+
   BackendRegistrationDraftGateway? get _draftGateway =>
       widget.ufmgSessionGateway is BackendRegistrationDraftGateway
       ? widget.ufmgSessionGateway! as BackendRegistrationDraftGateway
       : null;
 
   Future<Map<String, Object?>?> _latestCourseDraft() async {
+    final store = _draftStore;
+    Map<String, Object?>? localDraft;
+    try {
+      localDraft = await store.read(widget.user.id, _courseDraftSession);
+    } catch (error, stack) {
+      unawaited(
+        widget.logger
+            .recordError(error, stack, context: 'course_draft_local_read')
+            .catchError((_) => null),
+      );
+    }
+    if (localDraft != null) return localDraft;
     final gateway = _draftGateway;
     if (gateway == null) return null;
     try {
@@ -873,20 +896,31 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
           if (draft.sessionId == _courseDraftSession) draft,
       ];
       if (matching.isEmpty) return null;
-      return matching.last.formData;
+      final formData = matching.last.formData;
+      try {
+        await store.save(widget.user.id, _courseDraftSession, formData);
+      } catch (error, stack) {
+        unawaited(
+          widget.logger
+              .recordError(error, stack, context: 'course_draft_local_cache')
+              .catchError((_) => null),
+        );
+      }
+      return formData;
     } catch (error, stack) {
       unawaited(
         widget.logger
             .recordError(error, stack, context: 'course_draft_restore')
             .catchError((_) => null),
       );
-      return null;
+      return localDraft;
     }
   }
 
-  Future<void> _saveCourseDraft(CourseRecord course, String? errorCode) async {
-    final gateway = _draftGateway;
-    if (gateway == null) return;
+  /// Persists the form locally first (the confirmed, offline-safe copy) and
+  /// then opportunistically mirrors it to the backend. Returns whether the
+  /// local copy was confirmed; the local draft is kept for retry either way.
+  Future<bool> _saveCourseDraft(CourseRecord course, String? errorCode) async {
     final formData = <String, Object?>{
       'code': course.code,
       'name': course.name,
@@ -895,6 +929,25 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       'modality': course.modality.code,
       'attendance_policy': course.attendancePolicy.code,
     };
+    final store = _draftStore;
+    var locallyPersisted = false;
+    try {
+      await store.save(
+        widget.user.id,
+        _courseDraftSession,
+        formData,
+        lastError: errorCode,
+      );
+      locallyPersisted = true;
+    } catch (error, stack) {
+      unawaited(
+        widget.logger
+            .recordError(error, stack, context: 'course_draft_local_save')
+            .catchError((_) => null),
+      );
+    }
+    final gateway = _draftGateway;
+    if (gateway == null) return locallyPersisted;
     try {
       await gateway.saveRegistrationDraft(
         courseId: course.id,
@@ -920,9 +973,20 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
             .catchError((_) => null),
       );
     }
+    return locallyPersisted;
   }
 
   Future<void> _clearCourseDrafts() async {
+    final store = _draftStore;
+    try {
+      await store.clear(widget.user.id, _courseDraftSession);
+    } catch (error, stack) {
+      unawaited(
+        widget.logger
+            .recordError(error, stack, context: 'course_draft_local_clear')
+            .catchError((_) => null),
+      );
+    }
     final gateway = _draftGateway;
     if (gateway == null) return;
     try {
@@ -1458,17 +1522,17 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       // Cadastro confirmado: o rascunho dos mesmos valores é descartado.
       unawaited(_clearCourseDrafts());
     } catch (error) {
-      // Gravação recusada: o formulário é preservado como rascunho para
+      // Gravação recusada: o formulário é preservado como rascunho local para
       // nova tentativa com os mesmos valores.
       final code = ErrorLogDetails.from(error).code;
-      unawaited(_saveCourseDraft(course, code));
+      final draftPersisted = await _saveCourseDraft(course, code);
       if (!mounted) return;
       setState(() => _courses.removeWhere((item) => item.id == course.id));
       final diagnostic = code == null ? '' : ' Código: $code.';
-      _message(
-        'Não foi possível salvar ${course.code}. O rascunho foi guardado para tentar de novo.'
-        '$diagnostic',
-      );
+      final message = draftPersisted
+          ? 'Não foi possível salvar ${course.code}. O rascunho foi guardado para tentar de novo.$diagnostic'
+          : 'Não foi possível salvar ${course.code}. Não foi possível guardar o rascunho neste aparelho.$diagnostic';
+      _message(message);
     } finally {
       if (mounted) setState(() => _savingIds.remove(course.id));
     }

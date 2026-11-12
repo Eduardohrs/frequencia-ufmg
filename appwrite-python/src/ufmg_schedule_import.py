@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, cast
 
-from frequencia_ufmg.models import CentralPendencias, PendenciaHorario
+from frequencia_ufmg.models import PendenciaHorario
 
 from schedule_repository import DestructiveScheduleChange
 from schedule_service import ScheduleOverlap
@@ -40,6 +40,7 @@ class _ScheduleRepository(Protocol):
 class _PendencySink(Protocol):
     def list_pendencies(
         self,
+        user_id: str,
         course_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]: ...
@@ -75,7 +76,6 @@ class UFMGScheduleImportService:
         self._courses = courses
         self._schedules = schedules
         self._pendencies = pendencies
-        self._central = CentralPendencias()
 
     def import_schedules(self, user_id: str, *, now: int) -> dict[str, int]:
         session = self._sessions.load(user_id, now=now)
@@ -218,7 +218,7 @@ class UFMGScheduleImportService:
             return False
         course_id = str(course["id"])
         new_schedule = _schedule_summary(requested)
-        for existing in self._pendencies.list_pendencies(course_id=course_id):
+        for existing in self._pendencies.list_pendencies(user_id=user_id, course_id=course_id):
             if str(existing.get("new_schedule", "")) == new_schedule:
                 return False
         current_schedule = _schedule_summary(saved_meetings)
@@ -229,7 +229,6 @@ class UFMGScheduleImportService:
             horario_novo=new_schedule,
             motivo=reason,
         )
-        self._central.adicionar_pendencia(pendencia)
         self._pendencies.save_pendency(
             user_id=user_id,
             course_id=course_id,
@@ -242,7 +241,9 @@ class UFMGScheduleImportService:
                 "starts_on": course.get("starts_on"),
                 "ends_on": course.get("ends_on"),
                 "meetings": requested,
-                "confirm_destructive": True,
+                # Aplicar a pendência passa pelo fluxo seguro: nunca confirmar
+                # deleção destrutiva automaticamente.
+                "confirm_destructive": False,
             },
         )
         return True

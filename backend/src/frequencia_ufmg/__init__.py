@@ -5,12 +5,10 @@
 # somente de backend (como logging_config). A telemetria de produção vive em
 # appwrite-python/src/telemetry_guard.py.
 from frequencia_ufmg.models import (
-    CentralPendencias,
     ConfiguracaoSessao,
     DecisaoHorario,
     Disciplina,
     EstadoPing,
-    GerenciadorRascunhos,
     NumeroChamadas,
     PendenciaHorario,
     PoliticaChamadaUnica,
@@ -25,12 +23,10 @@ from frequencia_ufmg.models import (
 )
 
 __all__ = [
-    "CentralPendencias",
     "ConfiguracaoSessao",
     "DecisaoHorario",
     "Disciplina",
     "EstadoPing",
-    "GerenciadorRascunhos",
     "NumeroChamadas",
     "PendenciaHorario",
     "PoliticaChamadaUnica",

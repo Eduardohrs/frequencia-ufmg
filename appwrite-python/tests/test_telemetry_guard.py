@@ -144,3 +144,22 @@ def test_deduplicator_requires_positive_max_entries() -> None:
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__]))
+
+
+def test_attempt_counter_is_bounded_and_evicts_oldest() -> None:
+    from telemetry_guard import MAX_TRACKED_ATTEMPTS
+
+    recorder = ProductionTelemetryRecorder()
+    first = ("c", "a", "log", "first")
+    for index in range(MAX_TRACKED_ATTEMPTS):
+        recorder.record_report("c", "a", "log", f"entity-{index}")
+    recorder.record_report(*first)
+    # over budget: the oldest entry (entity-0) is evicted
+    recorder.record_report("c", "a", "log", "overflow")
+    assert recorder.attempt_count("c", "a", "log", "entity-0") == 0
+    assert recorder.attempt_count("c", "a", "log", "overflow") == 1
+    assert recorder.attempt_count(*first) == 1
+    # re-recording an existing key must not evict others
+    recorder.record_report(*first)
+    assert recorder.attempt_count("c", "a", "log", "overflow") == 1
+    assert recorder.attempt_count(*first) == 2

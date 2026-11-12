@@ -342,12 +342,16 @@ class _Pendencies:
         self.saved: list[dict[str, Any]] = []
 
     def list_pendencies(
-        self, course_id: str | None = None, status: str | None = None
+        self,
+        user_id: str,
+        course_id: str | None = None,
+        status: str | None = None,
     ) -> list[dict[str, Any]]:
         return [
             item
             for item in self.existing
-            if (course_id is None or item.get("course_id") == course_id)
+            if item.get("user_id", "user") == user_id
+            and (course_id is None or item.get("course_id") == course_id)
         ]
 
     def save_pendency(self, **kwargs: Any) -> str:
@@ -385,7 +389,9 @@ def test_manual_divergence_creates_persisted_pendency_with_context() -> None:
     assert saved["reason"] == "manual_schedule_diverged"
     assert "seg 08:20" in saved["current_schedule"]  # 500 minutes = 08:20
     assert "seg 07:30" in saved["new_schedule"]  # 450 minutes = 07:30
-    assert saved["payload"]["confirm_destructive"] is True
+    # the stored payload never pre-authorizes destructive deletion; applying a
+    # pendency goes through the safe flow with confirm_destructive=False
+    assert saved["payload"]["confirm_destructive"] is False
     assert saved["payload"]["meetings"][0]["id"] == "ufmg-1-450-2"
 
 
@@ -394,7 +400,14 @@ def test_identical_source_does_not_recreate_pendency() -> None:
     schedules = _Schedules({"ele028": _state(course, [_saved_meeting("manual", start=500)])})
     new_schedule = "seg 07:30 (2 aulas)"
     pendencies = _Pendencies(
-        existing=[{"course_id": "ele028", "new_schedule": new_schedule, "status": "resolved"}]
+        existing=[
+            {
+                "user_id": "user",
+                "course_id": "ele028",
+                "new_schedule": new_schedule,
+                "status": "resolved",
+            }
+        ]
     )
 
     result = _service_with_pendencies(
@@ -452,7 +465,7 @@ def test_pendency_created_when_existing_entries_do_not_match() -> None:
     course = _course()
     schedules = _Schedules({"ele028": _state(course, [_saved_meeting("manual", start=500)])})
     pendencies = _Pendencies(
-        existing=[{"course_id": "ele028", "new_schedule": "qua 10:00 (2 aulas)"}]
+        existing=[{"user_id": "user", "course_id": "ele028", "new_schedule": "qua 10:00 (2 aulas)"}]
     )
 
     result = _service_with_pendencies(

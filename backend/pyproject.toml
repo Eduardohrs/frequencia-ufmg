@@ -34,10 +34,6 @@ testpaths = ["tests"]
 [tool.coverage.run]
 source = ["frequencia_ufmg"]
 branch = true
-omit = [
-    "src/frequencia_ufmg/persistence_integration.py",
-    "src/frequencia_ufmg/telemetry_integration.py",
-]
 
 [tool.coverage.report]
 fail_under = 100

@@ -135,60 +135,6 @@ class TestSession55_35:
         assert recovered is not None
         assert recovered["error_code"] == "RESOURCE_EXHAUSTED"
 
-    def test_recuperacao_rascunho(self) -> None:
-        """Recuperação do rascunho quando cadastro falhar."""
-        from frequencia_ufmg.models import GerenciadorRascunhos
-
-        manager = GerenciadorRascunhos()
-        
-        draft_data = {"ping1": "no_campus", "ping2": "indisponivel"}
-        draft_id = manager.salvar_rascunho("DCC203", "aula-01", draft_data)
-        
-        recovered = manager.recuperar_rascunho(draft_id)
-        assert recovered is not None
-        assert recovered.dados == draft_data
-        assert recovered.disciplina_codigo == "DCC203"
-
-    def test_central_acionavel_comparacao_horario(self) -> None:
-        """Central acionável com comparação de horário funciona."""
-        from frequencia_ufmg.models import CentralPendencias, DecisaoHorario, PendenciaHorario
-
-        central = CentralPendencias()
-        
-        # Criar pendência
-        pendencia = PendenciaHorario(
-            disciplina_codigo="DCC203",
-            disciplina_nome="POO",
-            horario_atual="10:00-12:00",
-            horario_novo="11:00-13:00",
-            motivo="Mudança de sala"
-        )
-        
-        pendencia_id = central.adicionar_pendencia(pendencia)
-        
-        # Registrar decisão
-        central.registrar_decisao(pendencia_id, DecisaoHorario.MANTER_ATUAL)
-        
-        # Verificar que decisão persiste
-        assert central.get_decisao(pendencia_id) == DecisaoHorario.MANTER_ATUAL
-        
-        # Verificar que pendência pode ser recuperada
-        recovered_pendencia = central.get_pendencia(pendencia_id)
-        assert recovered_pendencia is pendencia
-
-    def test_decisao_persistida(self) -> None:
-        """Decisão persistida ao reabrir."""
-        from frequencia_ufmg.models import CentralPendencias, DecisaoHorario, PendenciaHorario
-
-        central = CentralPendencias()
-        pendencia = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo")
-        
-        pendencia_id = central.adicionar_pendencia(pendencia)
-        central.registrar_decisao(pendencia_id, DecisaoHorario.APLICAR_MUDANCA)
-        
-        # Simular reabertura - decisão deve persisitir
-        assert central.get_decisao(pendencia_id) == DecisaoHorario.APLICAR_MUDANCA
-
     def test_frequencia_preservada(self) -> None:
         """Registros de frequência são preservados."""
         from frequencia_ufmg.models import (
@@ -218,41 +164,3 @@ class TestSession55_35:
         resumo = disciplina.resumo()
         assert resumo.faltas_consumidas == 0
 
-    def test_pendencia_some_apos_confirmacao(self) -> None:
-        """Pendência some após confirmação real."""
-        from frequencia_ufmg.models import CentralPendencias, DecisaoHorario, PendenciaHorario
-
-        central = CentralPendencias()
-        pendencia = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo")
-        
-        pendencia_id = central.adicionar_pendencia(pendencia)
-        
-        # Registrar decisão
-        central.registrar_decisao(pendencia_id, DecisaoHorario.APLICAR_MUDANCA)
-        
-        # Limpar pendências resolvidas
-        removidas = central.limpar_pendencias_resolvidas()
-        
-        assert removidas == 1
-        assert central.get_pendencia(pendencia_id) is None
-
-    def test_escolha_manual_respeitada(self) -> None:
-        """Escolha manual respeitada não reaparece sem mudança da fonte."""
-        from frequencia_ufmg.models import CentralPendencias, DecisaoHorario, PendenciaHorario
-
-        central = CentralPendencias()
-        pendencia = PendenciaHorario("DCC203", "POO", "10:00", "11:00", "motivo")
-        
-        pendencia_id = central.adicionar_pendencia(pendencia)
-        central.registrar_decisao(pendencia_id, DecisaoHorario.MANTER_ATUAL)
-        
-        # Verificar que decisão foi registrada
-        assert central.get_decisao(pendencia_id) == DecisaoHorario.MANTER_ATUAL
-        
-        # Sem mudança na fonte, a pendência não deve reaparecer
-        # (simulado por não adicionar nova pendência)
-        assert len(central.get_todas_pendencias()) == 1
-        
-        # Após limpar, não deve mais existi
-        central.limpar_pendencias_resolvidas()
-        assert central.get_pendencia(pendencia_id) is None

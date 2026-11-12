@@ -53,3 +53,22 @@ def test_diagnostic_database_rules_are_deployed_before_new_clients() -> None:
     assert "--only firestore:rules,firestore:indexes,hosting" not in workflow
     assert "--only firestore:rules,firestore:indexes" in workflow
     assert "--only hosting" in workflow
+
+
+def test_every_flutter_action_step_pins_the_toolchain_validated_by_ci() -> None:
+    workflows_dir = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+    workflow_names = (
+        "ci.yml",
+        "deploy-production.yml",
+        "release.yml",
+        "build-artifacts.yml",
+    )
+    for name in workflow_names:
+        workflow = (workflows_dir / name).read_text(encoding="utf-8")
+        assert "flutter-version: '3.47.9'" in workflow, name
+        flutter_steps = workflow.split("- uses: subosito/flutter-action")[1:]
+        assert flutter_steps, name
+        for step in flutter_steps:
+            block = step.split("\n      - ", maxsplit=1)[0]
+            assert "flutter-version: '3.47.9'" in block, name
+            assert "channel:" not in block, name

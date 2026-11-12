@@ -1,15 +1,29 @@
-"""Repositório de persistência para rascunhos de cadastro."""
+"""Repositório de persistência para rascunhos de cadastro.
+
+Cada documento guarda o ``user_id`` do proprietário: API keys do Server SDK
+ignoram as permissões de documento, então toda leitura/escrita valida o dono
+antes de agir e as listagens filtram por ``user_id`` com ``Query.equal``.
+"""
 
 import json
 from datetime import datetime
 from typing import Any, cast
 
 from appwrite.client import Client
+from appwrite.exception import AppwriteException
 from appwrite.id import ID
 from appwrite.permission import Permission
+from appwrite.query import Query
 from appwrite.role import Role
 from appwrite.services.databases import Databases
 
+from appwrite_storage import (
+    DATABASE_ID,
+    DRAFT_COLLECTION_ID,
+    StorageNotFound,
+    classify_error,
+    list_all_documents,
+)
 from course_repository import validate_course_id
 
 
@@ -19,8 +33,8 @@ class DraftRepository:
     def __init__(
         self,
         client: Client,
-        database_id: str = "frequencia_ufmg",
-        collection_id: str = "registration_drafts",
+        database_id: str = DATABASE_ID,
+        collection_id: str = DRAFT_COLLECTION_ID,
     ) -> None:
         """Inicializa o repositório de rascunhos."""
         self._client = client
@@ -38,13 +52,16 @@ class DraftRepository:
         last_error: str | None = None,
         attempt_count: int = 1,
     ) -> str:
-        """Salva um rascunho de cadastro."""
+        """Salva um rascunho de cadastro com o proprietário registrado."""
         validate_course_id(course_id)
+        if not user_id:
+            raise ValueError("user_id is required")
 
         document_id = ID.unique()
         now = datetime.utcnow().isoformat()
 
         data: dict[str, Any] = {
+            "user_id": user_id,
             "course_id": course_id,
             "course_code": course_code,
             "session_id": session_id,
@@ -68,33 +85,40 @@ class DraftRepository:
                 ],
             )
             return cast(str, document_id)
-        except Exception as e:
-            print(f"Error saving draft: {e}")
-            raise
+        except AppwriteException as error:
+            raise classify_error(error, operation="create_document", document_level=False) from None
 
-    def get_draft(self, draft_id: str) -> dict[str, Any] | None:
-        """Recupera um rascunho pelo ID."""
+    def get_draft(self, draft_id: str, user_id: str) -> dict[str, Any] | None:
+        """Recupera um rascunho do usuário; devolve None se não for do usuário."""
         try:
             response = self._db.get_document(
                 database_id=self._database_id,
                 collection_id=self._collection_id,
                 document_id=draft_id,
             )
-            document = cast(dict[str, Any], response)
-            if document and "form_data" in document:
-                document["form_data"] = json.loads(document["form_data"])
-            return document
-        except Exception:
+        except AppwriteException as error:
+            translated = classify_error(error, operation="get_document", document_level=True)
+            if isinstance(translated, StorageNotFound):
+                return None
+            raise translated from None
+        document = cast(dict[str, Any], response)
+        if document.get("user_id") != user_id:
             return None
+        if "form_data" in document:
+            document["form_data"] = json.loads(document["form_data"])
+        return document
 
     def update_draft(
         self,
         draft_id: str,
+        user_id: str,
         form_data: dict[str, Any] | None = None,
         last_error: str | None = None,
         attempt_count: int | None = None,
     ) -> bool:
-        """Atualiza um rascunho."""
+        """Atualiza um rascunho do usuário."""
+        if self.get_draft(draft_id, user_id) is None:
+            return False
         data: dict[str, Any] = {
             "updated_at": datetime.utcnow().isoformat(),
         }
@@ -113,37 +137,36 @@ class DraftRepository:
                 data=data,
             )
             return True
-        except Exception:
-            return False
+        except AppwriteException as error:
+            translated = classify_error(error, operation="update_document", document_level=True)
+            if isinstance(translated, StorageNotFound):
+                return False
+            raise translated from None
 
     def list_drafts(
         self,
+        user_id: str,
         course_id: str | None = None,
         session_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Lista rascunhos, opcionalmente filtrados por curso e sessão."""
-        queries = []
+        """Lista rascunhos do usuário, opcionalmente filtrados por curso e sessão."""
+        if not user_id:
+            raise ValueError("user_id is required")
+        queries = [Query.equal("user_id", user_id)]
         if course_id:
-            queries.append(f"course_id = {json.dumps(course_id)}")
+            queries.append(Query.equal("course_id", course_id))
         if session_id:
-            queries.append(f"session_id = {json.dumps(session_id)}")
+            queries.append(Query.equal("session_id", session_id))
+        drafts = list_all_documents(self._db, self._database_id, self._collection_id, queries)
+        for draft in drafts:
+            if "form_data" in draft:
+                draft["form_data"] = json.loads(draft["form_data"])
+        return drafts
 
-        try:
-            response = self._db.list_documents(
-                database_id=self._database_id,
-                collection_id=self._collection_id,
-                queries=queries,
-            )
-            drafts = cast(list[dict[str, Any]], response.get("documents", []))
-            for draft in drafts:
-                if "form_data" in draft:
-                    draft["form_data"] = json.loads(draft["form_data"])
-            return drafts
-        except Exception:
-            return []
-
-    def delete_draft(self, draft_id: str) -> bool:
-        """Remove um rascunho."""
+    def delete_draft(self, draft_id: str, user_id: str) -> bool:
+        """Remove um rascunho do usuário."""
+        if self.get_draft(draft_id, user_id) is None:
+            return False
         try:
             self._db.delete_document(
                 database_id=self._database_id,
@@ -151,5 +174,8 @@ class DraftRepository:
                 document_id=draft_id,
             )
             return True
-        except Exception:
-            return False
+        except AppwriteException as error:
+            translated = classify_error(error, operation="delete_document", document_level=True)
+            if isinstance(translated, StorageNotFound):
+                return False
+            raise translated from None

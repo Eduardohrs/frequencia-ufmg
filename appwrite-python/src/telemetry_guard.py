@@ -4,9 +4,9 @@ The production deployment bundles ``appwrite-python/src`` plus only the shared
 ``frequencia_ufmg`` package ``__init__``/``models`` modules, so the guards that
 protect the real log producer must live here and never depend on the backend-only
 modules. Repeated reads of the same report inside one execution must not create
-new log writes, the deduplication cache is bounded so diagnostics cannot grow
-without limit, and HTTP 429 / RESOURCE_EXHAUSTED refusals keep their status and
-error code for diagnosis.
+new log writes, the deduplication cache and the attempt counter are bounded so diagnostics
+cannot grow without limit, and HTTP 429 / RESOURCE_EXHAUSTED refusals keep
+their status and error code for diagnosis.
 """
 
 import hashlib
@@ -20,6 +20,7 @@ from typing import Any
 DEFAULT_WINDOW_SECONDS = 300.0
 MAX_TRACKED_REPORTS = 4096
 MAX_TRACKED_DIAGNOSTICS = 1024
+MAX_TRACKED_ATTEMPTS = 4096
 VOLATILE_FIELDS = frozenset(
     {
         "duration_ms",
@@ -122,6 +123,9 @@ class ProductionTelemetryRecorder:
         )
         with self._lock:
             hash_key = key.to_hash()
+            if hash_key not in self._attempts and len(self._attempts) >= MAX_TRACKED_ATTEMPTS:
+                oldest = next(iter(self._attempts))
+                del self._attempts[oldest]
             self._attempts[hash_key] = self._attempts.get(hash_key, 0) + 1
         return self._deduplicator.should_report(key)
 

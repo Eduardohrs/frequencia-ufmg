@@ -28,6 +28,7 @@ import 'fixtures/attendance_permission_fixture.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/document_store.dart';
 import 'package:frequencia_ufmg/data/calendar_status.dart';
+import 'package:frequencia_ufmg/data/course_draft_store.dart';
 import 'package:frequencia_ufmg/data/python_overview_repository.dart';
 import 'package:frequencia_ufmg/data/ufmg_sync_schedule.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
@@ -3939,6 +3940,361 @@ void main() {
     expect(find.text('DCC203'), findsOneWidget);
     expect(logger.errorContexts, contains('course_draft_clear'));
   });
+
+  testWidgets(
+    'keeps the draft locally when the write and the remote draft both fail and restores it after a restart',
+    (tester) async {
+      final repository = _FakeCourseRepository()
+        ..saveError = FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'permission-denied',
+        );
+      final gateway = _DraftUFMGGateway()..saveError = StateError('offline');
+      final logger = _RecordingAppLogger();
+      final store = SharedPreferencesCourseDraftStore();
+      await tester.pumpWidget(
+        _appWithGateway(
+          repository,
+          user,
+          now,
+          gateway,
+          logger,
+          draftStore: store,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _fillNewCourse(tester);
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+
+      // The local copy was confirmed even though the remote push failed.
+      expect(find.textContaining('rascunho foi guardado'), findsOneWidget);
+      expect(gateway.savedDrafts, isEmpty);
+      expect(logger.errorContexts, contains('course_draft_save'));
+      final localDraft = await store.read(user.id, 'course-create');
+      expect(localDraft, isNotNull);
+      expect(localDraft!['code'], 'DCC203');
+      expect(localDraft['name'], 'POO');
+
+      // Restart the app while the gateway is offline.
+      gateway.listError = StateError('offline');
+      final listCallsBeforeRestart = gateway.listCalls;
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        _appWithGateway(
+          repository,
+          user,
+          now,
+          gateway,
+          logger,
+          draftStore: store,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('add-course')));
+      await tester.pumpAndSettle();
+
+      // The prefill came from the local store, not from the failing gateway.
+      expect(gateway.listCalls, listCallsBeforeRestart);
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const Key('course-code')))
+            .controller!
+            .text,
+        'DCC203',
+      );
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const Key('course-name')))
+            .controller!
+            .text,
+        'POO',
+      );
+    },
+  );
+
+  testWidgets('does not claim a saved draft when even the local store fails', (
+    tester,
+  ) async {
+    final repository = _FakeCourseRepository()
+      ..saveError = FirebaseException(
+        plugin: 'cloud_firestore',
+        code: 'permission-denied',
+      );
+    final gateway = _DraftUFMGGateway()..saveError = StateError('offline');
+    final logger = _RecordingAppLogger();
+    final store = _FakeCourseDraftStore(failRead: true, failSave: true);
+    await tester.pumpWidget(
+      _appWithGateway(
+        repository,
+        user,
+        now,
+        gateway,
+        logger,
+        draftStore: store,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _fillNewCourse(tester);
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('rascunho foi guardado'), findsNothing);
+    expect(
+      find.textContaining('Não foi possível guardar o rascunho neste aparelho'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Código: permission-denied'), findsOneWidget);
+    expect(logger.errorContexts, contains('course_draft_local_read'));
+    expect(logger.errorContexts, contains('course_draft_local_save'));
+    expect(logger.errorContexts, contains('course_draft_save'));
+    expect(gateway.savedDrafts, isEmpty);
+    expect(store.saveCalls, 1);
+  });
+
+  testWidgets('clears the local draft too after a confirmed registration', (
+    tester,
+  ) async {
+    final store = SharedPreferencesCourseDraftStore();
+    await store.save(user.id, 'course-create', {
+      'code': 'DCC203',
+      'name': 'POO',
+      'nickname': '',
+      'term': '2026-2',
+      'modality': 'in_person',
+      'attendance_policy': 'required',
+    });
+    final gateway = _DraftUFMGGateway();
+    await tester.pumpWidget(
+      _appWithGateway(
+        _FakeCourseRepository(),
+        user,
+        now,
+        gateway,
+        _RecordingAppLogger(),
+        draftStore: store,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _fillNewCourse(tester);
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+    await tester.pump();
+
+    expect(find.text('DCC203'), findsOneWidget);
+    expect(await store.read(user.id, 'course-create'), isNull);
+  });
+
+  testWidgets(
+    'retries a locally kept draft after a restart and clears it once the write succeeds',
+    (tester) async {
+      final repository = _FakeCourseRepository()
+        ..saveError = FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'permission-denied',
+        );
+      final gateway = _DraftUFMGGateway()
+        ..saveError = StateError('offline')
+        ..drafts.add(
+          const PythonRegistrationDraft(
+            id: 'draft-1',
+            courseId: 'course-1',
+            courseCode: 'DCC203',
+            sessionId: 'course-create',
+            formData: {'code': 'DCC203'},
+            attemptCount: 1,
+          ),
+        );
+      final logger = _RecordingAppLogger();
+      final store = SharedPreferencesCourseDraftStore();
+      await tester.pumpWidget(
+        _appWithGateway(
+          repository,
+          user,
+          now,
+          gateway,
+          logger,
+          draftStore: store,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _fillNewCourse(tester);
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('rascunho foi guardado'), findsOneWidget);
+      expect(gateway.savedDrafts, isEmpty);
+      expect(gateway.deletedDraftIds, isEmpty);
+      expect(await store.read(user.id, 'course-create'), isNotNull);
+
+      // Restart the app with the backend recovered.
+      repository.saveError = null;
+      gateway.saveError = null;
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        _appWithGateway(
+          repository,
+          user,
+          now,
+          gateway,
+          logger,
+          draftStore: store,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('add-course')));
+      await tester.pumpAndSettle();
+
+      // The editor is prefilled from the locally kept draft.
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const Key('course-code')))
+            .controller!
+            .text,
+        'DCC203',
+      );
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const Key('course-name')))
+            .controller!
+            .text,
+        'POO',
+      );
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+      await tester.pump();
+
+      expect(find.text('DCC203'), findsOneWidget);
+      expect(gateway.deletedDraftIds, ['draft-1']);
+      expect(gateway.drafts, isEmpty);
+      expect(await store.read(user.id, 'course-create'), isNull);
+    },
+  );
+
+  testWidgets(
+    'still prefills from a remote draft when caching it locally fails',
+    (tester) async {
+      final gateway = _DraftUFMGGateway()
+        ..drafts.add(
+          const PythonRegistrationDraft(
+            id: 'draft-1',
+            courseId: 'course-1',
+            courseCode: 'DCC204',
+            sessionId: 'course-create',
+            formData: {
+              'code': 'DCC204',
+              'name': 'Algoritmos',
+              'nickname': 'Algos',
+              'term': '2026-2',
+              'modality': 'online',
+              'attendance_policy': 'no_call',
+            },
+            attemptCount: 1,
+          ),
+        );
+      final logger = _RecordingAppLogger();
+      final store = _FakeCourseDraftStore(failSave: true);
+      await tester.pumpWidget(
+        _appWithGateway(
+          _FakeCourseRepository(),
+          user,
+          now,
+          gateway,
+          logger,
+          draftStore: store,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('add-course')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const Key('course-code')))
+            .controller!
+            .text,
+        'DCC204',
+      );
+      expect(logger.errorContexts, contains('course_draft_local_cache'));
+    },
+  );
+
+  testWidgets(
+    'still deletes remote drafts after a confirmed registration when the local clear fails',
+    (tester) async {
+      final gateway = _DraftUFMGGateway()
+        ..drafts.add(
+          const PythonRegistrationDraft(
+            id: 'draft-1',
+            courseId: 'course-1',
+            courseCode: 'DCC203',
+            sessionId: 'course-create',
+            formData: {'code': 'DCC203'},
+            attemptCount: 1,
+          ),
+        );
+      final logger = _RecordingAppLogger();
+      final store = _FakeCourseDraftStore(failClear: true);
+      await tester.pumpWidget(
+        _appWithGateway(
+          _FakeCourseRepository(),
+          user,
+          now,
+          gateway,
+          logger,
+          draftStore: store,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _fillNewCourse(tester);
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+      await tester.pump();
+
+      expect(find.text('DCC203'), findsOneWidget);
+      expect(gateway.deletedDraftIds, ['draft-1']);
+      expect(logger.errorContexts, contains('course_draft_local_clear'));
+    },
+  );
+
+  testWidgets(
+    'opens the create editor without prefill when only other sessions have remote drafts',
+    (tester) async {
+      final gateway = _DraftUFMGGateway()
+        ..drafts.add(
+          const PythonRegistrationDraft(
+            id: 'draft-other',
+            courseId: 'course-2',
+            courseCode: 'MAT001',
+            sessionId: 'other-session',
+            formData: {'code': 'MAT001', 'name': 'Cálculo'},
+            attemptCount: 1,
+          ),
+        );
+      await tester.pumpWidget(
+        _appWithGateway(
+          _FakeCourseRepository(),
+          user,
+          now,
+          gateway,
+          _RecordingAppLogger(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('add-course')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const Key('course-code')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+    },
+  );
 }
 
 Widget _appWithGateway(
@@ -3946,8 +4302,9 @@ Widget _appWithGateway(
   AuthUser user,
   DateTime now,
   BackendUFMGSessionGateway gateway,
-  AppLogger logger,
-) => _NavigationApp(
+  AppLogger logger, {
+  CourseDraftStore? draftStore,
+}) => _NavigationApp(
   builder: (context, child) => AcademicSyncHost(child: child!),
   home: CoursePage(
     repository: repository,
@@ -3957,6 +4314,7 @@ Widget _appWithGateway(
     logger: logger,
     onSignOut: () async {},
     ufmgSessionGateway: gateway,
+    draftStore: draftStore,
     now: () => now,
     idGenerator: () => 'course-1',
   ),
@@ -3969,6 +4327,7 @@ final class _DraftUFMGGateway extends _UFMGGateway
   final List<String> deletedDraftIds = [];
   Object? listError;
   Object? saveError;
+  int listCalls = 0;
   int _nextId = 0;
 
   @override
@@ -3998,6 +4357,7 @@ final class _DraftUFMGGateway extends _UFMGGateway
 
   @override
   Future<List<PythonRegistrationDraft>> listRegistrationDrafts() async {
+    listCalls++;
     if (listError case final error?) throw error;
     return List.of(drafts);
   }
@@ -4006,6 +4366,51 @@ final class _DraftUFMGGateway extends _UFMGGateway
   Future<void> deleteRegistrationDraft(String draftId) async {
     deletedDraftIds.add(draftId);
     drafts.removeWhere((draft) => draft.id == draftId);
+  }
+}
+
+final class _FakeCourseDraftStore implements CourseDraftStore {
+  _FakeCourseDraftStore({
+    this.failRead = false,
+    this.failSave = false,
+    this.failClear = false,
+  });
+
+  final bool failRead;
+  final bool failSave;
+  final bool failClear;
+  final Map<String, Map<String, Object?>> drafts = {};
+  int readCalls = 0;
+  int saveCalls = 0;
+  int clearCalls = 0;
+
+  String _scope(String userId, String sessionId) => '$userId|$sessionId';
+
+  @override
+  Future<void> save(
+    String userId,
+    String sessionId,
+    Map<String, Object?> formData, {
+    String? lastError,
+  }) async {
+    saveCalls++;
+    if (failSave) throw StateError('local save unavailable');
+    drafts[_scope(userId, sessionId)] = Map<String, Object?>.of(formData);
+  }
+
+  @override
+  Future<Map<String, Object?>?> read(String userId, String sessionId) async {
+    readCalls++;
+    if (failRead) throw StateError('local read unavailable');
+    final draft = drafts[_scope(userId, sessionId)];
+    return draft == null ? null : Map<String, Object?>.of(draft);
+  }
+
+  @override
+  Future<void> clear(String userId, String sessionId) async {
+    clearCalls++;
+    if (failClear) throw StateError('local clear unavailable');
+    drafts.remove(_scope(userId, sessionId));
   }
 }
 

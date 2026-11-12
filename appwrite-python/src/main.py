@@ -14,6 +14,7 @@ from typing import Any, cast
 
 from appwrite.client import Client
 from appwrite.enums.execution_method import ExecutionMethod
+from appwrite.services.databases import Databases
 from appwrite.services.functions import Functions
 from appwrite.services.tables_db import TablesDB
 
@@ -21,13 +22,7 @@ module_search_path.insert(0, str(Path(__file__).resolve().parent))
 development_domain = Path(__file__).resolve().parents[2] / "backend" / "src"
 module_search_path.insert(0, str(development_domain))
 
-from frequencia_ufmg.models import (  # noqa: E402
-    CentralPendencias,
-    DecisaoHorario,
-    GerenciadorRascunhos,
-    PendenciaHorario,
-    RascunhoCadastro,
-)
+from frequencia_ufmg.models import DecisaoHorario, RascunhoCadastro  # noqa: E402
 
 from academic_date_repository import (  # noqa: E402
     AcademicDateRepository,
@@ -39,6 +34,12 @@ from activity_snapshot_repository import (  # noqa: E402
     ActivitySnapshotMissing,
     ActivitySnapshotRepository,
     InvalidActivitySnapshot,
+)
+from appwrite_storage import (  # noqa: E402
+    StorageNotProvisioned,
+    StorageUnavailable,
+    ensure_appwrite_storage,
+    validate_appwrite_storage,
 )
 from attendance_service import InvalidAttendanceRequest, evaluate_attendance  # noqa: E402
 from checkpoint_service import validate_checkpoint_payload  # noqa: E402
@@ -275,6 +276,8 @@ def _dispatch(context: Any) -> Any:
     headers = context.req.headers
     if method == "POST" and path == "/internal/academic-sync":
         return _academic_sync_worker(context)
+    if method == "POST" and path == "/internal/storage/ensure":
+        return _storage_ensure(context)
     origin = _header(headers, "origin")
     allowed_origin = _allowed_origin(origin)
 
@@ -465,6 +468,23 @@ def _draft_repository(headers: dict[str, str]) -> DraftRepository:
     return DraftRepository(_appwrite_client(headers))
 
 
+def _storage_ensure(context: Any) -> Any:
+    """Idempotently provision and validate the Appwrite storage used by the API."""
+    try:
+        client = _appwrite_client(context.req.headers)
+    except SecurityStoreUnavailable:
+        return _respond(context, {"error": "storage_store_unavailable"}, 503)
+    databases = Databases(client)
+    try:
+        summary = ensure_appwrite_storage(databases)
+        validate_appwrite_storage(databases)
+    except (StorageNotProvisioned, StorageUnavailable):
+        _error(context, "storage_ensure_failed")
+        return _respond(context, {"error": "storage_ensure_failed"}, 503)
+    _log(context, "storage_ensure_succeeded")
+    return _respond(context, {"storage": summary}, 200)
+
+
 def _public_pendency(document: Mapping[str, Any]) -> dict[str, Any]:
     """Expose one persisted pendency without its internal apply payload."""
     return {
@@ -482,25 +502,6 @@ def _public_pendency(document: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _decision_from(value: Any) -> DecisaoHorario:
-    if isinstance(value, str):
-        try:
-            return DecisaoHorario(value)
-        except ValueError:
-            return DecisaoHorario.PENDENTE
-    return DecisaoHorario.PENDENTE
-
-
-def _pendency_model(document: Mapping[str, Any]) -> PendenciaHorario:
-    return PendenciaHorario(
-        disciplina_codigo=str(document.get("course_code", "")),
-        disciplina_nome=str(document.get("course_name", "")),
-        horario_atual=str(document.get("current_schedule", "")),
-        horario_novo=str(document.get("new_schedule", "")),
-        motivo=str(document.get("reason", "")),
-    )
-
-
 def _pend_error(context: Any, origin: str | None, error: str, status: int, **fields: Any) -> Any:
     _error(context, error, **fields)
     return _respond(context, {"error": error, **fields}, status, origin)
@@ -516,23 +517,26 @@ def _schedule_pendencies_list(context: Any, origin: str | None) -> Any:
     if rejected is not None:
         return rejected
     try:
-        documents = _pendency_repository(context.req.headers).list_pendencies()
+        documents = _pendency_repository(context.req.headers).list_pendencies(
+            user_id=cast(str, user_id)
+        )
     except SecurityStoreUnavailable:
         return _pend_error(context, origin, "pendency_store_unavailable", 503)
-    central = CentralPendencias()
-    items = []
-    for document in documents:
-        item = _public_pendency(document)
-        central.restaurar(
-            item["id"], _pendency_model(document), _decision_from(document.get("decision"))
-        )
-        items.append(item)
+    except (StorageNotProvisioned, StorageUnavailable):
+        return _pend_error(context, origin, "pendency_store_unavailable", 503)
+    items = [_public_pendency(document) for document in documents]
     _log(context, "schedule_pendencies_listed", count=len(items))
     return _respond(context, {"pendencies": items}, origin=origin)
 
 
 def _apply_pendency_payload(context: Any, user_id: str, document: Mapping[str, Any]) -> bool:
-    """Apply the stored schedule change, preserving attendance records."""
+    """Apply the stored schedule change through the safe update flow.
+
+    Every other course schedule is loaded so the overlap check sees the real
+    conflict, and ``confirm_destructive`` stays False so sessions with
+    attendance evidence raise ``DestructiveScheduleChange`` instead of being
+    deleted.
+    """
     raw = document.get("payload")
     if not isinstance(raw, str) or not raw:
         return False
@@ -540,12 +544,16 @@ def _apply_pendency_payload(context: Any, user_id: str, document: Mapping[str, A
     if not isinstance(payload, Mapping):
         raise ValueError("invalid pendency payload")
     course_id = str(document.get("course_id", ""))
-    course = _course_repository(context.req.headers, user_id).get_course(course_id)
-    schedules = _schedule_repository(context.req.headers, user_id).load_import_schedules([course])
-    repository = _schedule_repository(context.req.headers, user_id)
-    repository.save_import_schedule(
+    course_repository = _course_repository(context.req.headers, user_id)
+    course = course_repository.get_course(course_id)
+    all_courses = course_repository.list_courses()
+    if not any(str(item.get("id")) == course_id for item in all_courses):
+        all_courses.append(course)
+    schedule_repository = _schedule_repository(context.req.headers, user_id)
+    schedules = schedule_repository.load_import_schedules(all_courses)
+    schedule_repository.save_import_schedule(
         course_id,
-        {**payload, "confirm_destructive": True},
+        {**payload, "confirm_destructive": False},
         schedules,
     )
     return True
@@ -568,18 +576,25 @@ def _schedule_pendency_decision(context: Any, origin: str | None, pendency_id: s
         repository = _pendency_repository(context.req.headers)
     except SecurityStoreUnavailable:
         return _pend_error(context, origin, "pendency_store_unavailable", 503)
-    document = repository.get_pendency(pendency_id)
+    try:
+        document = repository.get_pendency(pendency_id, cast(str, user_id))
+    except (StorageNotProvisioned, StorageUnavailable):
+        return _pend_error(context, origin, "pendency_store_unavailable", 503)
     if document is None:
         return _pend_error(context, origin, "pendency_not_found", 404)
-    central = CentralPendencias()
-    central.restaurar(
-        pendency_id, _pendency_model(document), _decision_from(document.get("decision"))
-    )
     applied = False
     if decisao is DecisaoHorario.APLICAR_MUDANCA:
         try:
             applied = _apply_pendency_payload(context, cast(str, user_id), document)
-        except (DestructiveScheduleChange, ScheduleOverlap):
+        except DestructiveScheduleChange as error:
+            return _pend_error(
+                context,
+                origin,
+                "pendency_apply_conflict",
+                409,
+                destructive_sessions=error.count,
+            )
+        except ScheduleOverlap:
             return _pend_error(context, origin, "pendency_apply_conflict", 409)
         except FirestoreNotFound:
             return _pend_error(context, origin, "course_not_found", 404)
@@ -594,8 +609,13 @@ def _schedule_pendency_decision(context: Any, origin: str | None, pendency_id: s
             ValueError,
         ):
             return _pend_error(context, origin, "pendency_apply_failed", 503)
-    central.registrar_decisao(pendency_id, decisao)
-    if not repository.update_decision(pendency_id, decisao.value, "resolved"):
+    try:
+        updated = repository.update_decision(
+            pendency_id, cast(str, user_id), decisao.value, "resolved"
+        )
+    except (StorageNotProvisioned, StorageUnavailable):
+        updated = False
+    if not updated:
         return _pend_error(context, origin, "pendency_store_unavailable", 503)
     _log(
         context,
@@ -667,8 +687,6 @@ def _registration_draft_save(context: Any, origin: str | None) -> Any:
     except SecurityStoreUnavailable:
         return _draft_error(context, origin, "draft_store_unavailable", 503)
     rascunho = RascunhoCadastro(course_code, session_id, form_data)
-    gerenciador = GerenciadorRascunhos()
-    gerenciador.salvar_rascunho(course_code, session_id, rascunho.dados)
     try:
         draft_id = repository.save_draft(
             user_id=cast(str, user_id),
@@ -681,6 +699,8 @@ def _registration_draft_save(context: Any, origin: str | None) -> Any:
         )
     except (InvalidCourse, TypeError, ValueError):
         return _draft_error(context, origin, "draft_rejected", 400)
+    except (StorageNotProvisioned, StorageUnavailable):
+        return _draft_error(context, origin, "draft_store_unavailable", 503)
     _log(
         context,
         "registration_draft_saved",
@@ -698,20 +718,14 @@ def _registration_drafts_list(context: Any, origin: str | None) -> Any:
     if rejected is not None:
         return rejected
     try:
-        documents = _draft_repository(context.req.headers).list_drafts()
+        documents = _draft_repository(context.req.headers).list_drafts(
+            user_id=cast(str, user_id)
+        )
     except SecurityStoreUnavailable:
         return _draft_error(context, origin, "draft_store_unavailable", 503)
-    gerenciador = GerenciadorRascunhos()
-    items = []
-    for document in documents:
-        item = _public_draft(document)
-        if isinstance(item.get("form_data"), dict):
-            gerenciador.salvar_rascunho(
-                str(item.get("course_code", "")),
-                str(item.get("session_id", "")),
-                item["form_data"],
-            )
-        items.append(item)
+    except (StorageNotProvisioned, StorageUnavailable):
+        return _draft_error(context, origin, "draft_store_unavailable", 503)
+    items = [_public_draft(document) for document in documents]
     _log(context, "registration_drafts_listed", count=len(items))
     return _respond(context, {"drafts": items}, origin=origin)
 
@@ -724,7 +738,11 @@ def _registration_draft_delete(context: Any, origin: str | None, draft_id: str) 
         repository = _draft_repository(context.req.headers)
     except SecurityStoreUnavailable:
         return _draft_error(context, origin, "draft_store_unavailable", 503)
-    if not repository.delete_draft(draft_id):
+    try:
+        deleted = repository.delete_draft(draft_id, cast(str, user_id))
+    except (StorageNotProvisioned, StorageUnavailable):
+        return _draft_error(context, origin, "draft_store_unavailable", 503)
+    if not deleted:
         return _draft_error(context, origin, "draft_not_found", 404)
     _log(context, "registration_draft_deleted", draft_id=draft_id)
     return _respond(context, {"deleted": True, "id": draft_id}, origin=origin)
