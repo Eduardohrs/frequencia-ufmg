@@ -502,6 +502,15 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         (courseId, _) => courses.every((course) => course.id != courseId),
       );
       if (!mounted) return;
+      // CW09: disciplina criada em estado otimista continua visivel nos
+      // recortes ate o servidor confirmar; _persistCreatedCourse faz o
+      // rollback se a gravacao falhar.
+      for (final item in _courses) {
+        if (_savingIds.contains(item.id) &&
+            courses.every((course) => course.id != item.id)) {
+          courses.add(item);
+        }
+      }
       courses.sort(compareCourseNames);
       setState(() {
         _courses = courses;

@@ -166,6 +166,7 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
         constraints: const BoxConstraints(maxWidth: 480),
         child: Form(
           key: _formKey,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -287,12 +288,7 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
         ),
         FilledButton(
           onPressed: _saving ? null : _submit,
-          child: _saving
-              ? const SizedBox.square(
-                  dimension: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Salvar'),
+          child: _saving ? const Text('Salvando...') : const Text('Salvar'),
         ),
       ],
     );

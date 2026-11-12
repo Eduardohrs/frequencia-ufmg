@@ -4346,6 +4346,87 @@ void main() {
       );
     },
   );
+  testWidgets(
+    'clears required-field errors as soon as the field is fixed (CW08)',
+    (tester) async {
+      final repository = _FakeCourseRepository();
+      await tester.pumpWidget(_app(repository, user, now));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('add-course')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+      expect(find.text('Informe o código.'), findsOneWidget);
+      expect(find.text('Informe o nome.'), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('course-code')), 'DCC203');
+      await tester.pump();
+      expect(find.text('Informe o código.'), findsNothing);
+      await tester.enterText(find.byKey(const Key('course-name')), 'POO');
+      await tester.pump();
+      expect(find.text('Informe o nome.'), findsNothing);
+    },
+  );
+
+  testWidgets('save button announces the saving state with text (CW12)', (
+    tester,
+  ) async {
+    final repository = _FakeCourseRepository();
+    repository.saveGate = Completer<void>();
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('add-course')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('course-code')), 'DCC203');
+    await tester.enterText(find.byKey(const Key('course-name')), 'POO');
+    await tester.tap(find.text('Salvar'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Salvando...'), findsOneWidget);
+    repository.saveGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('DCC203'), findsWidgets);
+  });
+
+  testWidgets(
+    'optimistic new course survives a reload that lags behind the backend (CW09)',
+    (tester) async {
+      final courseRepository = _FakeCourseRepository();
+      courseRepository.saveGate = Completer<void>();
+      final overview = _FakeOverviewRepository(
+        AcademicOverviewSnapshot(courses: const [], sessionsByCourse: const {}),
+      );
+      await tester.pumpWidget(
+        _NavigationApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
+          home: CoursePage(
+            repository: courseRepository,
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            overviewRepository: overview,
+            overviewReadsEnabled: true,
+            user: user,
+            logger: _RecordingAppLogger(),
+            onSignOut: () async {},
+            now: () => now,
+            idGenerator: () => 'new-course',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('add-course')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('course-code')), 'DCC203');
+      await tester.enterText(find.byKey(const Key('course-name')), 'POO');
+      await tester.tap(find.text('Salvar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      // _load rodou com o overview sem a nova disciplina: ela deve continuar
+      expect(find.text('DCC203'), findsWidgets);
+      courseRepository.saveGate!.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('DCC203'), findsWidgets);
+    },
+  );
 }
 
 Widget _appWithGateway(
@@ -4518,6 +4599,7 @@ final class _FakeCourseRepository implements CourseRepository {
   Object? deleteError;
   int listCalls = 0;
   Completer<List<CourseRecord>>? pending;
+  Completer<void>? saveGate;
 
   @override
   Future<void> deleteCourse(String courseId) async {
@@ -4536,6 +4618,7 @@ final class _FakeCourseRepository implements CourseRepository {
   @override
   Future<void> saveCourse(CourseRecord course) async {
     if (saveError case final error?) throw error;
+    if (saveGate case final gate?) await gate.future;
     courses.removeWhere((item) => item.id == course.id);
     courses.add(course);
   }
