@@ -56,6 +56,8 @@ class CalendarExceptionsPage extends StatefulWidget {
 
 class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
   List<SessionRecord> _sessions = const [];
+  static const double _itemExtent = 96;
+  final ScrollController _scrollController = ScrollController();
   bool _loading = true;
   bool _loadFailed = false;
   String? _savingId;
@@ -64,6 +66,12 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -265,6 +273,26 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
     }
   }
 
+  SessionRecord? _nextSession() {
+    final nowUtc = widget.now().toUtc();
+    for (final session in _sessions) {
+      if (!session.startsAt.isBefore(nowUtc)) return session;
+    }
+    return _sessions.isEmpty ? null : _sessions.last;
+  }
+
+  void _jumpToNextSession() {
+    final next = _nextSession();
+    if (next == null || !_scrollController.hasClients) return;
+    final index = _sessions.indexWhere((s) => s.id == next.id);
+    if (index < 0) return;
+    _scrollController.animateTo(
+      index * _itemExtent,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
+  }
+
   String? _overlapConflict(DateTime startsAt, DateTime endsAt) {
     for (final existing in _sessions) {
       if (existing.calendarStatus == SessionCalendarStatus.cancelled ||
@@ -293,6 +321,12 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
     appBar: AppBar(
       title: const Text('Aulas e reposições'),
       actions: [
+        IconButton(
+          key: const Key('jump-to-next-session'),
+          tooltip: 'Ir para a próxima aula',
+          onPressed: _jumpToNextSession,
+          icon: const Icon(Icons.today_outlined),
+        ),
         IconButton(
           tooltip: 'Entenda os tipos de aula',
           onPressed: _showHelp,
@@ -343,77 +377,84 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
         message: 'Configure sua grade para organizar aulas e reposições.',
       );
     }
-    return ListView.separated(
-      itemCount: _sessions.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (_, index) {
-        final session = _sessions[index];
-        final local = tz.TZDateTime.from(session.startsAt, widget.location);
-        final date = _date(local);
-        return Card(
-          elevation: 0,
-          child: ListTile(
-            title: Text('$date • ${_time(local)}'),
-            subtitle: Text(
-              session.assessmentTitle == null
-                  ? _statusLabel(session.calendarStatus)
-                  : '${_statusLabel(session.calendarStatus)} • '
-                        'Avaliação: ${session.assessmentTitle}',
-            ),
-            trailing: _savingId == session.id
-                ? const SizedBox.square(
-                    dimension: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: 'Editar avaliação de $date',
-                        onPressed: () => _editAssessment(session),
-                        icon: Icon(
-                          session.assessmentTitle == null
-                              ? Icons.assignment_outlined
-                              : Icons.assignment,
-                        ),
-                      ),
-                      PopupMenuButton<SessionCalendarStatus>(
-                        tooltip: 'Alterar sessão de $date',
-                        onSelected: (status) => _changeStatus(session, status),
-                        itemBuilder: (_) => switch (session.calendarStatus) {
-                          SessionCalendarStatus.scheduled => const [
-                            PopupMenuItem(
-                              value: SessionCalendarStatus.cancelled,
-                              child: Text('Cancelada/feriado'),
-                            ),
-                            PopupMenuItem(
-                              value: SessionCalendarStatus.noCall,
-                              child: Text('Aula sem chamada'),
-                            ),
-                          ],
-                          SessionCalendarStatus.makeup => const [
-                            PopupMenuItem(
-                              value: SessionCalendarStatus.cancelled,
-                              child: Text('Cancelada/feriado'),
-                            ),
-                            PopupMenuItem(
-                              value: SessionCalendarStatus.noCall,
-                              child: Text('Aula sem chamada'),
-                            ),
-                          ],
-                          _ => const [
-                            PopupMenuItem(
-                              value: SessionCalendarStatus.scheduled,
-                              child: Text('Restaurar aula'),
-                            ),
-                          ],
-                        },
-                      ),
-                    ],
-                  ),
+    return ListView(
+      controller: _scrollController,
+      itemExtent: _itemExtent,
+      children: [
+        for (var i = 0; i < _sessions.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _sessionCard(_sessions[i]),
           ),
-        );
-      },
+      ],
+    );
+  }
+
+  Widget _sessionCard(SessionRecord session) {
+    final local = tz.TZDateTime.from(session.startsAt, widget.location);
+    final date = _date(local);
+    return Card(
+      elevation: 0,
+      child: ListTile(
+        title: Text('$date • ${_time(local)}'),
+        subtitle: Text(
+          session.assessmentTitle == null
+              ? _statusLabel(session.calendarStatus)
+              : '${_statusLabel(session.calendarStatus)} • '
+                    'Avaliação: ${session.assessmentTitle}',
+        ),
+        trailing: _savingId == session.id
+            ? const SizedBox.square(
+                dimension: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Editar avaliação de $date',
+                    onPressed: () => _editAssessment(session),
+                    icon: Icon(
+                      session.assessmentTitle == null
+                          ? Icons.assignment_outlined
+                          : Icons.assignment,
+                    ),
+                  ),
+                  PopupMenuButton<SessionCalendarStatus>(
+                    tooltip: 'Alterar sessão de $date',
+                    onSelected: (status) => _changeStatus(session, status),
+                    itemBuilder: (_) => switch (session.calendarStatus) {
+                      SessionCalendarStatus.scheduled => const [
+                        PopupMenuItem(
+                          value: SessionCalendarStatus.cancelled,
+                          child: Text('Cancelada/feriado'),
+                        ),
+                        PopupMenuItem(
+                          value: SessionCalendarStatus.noCall,
+                          child: Text('Aula sem chamada'),
+                        ),
+                      ],
+                      SessionCalendarStatus.makeup => const [
+                        PopupMenuItem(
+                          value: SessionCalendarStatus.cancelled,
+                          child: Text('Cancelada/feriado'),
+                        ),
+                        PopupMenuItem(
+                          value: SessionCalendarStatus.noCall,
+                          child: Text('Aula sem chamada'),
+                        ),
+                      ],
+                      _ => const [
+                        PopupMenuItem(
+                          value: SessionCalendarStatus.scheduled,
+                          child: Text('Restaurar aula'),
+                        ),
+                      ],
+                    },
+                  ),
+                ],
+              ),
+      ),
     );
   }
 
@@ -528,6 +569,43 @@ class _MakeupSessionDialogState extends State<_MakeupSessionDialog> {
     super.dispose();
   }
 
+  Future<void> _pickDate() async {
+    final initial = _parseDate(_dateController.text) ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      locale: const Locale('pt', 'BR'),
+    );
+    if (picked != null) {
+      setState(() {
+        final year = picked.year.toString().padLeft(4, '0');
+        final month = picked.month.toString().padLeft(2, '0');
+        final day = picked.day.toString().padLeft(2, '0');
+        _dateController.text = '$year-$month-$day';
+      });
+    }
+  }
+
+  Future<void> _pickTime() async {
+    final minutes = _parseTime(_startController.text);
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(
+        hour: minutes != null ? minutes ~/ 60 : 8,
+        minute: minutes != null ? minutes % 60 : 0,
+      ),
+    );
+    if (picked != null) {
+      final hour = picked.hour.toString().padLeft(2, '0');
+      final minute = picked.minute.toString().padLeft(2, '0');
+      setState(() {
+        _startController.text = '$hour:$minute';
+      });
+    }
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() {
@@ -568,9 +646,15 @@ class _MakeupSessionDialogState extends State<_MakeupSessionDialog> {
                 key: const Key('makeup-date'),
                 controller: _dateController,
                 enabled: !_saving,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Data',
                   hintText: 'AAAA-MM-DD',
+                  suffixIcon: IconButton(
+                    key: const Key('makeup-date-picker'),
+                    tooltip: 'Escolher data no calendário',
+                    onPressed: _saving ? null : _pickDate,
+                    icon: const Icon(Icons.calendar_month),
+                  ),
                 ),
                 validator: (value) => _parseDate(value ?? '') == null
                     ? 'Use uma data válida no formato AAAA-MM-DD.'
@@ -581,9 +665,15 @@ class _MakeupSessionDialogState extends State<_MakeupSessionDialog> {
                 key: const Key('makeup-start'),
                 controller: _startController,
                 enabled: !_saving,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Horário de início',
                   hintText: 'HH:MM',
+                  suffixIcon: IconButton(
+                    key: const Key('makeup-start-picker'),
+                    tooltip: 'Escolher horário',
+                    onPressed: _saving ? null : _pickTime,
+                    icon: const Icon(Icons.schedule),
+                  ),
                 ),
                 validator: (value) => _parseTime(value ?? '') == null
                     ? 'Use um horário válido no formato HH:MM.'

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
@@ -562,6 +563,99 @@ void main() {
     expect(find.textContaining('Conflita com'), findsNothing);
     expect(repository.sessions.length, 3);
     expect(repository.sessions.last.id, 'makeup-1');
+  });
+
+  testWidgets('makeup dialog fills date and time via pickers (CW22)', (
+    tester,
+  ) async {
+    final repository = _FakeSessionRepository([]);
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('pt', 'BR'),
+        supportedLocales: const [Locale('pt', 'BR')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        home: CalendarExceptionsPage(
+          courseId: courseId,
+          repository: repository,
+          logger: _RecordingAppLogger(),
+          location: location,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('add-makeup-session')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('makeup-date')), '2099-01-05');
+    await tester.enterText(find.byKey(const Key('makeup-start')), '08:00');
+
+    // date picker: abre em 2099-01 e escolhe o dia 20
+    await tester.tap(find.byKey(const Key('makeup-date-picker')));
+    await tester.pumpAndSettle();
+    expect(find.byType(DatePickerDialog), findsOneWidget);
+    await tester.tap(find.text('20').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const Key('makeup-date')))
+          .controller!
+          .text,
+      '2099-01-20',
+    );
+
+    // time picker: abre e confirma, preenchendo o campo formatado
+    await tester.tap(find.byKey(const Key('makeup-start-picker')));
+    await tester.pumpAndSettle();
+    expect(find.byType(TimePickerDialog), findsOneWidget);
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const Key('makeup-start')))
+          .controller!
+          .text,
+      '08:00',
+    );
+  });
+
+  testWidgets('jump-to-next-session scrolls the list to the upcoming class (CW21)', (
+    tester,
+  ) async {
+    final currentNow = DateTime.utc(2026, 8, 20, 12); // 20/08 09:00 BRT
+    final sessions = [
+      for (var day = 1; day <= 30; day++)
+        _session('s$day', DateTime.utc(2026, 8, day, 11), currentNow),
+    ];
+    final repository = _FakeSessionRepository(sessions);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CalendarExceptionsPage(
+          courseId: courseId,
+          repository: repository,
+          logger: _RecordingAppLogger(),
+          location: location,
+          now: () => currentNow,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // proxima aula: 21/08 (a de 20/08 11:00Z ja passou); ListView lazy -> ainda nao buildada
+    final target = find.text('21/08/2026 • 08:00');
+    expect(target, findsNothing);
+
+    await tester.tap(find.byKey(const Key('jump-to-next-session')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+
+    expect(target, findsOneWidget);
+    final top = tester.getTopLeft(target).dy;
+    expect(top, greaterThanOrEqualTo(0));
+    expect(top, lessThan(600));
   });
 }
 
