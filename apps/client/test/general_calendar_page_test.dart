@@ -493,7 +493,6 @@ void main() {
         SessionCalendarStatus.noCall,
         SessionCalendarStatus.scheduled,
       ]);
-
     },
   );
 
@@ -544,8 +543,12 @@ void main() {
         SessionRecord(
           id: id,
           startsAt: DateTime.utc(2026, 9, 16, hour),
-          endsAt:
-              DateTime.utc(2026, 9, 16, hour).add(const Duration(minutes: 100)),
+          endsAt: DateTime.utc(
+            2026,
+            9,
+            16,
+            hour,
+          ).add(const Duration(minutes: 100)),
           lessonCount: QuantidadeAulas.two,
           callCount: NumeroChamadas.one,
           attendanceStatus: status,
