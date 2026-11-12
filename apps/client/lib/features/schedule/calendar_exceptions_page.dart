@@ -473,8 +473,8 @@ class _CalendarExceptionsPageState extends State<CalendarExceptionsPage> {
         'Aulas programadas e reposições entram no total de aulas e no cálculo '
         'de faltas.\n\nCancelada/feriado indica que a aula não aconteceu. '
         'Aula sem chamada indica que a aula aconteceu e vale como presença '
-        'garantida. Ela entra no total acadêmico, mas não aparece na agenda '
-        'operacional. Cancelada/feriado não entra no cálculo.',
+        'garantida: ela continua aparecendo na agenda e não conta falta. '
+        'Cancelada/feriado não entra no cálculo.',
       ),
       actions: [
         TextButton(

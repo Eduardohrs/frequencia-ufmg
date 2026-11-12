@@ -982,7 +982,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                         session.attendanceStatus == null
                             ? 'Frequência: sem registro'
                             : 'Frequência: ${_attendanceName(session.attendanceStatus!)}'
-                                  '${session.absences == null ? '' : ' • ${session.absences} faltas'}',
+                                  '${session.absences == null ? '' : ' • ${session.absences} ${session.absences == 1 ? 'falta' : 'faltas'}'}',
                       ),
                     ],
                   )

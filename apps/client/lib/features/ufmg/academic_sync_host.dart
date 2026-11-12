@@ -17,6 +17,8 @@ class AcademicSyncHostState extends State<AcademicSyncHost> {
   AcademicSyncController? _controller;
   Widget? _banner;
 
+  bool get hasBanner => _banner != null;
+
   void show(AcademicSyncController controller, Widget banner) {
     setState(() {
       _controller = controller;

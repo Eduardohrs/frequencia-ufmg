@@ -365,7 +365,10 @@ class _AttendancePageState extends State<AttendancePage> {
             label: 'para resolver',
           ),
           _OverviewValue(value: '$registeredCount', label: 'registradas'),
-          _OverviewValue(value: '$upcomingCount', label: 'próximas'),
+          _OverviewValue(
+            value: '$upcomingCount',
+            label: upcomingCount == 1 ? 'próxima' : 'próximas',
+          ),
         ],
       ),
     ),
@@ -771,7 +774,7 @@ String _attendanceLabel(SessionRecord session) {
   final status = session.attendanceStatus;
   if (status == null) return 'Sem registro';
   final absences = session.absences;
-  return '${_statusName(status)} • ${absences == null ? 'faltas pendentes' : '$absences faltas'}';
+  return '${_statusName(status)} • ${absences == null ? 'faltas pendentes' : '$absences ${absences == 1 ? 'falta' : 'faltas'}'}';
 }
 
 String _statusName(SituacaoFrequencia status) => switch (status) {

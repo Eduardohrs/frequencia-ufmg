@@ -338,7 +338,7 @@ void main() {
 
     expect(gateway.attendanceCalls.last.useDefaultAbsences, isFalse);
     expect(gateway.attendanceCalls.last.correctedAbsences, 1);
-    expect(find.text('Saiu mais cedo • 1 faltas'), findsOneWidget);
+    expect(find.text('Saiu mais cedo • 1 falta'), findsOneWidget);
   });
 
   testWidgets('queues attendance in Firestore when Android loses the backend', (

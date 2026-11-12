@@ -12,6 +12,7 @@ import '../../design/app_feedback.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import '../attendance/attendance_page.dart';
+import '../ufmg/academic_sync_host.dart';
 import 'course_date_range_picker.dart';
 import 'general_calendar_page.dart';
 import 'calendar_exceptions_page.dart';
@@ -319,7 +320,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
         );
         if (schedule != null) {
           _adopt(schedule);
-          _message('Período salvo e calendário atualizado.');
+          _messageUnlessBanner('Período salvo e calendário atualizado.');
         }
         return;
       }
@@ -333,7 +334,7 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
       await widget.courseRepository!.saveCourse(updated);
       await _applyPlan(plan);
       if (mounted) setState(() => _course = updated);
-      _message('Período salvo e calendário atualizado.');
+      _messageUnlessBanner('Período salvo e calendário atualizado.');
     } catch (_) {
       if (mounted) {
         _message('Não foi possível salvar o período e atualizar o calendário.');
@@ -481,6 +482,13 @@ class _CourseSchedulePageState extends State<CourseSchedulePage> {
     } finally {
       if (mounted) setState(() => _syncing = false);
     }
+  }
+
+  void _messageUnlessBanner(String message) {
+    // CW15: com banner persistente ativo, o toast sobreporia o banner.
+    final host = AcademicSyncHost.maybeOf(context);
+    if (host != null && host.hasBanner) return;
+    _message(message);
   }
 
   void _message(String message) {
