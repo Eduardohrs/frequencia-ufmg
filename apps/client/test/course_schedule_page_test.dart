@@ -3,7 +3,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:frequencia_ufmg/backend/academic_sync_progress.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
+import 'package:frequencia_ufmg/features/ufmg/academic_sync_controller.dart';
+import 'package:frequencia_ufmg/features/ufmg/academic_sync_host.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
@@ -1240,6 +1243,52 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'period toast is suppressed while the sync banner is visible (CW15)',
+    (tester) async {
+      final gateway = _FakeScheduleGateway(course: course);
+      final hostKey = GlobalKey<AcademicSyncHostState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AcademicSyncHost(
+            key: hostKey,
+            child: CourseSchedulePage(
+              course: course,
+              repository: _FakeMeetingRepository(),
+              sessionRepository: _FakeSessionRepository(),
+              logger: _RecordingAppLogger(),
+              scheduleGateway: gateway,
+              scheduleWritesEnabled: true,
+              now: () => DateTime.utc(2026, 8, 1, 12),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final controller = AcademicSyncController(
+        gateway: _NoopProgressGateway(),
+        logger: _RecordingAppLogger(),
+      );
+      hostKey.currentState!.show(controller, const Text('Sincronizando…'));
+      await tester.pumpAndSettle();
+      expect(hostKey.currentState!.hasBanner, isTrue);
+      expect(find.text('Sincronizando…'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('edit-course-period')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('date-2026-08-03')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('date-2026-08-10')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Salvar período'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.startsOn, DateTime.utc(2026, 8, 3));
+      expect(find.text('Período salvo e calendário atualizado.'), findsNothing);
+      expect(find.text('Sincronizando…'), findsOneWidget);
+    },
+  );
 }
 
 Future<void> _chooseScheduleAction(WidgetTester tester, String label) async {
@@ -1534,3 +1583,17 @@ PythonSchedule _pythonSchedule(
   ),
   isLocalCopy: isLocalCopy,
 );
+
+final class _NoopProgressGateway implements BackendAcademicSyncProgressGateway {
+  @override
+  Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() =>
+      throw UnimplementedError();
+  @override
+  Future<PythonUnifiedAcademicSyncResult> syncWithProgress(
+    String operationId, {
+    bool force = false,
+  }) => throw UnimplementedError();
+  @override
+  Stream<AcademicSyncProgress> watchSyncProgress(String operationId) =>
+      const Stream.empty();
+}

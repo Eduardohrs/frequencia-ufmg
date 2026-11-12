@@ -236,12 +236,26 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Plano'));
       await tester.pumpAndSettle();
-      expect(find.text('Pausar busca do plano'), findsOneWidget);
+      expect(find.byKey(const Key('workspace-plan-menu')), findsOneWidget);
+      Future<void> openSyncDialog() async {
+        await tester.tap(find.byKey(const Key('workspace-plan-menu')));
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const Key('workspace-plan-toggle-sync-pause')),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await openSyncDialog();
       await tester.tap(find.byKey(const Key('course-plan-sync-paused')));
       await tester.pumpAndSettle();
       expect(gateway.paused, isTrue);
+      await openSyncDialog();
       expect(find.text('Busca pausada por você.'), findsOneWidget);
+      await tester.tap(find.text('Fechar'));
+      await tester.pumpAndSettle();
       gateway.failWrite = true;
+      await openSyncDialog();
       await tester.tap(find.byKey(const Key('course-plan-sync-paused')));
       await tester.pumpAndSettle();
       expect(
@@ -470,6 +484,9 @@ void main() {
       expect(gateway.dates.last.id, startsWith('manual-'));
       await tester.tap(find.text('Prova importada'));
       await tester.pumpAndSettle();
+      expect(find.byKey(const Key('workspace-date-edit')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('workspace-date-edit')));
+      await tester.pumpAndSettle();
       expect(
         find.text('Sua correção será preservada nas próximas sincronizações.'),
         findsOneWidget,
@@ -481,12 +498,16 @@ void main() {
       await tester.tap(find.text('Salvar'));
       await tester.pumpAndSettle();
       expect(gateway.dates.first.title, 'Correção pessoal');
-      await tester.tap(find.byTooltip('Excluir prazo'));
+      await tester.tap(find.text('Prazo pessoal'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Excluir prazo'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Cancelar'));
       await tester.pumpAndSettle();
       expect(find.text('Prazo pessoal'), findsOneWidget);
-      await tester.tap(find.byTooltip('Excluir prazo'));
+      await tester.tap(find.text('Prazo pessoal'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Excluir prazo'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Excluir'));
       await tester.pumpAndSettle();
@@ -534,6 +555,8 @@ void main() {
       await tester.pumpAndSettle();
       gateway.saveError = StateError('denied');
       await tester.tap(find.text('Prova importada'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('workspace-date-edit')));
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const Key('workspace-date-title')),
@@ -688,6 +711,115 @@ void main() {
       expect(find.text('Não informados no plano.'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'focusActivityTitle opens the matching activity detail directly (CW03)',
+    (tester) async {
+      final gateway = _Gateway();
+      await tester.pumpWidget(_app(gateway, _Logs(), focus: 'Protótipo'));
+      await tester.pumpAndSettle();
+      expect(find.text('Enunciado completo'), findsOneWidget);
+      expect(find.text('Nenhum envio feito'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'deadlines list upcoming first, collapses history and shows linked submission state (CW05)',
+    (tester) async {
+      final gateway = _Gateway();
+      gateway.dates
+        ..clear()
+        ..addAll([
+          PythonMoodleDate(
+            id: 'old-1',
+            courseId: 'poo',
+            courseCode: 'ELE631',
+            title: 'Prova antiga',
+            dueAt: now.subtract(const Duration(days: 3)),
+            kind: 'exam',
+          ),
+          PythonMoodleDate(
+            id: 'moodle-1',
+            courseId: 'poo',
+            courseCode: 'ELE631',
+            title: 'Protótipo',
+            dueAt: now.add(const Duration(days: 2)),
+            kind: 'assignment',
+          ),
+          PythonMoodleDate(
+            id: 'moodle-2',
+            courseId: 'poo',
+            courseCode: 'ELE631',
+            title: 'Trabalho final',
+            dueAt: now.add(const Duration(days: 9)),
+            kind: 'assignment',
+          ),
+        ]);
+      await tester.pumpWidget(_app(gateway, _Logs()));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Prazos'));
+      await tester.pumpAndSettle();
+      expect(find.text('Histórico (1)'), findsOneWidget);
+      expect(find.text('Prova antiga'), findsNothing);
+      expect(find.text('Trabalho final'), findsOneWidget);
+      expect(find.textContaining('Envio: Nenhum envio feito'), findsOneWidget);
+      await tester.tap(find.text('Histórico (1)'));
+      await tester.pumpAndSettle();
+      expect(find.text('Prova antiga'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'plan hides empty sections and keeps sync pause in the secondary menu (CW06)',
+    (tester) async {
+      final gateway = _PolicyGateway()
+        ..plan = {
+          'criteria': [
+            {'description': 'Soma das notas', 'value': '100'},
+          ],
+          'schedule': [],
+          'assessments': [],
+        };
+      await tester.pumpWidget(_app(gateway, _Logs()));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Plano'));
+      await tester.pumpAndSettle();
+      expect(find.text('Soma das notas'), findsOneWidget);
+      expect(find.textContaining('Avaliações ('), findsNothing);
+      expect(find.textContaining('Cronograma ('), findsNothing);
+      expect(find.text('Pausar busca do plano'), findsNothing);
+      expect(find.byKey(const Key('workspace-plan-menu')), findsOneWidget);
+    },
+  );
+
+  testWidgets('deadline detail shows the linked submission state (CW04/CW05)', (
+    tester,
+  ) async {
+    final gateway = _Gateway();
+    gateway.dates
+      ..clear()
+      ..add(
+        PythonMoodleDate(
+          id: 'moodle-1',
+          courseId: 'poo',
+          courseCode: 'ELE631',
+          title: 'Protótipo',
+          dueAt: now.add(const Duration(days: 2)),
+          kind: 'assignment',
+        ),
+      );
+    await tester.pumpWidget(_app(gateway, _Logs()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Prazos'));
+    await tester.pumpAndSettle();
+    // subtitle do tile mostra o envio vinculado
+    expect(find.textContaining('Envio: Nenhum envio feito'), findsOneWidget);
+    await tester.tap(find.text('Protótipo'));
+    await tester.pumpAndSettle();
+    // detalhe repete o estado de envio
+    expect(find.text('Envio: Nenhum envio feito'), findsOneWidget);
+    expect(find.byKey(const Key('workspace-date-edit')), findsOneWidget);
+  });
 }
 
 Widget _app(
@@ -697,6 +829,7 @@ Widget _app(
   Future<bool> Function(Uri)? open,
   String? userId,
   CourseActivitySnapshotCache? cache,
+  String? focus,
 }) => MaterialApp(
   home: CourseWorkspacePage(
     course: course,
@@ -709,6 +842,7 @@ Widget _app(
     now: () => now,
     materialFileCache: files,
     userId: userId,
+    focusActivityTitle: focus,
     snapshotCache: cache,
     openExternalUri: open,
   ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
@@ -98,6 +99,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Como as aulas entram no cálculo'), findsOneWidget);
     expect(find.textContaining('presença garantida'), findsOneWidget);
+    expect(
+      find.textContaining('continua aparecendo na agenda'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('agenda operacional'), findsNothing);
     await tester.tap(find.text('Entendi'));
     await tester.pumpAndSettle();
     expect(find.text('Como as aulas entram no cálculo'), findsNothing);
@@ -513,6 +519,205 @@ void main() {
       await tester.pumpAndSettle();
       expect(repository.sessions.single.id, startsWith('makeup-'));
       expect(repository.sessions.single.lessonCount, QuantidadeAulas.four);
+    },
+  );
+
+  testWidgets('rejects makeup sessions overlapping an active session', (
+    tester,
+  ) async {
+    final weekly = _session('weekly', DateTime.utc(2099, 1, 5, 11), now);
+    final cancelled = _session(
+      'cancelled',
+      DateTime.utc(2099, 1, 6, 11),
+      now,
+      status: SessionCalendarStatus.cancelled,
+    );
+    final repository = _FakeSessionRepository([weekly, cancelled]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CalendarExceptionsPage(
+          courseId: courseId,
+          repository: repository,
+          logger: _RecordingAppLogger(),
+          location: location,
+          now: () => now,
+          idGenerator: () => 'makeup-1',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('add-makeup-session')));
+    await tester.pumpAndSettle();
+    // 09:00 BRT (12:00Z) conflita com a aula das 08:00-09:40 BRT (11:00-12:40Z)
+    await tester.enterText(find.byKey(const Key('makeup-date')), '2099-01-05');
+    await tester.enterText(find.byKey(const Key('makeup-start')), '09:00');
+    await tester.tap(find.widgetWithText(FilledButton, 'Adicionar'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Conflita com programada de 05/01/2099 às 08:00.'),
+      findsOneWidget,
+    );
+    expect(repository.sessions.length, 2); // apenas as iniciais, nada salvo
+
+    // 10:00 BRT em outro dia nao conflita (a sessao cancelada nao bloqueia)
+    await tester.enterText(find.byKey(const Key('makeup-date')), '2099-01-06');
+    await tester.enterText(find.byKey(const Key('makeup-start')), '10:00');
+    await tester.tap(find.widgetWithText(FilledButton, 'Adicionar'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Conflita com'), findsNothing);
+    expect(repository.sessions.length, 3);
+    expect(repository.sessions.last.id, 'makeup-1');
+  });
+
+  testWidgets('makeup dialog fills date and time via pickers (CW22)', (
+    tester,
+  ) async {
+    final repository = _FakeSessionRepository([]);
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('pt', 'BR'),
+        supportedLocales: const [Locale('pt', 'BR')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        home: CalendarExceptionsPage(
+          courseId: courseId,
+          repository: repository,
+          logger: _RecordingAppLogger(),
+          location: location,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('add-makeup-session')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('makeup-date')), '2099-01-05');
+    await tester.enterText(find.byKey(const Key('makeup-start')), '08:00');
+
+    // date picker: abre em 2099-01 e escolhe o dia 20
+    await tester.tap(find.byKey(const Key('makeup-date-picker')));
+    await tester.pumpAndSettle();
+    expect(find.byType(DatePickerDialog), findsOneWidget);
+    await tester.tap(find.text('20').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const Key('makeup-date')))
+          .controller!
+          .text,
+      '2099-01-20',
+    );
+
+    // time picker: abre e confirma, preenchendo o campo formatado
+    await tester.tap(find.byKey(const Key('makeup-start-picker')));
+    await tester.pumpAndSettle();
+    expect(find.byType(TimePickerDialog), findsOneWidget);
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const Key('makeup-start')))
+          .controller!
+          .text,
+      '08:00',
+    );
+  });
+
+  testWidgets(
+    'jump-to-next-session scrolls the list to the upcoming class (CW21)',
+    (tester) async {
+      final currentNow = DateTime.utc(2026, 8, 20, 12); // 20/08 09:00 BRT
+      final sessions = [
+        for (var day = 1; day <= 30; day++)
+          _session('s$day', DateTime.utc(2026, 8, day, 11), currentNow),
+      ];
+      final repository = _FakeSessionRepository(sessions);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CalendarExceptionsPage(
+            courseId: courseId,
+            repository: repository,
+            logger: _RecordingAppLogger(),
+            location: location,
+            now: () => currentNow,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // proxima aula: 21/08 (a de 20/08 11:00Z ja passou); ListView lazy -> ainda nao buildada
+      final target = find.text('21/08/2026 • 08:00');
+      expect(target, findsNothing);
+
+      await tester.tap(find.byKey(const Key('jump-to-next-session')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+
+      expect(target, findsOneWidget);
+      final top = tester.getTopLeft(target).dy;
+      expect(top, greaterThanOrEqualTo(0));
+      expect(top, lessThan(600));
+    },
+  );
+
+  testWidgets('assessment editor shows course and date context (CW14)', (
+    tester,
+  ) async {
+    final repository = _FakeSessionRepository([
+      _session('first', DateTime.utc(2026, 8, 3, 11), now),
+    ]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CalendarExceptionsPage(
+          courseId: courseId,
+          courseName: 'POO',
+          repository: repository,
+          logger: _RecordingAppLogger(),
+          location: location,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Editar avaliação de 03/08/2026'));
+    await tester.pumpAndSettle();
+    expect(find.text('POO • 03/08/2026 • 08:00'), findsOneWidget);
+  });
+
+  testWidgets(
+    'jump-to-next-session falls back to the last class when all are past (CW21)',
+    (tester) async {
+      final currentNow = DateTime.utc(2026, 8, 20, 12);
+      final sessions = [
+        for (var day = 1; day <= 3; day++)
+          _session('s$day', DateTime.utc(2026, 8, day, 11), currentNow),
+      ];
+      final repository = _FakeSessionRepository(sessions);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CalendarExceptionsPage(
+            courseId: courseId,
+            repository: repository,
+            logger: _RecordingAppLogger(),
+            location: location,
+            now: () => currentNow,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final target = find.text('03/08/2026 • 08:00');
+      await tester.tap(find.byKey(const Key('jump-to-next-session')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(target, findsOneWidget);
+      final top = tester.getTopLeft(target).dy;
+      expect(top, greaterThanOrEqualTo(0));
+      expect(top, lessThan(600));
     },
   );
 }

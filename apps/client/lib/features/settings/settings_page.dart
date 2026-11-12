@@ -77,6 +77,17 @@ class _AttendanceSetup extends StatefulWidget {
 class _AttendanceSetupState extends State<_AttendanceSetup> {
   String? _error, _hint;
   AttendanceSetupNeed? _hintNeed;
+  String _continueLabel(AttendanceSetupNeed? need) => switch (need) {
+    AttendanceSetupNeed.precise ||
+    AttendanceSetupNeed.background => 'Abrir configurações do app',
+    AttendanceSetupNeed.location => 'Permitir localização',
+    AttendanceSetupNeed.locationServices => 'Ligar localização',
+    AttendanceSetupNeed.alarms => 'Permitir alarmes',
+    AttendanceSetupNeed.battery => 'Abrir configurações de bateria',
+    AttendanceSetupNeed.notifications => 'Permitir notificações',
+    null => 'Continuar',
+  };
+
   Future<void> _resolve() async {
     final previous = widget.controller.next;
     _hintNeed = previous;
@@ -148,8 +159,13 @@ class _AttendanceSetupState extends State<_AttendanceSetup> {
                 )
               else if (c.next != null)
                 FilledButton(
+                  key: const Key('attendance-setup-continue'),
                   onPressed: c.acting ? null : _resolve,
-                  child: Text(c.acting ? 'Aguardando…' : 'Continuar'),
+                  // CW24: contextualiza o destino antes de abrir as
+                  // configuracoes do app no Android.
+                  child: Text(
+                    c.acting ? 'Aguardando…' : _continueLabel(c.next),
+                  ),
                 )
               else
                 FilledButton(

@@ -386,7 +386,12 @@ class _CourseHubPageState extends State<CourseHubPage> {
           onOpenCourse: widget.onOpenCourse,
           onOpenActivities: _workspaceGateway == null
               ? null
-              : (_) => _openWorkspace(_workspaceGateway!, fromCalendar: true),
+              : (_, {String? activityTitle}) => _openWorkspace(
+                  _workspaceGateway!,
+                  fromCalendar: true,
+                  activityTitle: activityTitle,
+                ),
+          onChangeSessionStatus: _changeSessionStatus,
           initialDate: event?.startsAt,
           logger: widget.logger,
           overviewUpdates: _localSessionsRefreshed
@@ -449,9 +454,38 @@ class _CourseHubPageState extends State<CourseHubPage> {
     return null;
   }
 
+  Future<void> _changeSessionStatus(
+    String courseId,
+    String sessionId,
+    SessionCalendarStatus status,
+  ) async {
+    final sessions = await widget.sessionRepository.listSessions(courseId);
+    final current = sessions.firstWhere((s) => s.id == sessionId);
+    await widget.sessionRepository.saveSession(
+      courseId,
+      SessionRecord(
+        id: current.id,
+        startsAt: current.startsAt,
+        endsAt: current.endsAt,
+        lessonCount: current.lessonCount,
+        callCount: current.callCount,
+        firstPing: current.firstPing,
+        secondPing: current.secondPing,
+        attendanceStatus: current.attendanceStatus,
+        absences: current.absences,
+        calendarStatus: status,
+        assessmentTitle: current.assessmentTitle,
+        createdAt: current.createdAt,
+        updatedAt: widget.now().toUtc(),
+      ),
+    );
+    if (mounted) await _load(refresh: true);
+  }
+
   Future<void> _openWorkspace(
     BackendAcademicWorkspaceGateway gateway, {
     bool fromCalendar = false,
+    String? activityTitle,
   }) async {
     _logNavigation('activities_and_plan');
     await Navigator.of(context).push<void>(
@@ -462,6 +496,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
           logger: widget.logger,
           now: widget.now,
           userId: widget.userId,
+          focusActivityTitle: activityTitle,
           onOpenCalendar: fromCalendar
               ? () async => Navigator.of(context).pop()
               : null,

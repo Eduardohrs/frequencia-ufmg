@@ -365,7 +365,10 @@ class _AttendancePageState extends State<AttendancePage> {
             label: 'para resolver',
           ),
           _OverviewValue(value: '$registeredCount', label: 'registradas'),
-          _OverviewValue(value: '$upcomingCount', label: 'próximas'),
+          _OverviewValue(
+            value: '$upcomingCount',
+            label: upcomingCount == 1 ? 'próxima' : 'próximas',
+          ),
         ],
       ),
     ),
@@ -442,8 +445,10 @@ class _AttendancePageState extends State<AttendancePage> {
     return Card(
       key: Key('attendance-session-${session.id}'),
       elevation: 0,
-      color: selected
+      color: selected && overdue
           ? colorScheme.tertiaryContainer
+          : selected
+          ? colorScheme.secondaryContainer
           : overdue
           ? colorScheme.errorContainer
           : null,
@@ -455,7 +460,11 @@ class _AttendancePageState extends State<AttendancePage> {
           children: [
             Text(_dateTime(local)),
             if (overdue) const _StatusBadge('Falta informar'),
-            if (selected) const _StatusBadge('Selecionada pelo alerta'),
+            // CW16: apos resolver a pendencia, o destaque continua
+            // contextual, sem rotulo de pendencia ativa.
+            if (selected && overdue)
+              const _StatusBadge('Selecionada pelo alerta'),
+            if (selected && !overdue) const _StatusBadge('Aberta pelo alerta'),
           ],
         ),
         subtitle: Column(
@@ -771,7 +780,7 @@ String _attendanceLabel(SessionRecord session) {
   final status = session.attendanceStatus;
   if (status == null) return 'Sem registro';
   final absences = session.absences;
-  return '${_statusName(status)} • ${absences == null ? 'faltas pendentes' : '$absences faltas'}';
+  return '${_statusName(status)} • ${absences == null ? 'faltas pendentes' : '$absences ${absences == 1 ? 'falta' : 'faltas'}'}';
 }
 
 String _statusName(SituacaoFrequencia status) => switch (status) {

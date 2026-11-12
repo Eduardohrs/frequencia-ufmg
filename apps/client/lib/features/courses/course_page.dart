@@ -126,6 +126,8 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   bool _deliveryActive = true;
   bool _checkpointSchedulingAllowed = true;
   AutomaticCheckpointScheduler? _automaticCheckpoints;
+  Timer? _dayWatchTimer;
+  DateTime? _lastLocalDay;
 
   void _reconcileCheckpoints(
     AcademicOverviewSnapshot snapshot,
@@ -199,10 +201,28 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     unawaited(_load());
   }
 
+  DateTime _localDay(DateTime value) {
+    final local = tz.TZDateTime.from(
+      value,
+      tz.getLocation('America/Sao_Paulo'),
+    );
+    return DateTime(local.year, local.month, local.day);
+  }
+
+  void _watchDay() {
+    if (!mounted) return;
+    final day = _localDay(widget.now());
+    if (_lastLocalDay != null && day != _lastLocalDay) {
+      _lastLocalDay = day;
+      unawaited(_load());
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _deliveryActive = state == AppLifecycleState.resumed;
     if (_deliveryActive) {
+      _watchDay();
       unawaited(_automaticAttendance?.refresh(afterCurrent: true));
     }
     if (_deliveryActive && _usingOverviewSnapshot) {
@@ -337,6 +357,11 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       );
     }
     WidgetsBinding.instance.addObserver(this);
+    _lastLocalDay = _localDay(widget.now());
+    _dayWatchTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _watchDay(),
+    );
     _deliveryActive =
         (WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed) ==
         AppLifecycleState.resumed;
@@ -405,6 +430,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   @override
   void dispose() {
     _checkpointSchedulingAllowed = false;
+    _dayWatchTimer?.cancel();
     _navigation?.unbind(this);
     _automaticAttendance?.removeListener(_onAutomaticConfiguration);
     if (!identical(_automaticAttendance, widget.attendanceExperience)) {
@@ -476,6 +502,15 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         (courseId, _) => courses.every((course) => course.id != courseId),
       );
       if (!mounted) return;
+      // CW09: disciplina criada em estado otimista continua visivel nos
+      // recortes ate o servidor confirmar; _persistCreatedCourse faz o
+      // rollback se a gravacao falhar.
+      for (final item in _courses) {
+        if (_savingIds.contains(item.id) &&
+            courses.every((course) => course.id != item.id)) {
+          courses.add(item);
+        }
+      }
       courses.sort(compareCourseNames);
       setState(() {
         _courses = courses;
@@ -1075,7 +1110,38 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     if (mounted) await _load();
   }
 
-  Future<void> _openCourseActivities(CourseRecord course) async {
+  Future<void> _changeSessionStatus(
+    String courseId,
+    String sessionId,
+    SessionCalendarStatus status,
+  ) async {
+    final current = (_sessionsByCourse[courseId] ?? const <SessionRecord>[])
+        .firstWhere((s) => s.id == sessionId);
+    await widget.sessionRepository.saveSession(
+      courseId,
+      SessionRecord(
+        id: current.id,
+        startsAt: current.startsAt,
+        endsAt: current.endsAt,
+        lessonCount: current.lessonCount,
+        callCount: current.callCount,
+        firstPing: current.firstPing,
+        secondPing: current.secondPing,
+        attendanceStatus: current.attendanceStatus,
+        absences: current.absences,
+        calendarStatus: status,
+        assessmentTitle: current.assessmentTitle,
+        createdAt: current.createdAt,
+        updatedAt: widget.now().toUtc(),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
+  Future<void> _openCourseActivities(
+    CourseRecord course, {
+    String? activityTitle,
+  }) async {
     final gateway =
         widget.ufmgSessionGateway! as BackendAcademicWorkspaceGateway;
     await Navigator.of(context).push<void>(
@@ -1087,6 +1153,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
           logger: widget.logger,
           now: widget.now,
           userId: widget.user.id,
+          focusActivityTitle: activityTitle,
           onOpenCalendar: () async => Navigator.of(context).pop(),
           onConnect: _openUFMGConnection,
         ),
@@ -1106,6 +1173,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
               widget.ufmgSessionGateway is BackendAcademicWorkspaceGateway
               ? _openCourseActivities
               : null,
+          onChangeSessionStatus: _changeSessionStatus,
           logger: widget.logger,
           onOpenCourse: _openCourseHub,
           courses: _courses,
@@ -1132,6 +1200,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
               widget.ufmgSessionGateway is BackendAcademicWorkspaceGateway
               ? _openCourseActivities
               : null,
+          onChangeSessionStatus: _changeSessionStatus,
           navigationState: _calendarNavigation,
           logger: widget.logger,
           onOpenCourse: _openCourseHub,
