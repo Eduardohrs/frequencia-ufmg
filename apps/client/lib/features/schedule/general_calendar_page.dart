@@ -1083,6 +1083,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
     Navigator.pop(context);
     try {
       await change(entry.course.id, session.id, status);
+      if (mounted) unawaited(_load());
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Status da aula atualizado.')),

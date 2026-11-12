@@ -425,6 +425,172 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'lesson detail offers no-call and restore actions and reports change failures (CW13)',
+    (tester) async {
+      final repository = _Repository({
+        'poo': [
+          _session('a', DateTime.utc(2026, 9, 16, 11)),
+          _session('late', DateTime.utc(2026, 9, 17, 13)),
+        ],
+      })..persistSaves = true;
+      final statuses = <SessionCalendarStatus>[];
+      Future<void> openFirstEntry(String subtitle) async {
+        await calendarDisplay(tester, 'Lista');
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(subtitle));
+        await tester.pumpAndSettle();
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GeneralCalendarPage(
+            navigationState: CalendarNavigationState()
+              ..range = CalendarRange.month,
+            courses: courses,
+            repository: repository,
+            location: location,
+            now: () => now,
+            onChangeSessionStatus: (courseId, sessionId, status) async {
+              statuses.add(status);
+              final current = repository.sessions['poo']!.firstWhere(
+                (s) => s.id == sessionId,
+              );
+              await repository.saveSession(
+                courseId,
+                SessionRecord(
+                  id: current.id,
+                  startsAt: current.startsAt,
+                  endsAt: current.endsAt,
+                  lessonCount: current.lessonCount,
+                  callCount: current.callCount,
+                  attendanceStatus: current.attendanceStatus,
+                  absences: current.absences,
+                  calendarStatus: status,
+                  assessmentTitle: current.assessmentTitle,
+                  createdAt: current.createdAt,
+                  updatedAt: current.updatedAt,
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await openFirstEntry('08:00 – 09:40 • Programada');
+      await tester.tap(find.byKey(const Key('calendar-entry-mark-no-call')));
+      await tester.pumpAndSettle();
+      expect(statuses, [SessionCalendarStatus.noCall]);
+      expect(find.text('Status da aula atualizado.'), findsOneWidget);
+
+      // reabrindo, a aula sem chamada oferece restaurar
+      await openFirstEntry('08:00 – 09:40 • Aula sem chamada');
+      expect(find.byKey(const Key('calendar-entry-restore')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('calendar-entry-restore')));
+      await tester.pumpAndSettle();
+      expect(statuses, [
+        SessionCalendarStatus.noCall,
+        SessionCalendarStatus.scheduled,
+      ]);
+
+    },
+  );
+
+  testWidgets(
+    'lesson status change failure shows an actionable message (CW13)',
+    (tester) async {
+      final repository = _Repository({
+        'poo': [_session('a', DateTime.utc(2026, 9, 16, 11))],
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GeneralCalendarPage(
+            navigationState: CalendarNavigationState()
+              ..range = CalendarRange.month,
+            courses: courses,
+            repository: repository,
+            location: location,
+            now: () => now,
+            logger: FirestoreAppLogger(
+              store: _CalendarLogStore(),
+              currentUserId: () => 'owner',
+              platform: 'web',
+            ),
+            onChangeSessionStatus: (courseId, sessionId, status) async {
+              throw StateError('write denied');
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await calendarDisplay(tester, 'Lista');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('08:00 – 09:40 • Programada'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('calendar-entry-mark-cancelled')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Não foi possível atualizar o status da aula.'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('lesson detail renders the remaining attendance labels (CW07)', (
+    tester,
+  ) async {
+    SessionRecord withStatus(String id, int hour, SituacaoFrequencia status) =>
+        SessionRecord(
+          id: id,
+          startsAt: DateTime.utc(2026, 9, 16, hour),
+          endsAt:
+              DateTime.utc(2026, 9, 16, hour).add(const Duration(minutes: 100)),
+          lessonCount: QuantidadeAulas.two,
+          callCount: NumeroChamadas.one,
+          attendanceStatus: status,
+          absences: 1,
+          calendarStatus: SessionCalendarStatus.scheduled,
+          createdAt: DateTime.utc(2026, 9, 16, hour),
+          updatedAt: DateTime.utc(2026, 9, 16, hour),
+        );
+    final repository = _Repository({
+      'poo': [
+        withStatus('late', 11, SituacaoFrequencia.arrivedLate),
+        withStatus('early', 13, SituacaoFrequencia.leftEarly),
+        withStatus('pending', 15, SituacaoFrequencia.pending),
+        withStatus('present', 17, SituacaoFrequencia.present),
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GeneralCalendarPage(
+          navigationState: CalendarNavigationState()
+            ..range = CalendarRange.month,
+          courses: courses,
+          repository: repository,
+          location: location,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await calendarDisplay(tester, 'Lista');
+    await tester.pumpAndSettle();
+    final cases = [
+      ('08:00', 'Frequência: Chegou atrasado • 1 falta'),
+      ('10:00', 'Frequência: Saiu mais cedo • 1 falta'),
+      ('12:00', 'Frequência: A confirmar • 1 falta'),
+      ('14:00', 'Frequência: Presente • 1 falta'),
+    ];
+    for (final (time, expected) in cases) {
+      await tester.tap(find.textContaining(time).first);
+      await tester.pumpAndSettle();
+      expect(find.text(expected), findsOneWidget, reason: expected);
+      await tester.tap(find.text('Fechar'));
+      await tester.pumpAndSettle();
+    }
+  });
 }
 
 CourseRecord _course(String id, String code, DateTime now) => CourseRecord(
@@ -458,6 +624,7 @@ final class _Repository implements SessionRepository {
   _Repository(this.sessions);
   final Map<String, List<SessionRecord>> sessions;
   Object? error;
+  bool persistSaves = false;
   @override
   Future<void> deleteSession(String courseId, String sessionId) async {}
   @override
@@ -467,7 +634,12 @@ final class _Repository implements SessionRepository {
   }
 
   @override
-  Future<void> saveSession(String courseId, SessionRecord session) async {}
+  Future<void> saveSession(String courseId, SessionRecord session) async {
+    if (!persistSaves) return;
+    final list = sessions[courseId] ??= [];
+    list.removeWhere((item) => item.id == session.id);
+    list.add(session);
+  }
 }
 
 class _CalendarLogStore implements OperationalLogStore {

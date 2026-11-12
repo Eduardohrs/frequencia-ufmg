@@ -687,6 +687,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('POO • 03/08/2026 • 08:00'), findsOneWidget);
   });
+
+  testWidgets(
+    'jump-to-next-session falls back to the last class when all are past (CW21)',
+    (tester) async {
+      final currentNow = DateTime.utc(2026, 8, 20, 12);
+      final sessions = [
+        for (var day = 1; day <= 3; day++)
+          _session('s$day', DateTime.utc(2026, 8, day, 11), currentNow),
+      ];
+      final repository = _FakeSessionRepository(sessions);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CalendarExceptionsPage(
+            courseId: courseId,
+            repository: repository,
+            logger: _RecordingAppLogger(),
+            location: location,
+            now: () => currentNow,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final target = find.text('03/08/2026 • 08:00');
+      await tester.tap(find.byKey(const Key('jump-to-next-session')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(target, findsOneWidget);
+      final top = tester.getTopLeft(target).dy;
+      expect(top, greaterThanOrEqualTo(0));
+      expect(top, lessThan(600));
+    },
+  );
 }
 
 SessionRecord _session(

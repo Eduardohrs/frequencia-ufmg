@@ -791,6 +791,35 @@ void main() {
       expect(find.byKey(const Key('workspace-plan-menu')), findsOneWidget);
     },
   );
+
+  testWidgets('deadline detail shows the linked submission state (CW04/CW05)', (
+    tester,
+  ) async {
+    final gateway = _Gateway();
+    gateway.dates
+      ..clear()
+      ..add(
+        PythonMoodleDate(
+          id: 'moodle-1',
+          courseId: 'poo',
+          courseCode: 'ELE631',
+          title: 'Protótipo',
+          dueAt: now.add(const Duration(days: 2)),
+          kind: 'assignment',
+        ),
+      );
+    await tester.pumpWidget(_app(gateway, _Logs()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Prazos'));
+    await tester.pumpAndSettle();
+    // subtitle do tile mostra o envio vinculado
+    expect(find.textContaining('Envio: Nenhum envio feito'), findsOneWidget);
+    await tester.tap(find.text('Protótipo'));
+    await tester.pumpAndSettle();
+    // detalhe repete o estado de envio
+    expect(find.text('Envio: Nenhum envio feito'), findsOneWidget);
+    expect(find.byKey(const Key('workspace-date-edit')), findsOneWidget);
+  });
 }
 
 Widget _app(

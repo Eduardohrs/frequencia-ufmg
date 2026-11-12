@@ -1,6 +1,7 @@
 import 'fixtures/product_experience_fixture.dart' as experience;
 import 'package:frequencia_ufmg/features/navigation/product_navigation.dart';
 import 'helpers/calendar_controls.dart';
+import 'package:frequencia_ufmg/features/schedule/general_calendar_page.dart';
 import 'package:frequencia_ufmg/design/course_visuals.dart';
 import 'automatic_checkpoint_scheduler_test.dart' show Harness;
 import 'first_checkpoint_test.dart' as checkpoint_fixture;
@@ -4427,6 +4428,102 @@ void main() {
       expect(find.text('DCC203'), findsWidgets);
     },
   );
+
+  for (final fromHub in [false, true]) {
+    testWidgets(
+      'calendar entry status action saves through the repository (fromHub=$fromHub)',
+      (tester) async {
+        final course = CourseRecord(
+          id: 'course-1',
+          code: 'DCC203',
+          name: 'POO',
+          workload: 60,
+          term: '2026-2',
+          createdAt: now,
+          updatedAt: now,
+        );
+        final session = SessionRecord(
+          id: 'exam',
+          startsAt: now,
+          endsAt: now.add(const Duration(hours: 2)),
+          lessonCount: QuantidadeAulas.two,
+          callCount: NumeroChamadas.one,
+          assessmentTitle: 'Entrega específica',
+          createdAt: now,
+          updatedAt: now,
+        );
+        final sessionRepository = _FakeSessionRepository({
+          'course-1': [session],
+        });
+        await tester.pumpWidget(
+          _NavigationApp(
+            builder: (context, child) => AcademicSyncHost(child: child!),
+            home: CoursePage(
+              repository: _FakeCourseRepository(courses: [course]),
+              ufmgSessionGateway: _WorkspaceGateway(),
+              overviewReadsEnabled: true,
+              overviewRepository: _FakeOverviewRepository(
+                AcademicOverviewSnapshot(
+                  courses: [course],
+                  sessionsByCourse: {
+                    'course-1': [session],
+                  },
+                ),
+              ),
+              meetingRepository: _FakeMeetingRepository(),
+              sessionRepository: sessionRepository,
+              user: user,
+              logger: _RecordingAppLogger(),
+              onSignOut: () async {},
+              now: () => now,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        if (fromHub) {
+          await tester.tap(find.byKey(const Key('course-card-course-1')));
+          await tester.pumpAndSettle();
+          await tester.ensureVisible(
+            find.byKey(const Key('course-hub-open-calendar')),
+          );
+          await tester.tap(find.byKey(const Key('course-hub-open-calendar')));
+          await tester.pumpAndSettle();
+        } else {
+          await tester.tap(find.byKey(const Key('nav-general-calendar')));
+          await tester.pumpAndSettle();
+        }
+        if (find
+            .byType(SegmentedButton<CalendarDisplay>)
+            .evaluate()
+            .isNotEmpty) {
+          final listView = find.descendant(
+            of: find.byType(SegmentedButton<CalendarDisplay>),
+            matching: find.text('Lista'),
+          );
+          await tester.ensureVisible(listView);
+          await tester.tap(listView);
+          await tester.pumpAndSettle();
+        }
+        await tester.tap(find.textContaining('Avaliação: Entrega específica'));
+        await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.byKey(const Key('calendar-entry-mark-cancelled')),
+          60,
+          scrollable: find.byType(Scrollable).last,
+        );
+        await tester.tap(
+          find.byKey(const Key('calendar-entry-mark-cancelled')),
+        );
+        await tester.pumpAndSettle();
+        expect(sessionRepository.savedSessions, hasLength(1));
+        expect(
+          sessionRepository.savedSessions.single.calendarStatus,
+          SessionCalendarStatus.cancelled,
+        );
+        expect(find.text('Status da aula atualizado.'), findsOneWidget);
+      },
+    );
+  }
 }
 
 Widget _appWithGateway(
@@ -4651,6 +4748,7 @@ final class _FakeSessionRepository implements SessionRepository {
 
   final Map<String, List<SessionRecord>> sessions;
   final listedCourseIds = <String>[];
+  final savedSessions = <SessionRecord>[];
   Object? listError;
 
   @override
@@ -4665,7 +4763,12 @@ final class _FakeSessionRepository implements SessionRepository {
   }
 
   @override
-  Future<void> saveSession(String courseId, SessionRecord session) async {}
+  Future<void> saveSession(String courseId, SessionRecord session) async {
+    savedSessions.add(session);
+    final list = sessions[courseId] ??= [];
+    list.removeWhere((item) => item.id == session.id);
+    list.add(session);
+  }
 }
 
 final class _FakeOverviewRepository implements AcademicOverviewRepository {
