@@ -702,9 +702,7 @@ def _registration_drafts_list(context: Any, origin: str | None) -> Any:
     if rejected is not None:
         return rejected
     try:
-        documents = _draft_repository(context.req.headers).list_drafts(
-            user_id=cast(str, user_id)
-        )
+        documents = _draft_repository(context.req.headers).list_drafts(user_id=cast(str, user_id))
     except SecurityStoreUnavailable:
         return _draft_error(context, origin, "draft_store_unavailable", 503)
     except (StorageNotProvisioned, StorageUnavailable):
@@ -2631,33 +2629,39 @@ def _session_mutation_path(path: str) -> tuple[str, str, str] | None:
 
 
 def _is_public_api_path(path: str) -> bool:
-    return path in {
-        "/v1/identity",
-        "/v1/attendance/evaluate",
-        "/v1/courses",
-        "/v1/moodle/dates",
-        "/v1/moodle/materials",
-        "/v1/overview",
-        "/v1/ufmg/session",
-        "/v1/ufmg/import/courses",
-        "/v1/ufmg/import/schedules",
-        "/v1/ufmg/import/dates",
-        "/v1/ufmg/discover/content",
-        "/v1/ufmg/moodle/capabilities",
-        "/v1/ufmg/moodle/material-files",
-        "/v1/ufmg/moodle/diario-plan",
-        "/v1/ufmg/import/teaching-plan",
-        "/v1/ufmg/reconcile/teaching-plan",
-        "/v1/ufmg/sync/moodle",
-        "/v1/ufmg/sync/all",
-        "/v1/ufmg/sync/job",
-        "/v1/ufmg/sync",
-        "/v1/ufmg/sync/siga",
-        "/v1/calendar/official/preview",
-        "/v1/calendar/official/apply",
-        "/v1/schedule/pendencies",
-        "/v1/registration/drafts",
-    } or path.startswith("/v1/courses/")
+    return (
+        path
+        in {
+            "/v1/identity",
+            "/v1/attendance/evaluate",
+            "/v1/courses",
+            "/v1/moodle/dates",
+            "/v1/moodle/materials",
+            "/v1/overview",
+            "/v1/ufmg/session",
+            "/v1/ufmg/import/courses",
+            "/v1/ufmg/import/schedules",
+            "/v1/ufmg/import/dates",
+            "/v1/ufmg/discover/content",
+            "/v1/ufmg/moodle/capabilities",
+            "/v1/ufmg/moodle/material-files",
+            "/v1/ufmg/moodle/diario-plan",
+            "/v1/ufmg/import/teaching-plan",
+            "/v1/ufmg/reconcile/teaching-plan",
+            "/v1/ufmg/sync/moodle",
+            "/v1/ufmg/sync/all",
+            "/v1/ufmg/sync/job",
+            "/v1/ufmg/sync",
+            "/v1/ufmg/sync/siga",
+            "/v1/calendar/official/preview",
+            "/v1/calendar/official/apply",
+            "/v1/schedule/pendencies",
+            "/v1/registration/drafts",
+        }
+        or path.startswith("/v1/courses/")
+        or re.fullmatch(r"/v1/schedule/pendencies/[^/]+/decision", path) is not None
+        or re.fullmatch(r"/v1/registration/drafts/[^/]+", path) is not None
+    )
 
 
 def _firebase_identity(headers: dict[str, str]) -> str:

@@ -3025,6 +3025,34 @@ def test_preflight_allows_only_configured_exact_origin(
     assert result["headers"]["Vary"] == "Origin"
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/registration/drafts/6af5c0ac00061dbde0a0",
+        "/v1/schedule/pendencies/6af5c0ac00061dbde0a0/decision",
+    ],
+)
+def test_preflight_covers_parameterized_public_api_paths(
+    monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://frequencia-ufmg-eduardo.web.app")
+    context = FakeContext(
+        FakeRequest(
+            "OPTIONS",
+            path,
+            headers={"origin": "https://frequencia-ufmg-eduardo.web.app"},
+        )
+    )
+
+    result = function.main(context)
+
+    assert result["status"] == 204
+    assert result["headers"]["Access-Control-Allow-Methods"] == ("GET,POST,PUT,DELETE,OPTIONS")
+    assert result["headers"]["Access-Control-Allow-Origin"] == (
+        "https://frequencia-ufmg-eduardo.web.app"
+    )
+
+
 def test_request_id_is_echoed_and_correlates_the_request_log(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
