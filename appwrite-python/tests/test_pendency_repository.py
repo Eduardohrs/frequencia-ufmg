@@ -15,7 +15,6 @@ from appwrite.client import Client
 from appwrite.exception import AppwriteException
 
 from appwrite_storage import (
-    DATABASE_ID,
     LIST_PAGE_SIZE,
     PENDENCY_COLLECTION_ID,
     StorageNotProvisioned,
@@ -25,6 +24,10 @@ from course_service import InvalidCourse
 from pendency_repository import PendencyRepository
 
 TransportHandler = Callable[[str, str, dict[str, Any]], dict[str, Any]]
+
+
+# Explicit database id used by the fakes; the runtime never defaults one.
+TEST_DATABASE_ID = "test-database"
 
 
 class FakeTransport:
@@ -100,7 +103,7 @@ class DocumentServer:
     """In-memory document store served as canned ``client.call`` HTTP JSON."""
 
     def __init__(
-        self, database_id: str = DATABASE_ID, collection_id: str = PENDENCY_COLLECTION_ID
+        self, database_id: str = TEST_DATABASE_ID, collection_id: str = PENDENCY_COLLECTION_ID
     ) -> None:
         self.database_id = database_id
         self.collection_id = collection_id
@@ -199,7 +202,7 @@ def test_save_pendency_persists_owner_fields_payload_and_permissions(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, transport = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     payload = {"meetings": [{"id": "ufmg-1-480-2"}], "confirm_destructive": False}
 
     pendency_id = _save(repo, payload=payload)
@@ -225,7 +228,7 @@ def test_save_pendency_without_payload_omits_field(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     _save(repo)
     assert "payload" not in server.created[0]["data"]
 
@@ -234,7 +237,7 @@ def test_save_pendency_requires_user_id(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, _, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     with pytest.raises(ValueError):
         _save(repo, user_id="")
 
@@ -243,7 +246,7 @@ def test_save_pendency_validates_course_id(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, _, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     with pytest.raises(InvalidCourse):
         _save(repo, course_id="bad/id")
 
@@ -252,7 +255,7 @@ def test_save_pendency_classifies_backend_failures(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     server.fail_create = AppwriteException("down", code=500, type="general")
     with pytest.raises(StorageUnavailable):
         _save(repo)
@@ -265,7 +268,7 @@ def test_get_pendency_enforces_ownership_and_merges_sdk_document(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, _, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     pendency_id = _save(repo, user_id="user-1")
 
     fetched = repo.get_pendency(pendency_id, "user-1")
@@ -273,7 +276,7 @@ def test_get_pendency_enforces_ownership_and_merges_sdk_document(
     # metadata is preserved and the SDK-nested data is merged at the top level
     assert fetched["$id"] == pendency_id
     assert fetched["$collectionId"] == PENDENCY_COLLECTION_ID
-    assert fetched["$databaseId"] == DATABASE_ID
+    assert fetched["$databaseId"] == TEST_DATABASE_ID
     assert fetched["$permissions"] == [
         'read("user:user-1")',
         'write("user:user-1")',
@@ -290,7 +293,7 @@ def test_get_pendency_distinguishes_not_found_from_service_failure(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     pendency_id = _save(repo)
     server.fail_get = AppwriteException("missing", code=404, type="collection_not_found")
     with pytest.raises(StorageNotProvisioned):
@@ -304,7 +307,7 @@ def test_update_decision_only_for_owner(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     pendency_id = _save(repo, user_id="user-1")
 
     assert repo.update_decision(pendency_id, "user-2", "manter_atual") is False
@@ -319,7 +322,7 @@ def test_update_decision_maps_race_not_found_and_failures(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     pendency_id = _save(repo)
     server.fail_update = AppwriteException("gone", code=404, type="document_not_found")
     assert repo.update_decision(pendency_id, "user-1", "manter_atual") is False
@@ -336,7 +339,7 @@ def test_list_pendencies_filters_by_user_course_and_status(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     _save(repo, user_id="user-1", course_id="course-1", status="pending")
     _save(repo, user_id="user-1", course_id="course-2", status="resolved")
     _save(repo, user_id="user-2", course_id="course-1", status="pending")
@@ -364,7 +367,7 @@ def test_list_pendencies_requires_user_id(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, _, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     with pytest.raises(ValueError):
         repo.list_pendencies(user_id="")
 
@@ -373,7 +376,7 @@ def test_list_pendencies_paginates_until_short_page(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     for index in range(LIST_PAGE_SIZE + 50):
         _save(repo, course_id=f"course-{index}")
     result = repo.list_pendencies(user_id="user-1")
@@ -392,7 +395,7 @@ def test_list_pendencies_propagates_failures_instead_of_empty_list(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     _save(repo)
     server.fail_list = AppwriteException("down", code=500)
     with pytest.raises(StorageUnavailable):
@@ -406,7 +409,7 @@ def test_delete_pendency_only_for_owner(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     pendency_id = _save(repo, user_id="user-1")
 
     assert repo.delete_pendency(pendency_id, "user-2") is False
@@ -419,7 +422,7 @@ def test_delete_pendency_maps_race_not_found_and_failures(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = PendencyRepository(client)
+    repo = PendencyRepository(client, database_id=TEST_DATABASE_ID)
     pendency_id = _save(repo)
     server.fail_delete = AppwriteException("gone", code=404, type="document_not_found")
     assert repo.delete_pendency(pendency_id, "user-1") is False

@@ -1,14 +1,23 @@
-"""Idempotent Appwrite storage provisioner for the deploy pipeline.
+"""OPTIONAL one-time, operator-run Appwrite storage provisioner.
 
-Runs OUTSIDE the public function API (the /internal/storage/ensure route was
-removed) with an administrative API key from the APPWRITE_ADMIN_API_KEY
-secret — never with the runtime execution key, whose scopes stay limited to
-execute + data access. Creates/validates the ``frequencia_ufmg`` database and
-the ``schedule_pendencies`` / ``registration_drafts`` collections with every
-required attribute and index before new clients are published.
+NOT used by CI or by the production deploy (the deploy workflow never calls
+this script and never needs an administrative key): production already has
+the two collections in the existing database configured as
+``SECURITY_DATABASE_ID`` — see ``docs/appwrite-storage.md`` for the
+one-time provisioning evidence.
 
-Usage: python setup_storage.py   (env: APPWRITE_ENDPOINT,
-APPWRITE_PROJECT_ID, APPWRITE_ADMIN_API_KEY)
+Use it only to prepare ANOTHER environment, manually, with an
+administrative API key, against an EXPLICIT target database (there is no
+default target):
+
+    APPWRITE_ENDPOINT=... APPWRITE_PROJECT_ID=... APPWRITE_ADMIN_API_KEY=... \
+    APPWRITE_STORAGE_DATABASE_ID=<existing-database-id> \
+        python appwrite-python/setup_storage.py
+
+The key must carry schema-write scopes (see
+``storage_schema.PROVISIONING_KEY_SCOPES``). Creates/validates the
+``schedule_pendencies`` / ``registration_drafts`` collections from the
+versioned ``storage_schema.COLLECTION_SPECS``, idempotently.
 """
 
 import json
@@ -17,24 +26,24 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from appwrite.client import Client  # noqa: E402
 from appwrite.services.databases import Databases  # noqa: E402
 
-from appwrite_storage import (  # noqa: E402
+from appwrite_storage import StorageNotProvisioned, StorageUnavailable  # noqa: E402
+from storage_schema import (  # noqa: E402
     COLLECTION_SPECS,
     READY_POLL_INTERVAL_SECONDS,
     READY_TIMEOUT_SECONDS,
-    StorageNotProvisioned,
-    StorageUnavailable,
     ensure_appwrite_storage,
     validate_appwrite_storage,
 )
 
 
 def _ready_wait_options() -> dict[str, float]:
-    """Readiness polling budget, overridable via environment for deploys/tests."""
+    """Readiness polling budget, overridable via environment for tests."""
     timeout = float(os.environ.get("APPWRITE_STORAGE_READY_TIMEOUT_SECONDS", READY_TIMEOUT_SECONDS))
     poll = float(
         os.environ.get("APPWRITE_STORAGE_READY_POLL_INTERVAL_SECONDS", READY_POLL_INTERVAL_SECONDS)
@@ -44,26 +53,20 @@ def _ready_wait_options() -> dict[str, float]:
 
 def provision() -> dict[str, Any]:
     """Ensure and then validate the storage resources; raise on any failure."""
-    endpoint = (
-        os.environ.get("APPWRITE_ENDPOINT")
-        or os.environ.get("APPWRITE_FUNCTION_API_ENDPOINT")
-        or ""
-    )
-    project = (
-        os.environ.get("APPWRITE_PROJECT_ID")
-        or os.environ.get("APPWRITE_FUNCTION_PROJECT_ID")
-        or ""
-    )
-    key = os.environ.get("APPWRITE_ADMIN_API_KEY") or ""
-    if not endpoint or not project or not key:
+    endpoint = os.environ.get("APPWRITE_ENDPOINT", "")
+    project = os.environ.get("APPWRITE_PROJECT_ID", "")
+    key = os.environ.get("APPWRITE_ADMIN_API_KEY", "")
+    database_id = os.environ.get("APPWRITE_STORAGE_DATABASE_ID", "")
+    if not endpoint or not project or not key or not database_id:
         raise ValueError(
-            "APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID and APPWRITE_ADMIN_API_KEY are required"
+            "APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID, APPWRITE_ADMIN_API_KEY and "
+            "APPWRITE_STORAGE_DATABASE_ID (explicit target database) are required"
         )
     client = Client().set_endpoint(endpoint).set_project(project).set_key(key)
     databases = Databases(client)
     wait_options = _ready_wait_options()
-    summary = ensure_appwrite_storage(databases, **wait_options)
-    validate_appwrite_storage(databases, **wait_options)
+    summary = ensure_appwrite_storage(databases, database_id, **wait_options)
+    validate_appwrite_storage(databases, database_id, **wait_options)
     summary["validated"] = sorted(COLLECTION_SPECS)
     return summary
 

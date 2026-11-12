@@ -74,35 +74,37 @@ def test_every_flutter_action_step_pins_the_toolchain_validated_by_ci() -> None:
             assert "channel:" not in block, name
 
 
-def test_deploy_provisions_appwrite_storage_before_activating_the_new_backend() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "deploy-production.yml"
-    ).read_text(encoding="utf-8")
+def test_deploy_never_provisions_schema_and_ci_has_no_key_preflight() -> None:
+    workflows_dir = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+    deploy = (workflows_dir / "deploy-production.yml").read_text(encoding="utf-8")
+    ci = (workflows_dir / "ci.yml").read_text(encoding="utf-8")
 
-    provision_step = "Provision Appwrite storage before any function mutation (idempotent)"
-    assert provision_step in workflow
-    assert "python appwrite-python/setup_storage.py" in workflow
-    assert "APPWRITE_ADMIN_API_KEY: ${{ secrets.APPWRITE_ADMIN_API_KEY }}" in workflow
-    # Falls back to the existing deploy key when the dedicated admin secret is
-    # not configured; that key must then carry the schema-write scopes.
-    assert "APPWRITE_DEPLOY_KEY: ${{ secrets.APPWRITE_DEPLOY_KEY }}" in workflow
-    assert 'provision_key="$APPWRITE_DEPLOY_KEY"' in workflow
-    assert "tables.write" in workflow
-    assert "columns.write" in workflow
-    # Provisioning runs BEFORE any function mutation or deployment activation:
-    # if it fails, the job stops and the previous rollout stays live.
-    assert workflow.index(provision_step) < workflow.index(
-        "Configure Appwrite deployment identity"
-    )
-    assert workflow.index(provision_step) < workflow.index(
+    # Schema provisioning is one-time operator work, never part of CI/deploy:
+    # no admin key, no provision step, no setup_storage invocation anywhere.
+    assert "APPWRITE_ADMIN_API_KEY" not in deploy
+    assert "APPWRITE_ADMIN_API_KEY" not in ci
+    assert "setup_storage.py" not in deploy
+    assert "setup_storage.py" not in ci
+    assert "Provision Appwrite storage" not in deploy
+    assert "appwrite-key-preflight" not in ci
+    assert "preflight_key_scopes" not in ci
+    assert "workflow_dispatch" not in ci
+
+    # The existing deployment credential is still used for the function deploy.
+    assert "APPWRITE_DEPLOY_KEY: ${{ secrets.APPWRITE_DEPLOY_KEY }}" in deploy
+
+    # Deploy ordering without the provisioning step is unchanged: configure
+    # identity -> activate function deployment (with rollback) -> hosting.
+    assert deploy.index("Configure Appwrite deployment identity") < deploy.index(
         "Deploy Appwrite and roll back a failed activation"
     )
-    assert workflow.index("Deploy Appwrite and roll back a failed activation") < workflow.index(
+    assert deploy.index("Deploy Appwrite and roll back a failed activation") < deploy.index(
         "Publish Firebase Hosting after database rules"
     )
-    # The runtime function key keeps its existing scopes: storage creation is
-    # authorized by the admin key, not by widening required_scopes.
-    scopes_block = workflow.split("required_scopes=(")[1].split(")")[0]
+
+    # The runtime function key keeps its existing scopes: no schema-write
+    # scopes are required anywhere in the deploy.
+    scopes_block = deploy.split("required_scopes=(")[1].split(")")[0]
     for creation_scope in (
         "databases.write",
         "databases.read",
@@ -112,5 +114,9 @@ def test_deploy_provisions_appwrite_storage_before_activating_the_new_backend() 
         "attributes.read",
         "indexes.write",
         "indexes.read",
+        "tables.write",
+        "columns.write",
     ):
         assert creation_scope not in scopes_block
+    assert "rows.read" in scopes_block
+    assert "rows.write" in scopes_block

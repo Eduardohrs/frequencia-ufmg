@@ -1,5 +1,8 @@
 """Repositório de persistência para pendências de horário.
 
+O banco é o configurado em ``SECURITY_DATABASE_ID``, passado explicitamente
+pelo chamador (sem padrão): configuração ausente deve falhar alto.
+
 Cada documento guarda o ``user_id`` do proprietário: API keys do Server SDK
 ignoram as permissões de documento, então toda leitura/escrita valida o dono
 antes de agir e as listagens filtram por ``user_id`` com ``Query.equal``.
@@ -18,7 +21,6 @@ from appwrite.role import Role
 from appwrite.services.databases import Databases
 
 from appwrite_storage import (
-    DATABASE_ID,
     PENDENCY_COLLECTION_ID,
     StorageNotFound,
     classify_error,
@@ -34,7 +36,7 @@ class PendencyRepository:
     def __init__(
         self,
         client: Client,
-        database_id: str = DATABASE_ID,
+        database_id: str,
         collection_id: str = PENDENCY_COLLECTION_ID,
     ) -> None:
         """Inicializa o repositório de pendências."""

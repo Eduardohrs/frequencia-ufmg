@@ -10,10 +10,9 @@ import json
 import pytest
 from appwrite.client import Client
 from appwrite.exception import AppwriteException
-from test_pendency_repository import DocumentServer, FakeTransport, make_client
+from test_pendency_repository import TEST_DATABASE_ID, DocumentServer, FakeTransport, make_client
 
 from appwrite_storage import (
-    DATABASE_ID,
     DRAFT_COLLECTION_ID,
     StorageNotProvisioned,
     StorageUnavailable,
@@ -24,7 +23,7 @@ from draft_repository import DraftRepository
 
 @pytest.fixture()
 def harness(monkeypatch: pytest.MonkeyPatch) -> tuple[Client, DocumentServer, FakeTransport]:
-    server = DocumentServer(database_id=DATABASE_ID, collection_id=DRAFT_COLLECTION_ID)
+    server = DocumentServer(database_id=TEST_DATABASE_ID, collection_id=DRAFT_COLLECTION_ID)
     client, transport = make_client(monkeypatch, server)
     return client, server, transport
 
@@ -45,7 +44,7 @@ def test_save_and_get_draft_round_trips_owner_and_form_data(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = DraftRepository(client)
+    repo = DraftRepository(client, database_id=TEST_DATABASE_ID)
     form_data = {"code": "DCC205", "name": "Estruturas de Dados"}
 
     draft_id = repo.save_draft(
@@ -79,7 +78,7 @@ def test_save_draft_requires_user_id_and_validates_course(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = DraftRepository(client)
+    repo = DraftRepository(client, database_id=TEST_DATABASE_ID)
     with pytest.raises(ValueError):
         _save(repo, user_id="")
     with pytest.raises(InvalidCourse):
@@ -96,7 +95,7 @@ def test_get_draft_distinguishes_not_found_from_failures(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = DraftRepository(client)
+    repo = DraftRepository(client, database_id=TEST_DATABASE_ID)
     draft_id = _save(repo)
     server.fail_get = AppwriteException("missing", code=404, type="collection_not_found")
     with pytest.raises(StorageNotProvisioned):
@@ -110,7 +109,7 @@ def test_update_draft_only_for_owner(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = DraftRepository(client)
+    repo = DraftRepository(client, database_id=TEST_DATABASE_ID)
     draft_id = _save(repo, user_id="user-1")
 
     assert repo.update_draft(draft_id, "user-2", last_error="x") is False
@@ -131,7 +130,7 @@ def test_update_draft_maps_race_not_found_and_failures(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = DraftRepository(client)
+    repo = DraftRepository(client, database_id=TEST_DATABASE_ID)
     draft_id = _save(repo)
     server.fail_update = AppwriteException("gone", code=404, type="document_not_found")
     assert repo.update_draft(draft_id, "user-1", last_error="x") is False
@@ -144,7 +143,7 @@ def test_list_drafts_filters_by_user_course_session_and_decodes(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = DraftRepository(client)
+    repo = DraftRepository(client, database_id=TEST_DATABASE_ID)
     _save(repo, user_id="user-1", course_id="course-1", session_id="session-1")
     _save(repo, user_id="user-1", course_id="course-2", session_id="session-2")
     _save(repo, user_id="user-2", course_id="course-1", session_id="session-1")
@@ -168,7 +167,7 @@ def test_list_drafts_requires_user_id_and_propagates_failures(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = DraftRepository(client)
+    repo = DraftRepository(client, database_id=TEST_DATABASE_ID)
     with pytest.raises(ValueError):
         repo.list_drafts(user_id="")
     _save(repo)
@@ -184,7 +183,7 @@ def test_delete_draft_only_for_owner(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = DraftRepository(client)
+    repo = DraftRepository(client, database_id=TEST_DATABASE_ID)
     draft_id = _save(repo, user_id="user-1")
 
     assert repo.delete_draft(draft_id, "user-2") is False
@@ -201,7 +200,7 @@ def test_get_and_list_draft_without_form_data(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = DraftRepository(client)
+    repo = DraftRepository(client, database_id=TEST_DATABASE_ID)
     draft_id = _save(repo, form_data={"a": 1})
     server.documents[draft_id].pop("form_data")
     fetched = repo.get_draft(draft_id, "user-1")
@@ -216,7 +215,7 @@ def test_delete_draft_maps_race_not_found(
     harness: tuple[Client, DocumentServer, FakeTransport],
 ) -> None:
     client, server, _ = harness
-    repo = DraftRepository(client)
+    repo = DraftRepository(client, database_id=TEST_DATABASE_ID)
     draft_id = _save(repo)
     server.fail_delete = AppwriteException("gone", code=404, type="document_not_found")
     assert repo.delete_draft(draft_id, "user-1") is False

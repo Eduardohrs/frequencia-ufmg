@@ -4134,18 +4134,36 @@ def test_appwrite_client_builds_with_configuration(monkeypatch: pytest.MonkeyPat
         {
             "APPWRITE_FUNCTION_API_ENDPOINT": "https://cloud.appwrite.io/v1",
             "APPWRITE_FUNCTION_PROJECT_ID": "project",
+            "SECURITY_DATABASE_ID": "database",
         },
     )
     client = function._appwrite_client({"X-Appwrite-Key": "key"})
     assert client is not None
-    assert (
-        function._pendency_repository({"X-Appwrite-Key": "key"}).__class__.__name__
-        == "PendencyRepository"
+    pendency_repo = function._pendency_repository({"X-Appwrite-Key": "key"})
+    assert pendency_repo.__class__.__name__ == "PendencyRepository"
+    assert pendency_repo._database_id == "database"
+    draft_repo = function._draft_repository({"X-Appwrite-Key": "key"})
+    assert draft_repo.__class__.__name__ == "DraftRepository"
+    assert draft_repo._database_id == "database"
+
+
+def test_pendency_and_draft_repositories_fail_loudly_without_database_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The runtime never defaults to a database id: missing configuration must
+    # raise instead of silently selecting a nonexistent database.
+    monkeypatch.setattr(
+        function,
+        "environ",
+        {
+            "APPWRITE_FUNCTION_API_ENDPOINT": "https://cloud.appwrite.io/v1",
+            "APPWRITE_FUNCTION_PROJECT_ID": "project",
+        },
     )
-    assert (
-        function._draft_repository({"X-Appwrite-Key": "key"}).__class__.__name__
-        == "DraftRepository"
-    )
+    with pytest.raises(SecurityStoreUnavailable):
+        function._pendency_repository({"X-Appwrite-Key": "key"})
+    with pytest.raises(SecurityStoreUnavailable):
+        function._draft_repository({"X-Appwrite-Key": "key"})
 
 
 def test_registration_drafts_list_skips_non_dict_form_data(

@@ -452,12 +452,21 @@ def _appwrite_client(headers: dict[str, str]) -> Client:
     )
 
 
+def _appwrite_database_id() -> str:
+    """Banco existente (SECURITY_DATABASE_ID) que guarda segurança/sessões,
+    pendências de horário e rascunhos de cadastro."""
+    database = environ.get("SECURITY_DATABASE_ID", "")
+    if not database:
+        raise SecurityStoreUnavailable("appwrite database not configured")
+    return database
+
+
 def _pendency_repository(headers: dict[str, str]) -> PendencyRepository:
-    return PendencyRepository(_appwrite_client(headers))
+    return PendencyRepository(_appwrite_client(headers), database_id=_appwrite_database_id())
 
 
 def _draft_repository(headers: dict[str, str]) -> DraftRepository:
-    return DraftRepository(_appwrite_client(headers))
+    return DraftRepository(_appwrite_client(headers), database_id=_appwrite_database_id())
 
 
 def _public_pendency(document: Mapping[str, Any]) -> dict[str, Any]:
