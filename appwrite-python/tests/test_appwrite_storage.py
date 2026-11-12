@@ -664,7 +664,8 @@ def test_classify_error_explains_required_key_scopes_on_401_and_403() -> None:
         )
         assert isinstance(error, StorageUnavailable)
         assert str(code) in str(error)
-        assert "tablesdb.write" in str(error)
+        assert "tables.write" in str(error)
+        assert "columns.write" in str(error)
         assert "databases.write" in str(error)
 
 

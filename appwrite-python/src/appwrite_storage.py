@@ -29,9 +29,10 @@ MAX_LIST_PAGES = 1000
 READY_POLL_INTERVAL_SECONDS = 5.0
 READY_TIMEOUT_SECONDS = 300.0
 FAILED_RESOURCE_STATUSES = frozenset({"failed", "stuck"})
+# Scope names from the SDK's ProjectKeyScopes enum (appwrite 27.1.0).
 PROVISIONING_KEY_SCOPES = (
-    "tablesdb.write (or legacy databases.write, collections.write, "
-    "attributes.write, indexes.write)"
+    "tables.write + columns.write + indexes.write (+ reads), or legacy "
+    "databases.write + collections.write + attributes.write + indexes.write"
 )
 
 DOCUMENT_NOT_FOUND_TYPE = "document_not_found"

@@ -163,9 +163,10 @@ jobs:
           # key. Creating databases/collections/attributes/indexes is not a
           # runtime scope, so it is never added to required_scopes. Falls back
           # to APPWRITE_DEPLOY_KEY when the dedicated secret is not configured;
-          # that key must then carry schema-write scopes (tablesdb.write, or
-          # legacy databases.write/collections.write/attributes.write/
-          # indexes.write). A 401/403 here fails the job BEFORE the new
+          # that key must then carry schema-write scopes (tables.write +
+          # columns.write + indexes.write, or legacy databases.write +
+          # collections.write + attributes.write + indexes.write). A 401/403
+          # here fails the job BEFORE the new
           # function deployment is activated, so the previous rollout stays
           # live and no client is published against unprepared storage.
           APPWRITE_ADMIN_API_KEY: ${{ secrets.APPWRITE_ADMIN_API_KEY }}

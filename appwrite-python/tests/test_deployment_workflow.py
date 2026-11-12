@@ -87,7 +87,8 @@ def test_deploy_provisions_appwrite_storage_before_activating_the_new_backend() 
     # not configured; that key must then carry the schema-write scopes.
     assert "APPWRITE_DEPLOY_KEY: ${{ secrets.APPWRITE_DEPLOY_KEY }}" in workflow
     assert 'provision_key="$APPWRITE_DEPLOY_KEY"' in workflow
-    assert "tablesdb.write" in workflow
+    assert "tables.write" in workflow
+    assert "columns.write" in workflow
     # Provisioning runs BEFORE any function mutation or deployment activation:
     # if it fails, the job stops and the previous rollout stays live.
     assert workflow.index(provision_step) < workflow.index(
