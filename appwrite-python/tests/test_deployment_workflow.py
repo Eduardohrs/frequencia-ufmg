@@ -74,22 +74,29 @@ def test_every_flutter_action_step_pins_the_toolchain_validated_by_ci() -> None:
             assert "channel:" not in block, name
 
 
-def test_deploy_provisions_appwrite_storage_with_a_separate_admin_key() -> None:
+def test_deploy_provisions_appwrite_storage_before_activating_the_new_backend() -> None:
     workflow = (
         Path(__file__).resolve().parents[2] / ".github" / "workflows" / "deploy-production.yml"
     ).read_text(encoding="utf-8")
 
-    assert "Provision Appwrite storage (idempotent)" in workflow
+    provision_step = "Provision Appwrite storage before any function mutation (idempotent)"
+    assert provision_step in workflow
     assert "python appwrite-python/setup_storage.py" in workflow
     assert "APPWRITE_ADMIN_API_KEY: ${{ secrets.APPWRITE_ADMIN_API_KEY }}" in workflow
-    assert 'test -n "$APPWRITE_ADMIN_API_KEY"' in workflow
-    # Provisioning runs in the deploy pipeline with the administrative key,
-    # after the function deploy and before any client-facing publish; it is
-    # never exposed through the public API.
-    assert workflow.index("Deploy Appwrite and roll back a failed activation") < workflow.index(
-        "Provision Appwrite storage (idempotent)"
+    # Falls back to the existing deploy key when the dedicated admin secret is
+    # not configured; that key must then carry the schema-write scopes.
+    assert "APPWRITE_DEPLOY_KEY: ${{ secrets.APPWRITE_DEPLOY_KEY }}" in workflow
+    assert 'provision_key="$APPWRITE_DEPLOY_KEY"' in workflow
+    assert "tablesdb.write" in workflow
+    # Provisioning runs BEFORE any function mutation or deployment activation:
+    # if it fails, the job stops and the previous rollout stays live.
+    assert workflow.index(provision_step) < workflow.index(
+        "Configure Appwrite deployment identity"
     )
-    assert workflow.index("Provision Appwrite storage (idempotent)") < workflow.index(
+    assert workflow.index(provision_step) < workflow.index(
+        "Deploy Appwrite and roll back a failed activation"
+    )
+    assert workflow.index("Deploy Appwrite and roll back a failed activation") < workflow.index(
         "Publish Firebase Hosting after database rules"
     )
     # The runtime function key keeps its existing scopes: storage creation is

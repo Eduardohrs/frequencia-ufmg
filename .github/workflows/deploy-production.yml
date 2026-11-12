@@ -153,6 +153,35 @@ jobs:
             apps/client/build/web
             appwrite-python/appwrite-python.tar.gz
 
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.14"
+
+      - name: Provision Appwrite storage before any function mutation (idempotent)
+        env:
+          # Dedicated administrative key, separate from the function runtime
+          # key. Creating databases/collections/attributes/indexes is not a
+          # runtime scope, so it is never added to required_scopes. Falls back
+          # to APPWRITE_DEPLOY_KEY when the dedicated secret is not configured;
+          # that key must then carry schema-write scopes (tablesdb.write, or
+          # legacy databases.write/collections.write/attributes.write/
+          # indexes.write). A 401/403 here fails the job BEFORE the new
+          # function deployment is activated, so the previous rollout stays
+          # live and no client is published against unprepared storage.
+          APPWRITE_ADMIN_API_KEY: ${{ secrets.APPWRITE_ADMIN_API_KEY }}
+          APPWRITE_DEPLOY_KEY: ${{ secrets.APPWRITE_DEPLOY_KEY }}
+        run: |
+          if [[ -n "$APPWRITE_ADMIN_API_KEY" ]]; then
+            provision_key="$APPWRITE_ADMIN_API_KEY"
+          else
+            echo "APPWRITE_ADMIN_API_KEY not configured; using APPWRITE_DEPLOY_KEY for provisioning"
+            provision_key="$APPWRITE_DEPLOY_KEY"
+          fi
+          test -n "$provision_key"
+          export APPWRITE_ADMIN_API_KEY="$provision_key"
+          python -m pip install --requirement appwrite-python/requirements.txt
+          python appwrite-python/setup_storage.py
+
       - name: Configure Appwrite deployment identity
         env:
           APPWRITE_DEPLOY_KEY: ${{ secrets.APPWRITE_DEPLOY_KEY }}
@@ -285,21 +314,6 @@ jobs:
           fi
 
           echo "deployment=$deployment" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
-        with:
-          python-version: "3.14"
-
-      - name: Provision Appwrite storage (idempotent)
-        env:
-          # Dedicated administrative key, separate from the function runtime
-          # key. Creating databases/collections/attributes/indexes is not a
-          # runtime scope, so it must never be added to required_scopes.
-          APPWRITE_ADMIN_API_KEY: ${{ secrets.APPWRITE_ADMIN_API_KEY }}
-        run: |
-          test -n "$APPWRITE_ADMIN_API_KEY"
-          python -m pip install --requirement appwrite-python/requirements.txt
-          python appwrite-python/setup_storage.py
 
       - name: Authenticate to Google Cloud without a stored key
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3

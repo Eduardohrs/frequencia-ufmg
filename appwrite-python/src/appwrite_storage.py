@@ -10,7 +10,8 @@ the attributes and indexes the repositories require, idempotently, and
 ``validate_appwrite_storage`` fails loudly when they are missing.
 """
 
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
 from appwrite.enums.databases_index_type import DatabasesIndexType
@@ -24,6 +25,14 @@ DRAFT_COLLECTION_ID = "registration_drafts"
 
 LIST_PAGE_SIZE = 100
 MAX_LIST_PAGES = 1000
+
+READY_POLL_INTERVAL_SECONDS = 5.0
+READY_TIMEOUT_SECONDS = 300.0
+FAILED_RESOURCE_STATUSES = frozenset({"failed", "stuck"})
+PROVISIONING_KEY_SCOPES = (
+    "tablesdb.write (or legacy databases.write, collections.write, "
+    "attributes.write, indexes.write)"
+)
 
 DOCUMENT_NOT_FOUND_TYPE = "document_not_found"
 COLLECTION_NOT_FOUND_TYPE = "collection_not_found"
@@ -89,6 +98,12 @@ def classify_error(error: AppwriteException, *, operation: str, document_level: 
         if document_level and error_type in (None, DOCUMENT_NOT_FOUND_TYPE):
             return StorageNotFound(f"{operation}: document_not_found")
         return StorageNotProvisioned(f"{operation}: resource_not_found ({error_type})")
+    if code in (401, 403):
+        return StorageUnavailable(
+            f"{operation}: API key rejected (appwrite error {code} ({error_type})); "
+            f"provisioning needs a project key with schema-write scopes: "
+            f"{PROVISIONING_KEY_SCOPES}"
+        )
     return StorageUnavailable(f"{operation}: appwrite error {code} ({error_type})")
 
 
@@ -194,12 +209,28 @@ def ensure_appwrite_storage(
     databases: _Databases,
     database_id: str = DATABASE_ID,
     collections: Mapping[str, Mapping[str, Any]] = COLLECTION_SPECS,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    poll_interval_seconds: float = READY_POLL_INTERVAL_SECONDS,
+    timeout_seconds: float = READY_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    """Idempotently create the database, collections, attributes, and indexes."""
+    """Idempotently create the database, collections, attributes, and indexes.
+
+    Waits (bounded by ``timeout_seconds``) for attributes to reach ``available``
+    before creating indexes and for indexes to be ``available`` before returning.
+    """
     return {
         "database": _ensure_database(databases, database_id),
         "collections": {
-            collection_id: _ensure_collection(databases, database_id, collection_id, spec)
+            collection_id: _ensure_collection(
+                databases,
+                database_id,
+                collection_id,
+                spec,
+                sleep=sleep,
+                poll_interval_seconds=poll_interval_seconds,
+                timeout_seconds=timeout_seconds,
+            )
             for collection_id, spec in collections.items()
         },
     }
@@ -209,8 +240,17 @@ def validate_appwrite_storage(
     databases: _Databases,
     database_id: str = DATABASE_ID,
     collections: Mapping[str, Mapping[str, Any]] = COLLECTION_SPECS,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    poll_interval_seconds: float = READY_POLL_INTERVAL_SECONDS,
+    timeout_seconds: float = READY_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    """Fail loudly when the database, collections, attributes, or indexes are missing."""
+    """Fail loudly until the database, collections, attributes, and indexes are ready.
+
+    Attributes and indexes are provisioned asynchronously: existence of a key is
+    not enough, so each spec entry must reach status ``available`` (bounded wait)
+    before the storage is considered usable by a deployment.
+    """
     try:
         databases.get(database_id)
     except AppwriteException as error:
@@ -226,19 +266,30 @@ def validate_appwrite_storage(
             raise classify_error(
                 error, operation="get_collection", document_level=False
             ) from None
-        missing.extend(_missing_spec_entries(databases, database_id, collection_id, spec))
+        try:
+            wait_for_spec_ready(
+                databases,
+                database_id,
+                collection_id,
+                spec,
+                sleep=sleep,
+                poll_interval_seconds=poll_interval_seconds,
+                timeout_seconds=timeout_seconds,
+            )
+        except StorageNotProvisioned as error:
+            missing.append(f"{collection_id}: {error}")
     if missing:
         raise StorageNotProvisioned(f"missing storage spec: {', '.join(sorted(missing))}")
     return {"database": database_id, "collections": sorted(collections)}
 
 
-def _missing_spec_entries(
+def _spec_resource_status(
     databases: _Databases,
     database_id: str,
     collection_id: str,
     spec: Mapping[str, Any],
-) -> list[str]:
-    """Return the spec attributes/indexes absent from the live collection."""
+) -> dict[str, tuple[str, str]]:
+    """Map each spec entry to its live ``(status, error)``; missing entries are empty."""
     try:
         attributes = databases.list_attributes(database_id, collection_id)
     except AppwriteException as error:
@@ -247,21 +298,66 @@ def _missing_spec_entries(
         indexes = databases.list_indexes(database_id, collection_id)
     except AppwriteException as error:
         raise classify_error(error, operation="list_indexes", document_level=False) from None
-    existing_attributes = {
-        str(item.get("key")) for item in attributes.to_dict().get("attributes", [])
-    }
-    existing_indexes = {str(item.get("key")) for item in indexes.to_dict().get("indexes", [])}
-    missing = [
-        f"{collection_id}: attribute '{attribute['key']}'"
-        for attribute in spec["attributes"]
-        if str(attribute["key"]) not in existing_attributes
-    ]
-    missing.extend(
-        f"{collection_id}: index '{index['key']}'"
-        for index in spec["indexes"]
-        if str(index["key"]) not in existing_indexes
+    live: dict[str, tuple[str, str]] = {}
+    for item in _as_mapping(attributes).get("attributes", []):
+        live[f"attribute {item.get('key')}"] = (
+            str(item.get("status", "")),
+            str(item.get("error", "")),
+        )
+    for item in _as_mapping(indexes).get("indexes", []):
+        live[f"index {item.get('key')}"] = (
+            str(item.get("status", "")),
+            str(item.get("error", "")),
+        )
+    entries: dict[str, tuple[str, str]] = {}
+    for attribute in spec["attributes"]:
+        key = str(attribute["key"])
+        entries[f"attribute '{key}'"] = live.get(f"attribute {key}", ("", ""))
+    for index in spec["indexes"]:
+        key = str(index["key"])
+        entries[f"index '{key}'"] = live.get(f"index {key}", ("", ""))
+    return entries
+
+
+def _not_ready(entries: Mapping[str, tuple[str, str]]) -> list[str]:
+    """Describe spec entries that are not ``available``; raise on failed/stuck."""
+    not_ready: list[str] = []
+    for name, (status, error) in sorted(entries.items()):
+        detail = f" error={error}" if error else ""
+        if status in FAILED_RESOURCE_STATUSES:
+            raise StorageNotProvisioned(f"storage resource {name} status={status}{detail}")
+        if status != "available":
+            not_ready.append(f"{name} status={status or 'missing'}{detail}")
+    return not_ready
+
+
+def wait_for_spec_ready(
+    databases: _Databases,
+    database_id: str,
+    collection_id: str,
+    spec: Mapping[str, Any],
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    poll_interval_seconds: float = READY_POLL_INTERVAL_SECONDS,
+    timeout_seconds: float = READY_TIMEOUT_SECONDS,
+) -> None:
+    """Poll until every spec attribute/index exists with status ``available``.
+
+    Bounded by ``timeout_seconds``: on timeout raises ``StorageNotProvisioned``
+    listing each not-ready resource with its status/error. ``failed``/``stuck``
+    resources fail immediately.
+    """
+    max_attempts = max(1, round(timeout_seconds / poll_interval_seconds))
+    not_ready: list[str] = []
+    for attempt in range(max_attempts):
+        not_ready = _not_ready(_spec_resource_status(databases, database_id, collection_id, spec))
+        if not not_ready:
+            return
+        if attempt < max_attempts - 1:
+            sleep(poll_interval_seconds)
+    raise StorageNotProvisioned(
+        f"storage spec not ready within {timeout_seconds}s: {'; '.join(not_ready)}"
     )
-    return missing
 
 
 def _ensure_database(databases: _Databases, database_id: str) -> str:
@@ -285,7 +381,12 @@ def _ensure_collection(
     database_id: str,
     collection_id: str,
     spec: Mapping[str, Any],
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    poll_interval_seconds: float = READY_POLL_INTERVAL_SECONDS,
+    timeout_seconds: float = READY_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
+    status = "exists"
     try:
         databases.get_collection(database_id, collection_id)
     except AppwriteException as error:
@@ -301,15 +402,35 @@ def _ensure_collection(
                 attributes=list(spec["attributes"]),
                 indexes=list(spec["indexes"]),
             )
-            return {"status": "created"}
+            status = "created"
         except AppwriteException as create_error:
             if create_error.code != 409:
                 raise classify_error(
                     create_error, operation="create_collection", document_level=False
                 ) from None
     _ensure_attributes(databases, database_id, collection_id, spec)
+    # Attributes/indexes are provisioned asynchronously; indexes over attributes
+    # that are still "processing" fail, so wait for readiness before indexing.
+    wait_for_spec_ready(
+        databases,
+        database_id,
+        collection_id,
+        {"attributes": spec["attributes"], "indexes": []},
+        sleep=sleep,
+        poll_interval_seconds=poll_interval_seconds,
+        timeout_seconds=timeout_seconds,
+    )
     _ensure_indexes(databases, database_id, collection_id, spec)
-    return {"status": "exists"}
+    wait_for_spec_ready(
+        databases,
+        database_id,
+        collection_id,
+        spec,
+        sleep=sleep,
+        poll_interval_seconds=poll_interval_seconds,
+        timeout_seconds=timeout_seconds,
+    )
+    return {"status": status}
 
 
 def _ensure_attributes(

@@ -36,6 +36,7 @@ from appwrite_storage import (
     list_all_documents,
     normalize_document,
     validate_appwrite_storage,
+    wait_for_spec_ready,
 )
 
 STAMP = "2025-01-01T00:00:00.000+00:00"
@@ -61,15 +62,21 @@ def collection_json(collection_id: str, name: str) -> dict[str, Any]:
 
 
 def attribute_json(
-    key: str, type_: str, *, required: bool = True, size: float = 128.0
+    key: str,
+    type_: str,
+    *,
+    required: bool = True,
+    size: float = 128.0,
+    status: str = "available",
+    error: str = "",
 ) -> dict[str, Any]:
     attribute: dict[str, Any] = {
         "$id": key,
         "key": key,
         "description": "",
         "type": type_,
-        "status": "available",
-        "error": "",
+        "status": status,
+        "error": error,
         "required": required,
         "$createdAt": STAMP,
         "$updatedAt": STAMP,
@@ -81,7 +88,9 @@ def attribute_json(
     return attribute
 
 
-def index_json(key: str, attributes: list[str]) -> dict[str, Any]:
+def index_json(
+    key: str, attributes: list[str], *, status: str = "available", error: str = ""
+) -> dict[str, Any]:
     return {
         "$id": key,
         "$createdAt": STAMP,
@@ -89,8 +98,8 @@ def index_json(key: str, attributes: list[str]) -> dict[str, Any]:
         "key": key,
         "description": "",
         "type": "key",
-        "status": "available",
-        "error": "",
+        "status": status,
+        "error": error,
         "attributes": attributes,
         "lengths": [],
         "orders": [],
@@ -106,6 +115,12 @@ class StorageServer:
         self.collections: dict[str, dict[str, Any]] = {}
         self.attributes: dict[str, dict[str, str]] = {}
         self.indexes: dict[str, dict[str, list[str]]] = {}
+        self.attribute_meta: dict[tuple[str, str], tuple[str, str]] = {}
+        self.index_meta: dict[tuple[str, str], tuple[str, str]] = {}
+        self.on_list_attributes = None
+        self.on_list_indexes = None
+        self.new_attributes_processing = False
+        self.attribute_ready_at_index_create: list[bool] = []
         self.documents: dict[str, dict[str, dict[str, Any]]] = {}
         self.create_collection_calls: list[dict[str, Any]] = []
         self.full_pages_only = False
@@ -121,6 +136,16 @@ class StorageServer:
 
     def _fail(self, error: Exception | None) -> None:
         if error is not None:
+            raise error
+
+    def _fail_create(self, error: Exception | None, register) -> None:
+        """A 409 race means a concurrent provisioner created the resource first."""
+        if error is None:
+            register()
+        elif getattr(error, "code", None) == 409:
+            register()
+            raise error
+        else:
             raise error
 
     def add_collection(self, collection_id: str, spec: dict[str, Any] | None = None) -> None:
@@ -178,38 +203,75 @@ class StorageServer:
     ) -> dict[str, Any]:
         if resource == "attributes" and method == "get":
             self._fail(self.fail_list_attributes)
+            if self.on_list_attributes is not None:
+                self.on_list_attributes(collection_id)
             attributes = [
-                attribute_json(key, type_)
+                attribute_json(
+                    key,
+                    type_,
+                    status=self.attribute_meta.get((collection_id, key), ("available", ""))[0],
+                    error=self.attribute_meta.get((collection_id, key), ("available", ""))[1],
+                )
                 for key, type_ in self.attributes[collection_id].items()
             ]
             return {"total": len(attributes), "attributes": attributes}
         if resource == "attributes/string" and method == "post":
-            self._fail(self.fail_create_attribute)
             key = params["key"]
             if key in self.attributes[collection_id]:
+                self._fail(self.fail_create_attribute)
                 raise AppwriteException("exists", code=409, type="attribute_already_exists")
-            self.attributes[collection_id][key] = "string"
+
+            def register_string() -> None:
+                self.attributes[collection_id][key] = "string"
+                if self.new_attributes_processing:
+                    self.attribute_meta[(collection_id, key)] = ("processing", "still building")
+
+            self._fail_create(self.fail_create_attribute, register_string)
             return attribute_json(key, "string", required=params["required"], size=params["size"])
         if resource == "attributes/integer" and method == "post":
-            self._fail(self.fail_create_attribute)
             key = params["key"]
             if key in self.attributes[collection_id]:
+                self._fail(self.fail_create_attribute)
                 raise AppwriteException("exists", code=409, type="attribute_already_exists")
-            self.attributes[collection_id][key] = "integer"
+
+            def register_integer() -> None:
+                self.attributes[collection_id][key] = "integer"
+                if self.new_attributes_processing:
+                    self.attribute_meta[(collection_id, key)] = ("processing", "still building")
+
+            self._fail_create(self.fail_create_attribute, register_integer)
             return attribute_json(key, "integer", required=params["required"])
         if resource == "indexes" and method == "get":
             self._fail(self.fail_list_indexes)
+            if self.on_list_indexes is not None:
+                self.on_list_indexes(collection_id)
             indexes = [
-                index_json(key, attributes)
+                index_json(
+                    key,
+                    attributes,
+                    status=self.index_meta.get((collection_id, key), ("available", ""))[0],
+                    error=self.index_meta.get((collection_id, key), ("available", ""))[1],
+                )
                 for key, attributes in self.indexes[collection_id].items()
             ]
             return {"total": len(indexes), "indexes": indexes}
         if resource == "indexes" and method == "post":
-            self._fail(self.fail_create_index)
             key = params["key"]
             if key in self.indexes[collection_id]:
+                self._fail(self.fail_create_index)
                 raise AppwriteException("exists", code=409, type="index_already_exists")
-            self.indexes[collection_id][key] = list(params["attributes"])
+
+            def register_index() -> None:
+                self.indexes[collection_id][key] = list(params["attributes"])
+
+            self._fail_create(self.fail_create_index, register_index)
+            self.attribute_ready_at_index_create.append(
+                all(
+                    self.attribute_meta.get((collection_id, attribute_key), ("available", ""))[0]
+                    == "available"
+                    for attribute_key in self.attributes[collection_id]
+                )
+            )
             return index_json(key, params["attributes"])
         if resource == "documents" and method == "get":
             self._fail(self.fail_list_documents)
@@ -237,6 +299,13 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> tuple[Databases, StorageServer, 
 
 def _err(code: int, type: str | None = None) -> AppwriteException:
     return AppwriteException("boom", code=code, type=type)
+
+
+FAST_WAIT = {
+    "sleep": lambda *_args: None,
+    "poll_interval_seconds": 0.01,
+    "timeout_seconds": 0.05,
+}
 
 
 def test_classify_error_covers_the_whole_taxonomy() -> None:
@@ -468,10 +537,19 @@ def test_ensure_backfill_classifies_attribute_and_index_failures(
     for attribute in spec["attributes"]:
         server.attributes[PENDENCY_COLLECTION_ID][attribute["key"]] = attribute["type"]
     server.fail_create_attribute = _err(409, "attribute_already_exists")
-    server.fail_list_indexes = _err(500, "general")
+    # the readiness wait lists indexes once; fail the second listing (inside
+    # _ensure_indexes) so that branch is exercised too
+    index_lists = {"n": 0}
+
+    def fail_second_list(_collection_id: str) -> None:
+        index_lists["n"] += 1
+        if index_lists["n"] >= 2:
+            raise _err(500, "general")
+
+    server.on_list_indexes = fail_second_list
     with pytest.raises(StorageUnavailable):
         ensure_appwrite_storage(databases, collections=single)
-    server.fail_list_indexes = None
+    server.on_list_indexes = None
     server.fail_create_attribute = _err(500, "general")
     server.attributes[PENDENCY_COLLECTION_ID] = {}
     with pytest.raises(StorageUnavailable):
@@ -549,19 +627,20 @@ def test_validate_reports_missing_attributes_and_indexes(
     del server.indexes[PENDENCY_COLLECTION_ID]["idx_user_course"]
 
     with pytest.raises(StorageNotProvisioned) as excinfo:
-        validate_appwrite_storage(databases)
+        validate_appwrite_storage(databases, **FAST_WAIT)
     message = str(excinfo.value)
     assert "reason" in message
     assert "idx_user_course" in message
+    assert "missing" in message
 
     # attribute/index listing failures propagate as unavailable
     server.fail_list_attributes = _err(500, "general")
     with pytest.raises(StorageUnavailable):
-        validate_appwrite_storage(databases)
+        validate_appwrite_storage(databases, **FAST_WAIT)
     server.fail_list_attributes = None
     server.fail_list_indexes = _err(500, "general")
     with pytest.raises(StorageUnavailable):
-        validate_appwrite_storage(databases)
+        validate_appwrite_storage(databases, **FAST_WAIT)
     server.fail_list_indexes = None
 
 
@@ -576,3 +655,142 @@ def test_validate_succeeds_when_database_collections_attributes_and_indexes_exis
         "database": DATABASE_ID,
         "collections": sorted(COLLECTION_SPECS),
     }
+
+
+def test_classify_error_explains_required_key_scopes_on_401_and_403() -> None:
+    for code in (401, 403):
+        error = classify_error(
+            _err(code, "general"), operation="create_database", document_level=False
+        )
+        assert isinstance(error, StorageUnavailable)
+        assert str(code) in str(error)
+        assert "tablesdb.write" in str(error)
+        assert "databases.write" in str(error)
+
+
+def test_validate_waits_for_processing_resources_until_available(
+    harness: tuple[Databases, StorageServer, FakeTransport],
+) -> None:
+    databases, server, _ = harness
+    server.databases.add(DATABASE_ID)
+    for collection_id, spec in COLLECTION_SPECS.items():
+        server.add_collection(collection_id, spec)
+    for collection_id in COLLECTION_SPECS:
+        for key in server.attributes[collection_id]:
+            server.attribute_meta[(collection_id, key)] = ("processing", "still building")
+        for key in server.indexes[collection_id]:
+            server.index_meta[(collection_id, key)] = ("processing", "")
+    polls = {"n": 0}
+
+    def flip_to_available(_collection_id: str) -> None:
+        polls["n"] += 1
+        if polls["n"] < 2:
+            return
+        for collection_id in COLLECTION_SPECS:
+            for key in server.attributes[collection_id]:
+                server.attribute_meta[(collection_id, key)] = ("available", "")
+            for key in server.indexes[collection_id]:
+                server.index_meta[(collection_id, key)] = ("available", "")
+
+    server.on_list_attributes = flip_to_available
+    sleeps: list[float] = []
+    result = validate_appwrite_storage(
+        databases,
+        sleep=sleeps.append,
+        poll_interval_seconds=0.01,
+        timeout_seconds=5.0,
+    )
+    assert result == {"database": DATABASE_ID, "collections": sorted(COLLECTION_SPECS)}
+    assert polls["n"] >= 2
+    assert sleeps  # the validator actually waited between polls
+
+
+def test_validate_fails_fast_on_failed_and_stuck_resources(
+    harness: tuple[Databases, StorageServer, FakeTransport],
+) -> None:
+    databases, server, _ = harness
+    server.databases.add(DATABASE_ID)
+    for collection_id, spec in COLLECTION_SPECS.items():
+        server.add_collection(collection_id, spec)
+
+    server.attribute_meta[(PENDENCY_COLLECTION_ID, "user_id")] = ("failed", "size too small")
+    with pytest.raises(StorageNotProvisioned) as excinfo:
+        validate_appwrite_storage(databases, **FAST_WAIT)
+    message = str(excinfo.value)
+    assert "user_id" in message and "failed" in message and "size too small" in message
+
+    server.attribute_meta[(PENDENCY_COLLECTION_ID, "user_id")] = ("available", "")
+    server.index_meta[(PENDENCY_COLLECTION_ID, "idx_user_id")] = ("stuck", "index stuck")
+    with pytest.raises(StorageNotProvisioned) as excinfo:
+        validate_appwrite_storage(databases, **FAST_WAIT)
+    assert "idx_user_id" in str(excinfo.value) and "stuck" in str(excinfo.value)
+
+
+def test_wait_for_spec_ready_times_out_listing_not_ready_resources(
+    harness: tuple[Databases, StorageServer, FakeTransport],
+) -> None:
+    databases, server, _ = harness
+    server.databases.add(DATABASE_ID)
+    spec = COLLECTION_SPECS[PENDENCY_COLLECTION_ID]
+    server.add_collection(PENDENCY_COLLECTION_ID, spec)
+    server.attribute_meta[(PENDENCY_COLLECTION_ID, "reason")] = ("processing", "still building")
+
+    sleeps: list[float] = []
+    with pytest.raises(StorageNotProvisioned) as excinfo:
+        wait_for_spec_ready(
+            databases,
+            DATABASE_ID,
+            PENDENCY_COLLECTION_ID,
+            spec,
+            sleep=sleeps.append,
+            poll_interval_seconds=0.01,
+            timeout_seconds=0.05,
+        )
+    message = str(excinfo.value)
+    assert "not ready" in message
+    assert "reason" in message and "processing" in message and "still building" in message
+    assert len(sleeps) == 4  # 5 attempts (0.05/0.01), sleeping between them
+
+    # single-attempt budget: no sleep, immediate timeout
+    with pytest.raises(StorageNotProvisioned):
+        wait_for_spec_ready(
+            databases,
+            DATABASE_ID,
+            PENDENCY_COLLECTION_ID,
+            spec,
+            sleep=lambda *_args: None,
+            poll_interval_seconds=0.01,
+            timeout_seconds=0.01,
+        )
+
+
+def test_ensure_waits_for_attributes_available_before_creating_indexes(
+    harness: tuple[Databases, StorageServer, FakeTransport],
+) -> None:
+    databases, server, _ = harness
+    server.databases.add(DATABASE_ID)
+    server.add_collection(PENDENCY_COLLECTION_ID)  # exists, empty
+    spec = COLLECTION_SPECS[PENDENCY_COLLECTION_ID]
+    server.new_attributes_processing = True  # created attributes start "processing"
+    polls = {"n": 0}
+
+    def flip(_collection_id: str) -> None:
+        polls["n"] += 1
+        if polls["n"] < 2:
+            return
+        for key in server.attributes[PENDENCY_COLLECTION_ID]:
+            server.attribute_meta[(PENDENCY_COLLECTION_ID, key)] = ("available", "")
+
+    server.on_list_attributes = flip
+    summary = ensure_appwrite_storage(
+        databases,
+        collections={PENDENCY_COLLECTION_ID: spec},
+        sleep=lambda *_args: None,
+        poll_interval_seconds=0.01,
+        timeout_seconds=5.0,
+    )
+    assert summary["collections"][PENDENCY_COLLECTION_ID] == {"status": "exists"}
+    assert polls["n"] >= 2  # readiness was polled after backfill
+    # every index was created only once all attributes were available
+    assert server.attribute_ready_at_index_create
+    assert all(server.attribute_ready_at_index_create)

@@ -24,11 +24,22 @@ from appwrite.services.databases import Databases  # noqa: E402
 
 from appwrite_storage import (  # noqa: E402
     COLLECTION_SPECS,
+    READY_POLL_INTERVAL_SECONDS,
+    READY_TIMEOUT_SECONDS,
     StorageNotProvisioned,
     StorageUnavailable,
     ensure_appwrite_storage,
     validate_appwrite_storage,
 )
+
+
+def _ready_wait_options() -> dict[str, float]:
+    """Readiness polling budget, overridable via environment for deploys/tests."""
+    timeout = float(os.environ.get("APPWRITE_STORAGE_READY_TIMEOUT_SECONDS", READY_TIMEOUT_SECONDS))
+    poll = float(
+        os.environ.get("APPWRITE_STORAGE_READY_POLL_INTERVAL_SECONDS", READY_POLL_INTERVAL_SECONDS)
+    )
+    return {"poll_interval_seconds": poll, "timeout_seconds": timeout}
 
 
 def provision() -> dict[str, Any]:
@@ -50,8 +61,9 @@ def provision() -> dict[str, Any]:
         )
     client = Client().set_endpoint(endpoint).set_project(project).set_key(key)
     databases = Databases(client)
-    summary = ensure_appwrite_storage(databases)
-    validate_appwrite_storage(databases)
+    wait_options = _ready_wait_options()
+    summary = ensure_appwrite_storage(databases, **wait_options)
+    validate_appwrite_storage(databases, **wait_options)
     summary["validated"] = sorted(COLLECTION_SPECS)
     return summary
 

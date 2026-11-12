@@ -97,12 +97,17 @@ def _install(monkeypatch: pytest.MonkeyPatch, transport: FakeTransport,
     client.call = transport  # type: ignore[method-assign]
     monkeypatch.setattr(setup_storage, "Client", lambda: client)
     for name in ("APPWRITE_ENDPOINT", "APPWRITE_PROJECT_ID", "APPWRITE_ADMIN_API_KEY",
-                 "APPWRITE_FUNCTION_API_ENDPOINT", "APPWRITE_FUNCTION_PROJECT_ID"):
+                 "APPWRITE_FUNCTION_API_ENDPOINT", "APPWRITE_FUNCTION_PROJECT_ID",
+                 "APPWRITE_STORAGE_READY_TIMEOUT_SECONDS",
+                 "APPWRITE_STORAGE_READY_POLL_INTERVAL_SECONDS"):
         monkeypatch.delenv(name, raising=False)
     for name, value in (env or {
         "APPWRITE_ENDPOINT": "https://cloud.appwrite.io/v1",
         "APPWRITE_PROJECT_ID": "proj",
         "APPWRITE_ADMIN_API_KEY": "admin-key",
+        # bounded readiness wait so failure tests stay fast
+        "APPWRITE_STORAGE_READY_TIMEOUT_SECONDS": "0.05",
+        "APPWRITE_STORAGE_READY_POLL_INTERVAL_SECONDS": "0.01",
     }).items():
         monkeypatch.setenv(name, value)
 
