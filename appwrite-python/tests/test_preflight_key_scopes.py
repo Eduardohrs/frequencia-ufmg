@@ -1,6 +1,7 @@
 """Tests for the read-only key-scope preflight (real SDK, mocked HTTP transport)."""
 
 import json
+from pathlib import Path
 from typing import Any
 
 from appwrite.client import Client
@@ -114,3 +115,15 @@ def test_preflight_main_prefers_admin_key_and_maps_verdict_to_exit_code(
     monkeypatch.setattr(preflight, "Client", lambda: make_client(insufficient))
     assert preflight.main() == 2
     assert "VERDICT: INSUFFICIENT" in capsys.readouterr().out
+
+
+def test_ci_runs_the_preflight_only_on_manual_dispatch() -> None:
+    ci = (
+        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+    ).read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in ci
+    assert "appwrite-key-preflight:" in ci
+    assert "if: github.event_name == 'workflow_dispatch'" in ci
+    assert "python appwrite-python/preflight_key_scopes.py" in ci
+    assert "APPWRITE_DEPLOY_KEY: ${{ secrets.APPWRITE_DEPLOY_KEY }}" in ci
+    assert "APPWRITE_ADMIN_API_KEY: ${{ secrets.APPWRITE_ADMIN_API_KEY }}" in ci
