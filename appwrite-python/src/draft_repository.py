@@ -2,11 +2,12 @@
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from appwrite.client import Client
-from appwrite.enums import Permission, Role
 from appwrite.id import ID
+from appwrite.permission import Permission
+from appwrite.role import Role
 from appwrite.services.databases import Databases
 
 from course_repository import validate_course_id
@@ -29,6 +30,7 @@ class DraftRepository:
 
     def save_draft(
         self,
+        user_id: str,
         course_id: str,
         course_code: str,
         session_id: str,
@@ -47,10 +49,10 @@ class DraftRepository:
             "course_code": course_code,
             "session_id": session_id,
             "form_data": json.dumps(form_data, ensure_ascii=False),
+            "last_error": last_error,
+            "attempt_count": attempt_count,
             "created_at": now,
             "updated_at": now,
-            "attempt_count": attempt_count,
-            "last_error": last_error,
         }
 
         try:
@@ -60,12 +62,12 @@ class DraftRepository:
                 document_id=document_id,
                 data=data,
                 permissions=[
-                    Permission.read(Role.user(course_id)),
-                    Permission.write(Role.user(course_id)),
-                    Permission.delete(Role.user(course_id)),
+                    Permission.read(Role.user(user_id)),
+                    Permission.write(Role.user(user_id)),
+                    Permission.delete(Role.user(user_id)),
                 ],
             )
-            return document_id
+            return cast(str, document_id)
         except Exception as e:
             print(f"Error saving draft: {e}")
             raise
@@ -78,9 +80,10 @@ class DraftRepository:
                 collection_id=self._collection_id,
                 document_id=draft_id,
             )
-            if response and "form_data" in response:
-                response["form_data"] = json.loads(response["form_data"])
-            return response
+            document = cast(dict[str, Any], response)
+            if document and "form_data" in document:
+                document["form_data"] = json.loads(document["form_data"])
+            return document
         except Exception:
             return None
 
@@ -131,7 +134,7 @@ class DraftRepository:
                 collection_id=self._collection_id,
                 queries=queries,
             )
-            drafts = response.get("documents", [])
+            drafts = cast(list[dict[str, Any]], response.get("documents", []))
             for draft in drafts:
                 if "form_data" in draft:
                     draft["form_data"] = json.loads(draft["form_data"])

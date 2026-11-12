@@ -151,6 +151,7 @@ def test_imports_new_schedule_with_remote_dates_and_one_call() -> None:
         "meeting_deletes": 0,
         "session_upserts": 0,
         "session_deletes": 0,
+        "pendencies_created": 0,
     }
     assert schedules.saved == [
         (
@@ -333,3 +334,130 @@ def test_small_helpers_cover_manual_and_first_semester_contracts() -> None:
         "2026-01-01T00:00:00Z",
         "2026-06-30T00:00:00Z",
     )
+
+
+class _Pendencies:
+    def __init__(self, existing: list[dict[str, Any]] | None = None) -> None:
+        self.existing = existing or []
+        self.saved: list[dict[str, Any]] = []
+
+    def list_pendencies(
+        self, course_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        return [
+            item
+            for item in self.existing
+            if (course_id is None or item.get("course_id") == course_id)
+        ]
+
+    def save_pendency(self, **kwargs: Any) -> str:
+        self.saved.append(kwargs)
+        return f"pend-{len(self.saved)}"
+
+
+def _service_with_pendencies(
+    remote: list[dict[str, object]],
+    courses: list[dict[str, object]],
+    schedules: _Schedules,
+    pendencies: _Pendencies | None,
+) -> UFMGScheduleImportService:
+    return UFMGScheduleImportService(
+        _Sessions(), _Enrollments(remote), _Courses(courses), schedules, pendencies
+    )
+
+
+def test_manual_divergence_creates_persisted_pendency_with_context() -> None:
+    course = _course()
+    schedules = _Schedules({"ele028": _state(course, [_saved_meeting("manual", start=500)])})
+    pendencies = _Pendencies()
+
+    result = _service_with_pendencies(
+        [_remote()], [course], schedules, pendencies
+    ).import_schedules("user", now=10)
+
+    assert result["conflicts"] == 1
+    assert result["pendencies_created"] == 1
+    assert len(pendencies.saved) == 1
+    saved = pendencies.saved[0]
+    assert saved["user_id"] == "user"
+    assert saved["course_id"] == "ele028"
+    assert saved["course_code"] == "ELE028"
+    assert saved["reason"] == "manual_schedule_diverged"
+    assert "seg 08:20" in saved["current_schedule"]  # 500 minutes = 08:20
+    assert "seg 07:30" in saved["new_schedule"]  # 450 minutes = 07:30
+    assert saved["payload"]["confirm_destructive"] is True
+    assert saved["payload"]["meetings"][0]["id"] == "ufmg-1-450-2"
+
+
+def test_identical_source_does_not_recreate_pendency() -> None:
+    course = _course()
+    schedules = _Schedules({"ele028": _state(course, [_saved_meeting("manual", start=500)])})
+    new_schedule = "seg 07:30 (2 aulas)"
+    pendencies = _Pendencies(
+        existing=[{"course_id": "ele028", "new_schedule": new_schedule, "status": "resolved"}]
+    )
+
+    result = _service_with_pendencies(
+        [_remote()], [course], schedules, pendencies
+    ).import_schedules("user", now=10)
+
+    assert result["conflicts"] == 1
+    assert result["pendencies_created"] == 0
+    assert pendencies.saved == []
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (DestructiveScheduleChange(1), "destructive_change"),
+        (ScheduleOverlap("overlap"), "schedule_overlap"),
+    ],
+)
+def test_safe_conflict_creates_pendency_with_reason(failure: Exception, reason: str) -> None:
+    course = _course()
+    schedules = _Schedules({"ele028": _state(course, [])}, failure)
+    pendencies = _Pendencies()
+
+    result = _service_with_pendencies(
+        [_remote()], [course], schedules, pendencies
+    ).import_schedules("user", now=10)
+
+    assert result["conflicts"] == 1
+    assert result["pendencies_created"] == 1
+    assert pendencies.saved[0]["reason"] == reason
+
+
+def test_conflict_without_pendency_sink_still_counts_conflict() -> None:
+    course = _course()
+    schedules = _Schedules({"ele028": _state(course, [_saved_meeting("manual", start=500)])})
+
+    result = _service_with_pendencies([_remote()], [course], schedules, None).import_schedules(
+        "user", now=10
+    )
+
+    assert result["conflicts"] == 1
+    assert result["pendencies_created"] == 0
+
+
+def test_schedule_summary_handles_invalid_and_out_of_range_weekday() -> None:
+    from ufmg_schedule_import import _schedule_summary
+
+    assert _schedule_summary([]) == ""
+    assert _schedule_summary(["not-a-mapping"]) == ""
+    summary = _schedule_summary([{"weekday": 9, "start_minutes": 480, "lesson_count": 4}])
+    assert summary == "9 08:00 (4 aulas)"
+
+
+def test_pendency_created_when_existing_entries_do_not_match() -> None:
+    course = _course()
+    schedules = _Schedules({"ele028": _state(course, [_saved_meeting("manual", start=500)])})
+    pendencies = _Pendencies(
+        existing=[{"course_id": "ele028", "new_schedule": "qua 10:00 (2 aulas)"}]
+    )
+
+    result = _service_with_pendencies(
+        [_remote()], [course], schedules, pendencies
+    ).import_schedules("user", now=10)
+
+    assert result["pendencies_created"] == 1
+    assert len(pendencies.saved) == 1

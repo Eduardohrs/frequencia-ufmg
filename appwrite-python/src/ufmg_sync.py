@@ -84,6 +84,7 @@ class UFMGSyncService:
             "conflicts",
             "missing_courses",
             "meetings_imported",
+            "pendencies_created",
         )
         return {
             "courses": course_result,

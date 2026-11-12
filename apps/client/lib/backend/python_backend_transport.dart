@@ -153,6 +153,164 @@ abstract interface class BackendUnifiedAcademicSyncGateway {
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData();
 }
 
+abstract interface class BackendSchedulePendencyGateway {
+  Future<List<PythonSchedulePendency>> listSchedulePendencies();
+
+  Future<PythonSchedulePendency> decideSchedulePendency(
+    String pendencyId, {
+    required PythonScheduleDecision decision,
+  });
+}
+
+abstract interface class BackendRegistrationDraftGateway {
+  Future<String> saveRegistrationDraft({
+    required String courseId,
+    required String courseCode,
+    required String sessionId,
+    required Map<String, Object?> formData,
+    String? lastError,
+    int attemptCount = 1,
+  });
+
+  Future<List<PythonRegistrationDraft>> listRegistrationDrafts();
+
+  Future<void> deleteRegistrationDraft(String draftId);
+}
+
+enum PythonScheduleDecision {
+  manterAtual('manter_atual'),
+  aplicarMudanca('aplicar_mudanca');
+
+  const PythonScheduleDecision(this.wire);
+
+  final String wire;
+}
+
+final class PythonSchedulePendency {
+  const PythonSchedulePendency({
+    required this.id,
+    required this.courseId,
+    required this.courseCode,
+    required this.courseName,
+    required this.currentSchedule,
+    required this.newSchedule,
+    required this.reason,
+    required this.status,
+    this.decision,
+  });
+
+  factory PythonSchedulePendency.fromJson(Map<String, Object?> json) {
+    const keys = {
+      'id',
+      'course_id',
+      'course_code',
+      'course_name',
+      'current_schedule',
+      'new_schedule',
+      'reason',
+      'status',
+      'decision',
+      'created_at',
+      'updated_at',
+    };
+    if (!_hasExactKeys(json, keys) ||
+        json['id'] is! String ||
+        (json['id'] as String).isEmpty ||
+        json['course_id'] is! String ||
+        json['course_code'] is! String ||
+        json['course_name'] is! String ||
+        json['current_schedule'] is! String ||
+        json['new_schedule'] is! String ||
+        json['reason'] is! String ||
+        json['status'] is! String ||
+        (json['decision'] != null && json['decision'] is! String) ||
+        (json['created_at'] != null && json['created_at'] is! String) ||
+        (json['updated_at'] != null && json['updated_at'] is! String)) {
+      throw const FormatException();
+    }
+    return PythonSchedulePendency(
+      id: json['id']! as String,
+      courseId: json['course_id']! as String,
+      courseCode: json['course_code']! as String,
+      courseName: json['course_name']! as String,
+      currentSchedule: json['current_schedule']! as String,
+      newSchedule: json['new_schedule']! as String,
+      reason: json['reason']! as String,
+      status: json['status']! as String,
+      decision: json['decision'] as String?,
+    );
+  }
+
+  final String id;
+  final String courseId;
+  final String courseCode;
+  final String courseName;
+  final String currentSchedule;
+  final String newSchedule;
+  final String reason;
+  final String status;
+  final String? decision;
+
+  bool get isResolved => status == 'resolved';
+}
+
+final class PythonRegistrationDraft {
+  const PythonRegistrationDraft({
+    required this.id,
+    required this.courseId,
+    required this.courseCode,
+    required this.sessionId,
+    required this.formData,
+    this.lastError,
+    required this.attemptCount,
+  });
+
+  factory PythonRegistrationDraft.fromJson(Map<String, Object?> json) {
+    const keys = {
+      'id',
+      'course_id',
+      'course_code',
+      'session_id',
+      'form_data',
+      'last_error',
+      'attempt_count',
+      'created_at',
+      'updated_at',
+    };
+    if (!_hasExactKeys(json, keys) ||
+        json['id'] is! String ||
+        (json['id'] as String).isEmpty ||
+        json['course_id'] is! String ||
+        json['course_code'] is! String ||
+        json['session_id'] is! String ||
+        json['form_data'] is! Map ||
+        (json['last_error'] != null && json['last_error'] is! String) ||
+        json['attempt_count'] is! int ||
+        (json['attempt_count'] as int) < 1 ||
+        (json['created_at'] != null && json['created_at'] is! String) ||
+        (json['updated_at'] != null && json['updated_at'] is! String)) {
+      throw const FormatException();
+    }
+    return PythonRegistrationDraft(
+      id: json['id']! as String,
+      courseId: json['course_id']! as String,
+      courseCode: json['course_code']! as String,
+      sessionId: json['session_id']! as String,
+      formData: Map<String, Object?>.from(json['form_data']! as Map),
+      lastError: json['last_error'] as String?,
+      attemptCount: json['attempt_count']! as int,
+    );
+  }
+
+  final String id;
+  final String courseId;
+  final String courseCode;
+  final String sessionId;
+  final Map<String, Object?> formData;
+  final String? lastError;
+  final int attemptCount;
+}
+
 abstract interface class BackendOfficialCalendarGateway {
   Future<PythonOfficialCalendarPreview> previewOfficialCalendar();
 
@@ -749,6 +907,7 @@ final class PythonUFMGScheduleImportResult {
     required this.conflicts,
     required this.missingCourses,
     required this.meetingsImported,
+    required this.pendenciesCreated,
   });
 
   final int total;
@@ -757,6 +916,7 @@ final class PythonUFMGScheduleImportResult {
   final int conflicts;
   final int missingCourses;
   final int meetingsImported;
+  final int pendenciesCreated;
 }
 
 final class PythonUFMGSigaSyncResult {
@@ -1271,6 +1431,7 @@ PythonUFMGScheduleImportResult _scheduleImportResult(Object? value) {
     'conflicts',
     'missing_courses',
     'meetings_imported',
+    'pendencies_created',
   };
   if (value is! Map<String, dynamic> || !_hasExactKeys(value, keys)) {
     throw const FormatException();
@@ -1285,8 +1446,10 @@ PythonUFMGScheduleImportResult _scheduleImportResult(Object? value) {
   final conflicts = value['conflicts'] as int;
   final missingCourses = value['missing_courses'] as int;
   final meetingsImported = value['meetings_imported'] as int;
+  final pendenciesCreated = value['pendencies_created'] as int;
   if (total != updated + unchanged + conflicts + missingCourses ||
-      meetingsImported > updated * 32) {
+      meetingsImported > updated * 32 ||
+      pendenciesCreated > conflicts) {
     throw const FormatException();
   }
   return PythonUFMGScheduleImportResult(
@@ -1296,6 +1459,7 @@ PythonUFMGScheduleImportResult _scheduleImportResult(Object? value) {
     conflicts: conflicts,
     missingCourses: missingCourses,
     meetingsImported: meetingsImported,
+    pendenciesCreated: pendenciesCreated,
   );
 }
 
@@ -1602,6 +1766,8 @@ final class PythonBackendTransport
         BackendUFMGSessionGateway,
         BackendUnifiedAcademicSyncGateway,
         BackendOfficialCalendarGateway,
+        BackendSchedulePendencyGateway,
+        BackendRegistrationDraftGateway,
         BackendOverviewGateway {
   PythonBackendTransport({
     required Uri endpoint,
@@ -1711,6 +1877,134 @@ final class PythonBackendTransport
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
     }
+  }
+
+  @override
+  Future<List<PythonSchedulePendency>> listSchedulePendencies() async {
+    final response = await _authenticatedRequest(
+      path: '/v1/schedule/pendencies',
+    );
+    try {
+      final value = jsonDecode(response.body);
+      if (value is! Map<String, dynamic> || value['pendencies'] is! List) {
+        throw const FormatException();
+      }
+      return [
+        for (final item in value['pendencies']! as List)
+          if (item is Map<String, dynamic>)
+            PythonSchedulePendency.fromJson(Map<String, Object?>.from(item)),
+      ];
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<PythonSchedulePendency> decideSchedulePendency(
+    String pendencyId, {
+    required PythonScheduleDecision decision,
+  }) async {
+    _validateResourceId(pendencyId, 'pendencyId');
+    final response = await _authenticatedRequest(
+      path: '/v1/schedule/pendencies/$pendencyId/decision',
+      method: _BackendMethod.post,
+      body: {'decision': decision.wire},
+    );
+    try {
+      final value = jsonDecode(response.body);
+      if (value is! Map<String, dynamic> ||
+          value['pendency'] is! Map<String, dynamic>) {
+        throw const FormatException();
+      }
+      return PythonSchedulePendency.fromJson(
+        Map<String, Object?>.from(value['pendency']! as Map),
+      );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<String> saveRegistrationDraft({
+    required String courseId,
+    required String courseCode,
+    required String sessionId,
+    required Map<String, Object?> formData,
+    String? lastError,
+    int attemptCount = 1,
+  }) async {
+    _validateCourseId(courseId);
+    if (courseCode.isEmpty || courseCode.length > 64) {
+      throw ArgumentError.value(
+        courseCode,
+        'courseCode',
+        'invalid course code',
+      );
+    }
+    if (sessionId.isEmpty || sessionId.length > 128) {
+      throw ArgumentError.value(sessionId, 'sessionId', 'invalid session id');
+    }
+    if (attemptCount < 1) {
+      throw ArgumentError.value(
+        attemptCount,
+        'attemptCount',
+        'must be positive',
+      );
+    }
+    final response = await _authenticatedRequest(
+      path: '/v1/registration/drafts',
+      method: _BackendMethod.post,
+      body: {
+        'course_id': courseId,
+        'course_code': courseCode,
+        'session_id': sessionId,
+        'form_data': formData,
+        'last_error': lastError,
+        'attempt_count': attemptCount,
+      },
+    );
+    try {
+      final value = jsonDecode(response.body);
+      if (value is! Map<String, dynamic> ||
+          value['draft'] is! Map<String, dynamic> ||
+          value['draft']['id'] is! String) {
+        throw const FormatException();
+      }
+      final id = value['draft']['id']! as String;
+      if (id.isEmpty) throw const FormatException();
+      return id;
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<List<PythonRegistrationDraft>> listRegistrationDrafts() async {
+    final response = await _authenticatedRequest(
+      path: '/v1/registration/drafts',
+    );
+    try {
+      final value = jsonDecode(response.body);
+      if (value is! Map<String, dynamic> || value['drafts'] is! List) {
+        throw const FormatException();
+      }
+      return [
+        for (final item in value['drafts']! as List)
+          if (item is Map<String, dynamic>)
+            PythonRegistrationDraft.fromJson(Map<String, Object?>.from(item)),
+      ];
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  @override
+  Future<void> deleteRegistrationDraft(String draftId) async {
+    _validateResourceId(draftId, 'draftId');
+    await _authenticatedRequest(
+      path: '/v1/registration/drafts/$draftId',
+      method: _BackendMethod.delete,
+    );
   }
 
   @override
@@ -3296,6 +3590,16 @@ final class PythonBackendTransport
       return const PythonBackendException(PythonBackendError.unavailable);
     }
     return const PythonBackendException(PythonBackendError.invalidResponse);
+  }
+
+  static void _validateResourceId(String value, String name) {
+    if (value.isEmpty ||
+        value.length > 128 ||
+        value.trim() != value ||
+        value.contains('/') ||
+        value.contains(r'\')) {
+      throw ArgumentError.value(value, name, 'unsafe resource id');
+    }
   }
 
   static void _validateCourseId(String value) {

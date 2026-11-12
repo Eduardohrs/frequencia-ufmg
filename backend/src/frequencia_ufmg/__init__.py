@@ -1,11 +1,9 @@
 """Frequência UFMG backend package."""
 
-from frequencia_ufmg.logging_config import (
-    TelemetryDeduplicator,
-    TelemetryKey,
-    TelemetryRecorder,
-    telemetry_recorder,
-)
+# O deploy do Appwrite empacota apenas este __init__ e models.py do pacote
+# compartilhado; portanto nenhuma importação aqui pode depender de módulos
+# somente de backend (como logging_config). A telemetria de produção vive em
+# appwrite-python/src/telemetry_guard.py.
 from frequencia_ufmg.models import (
     CentralPendencias,
     ConfiguracaoSessao,
@@ -44,9 +42,5 @@ __all__ = [
     "ResumoDisciplina",
     "SessaoAula",
     "SituacaoFrequencia",
-    "TelemetryDeduplicator",
-    "TelemetryKey",
-    "TelemetryRecorder",
-    "telemetry_recorder",
 ]
 

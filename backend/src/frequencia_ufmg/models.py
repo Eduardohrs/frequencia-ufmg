@@ -484,6 +484,17 @@ class CentralPendencias:
         self._pendencias[pendencia_id] = pendencia
         return pendencia_id
 
+    def restaurar(
+        self,
+        pendencia_id: str,
+        pendencia: PendenciaHorario,
+        decisao: DecisaoHorario = DecisaoHorario.PENDENTE,
+    ) -> None:
+        """Restaura uma pendência persistida para a memória da instância."""
+        self._pendencias[pendencia_id] = pendencia
+        if decisao is not DecisaoHorario.PENDENTE:
+            self._decisoes[pendencia_id] = decisao
+
     def registrar_decisao(
         self,
         pendencia_id: str,

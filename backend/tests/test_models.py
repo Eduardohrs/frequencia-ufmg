@@ -830,3 +830,22 @@ class TestGerenciadorRascunhos:
 
         removido = gerenciador.remover_rascunho("inexistente")
         assert removido is False
+
+
+def test_central_pendencias_restaurar_recarrega_estado_persistido() -> None:
+    central = CentralPendencias()
+    pendencia = PendenciaHorario(
+        disciplina_codigo="DCC205",
+        disciplina_nome="Estruturas",
+        horario_atual="seg 08:00 (2 aulas)",
+        horario_novo="ter 10:00 (2 aulas)",
+        motivo="manual_schedule_diverged",
+    )
+
+    central.restaurar("doc-1", pendencia)
+    assert central.get_pendencia("doc-1") is pendencia
+    assert central.get_decisao("doc-1") is None
+
+    central.restaurar("doc-2", pendencia, DecisaoHorario.APLICAR_MUDANCA)
+    assert central.get_decisao("doc-2") is DecisaoHorario.APLICAR_MUDANCA
+    assert central.get_todas_pendencias() == [pendencia, pendencia]

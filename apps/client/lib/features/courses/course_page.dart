@@ -856,15 +856,103 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     }
   }
 
+  static const String _courseDraftSession = 'course-create';
+
+  BackendRegistrationDraftGateway? get _draftGateway =>
+      widget.ufmgSessionGateway is BackendRegistrationDraftGateway
+      ? widget.ufmgSessionGateway! as BackendRegistrationDraftGateway
+      : null;
+
+  Future<Map<String, Object?>?> _latestCourseDraft() async {
+    final gateway = _draftGateway;
+    if (gateway == null) return null;
+    try {
+      final drafts = await gateway.listRegistrationDrafts();
+      final matching = [
+        for (final draft in drafts)
+          if (draft.sessionId == _courseDraftSession) draft,
+      ];
+      if (matching.isEmpty) return null;
+      return matching.last.formData;
+    } catch (error, stack) {
+      unawaited(
+        widget.logger
+            .recordError(error, stack, context: 'course_draft_restore')
+            .catchError((_) => null),
+      );
+      return null;
+    }
+  }
+
+  Future<void> _saveCourseDraft(CourseRecord course, String? errorCode) async {
+    final gateway = _draftGateway;
+    if (gateway == null) return;
+    final formData = <String, Object?>{
+      'code': course.code,
+      'name': course.name,
+      'nickname': course.nickname ?? '',
+      'term': course.term,
+      'modality': course.modality.code,
+      'attendance_policy': course.attendancePolicy.code,
+    };
+    try {
+      await gateway.saveRegistrationDraft(
+        courseId: course.id,
+        courseCode: course.code,
+        sessionId: _courseDraftSession,
+        formData: formData,
+        lastError: errorCode,
+      );
+      unawaited(
+        widget.logger.logEvent(
+          'course_draft_saved',
+          parameters: {
+            'course_id': course.id,
+            'course_code': course.code,
+            'last_error': errorCode ?? '',
+          },
+        ),
+      );
+    } catch (error, stack) {
+      unawaited(
+        widget.logger
+            .recordError(error, stack, context: 'course_draft_save')
+            .catchError((_) => null),
+      );
+    }
+  }
+
+  Future<void> _clearCourseDrafts() async {
+    final gateway = _draftGateway;
+    if (gateway == null) return;
+    try {
+      final drafts = await gateway.listRegistrationDrafts();
+      for (final draft in drafts) {
+        if (draft.sessionId == _courseDraftSession) {
+          await gateway.deleteRegistrationDraft(draft.id);
+        }
+      }
+    } catch (error, stack) {
+      unawaited(
+        widget.logger
+            .recordError(error, stack, context: 'course_draft_clear')
+            .catchError((_) => null),
+      );
+    }
+  }
+
   Future<void> _openEditor([CourseRecord? course]) async {
     final mode = course == null ? 'create' : 'update';
     final policy = AcademicPeriodPolicy(widget.now());
     unawaited(widget.logger.logEvent('course_${mode}_editor_opened'));
+    final draftValues = course == null ? await _latestCourseDraft() : null;
+    if (!mounted) return;
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (context) => CourseEditorDialog(
         course: course,
+        draftValues: draftValues,
         initialTerm: course?.term ?? policy.current.term,
         allowedTerms: policy.allowedTerms,
         onSave: (input) => _save(course, input),
@@ -1367,13 +1455,18 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         operation: AuditedOperation.courseCreate,
         action: () => widget.repository.saveCourse(course),
       );
+      // Cadastro confirmado: o rascunho dos mesmos valores é descartado.
+      unawaited(_clearCourseDrafts());
     } catch (error) {
+      // Gravação recusada: o formulário é preservado como rascunho para
+      // nova tentativa com os mesmos valores.
+      final code = ErrorLogDetails.from(error).code;
+      unawaited(_saveCourseDraft(course, code));
       if (!mounted) return;
       setState(() => _courses.removeWhere((item) => item.id == course.id));
-      final code = ErrorLogDetails.from(error).code;
       final diagnostic = code == null ? '' : ' Código: $code.';
       _message(
-        'Não foi possível salvar ${course.code}. A disciplina foi removida.'
+        'Não foi possível salvar ${course.code}. O rascunho foi guardado para tentar de novo.'
         '$diagnostic',
       );
     } finally {

@@ -72,6 +72,7 @@ class _ScheduleImporter:
             "conflicts": 0,
             "missing_courses": 0,
             "meetings_imported": 1,
+        "pendencies_created": 0,
         }
 
 
@@ -141,6 +142,7 @@ def test_sync_fetches_once_and_reuses_the_snapshot_for_every_stage() -> None:
             "conflicts": 0,
             "missing_courses": 0,
             "meetings_imported": 1,
+        "pendencies_created": 0,
         },
         "dates": {
             "total": 2,
@@ -172,6 +174,7 @@ def test_siga_sync_fetches_once_without_contacting_moodle() -> None:
             "conflicts": 0,
             "missing_courses": 0,
             "meetings_imported": 1,
+        "pendencies_created": 0,
         },
         "checked_at": "2026-08-10T12:00:00Z",
         "next_automatic_sync_at": "2026-08-11T12:00:00Z",

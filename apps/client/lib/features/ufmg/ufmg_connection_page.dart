@@ -1,4 +1,5 @@
 import 'academic_sync_feedback.dart';
+import 'schedule_pendency_review_dialog.dart';
 import '../../design/course_visuals.dart';
 import '../../data/material_scope_cache.dart';
 import '../../observability/operation_diagnostics.dart';
@@ -1500,7 +1501,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     List<AcademicSyncIssue> exceptions,
   ) => showDialog<void>(
     context: context,
-    builder: (context) => AlertDialog(
+    builder: (dialogContext) => AlertDialog(
       title: const Text('Pendências da sincronização'),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520),
@@ -1528,13 +1529,41 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         ),
       ),
       actions: [
+        if (exceptions.any((issue) => issue.reason == 'schedule_review') &&
+            widget.gateway is BackendSchedulePendencyGateway)
+          TextButton(
+            key: const Key('ufmg-review-schedule-pendencies'),
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              _openSchedulePendencyReview();
+            },
+            child: const Text('Revisar horários'),
+          ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () => Navigator.of(dialogContext).pop(),
           child: const Text('Entendi'),
         ),
       ],
     ),
   );
+
+  Future<void> _openSchedulePendencyReview() async {
+    final gateway = widget.gateway;
+    if (gateway is! BackendSchedulePendencyGateway || !mounted) return;
+    _logInteraction('ufmg_review_schedule_pendencies');
+    await showDialog<void>(
+      context: context,
+      builder: (context) => SchedulePendencyReviewDialog(
+        gateway: gateway as BackendSchedulePendencyGateway,
+        logger: widget.logger,
+      ),
+    );
+    if (mounted) {
+      setState(() {
+        _sigaSummary = null;
+      });
+    }
+  }
 
   Future<void> _offerOfficialCalendar() async {
     final gateway = widget.gateway;

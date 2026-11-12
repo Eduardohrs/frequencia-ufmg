@@ -2,11 +2,12 @@
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from appwrite.client import Client
-from appwrite.enums import Permission, Role
 from appwrite.id import ID
+from appwrite.permission import Permission
+from appwrite.role import Role
 from appwrite.services.databases import Databases
 
 from course_repository import validate_course_id
@@ -29,6 +30,7 @@ class PendencyRepository:
 
     def save_pendency(
         self,
+        user_id: str,
         course_id: str,
         course_code: str,
         course_name: str,
@@ -37,6 +39,7 @@ class PendencyRepository:
         reason: str,
         decision: str | None = None,
         status: str = "pending",
+        payload: dict[str, Any] | None = None,
     ) -> str:
         """Salva uma pendência de horário."""
         validate_course_id(course_id)
@@ -56,6 +59,8 @@ class PendencyRepository:
             "updated_at": now,
             "status": status,
         }
+        if payload is not None:
+            data["payload"] = json.dumps(payload, ensure_ascii=False)
 
         try:
             self._db.create_document(
@@ -64,12 +69,12 @@ class PendencyRepository:
                 document_id=document_id,
                 data=data,
                 permissions=[
-                    Permission.read(Role.user(course_id)),
-                    Permission.write(Role.user(course_id)),
-                    Permission.delete(Role.user(course_id)),
+                    Permission.read(Role.user(user_id)),
+                    Permission.write(Role.user(user_id)),
+                    Permission.delete(Role.user(user_id)),
                 ],
             )
-            return document_id
+            return cast(str, document_id)
         except Exception as e:
             print(f"Error saving pendency: {e}")
             raise
@@ -82,7 +87,7 @@ class PendencyRepository:
                 collection_id=self._collection_id,
                 document_id=pendency_id,
             )
-            return response
+            return cast(dict[str, Any], response)
         except Exception:
             return None
 
@@ -126,7 +131,7 @@ class PendencyRepository:
                 collection_id=self._collection_id,
                 queries=queries,
             )
-            return response.get("documents", [])
+            return cast(list[dict[str, Any]], response.get("documents", []))
         except Exception:
             return []
 
