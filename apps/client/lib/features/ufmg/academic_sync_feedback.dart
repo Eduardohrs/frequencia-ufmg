@@ -63,6 +63,7 @@ Map<String, Object> sigaSyncDetails(PythonUFMGSigaSyncResult result) => {
   'schedules_updated': result.schedules.updated,
   'schedules_unchanged': result.schedules.unchanged,
   'schedule_conflicts': result.schedules.conflicts,
+  'schedule_pendencies_created': result.schedules.pendenciesCreated,
   'courses_missing': result.schedules.missingCourses,
   'meetings_imported': result.schedules.meetingsImported,
 };

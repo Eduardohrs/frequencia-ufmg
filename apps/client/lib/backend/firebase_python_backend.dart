@@ -50,6 +50,8 @@ final class _FirebasePythonBackendVerifier
         BackendResumableAcademicSyncGateway,
         BackendOfficialCalendarGateway,
         BackendDiarioPlanGateway,
+        BackendSchedulePendencyGateway,
+        BackendRegistrationDraftGateway,
         BackendOverviewGateway {
   _FirebasePythonBackendVerifier(Uri endpoint)
     : _transport = PythonBackendTransport(
@@ -98,6 +100,53 @@ final class _FirebasePythonBackendVerifier
   Future<PythonUFMGScheduleImportResult> importUFMGSchedules() async {
     await (_activation ??= _activateAppCheck());
     return _transport.importUFMGSchedules();
+  }
+
+  @override
+  Future<List<PythonSchedulePendency>> listSchedulePendencies() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.listSchedulePendencies();
+  }
+
+  @override
+  Future<PythonSchedulePendency> decideSchedulePendency(
+    String pendencyId, {
+    required PythonScheduleDecision decision,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.decideSchedulePendency(pendencyId, decision: decision);
+  }
+
+  @override
+  Future<String> saveRegistrationDraft({
+    required String courseId,
+    required String courseCode,
+    required String sessionId,
+    required Map<String, Object?> formData,
+    String? lastError,
+    int attemptCount = 1,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.saveRegistrationDraft(
+      courseId: courseId,
+      courseCode: courseCode,
+      sessionId: sessionId,
+      formData: formData,
+      lastError: lastError,
+      attemptCount: attemptCount,
+    );
+  }
+
+  @override
+  Future<List<PythonRegistrationDraft>> listRegistrationDrafts() async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.listRegistrationDrafts();
+  }
+
+  @override
+  Future<void> deleteRegistrationDraft(String draftId) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.deleteRegistrationDraft(draftId);
   }
 
   Future<BackendAcademicWorkspaceGateway> _workspaceGateway() async {

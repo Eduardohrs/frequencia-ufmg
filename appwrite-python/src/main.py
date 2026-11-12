@@ -21,6 +21,8 @@ module_search_path.insert(0, str(Path(__file__).resolve().parent))
 development_domain = Path(__file__).resolve().parents[2] / "backend" / "src"
 module_search_path.insert(0, str(development_domain))
 
+from frequencia_ufmg.models import DecisaoHorario, RascunhoCadastro  # noqa: E402
+
 from academic_date_repository import (  # noqa: E402
     AcademicDateRepository,
     InvalidAcademicDate,
@@ -32,6 +34,7 @@ from activity_snapshot_repository import (  # noqa: E402
     ActivitySnapshotRepository,
     InvalidActivitySnapshot,
 )
+from appwrite_storage import StorageNotProvisioned, StorageUnavailable  # noqa: E402
 from attendance_service import InvalidAttendanceRequest, evaluate_attendance  # noqa: E402
 from checkpoint_service import validate_checkpoint_payload  # noqa: E402
 from course_activities import CourseActivityService, CourseMoodleNotLinked  # noqa: E402
@@ -42,6 +45,7 @@ from course_repository import (  # noqa: E402
 )
 from course_service import InvalidCourse  # noqa: E402
 from course_sync_policy import AdaptiveTeachingPlanImporter, CourseSyncPolicy  # noqa: E402
+from draft_repository import DraftRepository  # noqa: E402
 from firebase_app_check import (  # noqa: E402
     FirebaseAppIdentity,
     InvalidAppCheck,
@@ -56,6 +60,7 @@ from firestore_rest import (  # noqa: E402
     FirestoreAccessDenied,
     FirestoreConflict,
     FirestoreNotFound,
+    FirestoreRateLimited,
     FirestoreRequestRejected,
     FirestoreRestClient,
     FirestoreUnavailable,
@@ -92,6 +97,7 @@ from overview_repository import (  # noqa: E402
     AcademicOverviewRepository,
     OverviewTooLarge,
 )
+from pendency_repository import PendencyRepository  # noqa: E402
 from quota_guard import (  # noqa: E402
     AppwriteSecurityStore,
     RateLimitExceeded,
@@ -117,6 +123,7 @@ from teaching_plan_repository import (  # noqa: E402
     TeachingPlanNotFound,
     TeachingPlanRepository,
 )
+from telemetry_guard import production_telemetry  # noqa: E402
 from ufmg_auth import (  # noqa: E402
     InvalidUFMGCredentials,
     UFMGAuthenticationUnavailable,
@@ -215,6 +222,29 @@ def main(context: Any) -> Any:
             **metrics.snapshot(),
         )
         return result
+    except FirestoreRateLimited as error:
+        _error(
+            context,
+            "resource_exhausted",
+            duration_ms=_elapsed_ms(started),
+            error_code=error.error_code,
+            method=method,
+            request_id=request_id,
+            retry_after=error.retry_after,
+            route=_route_name(path),
+            status_code=error.status_code,
+            **metrics.snapshot(),
+        )
+        extra_headers = (
+            {"Retry-After": str(error.retry_after)} if error.retry_after is not None else None
+        )
+        return _respond(
+            context,
+            {"error": "rate_limited", "error_code": error.error_code},
+            error.status_code,
+            _allowed_origin(_header(context.req.headers, "origin")),
+            extra_headers,
+        )
     except Exception:
         _error(
             context,
@@ -313,6 +343,18 @@ def _dispatch(context: Any) -> Any:
         return _ufmg_sync(context, allowed_origin)
     if path == "/v1/ufmg/sync/siga" and method == "POST":
         return _ufmg_sync(context, allowed_origin, siga_only=True)
+    if path == "/v1/schedule/pendencies" and method == "GET":
+        return _schedule_pendencies_list(context, allowed_origin)
+    pendency_decision = re.fullmatch(r"/v1/schedule/pendencies/([^/]+)/decision", path)
+    if pendency_decision and method == "POST":
+        return _schedule_pendency_decision(context, allowed_origin, pendency_decision.group(1))
+    if path == "/v1/registration/drafts" and method == "POST":
+        return _registration_draft_save(context, allowed_origin)
+    if path == "/v1/registration/drafts" and method == "GET":
+        return _registration_drafts_list(context, allowed_origin)
+    draft_delete = re.fullmatch(r"/v1/registration/drafts/([^/]+)", path)
+    if draft_delete and method == "DELETE":
+        return _registration_draft_delete(context, allowed_origin, draft_delete.group(1))
     session_mutation = _session_mutation_path(path)
     if method == "PUT" and session_mutation is not None:
         course_id, session_id, mutation = session_mutation
@@ -391,6 +433,301 @@ def _schedule(context: Any, origin: str | None, method: str, course_id: str) -> 
     event = "schedule_preview_succeeded" if method == "GET" else "schedule_save_succeeded"
     _log(context, event, **result["changes"])
     return _respond(context, result, origin=origin)
+
+
+def _appwrite_client(headers: dict[str, str]) -> Client:
+    """Build the Appwrite client used by the persistence repositories."""
+    values = {
+        "endpoint": environ.get("APPWRITE_FUNCTION_API_ENDPOINT"),
+        "project": environ.get("APPWRITE_FUNCTION_PROJECT_ID"),
+        "key": _header(headers, "x-appwrite-key"),
+    }
+    if any(not value for value in values.values()):
+        raise SecurityStoreUnavailable("appwrite client unavailable")
+    return (
+        Client()
+        .set_endpoint(cast(str, values["endpoint"]))
+        .set_project(cast(str, values["project"]))
+        .set_key(cast(str, values["key"]))
+    )
+
+
+def _appwrite_database_id() -> str:
+    """Banco existente (SECURITY_DATABASE_ID) que guarda segurança/sessões,
+    pendências de horário e rascunhos de cadastro."""
+    database = environ.get("SECURITY_DATABASE_ID", "")
+    if not database:
+        raise SecurityStoreUnavailable("appwrite database not configured")
+    return database
+
+
+def _pendency_repository(headers: dict[str, str]) -> PendencyRepository:
+    return PendencyRepository(_appwrite_client(headers), database_id=_appwrite_database_id())
+
+
+def _draft_repository(headers: dict[str, str]) -> DraftRepository:
+    return DraftRepository(_appwrite_client(headers), database_id=_appwrite_database_id())
+
+
+def _public_pendency(document: Mapping[str, Any]) -> dict[str, Any]:
+    """Expose one persisted pendency without its internal apply payload."""
+    return {
+        "id": str(document.get("$id", "")),
+        "course_id": document.get("course_id"),
+        "course_code": document.get("course_code"),
+        "course_name": document.get("course_name"),
+        "current_schedule": document.get("current_schedule"),
+        "new_schedule": document.get("new_schedule"),
+        "reason": document.get("reason"),
+        "decision": document.get("decision"),
+        "status": document.get("status"),
+        "created_at": document.get("created_at"),
+        "updated_at": document.get("updated_at"),
+    }
+
+
+def _pend_error(context: Any, origin: str | None, error: str, status: int, **fields: Any) -> Any:
+    _error(context, error, **fields)
+    return _respond(context, {"error": error, **fields}, status, origin)
+
+
+def _draft_error(context: Any, origin: str | None, error: str, status: int, **fields: Any) -> Any:
+    _error(context, error, **fields)
+    return _respond(context, {"error": error, **fields}, status, origin)
+
+
+def _schedule_pendencies_list(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/schedule/pendencies/get")
+    if rejected is not None:
+        return rejected
+    try:
+        documents = _pendency_repository(context.req.headers).list_pendencies(
+            user_id=cast(str, user_id)
+        )
+    except SecurityStoreUnavailable:
+        return _pend_error(context, origin, "pendency_store_unavailable", 503)
+    except (StorageNotProvisioned, StorageUnavailable):
+        return _pend_error(context, origin, "pendency_store_unavailable", 503)
+    items = [_public_pendency(document) for document in documents]
+    _log(context, "schedule_pendencies_listed", count=len(items))
+    return _respond(context, {"pendencies": items}, origin=origin)
+
+
+def _apply_pendency_payload(context: Any, user_id: str, document: Mapping[str, Any]) -> bool:
+    """Apply the stored schedule change through the safe update flow.
+
+    Every other course schedule is loaded so the overlap check sees the real
+    conflict, and ``confirm_destructive`` stays False so sessions with
+    attendance evidence raise ``DestructiveScheduleChange`` instead of being
+    deleted.
+    """
+    raw = document.get("payload")
+    if not isinstance(raw, str) or not raw:
+        return False
+    payload = json.loads(raw)
+    if not isinstance(payload, Mapping):
+        raise ValueError("invalid pendency payload")
+    course_id = str(document.get("course_id", ""))
+    course_repository = _course_repository(context.req.headers, user_id)
+    course = course_repository.get_course(course_id)
+    all_courses = course_repository.list_courses()
+    if not any(str(item.get("id")) == course_id for item in all_courses):
+        all_courses.append(course)
+    schedule_repository = _schedule_repository(context.req.headers, user_id)
+    schedules = schedule_repository.load_import_schedules(all_courses)
+    schedule_repository.save_import_schedule(
+        course_id,
+        {**payload, "confirm_destructive": False},
+        schedules,
+    )
+    return True
+
+
+def _schedule_pendency_decision(context: Any, origin: str | None, pendency_id: str) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/schedule/pendencies/decision/post")
+    if rejected is not None:
+        return rejected
+    payload = context.req.body_json
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("decision"), str):
+        return _pend_error(context, origin, "pendency_decision_invalid", 400)
+    try:
+        decisao = DecisaoHorario(cast(str, payload["decision"]))
+    except ValueError:
+        return _pend_error(context, origin, "pendency_decision_invalid", 400)
+    if decisao is DecisaoHorario.PENDENTE:
+        return _pend_error(context, origin, "pendency_decision_invalid", 400)
+    try:
+        repository = _pendency_repository(context.req.headers)
+    except SecurityStoreUnavailable:
+        return _pend_error(context, origin, "pendency_store_unavailable", 503)
+    try:
+        document = repository.get_pendency(pendency_id, cast(str, user_id))
+    except (StorageNotProvisioned, StorageUnavailable):
+        return _pend_error(context, origin, "pendency_store_unavailable", 503)
+    if document is None:
+        return _pend_error(context, origin, "pendency_not_found", 404)
+    applied = False
+    if decisao is DecisaoHorario.APLICAR_MUDANCA:
+        try:
+            applied = _apply_pendency_payload(context, cast(str, user_id), document)
+        except DestructiveScheduleChange as error:
+            return _pend_error(
+                context,
+                origin,
+                "pendency_apply_conflict",
+                409,
+                destructive_sessions=error.count,
+            )
+        except ScheduleOverlap:
+            return _pend_error(context, origin, "pendency_apply_conflict", 409)
+        except FirestoreNotFound:
+            return _pend_error(context, origin, "course_not_found", 404)
+        except FirestoreAccessDenied:
+            return _pend_error(context, origin, "course_access_denied", 403)
+        except (
+            FirestoreUnavailable,
+            FirestoreRequestRejected,
+            InvalidSchedule,
+            InvalidCourse,
+            TypeError,
+            ValueError,
+        ):
+            return _pend_error(context, origin, "pendency_apply_failed", 503)
+    try:
+        updated = repository.update_decision(
+            pendency_id, cast(str, user_id), decisao.value, "resolved"
+        )
+    except (StorageNotProvisioned, StorageUnavailable):
+        updated = False
+    if not updated:
+        return _pend_error(context, origin, "pendency_store_unavailable", 503)
+    _log(
+        context,
+        "schedule_pendency_decided",
+        applied=applied,
+        course_id=document.get("course_id"),
+        decision=decisao.value,
+        pendency_id=pendency_id,
+    )
+    return _respond(
+        context,
+        {
+            "applied": applied,
+            "pendency": {
+                **_public_pendency(document),
+                "decision": decisao.value,
+                "id": pendency_id,
+                "status": "resolved",
+            },
+        },
+        origin=origin,
+    )
+
+
+def _public_draft(document: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(document.get("$id", "")),
+        "course_id": document.get("course_id"),
+        "course_code": document.get("course_code"),
+        "session_id": document.get("session_id"),
+        "form_data": document.get("form_data"),
+        "last_error": document.get("last_error"),
+        "attempt_count": document.get("attempt_count"),
+        "created_at": document.get("created_at"),
+        "updated_at": document.get("updated_at"),
+    }
+
+
+def _registration_draft_save(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/registration/drafts/post")
+    if rejected is not None:
+        return rejected
+    payload = context.req.body_json
+    if not isinstance(payload, Mapping):
+        return _draft_error(context, origin, "draft_rejected", 400)
+    course_id = payload.get("course_id")
+    course_code = payload.get("course_code")
+    session_id = payload.get("session_id")
+    form_data = payload.get("form_data")
+    if (
+        not isinstance(course_id, str)
+        or not isinstance(course_code, str)
+        or not isinstance(session_id, str)
+        or not isinstance(form_data, dict)
+    ):
+        return _draft_error(context, origin, "draft_rejected", 400)
+    try:
+        validate_course_id(course_id)
+    except (InvalidCourse, ValueError):
+        return _draft_error(context, origin, "draft_rejected", 400)
+    last_error = payload.get("last_error")
+    if not isinstance(last_error, str):
+        last_error = None
+    attempt_count = payload.get("attempt_count", 1)
+    if not isinstance(attempt_count, int) or isinstance(attempt_count, bool) or attempt_count < 1:
+        attempt_count = 1
+    try:
+        repository = _draft_repository(context.req.headers)
+    except SecurityStoreUnavailable:
+        return _draft_error(context, origin, "draft_store_unavailable", 503)
+    rascunho = RascunhoCadastro(course_code, session_id, form_data)
+    try:
+        draft_id = repository.save_draft(
+            user_id=cast(str, user_id),
+            course_id=course_id,
+            course_code=course_code,
+            session_id=session_id,
+            form_data=rascunho.dados,
+            last_error=last_error,
+            attempt_count=attempt_count,
+        )
+    except (InvalidCourse, TypeError, ValueError):
+        return _draft_error(context, origin, "draft_rejected", 400)
+    except (StorageNotProvisioned, StorageUnavailable):
+        return _draft_error(context, origin, "draft_store_unavailable", 503)
+    _log(
+        context,
+        "registration_draft_saved",
+        attempt_count=attempt_count,
+        course_code=course_code,
+        course_id=course_id,
+        draft_id=draft_id,
+        session_id=session_id,
+    )
+    return _respond(context, {"draft": {"id": draft_id}}, origin=origin)
+
+
+def _registration_drafts_list(context: Any, origin: str | None) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/registration/drafts/get")
+    if rejected is not None:
+        return rejected
+    try:
+        documents = _draft_repository(context.req.headers).list_drafts(user_id=cast(str, user_id))
+    except SecurityStoreUnavailable:
+        return _draft_error(context, origin, "draft_store_unavailable", 503)
+    except (StorageNotProvisioned, StorageUnavailable):
+        return _draft_error(context, origin, "draft_store_unavailable", 503)
+    items = [_public_draft(document) for document in documents]
+    _log(context, "registration_drafts_listed", count=len(items))
+    return _respond(context, {"drafts": items}, origin=origin)
+
+
+def _registration_draft_delete(context: Any, origin: str | None, draft_id: str) -> Any:
+    user_id, rejected = _authentication(context, origin, "/v1/registration/drafts/delete")
+    if rejected is not None:
+        return rejected
+    try:
+        repository = _draft_repository(context.req.headers)
+    except SecurityStoreUnavailable:
+        return _draft_error(context, origin, "draft_store_unavailable", 503)
+    try:
+        deleted = repository.delete_draft(draft_id, cast(str, user_id))
+    except (StorageNotProvisioned, StorageUnavailable):
+        return _draft_error(context, origin, "draft_store_unavailable", 503)
+    if not deleted:
+        return _draft_error(context, origin, "draft_not_found", 404)
+    _log(context, "registration_draft_deleted", draft_id=draft_id)
+    return _respond(context, {"deleted": True, "id": draft_id}, origin=origin)
 
 
 def _identity(context: Any, origin: str | None) -> Any:
@@ -588,6 +925,7 @@ def _ufmg_schedule_import(context: Any, origin: str | None) -> Any:
         "conflicts",
         "missing_courses",
         "meetings_imported",
+        "pendencies_created",
     )
     return _respond(
         context,
@@ -655,6 +993,7 @@ def _ufmg_sync(context: Any, origin: str | None, *, siga_only: bool = False) -> 
         "course_created": courses["created"],
         "course_total": courses["total"],
         "schedule_conflicts": schedules["conflicts"],
+        "schedule_pendencies_created": schedules.get("pendencies_created", 0),
         "schedule_total": schedules["total"],
         "schedule_updated": schedules["updated"],
     }
@@ -1607,10 +1946,18 @@ def _authentication(
         _error(context, "app_check_replayed")
         return None, _respond(context, {"error": "app_check_replayed"}, 409, origin)
     except RateLimitExceeded as error:
-        _error(context, "rate_limit_exceeded")
+        _error(
+            context,
+            "rate_limit_exceeded",
+            error_code="RATE_LIMITED",
+            request_id=_REQUEST_ID.get(),
+            retry_after=error.retry_after,
+            route=route,
+            status_code=429,
+        )
         return None, _respond(
             context,
-            {"error": "rate_limited"},
+            {"error": "rate_limited", "error_code": "RATE_LIMITED"},
             429,
             origin,
             {"Retry-After": str(error.retry_after)},
@@ -1912,6 +2259,7 @@ def _ufmg_schedule_import_service(
         UFMGEnrollmentClient(),
         _course_repository(headers, user_id),
         _schedule_repository(headers, user_id),
+        _pendency_repository(headers),
     )
 
 
@@ -1925,7 +2273,9 @@ def _ufmg_sync_service(headers: dict[str, str], user_id: str) -> UFMGSyncService
         sessions,
         enrollments,
         UFMGCourseImportService(sessions, enrollments, courses),
-        UFMGScheduleImportService(sessions, enrollments, courses, schedules),
+        UFMGScheduleImportService(
+            sessions, enrollments, courses, schedules, _pendency_repository(headers)
+        ),
         dates,
     )
 
@@ -2033,6 +2383,7 @@ def _unified_academic_sync_service(
             enrollments,
             courses,
             ScheduleRepository(firestore),
+            _pendency_repository(headers),
         ),
         MoodleDateImportService(sessions, client, courses, dates, telemetry=telemetry),
         telemetry=telemetry,
@@ -2278,31 +2629,39 @@ def _session_mutation_path(path: str) -> tuple[str, str, str] | None:
 
 
 def _is_public_api_path(path: str) -> bool:
-    return path in {
-        "/v1/identity",
-        "/v1/attendance/evaluate",
-        "/v1/courses",
-        "/v1/moodle/dates",
-        "/v1/moodle/materials",
-        "/v1/overview",
-        "/v1/ufmg/session",
-        "/v1/ufmg/import/courses",
-        "/v1/ufmg/import/schedules",
-        "/v1/ufmg/import/dates",
-        "/v1/ufmg/discover/content",
-        "/v1/ufmg/moodle/capabilities",
-        "/v1/ufmg/moodle/material-files",
-        "/v1/ufmg/moodle/diario-plan",
-        "/v1/ufmg/import/teaching-plan",
-        "/v1/ufmg/reconcile/teaching-plan",
-        "/v1/ufmg/sync/moodle",
-        "/v1/ufmg/sync/all",
-        "/v1/ufmg/sync/job",
-        "/v1/ufmg/sync",
-        "/v1/ufmg/sync/siga",
-        "/v1/calendar/official/preview",
-        "/v1/calendar/official/apply",
-    } or path.startswith("/v1/courses/")
+    return (
+        path
+        in {
+            "/v1/identity",
+            "/v1/attendance/evaluate",
+            "/v1/courses",
+            "/v1/moodle/dates",
+            "/v1/moodle/materials",
+            "/v1/overview",
+            "/v1/ufmg/session",
+            "/v1/ufmg/import/courses",
+            "/v1/ufmg/import/schedules",
+            "/v1/ufmg/import/dates",
+            "/v1/ufmg/discover/content",
+            "/v1/ufmg/moodle/capabilities",
+            "/v1/ufmg/moodle/material-files",
+            "/v1/ufmg/moodle/diario-plan",
+            "/v1/ufmg/import/teaching-plan",
+            "/v1/ufmg/reconcile/teaching-plan",
+            "/v1/ufmg/sync/moodle",
+            "/v1/ufmg/sync/all",
+            "/v1/ufmg/sync/job",
+            "/v1/ufmg/sync",
+            "/v1/ufmg/sync/siga",
+            "/v1/calendar/official/preview",
+            "/v1/calendar/official/apply",
+            "/v1/schedule/pendencies",
+            "/v1/registration/drafts",
+        }
+        or path.startswith("/v1/courses/")
+        or re.fullmatch(r"/v1/schedule/pendencies/[^/]+/decision", path) is not None
+        or re.fullmatch(r"/v1/registration/drafts/[^/]+", path) is not None
+    )
 
 
 def _firebase_identity(headers: dict[str, str]) -> str:
@@ -2482,8 +2841,14 @@ def _route_name(path: str) -> str:
         "/v1/ufmg/sync/siga",
         "/v1/calendar/official/preview",
         "/v1/calendar/official/apply",
+        "/v1/schedule/pendencies",
+        "/v1/registration/drafts",
     }:
         return path
+    if re.fullmatch(r"/v1/schedule/pendencies/[^/]+/decision", path):
+        return "/v1/schedule/pendencies/:pendency_id/decision"
+    if re.fullmatch(r"/v1/registration/drafts/[^/]+", path):
+        return "/v1/registration/drafts/:draft_id"
     if _session_mutation_path(path) is not None:
         mutation = path.rsplit("/", 1)[-1]
         return f"/v1/courses/:course_id/sessions/:session_id/{mutation}"
@@ -2494,8 +2859,26 @@ def _route_name(path: str) -> str:
     return "unmatched"
 
 
+def _telemetry_entity_id(fields: Mapping[str, Any]) -> str:
+    """Resolve the report entity, falling back to the current request scope."""
+    for name in ("entity_id", "operation_id", "session_id", "course_id"):
+        value = fields.get(name)
+        if value:
+            return str(value)
+    return f"request:{_REQUEST_ID.get()}"
+
+
 def _log(context: Any, event: str, **fields: Any) -> None:
     try:
+        # Deduplicação ligada ao produtor real: ler repetidamente o mesmo
+        # relatório dentro da mesma execução não cria novas escritas de log.
+        category = str(fields.get("category", "general"))
+        action = str(fields.get("action", event))
+        entity_type = str(fields.get("entity_type", "log"))
+        if not production_telemetry.record_report(
+            category, action, entity_type, _telemetry_entity_id(fields), fields
+        ):
+            return
         context.log(json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True))
     except Exception:
         _fallback_delivery(context.error, "log")
@@ -2503,6 +2886,16 @@ def _log(context: Any, event: str, **fields: Any) -> None:
 
 def _error(context: Any, event: str, **fields: Any) -> None:
     try:
+        # Erros nunca são descartados pela deduplicação; 429/RESOURCE_EXHAUSTED
+        # preservam status, código e retry-after no diagnóstico.
+        if event in ("rate_limit_exceeded", "resource_exhausted"):
+            production_telemetry.record_rejection(
+                str(fields.get("request_id") or _REQUEST_ID.get() or "unknown"),
+                status_code=int(fields.get("status_code", 429)),
+                error_code=str(fields.get("error_code", "RATE_LIMITED")),
+                retry_after=fields.get("retry_after"),
+                context=fields,
+            )
         context.error(json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True))
     except Exception:
         _fallback_delivery(context.log, "error")

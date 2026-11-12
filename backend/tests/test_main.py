@@ -5,10 +5,15 @@ import logging
 import sys
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from frequencia_ufmg.logging_config import JsonFormatter
+from frequencia_ufmg.logging_config import (
+    JsonFormatter,
+    TelemetryDeduplicator,
+    TelemetryKey,
+    TelemetryRecorder,
+)
 from frequencia_ufmg.main import RequestLoggingMiddleware, app
 
 
@@ -73,6 +78,74 @@ def test_request_failures_are_logged_without_request_content(
     assert "never-log-this" not in JsonFormatter().format(failure_record)
 
 
+def test_non_429_http_exception_is_handled() -> None:
+    """HTTP exceptions other than 429 are handled correctly."""
+
+    import asyncio
+    import json
+
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+    middleware = RequestLoggingMiddleware(app)
+
+    async def call_next(request: Request) -> Response:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Criar uma request mock
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/forbidden",
+        "query_string": b"",
+        "headers": [(b"x-request-id", b"test-request-456")],
+        "server": ("localhost", 8000),
+        "scheme": "http",
+    }
+    request = Request(scope, receive=lambda: None)
+
+    # Chamar o dispatch
+    response = asyncio.run(middleware.dispatch(request, call_next))
+
+    assert response.status_code == 403
+    assert json.loads(response.body) == {"detail": "Access denied"}
+    assert response.headers["x-request-id"] == "test-request-456"
+
+
+def test_429_http_exception_is_handled() -> None:
+    """HTTP 429 exceptions are handled and diagnosed."""
+
+    import asyncio
+    import json
+
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+    middleware = RequestLoggingMiddleware(app)
+
+    async def call_next(request: Request) -> Response:
+        raise HTTPException(status_code=429, detail="Rate limited", headers={"retry-after": "60"})
+
+    # Criar uma request mock
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/rate-limited",
+        "query_string": b"",
+        "headers": [(b"x-request-id", b"test-request-123")],
+        "server": ("localhost", 8000),
+        "scheme": "http",
+    }
+    request = Request(scope, receive=lambda: None)
+
+    # Chamar o dispatch
+    response = asyncio.run(middleware.dispatch(request, call_next))
+
+    assert response.status_code == 429
+    assert json.loads(response.body) == {"detail": "Rate limited"}
+    assert response.headers["x-request-id"] == "test-request-123"
+
+
 def test_json_formatter_serializes_plain_and_exception_records() -> None:
     """The formatter emits valid JSON and includes exceptions when present."""
 
@@ -100,3 +173,223 @@ def test_json_formatter_serializes_plain_and_exception_records() -> None:
 
     exception_payload = json.loads(formatter.format(exception_record))
     assert "ValueError: formatted failure" in exception_payload["exception"]
+
+
+# ==================== Sessão 55,35 - Testes de Telemetria ====================
+
+
+class TestTelemetryDeduplicator:
+    """Testes para o deduplicador de telemetria."""
+
+    def test_chave_unica_gerada_corretamente(self) -> None:
+        """TelemetryKey gera hash estável para a mesma entrada."""
+
+        key1 = TelemetryKey("attendance", "record", "session", "aula-01")
+        key2 = TelemetryKey("attendance", "record", "session", "aula-01")
+        key3 = TelemetryKey("attendance", "record", "session", "aula-02")
+
+        assert key1.to_hash() == key2.to_hash()
+        assert key1.to_hash() != key3.to_hash()
+
+    def test_primeiro_relatorio_eh_permitido(self) -> None:
+        """O primeiro relatório de uma chave é sempre permitido."""
+
+        deduplicator = TelemetryDeduplicator()
+        key = TelemetryKey("attendance", "record", "session", "aula-01")
+
+        assert deduplicator.should_report(key) is True
+
+    def test_relatorio_duplicado_na_janela_eh_bloqueado(self) -> None:
+        """Relatórios duplicados dentro da janela são bloqueados."""
+
+        deduplicator = TelemetryDeduplicator(window_seconds=1.0)
+        key = TelemetryKey("attendance", "record", "session", "aula-01")
+
+        # Primeiro relatório
+        assert deduplicator.should_report(key) is True
+        # Segundo relatório na mesma janela
+        assert deduplicator.should_report(key) is False
+
+    def test_relatorio_fora_da_janela_eh_permitido(self) -> None:
+        """Relatórios fora da janela de tempo são permitidos."""
+
+        import time
+
+        deduplicator = TelemetryDeduplicator(window_seconds=0.1)
+        key = TelemetryKey("attendance", "record", "session", "aula-01")
+
+        # Primeiro relatório
+        assert deduplicator.should_report(key) is True
+        # Esperar janela expirar
+        time.sleep(0.15)
+        # Segundo relatório após janela
+        assert deduplicator.should_report(key) is True
+
+
+class TestTelemetryRecorder:
+    """Testes para o gravador de telemetria."""
+
+    def test_gravacao_de_relatorio_unico(self) -> None:
+        """Relatórios únicos são gravados com sucesso."""
+
+        recorder = TelemetryRecorder()
+
+        resultado = recorder.record(
+            category="attendance",
+            action="record",
+            entity_type="session",
+            entity_id="aula-01",
+        )
+
+        assert resultado is True
+
+    def test_gravacao_de_relatorio_duplicado_eh_bloqueada(self) -> None:
+        """Relatórios duplicados não são gravados."""
+
+        recorder = TelemetryRecorder(TelemetryDeduplicator(window_seconds=1.0))
+
+        # Primeiro relatório
+        assert recorder.record("attendance", "record", "session", "aula-01") is True
+        # Segundo relatório idêntico
+        assert recorder.record("attendance", "record", "session", "aula-01") is False
+
+    def test_gravacao_de_429(self) -> None:
+        """Erro 429 é registrado corretamente."""
+
+        recorder = TelemetryRecorder()
+
+        info = recorder.record_429(
+            request_id="req-001",
+            retry_after=60.0,
+            context={"path": "/api/data"},
+        )
+
+        assert info["error_code"] == "RATE_LIMITED"
+        assert info["request_id"] == "req-001"
+        assert info["retry_after"] == 60.0
+        assert "timestamp" in info
+
+    def test_gravacao_de_resource_exhausted(self) -> None:
+        """Erro RESOURCE_EXHAUSTED é registrado corretamente."""
+
+        recorder = TelemetryRecorder()
+
+        info = recorder.record_resource_exhausted(
+            request_id="req-002",
+            context={"operation": "write"},
+        )
+
+        assert info["error_code"] == "RESOURCE_EXHAUSTED"
+        assert info["request_id"] == "req-002"
+        assert "timestamp" in info
+
+    def test_recuperacao_de_rate_limit(self) -> None:
+        """Informações de rate limit podem ser recuperadas."""
+
+        recorder = TelemetryRecorder()
+
+        recorder.record_429("req-001", retry_after=30.0)
+        info = recorder.get_rate_limit("req-001")
+
+        assert info is not None
+        assert info["error_code"] == "RATE_LIMITED"
+
+    def test_recuperacao_de_rate_limit_inexistente(self) -> None:
+        """Recuperar rate limit inexistente retorna None."""
+
+        recorder = TelemetryRecorder()
+
+        assert recorder.get_rate_limit("inexistente") is None
+
+
+class TestRateLimitPreservation:
+    """Testes para preservação de erros 429 e RESOURCE_EXHAUSTED."""
+
+    def test_429_preserva_contexto(self) -> None:
+        """Contexto do erro 429 é preservado."""
+
+        recorder = TelemetryRecorder()
+
+        contexto = {
+            "path": "/api/attendance",
+            "method": "POST",
+            "disciplina": "DCC203",
+        }
+        info = recorder.record_429("req-001", retry_after=120.0, context=contexto)
+
+        assert info["context"] == contexto
+
+    def test_multiplos_429_sao_armazenados(self) -> None:
+        """Múltiplos erros 429 são armazenados separadamente."""
+
+        recorder = TelemetryRecorder()
+
+        recorder.record_429("req-001", retry_after=60.0)
+        recorder.record_429("req-002", retry_after=120.0)
+
+        info1 = recorder.get_rate_limit("req-001")
+        info2 = recorder.get_rate_limit("req-002")
+
+        assert info1 is not None
+        assert info2 is not None
+        assert info1 != info2
+
+    def test_clear_old_entries(self) -> None:
+        """Entradas antigas são removidas do cache de deduplicação."""
+
+        import time
+
+        deduplicator = TelemetryDeduplicator(window_seconds=0.1)
+        key1 = TelemetryKey("attendance", "record", "session", "aula-01")
+        key2 = TelemetryKey("attendance", "record", "session", "aula-02")
+
+        # Adicionar entradas
+        assert deduplicator.should_report(key1) is True
+        assert deduplicator.should_report(key2) is True
+
+        # Esperar janela expirar
+        time.sleep(0.15)
+
+        # Remover entradas antigas
+        removidas = deduplicator.clear_old_entries()
+        assert removidas == 2
+
+        # Verificar que entradas foram removidas
+        # Nova verificação deve permitir relatórios novamente
+        assert deduplicator.should_report(key1) is True
+
+    def test_record_429_sem_context(self) -> None:
+        """Erro 429 sem contexto é registrado corretamente."""
+
+        recorder = TelemetryRecorder()
+
+        info = recorder.record_429("req-003", retry_after=None, context=None)
+
+        assert info["error_code"] == "RATE_LIMITED"
+        assert info["request_id"] == "req-003"
+        assert "context" not in info
+
+    def test_record_resource_exhausted_sem_context(self) -> None:
+        """Erro RESOURCE_EXHAUSTED sem contexto é registrado corretamente."""
+
+        recorder = TelemetryRecorder()
+
+        info = recorder.record_resource_exhausted("req-004", context=None)
+
+        assert info["error_code"] == "RESOURCE_EXHAUSTED"
+        assert info["request_id"] == "req-004"
+        assert "context" not in info
+
+    def test_record_resource_exhausted_com_dicionario_existente(self) -> None:
+        """Registro de RESOURCE_EXHAUSTED com dicionário já criado."""
+
+        recorder = TelemetryRecorder()
+
+        # Primeiro registro cria o dicionário
+        recorder.record_resource_exhausted("req-004", context=None)
+        # Segundo registro usa o dicionário existente
+        info = recorder.record_resource_exhausted("req-005", context={"test": "value"})
+
+        assert info["error_code"] == "RESOURCE_EXHAUSTED"
+        assert info["request_id"] == "req-005"
+        assert info["context"] == {"test": "value"}

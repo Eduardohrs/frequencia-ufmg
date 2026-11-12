@@ -1,8 +1,11 @@
 """Modelo de domínio avaliável da frequência acadêmica."""
 
+import copy
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from enum import IntEnum, StrEnum
+from typing import Any
 
 
 class QuantidadeAulas(IntEnum):
@@ -391,3 +394,76 @@ def _classificar_pings_validos(
     if segundo_ping is EstadoPing.NO_CAMPUS:
         return SituacaoFrequencia.CHEGOU_ATRASADO
     return SituacaoFrequencia.AUSENTE
+
+
+class DecisaoHorario(StrEnum):
+    """DecisãoTomada pelo usuário em relação a uma pendência de horário."""
+
+    MANTER_ATUAL = "manter_atual"
+    APLICAR_MUDANCA = "aplicar_mudanca"
+    PENDENTE = "pendente"
+
+
+@dataclass(frozen=True, slots=True)
+class PendenciaHorario:
+    """Pendência de horário que precisa de decisão do usuário."""
+
+    disciplina_codigo: str
+    disciplina_nome: str
+    horario_atual: str
+    horario_novo: str
+    motivo: str
+    data_criacao: datetime = field(default_factory=lambda: datetime.now())
+
+    def to_dict(self) -> dict[str, Any]:
+        """Converte para dicionário para serialização."""
+        return {
+            "disciplina_codigo": self.disciplina_codigo,
+            "disciplina_nome": self.disciplina_nome,
+            "horario_atual": self.horario_atual,
+            "horario_novo": self.horario_novo,
+            "motivo": self.motivo,
+            "data_criacao": self.data_criacao.isoformat(),
+        }
+
+
+class RascunhoCadastro:
+    """Rascunho de cadastro que pode ser recuperado em caso de falha."""
+
+    __slots__ = ("_disciplina", "_sessao", "_dados", "_timestamp")
+
+    def __init__(
+        self,
+        disciplina_codigo: str,
+        sessao_identificador: str,
+        dados: dict[str, Any],
+    ) -> None:
+        self._disciplina = disciplina_codigo
+        self._sessao = sessao_identificador
+        self._dados = copy.deepcopy(dados)
+        self._timestamp = datetime.now()
+
+    @property
+    def disciplina_codigo(self) -> str:
+        return self._disciplina
+
+    @property
+    def sessao_identificador(self) -> str:
+        return self._sessao
+
+    @property
+    def dados(self) -> dict[str, Any]:
+        return self._dados.copy()
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
+    def to_dict(self) -> dict[str, Any]:
+        """Converte para dicionário para serialização."""
+        return {
+            "disciplina_codigo": self._disciplina,
+            "sessao_identificador": self._sessao,
+            "dados": self._dados,
+            "timestamp": self._timestamp.isoformat(),
+        }

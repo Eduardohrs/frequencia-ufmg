@@ -194,14 +194,23 @@ def test_saved_api_works_with_expired_session_and_reports_missing_or_corrupt_sna
             )
         )
 
-    assert get()["body"]["activities"][0]["description"] == "Saved task"
+    first = FakeContext(
+        FakeRequest("GET", "/v1/courses/poo/activities", headers={"X-Academic-Contract": "2"})
+    )
+    assert function.main(first)["body"]["activities"][0]["description"] == "Saved task"
+    assert any(
+        json.loads(row).get("snapshot_synced_at") == snapshot()["synced_at"] for row in first.logs
+    )
     context = FakeContext(
         FakeRequest("GET", "/v1/courses/poo/activities", headers={"X-Academic-Contract": "2"})
     )
     function.main(context)
-    assert any(
+    # Ler repetidamente o mesmo relatório não cria novas escritas de log,
+    # mas o log por requisição continua emitido.
+    assert not any(
         json.loads(row).get("snapshot_synced_at") == snapshot()["synced_at"] for row in context.logs
     )
+    assert any(json.loads(row).get("event") == "request_completed" for row in context.logs)
     assert get("/20")["body"]["description"] == "Saved task"
     assert get("/99")["status"] == 404
     store.documents.clear()

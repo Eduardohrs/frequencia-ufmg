@@ -7,6 +7,7 @@ import pytest
 
 import main as function
 from academic_date_repository import InvalidAcademicDate
+from appwrite_storage import StorageNotProvisioned, StorageUnavailable
 from course_repository import DuplicateCourseCode
 from course_service import InvalidCourse
 from firebase_app_check import FirebaseAppIdentity, InvalidAppCheck
@@ -14,6 +15,7 @@ from firebase_identity import InvalidIdentity
 from firestore_rest import (
     FirestoreAccessDenied,
     FirestoreNotFound,
+    FirestoreRateLimited,
     FirestoreRequestRejected,
     FirestoreUnavailable,
 )
@@ -432,7 +434,7 @@ def test_unified_academic_sync_returns_summary_exceptions_and_diagnostic_log(
         "event": "academic_sync_course_failed",
         "reason": "diario_plan_structure",
         "stage": "teaching_plan_import",
-        "request_id":result["headers"]["X-Request-ID"],
+        "request_id": result["headers"]["X-Request-ID"],
     }
 
 
@@ -452,7 +454,8 @@ def test_unified_academic_sync_rejects_nonempty_payload(
 
 @pytest.mark.parametrize("failure", [False, True])
 def test_unified_sync_progress_reaches_terminal_state_and_preserves_failure_mapping(
-    monkeypatch: pytest.MonkeyPatch, failure: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: bool,
 ) -> None:
     monkeypatch.setenv("ENABLE_SCHEDULE_WRITES", "true")
     monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
@@ -473,14 +476,22 @@ def test_unified_sync_progress_reaches_terminal_state_and_preserves_failure_mapp
             self.telemetry("academic_sync_stage_completed", {"stage": "moodle"})
             if failure:
                 raise MoodleUnavailable("upstream unavailable")
-            return {"exceptions": [], "teaching_plans": {
-                "available": 0, "imported": 0, "applied": 0, "unchanged": 0, "review_required": 0,
-            }}
+            return {
+                "exceptions": [],
+                "teaching_plans": {
+                    "available": 0,
+                    "imported": 0,
+                    "applied": 0,
+                    "unchanged": 0,
+                    "review_required": 0,
+                },
+            }
 
     monkeypatch.setattr(function, "_firestore", lambda *_: Store())
     monkeypatch.setattr(function, "_unified_academic_sync_service", lambda _, __, t: Service(t))
-    context = FakeContext(FakeRequest("POST", "/v1/ufmg/sync/all",
-                                     body_json={"progress_id": "sync-test123"}))
+    context = FakeContext(
+        FakeRequest("POST", "/v1/ufmg/sync/all", body_json={"progress_id": "sync-test123"})
+    )
     result = function.main(context)
     assert result["status"] == (503 if failure else 200)
     assert writes[-1]["status"] == {"stringValue": "failed" if failure else "succeeded"}
@@ -490,11 +501,13 @@ def test_unified_sync_progress_reaches_terminal_state_and_preserves_failure_mapp
 
 @pytest.mark.parametrize("identifier", [None, 3, "../secret", "x", "x" * 81])
 def test_unified_sync_rejects_malformed_progress_identifier(
-    monkeypatch: pytest.MonkeyPatch, identifier: object,
+    monkeypatch: pytest.MonkeyPatch,
+    identifier: object,
 ) -> None:
     monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
-    result = function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/sync/all",
-                                                body_json={"progress_id": identifier})))
+    result = function.main(
+        FakeContext(FakeRequest("POST", "/v1/ufmg/sync/all", body_json={"progress_id": identifier}))
+    )
     assert result["status"] == 400
 
 
@@ -573,6 +586,7 @@ def test_unified_academic_sync_factory_reuses_one_moodle_client(
     monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: client)
     monkeypatch.setattr(function, "_firestore", lambda _headers, _user: firestore)
     monkeypatch.setattr(function, "_moodle_token_store", lambda _headers: tokens)
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: "pendencies")
 
     service = function._unified_academic_sync_service({}, "user")
 
@@ -837,6 +851,7 @@ def test_ufmg_schedule_import_route_is_authenticated_and_logs_only_counts(
         "meeting_deletes": 0,
         "session_upserts": 18,
         "session_deletes": 0,
+        "pendencies_created": 0,
     }
 
     class Service:
@@ -861,6 +876,7 @@ def test_ufmg_schedule_import_route_is_authenticated_and_logs_only_counts(
             "conflicts",
             "missing_courses",
             "meetings_imported",
+            "pendencies_created",
         )
     }
     assert routes == ["/v1/ufmg/import/schedules/post"]
@@ -888,6 +904,7 @@ def test_ufmg_sync_route_returns_the_bounded_combined_contract(
             "conflicts": 1,
             "missing_courses": 0,
             "meetings_imported": 2,
+            "pendencies_created": 0,
         },
         "dates": {
             "total": 3,
@@ -925,6 +942,7 @@ def test_ufmg_sync_route_returns_the_bounded_combined_contract(
         "date_unmatched": 1,
         "event": "ufmg_sync_succeeded",
         "schedule_conflicts": 1,
+        "schedule_pendencies_created": 0,
         "schedule_total": 5,
         "schedule_updated": 1,
     }
@@ -943,6 +961,7 @@ def test_ufmg_siga_sync_route_preserves_the_legacy_contract(
             "conflicts": 1,
             "missing_courses": 0,
             "meetings_imported": 2,
+            "pendencies_created": 0,
         },
         "checked_at": "2026-10-13T12:00:00Z",
         "next_automatic_sync_at": "2026-12-06T00:00:00Z",
@@ -972,6 +991,7 @@ def test_ufmg_siga_sync_route_preserves_the_legacy_contract(
         "course_total": 5,
         "event": "ufmg_siga_sync_succeeded",
         "schedule_conflicts": 1,
+        "schedule_pendencies_created": 0,
         "schedule_total": 5,
         "schedule_updated": 1,
     }
@@ -2372,6 +2392,8 @@ def test_ufmg_sync_service_reuses_secure_dependencies(
     monkeypatch.setattr(
         function, "_moodle_date_import_service", lambda _headers, _user: values["dates"]
     )
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: values["pendencies"])
+    values["pendencies"] = object()
 
     class Importer:
         def __init__(self, *dependencies: object) -> None:
@@ -2394,6 +2416,7 @@ def test_ufmg_sync_service_reuses_secure_dependencies(
             values["enrollments"],
             values["courses"],
             values["schedules"],
+            values["pendencies"],
         ),
     ]
     assert captured_sync[:2] == (values["sessions"], values["enrollments"])
@@ -2424,6 +2447,8 @@ def test_ufmg_schedule_import_service_uses_shared_secure_dependencies(
         function, "_schedule_repository", lambda _headers, _user: values["schedules"]
     )
     monkeypatch.setattr(function, "UFMGEnrollmentClient", lambda: "enrollments")
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: values["pendencies"])
+    values["pendencies"] = object()
 
     class Service:
         def __init__(self, *dependencies: object) -> None:
@@ -2438,6 +2463,7 @@ def test_ufmg_schedule_import_service_uses_shared_secure_dependencies(
         "enrollments",
         values["courses"],
         values["schedules"],
+        values["pendencies"],
     )
 
 
@@ -2599,7 +2625,8 @@ def test_ufmg_course_import_sanitizes_failures(
 
 @pytest.mark.parametrize("policy", [{}, {"modality": "online", "attendance_policy": "no_call"}])
 def test_course_routes_list_save_and_delete(
-    monkeypatch: pytest.MonkeyPatch, policy: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    policy: dict[str, str],
 ) -> None:
     monkeypatch.setattr(function, "_authentication", lambda *_args: ("user", None))
 
@@ -2617,9 +2644,13 @@ def test_course_routes_list_save_and_delete(
     monkeypatch.setattr(function, "_course_repository", lambda *_args: Repository())
 
     listed = FakeContext(FakeRequest("GET", "/v1/courses"))
-    saved = FakeContext(FakeRequest(
-        "PUT", "/v1/courses/course-1", body_json={"code": "DCC203", **policy},
-    ))
+    saved = FakeContext(
+        FakeRequest(
+            "PUT",
+            "/v1/courses/course-1",
+            body_json={"code": "DCC203", **policy},
+        )
+    )
     deleted = FakeContext(FakeRequest("DELETE", "/v1/courses/course-1"))
 
     assert function.main(listed)["body"] == {"courses": [{"id": "course-1"}]}
@@ -2627,7 +2658,9 @@ def test_course_routes_list_save_and_delete(
     assert function.main(deleted)["body"] == {"deleted": True}
     assert json.loads(listed.logs[0]) == {"count": 1, "event": "course_list_succeeded"}
     assert json.loads(saved.logs[0]) == {
-        "event": "course_save_succeeded", "course_id": "course-1", "course_code": "DCC203",
+        "event": "course_save_succeeded",
+        "course_id": "course-1",
+        "course_code": "DCC203",
         "modality": policy.get("modality", "in_person"),
         "attendance_policy": policy.get("attendance_policy", "required"),
         "session_history_preserved": True,
@@ -2992,6 +3025,34 @@ def test_preflight_allows_only_configured_exact_origin(
     assert result["headers"]["Vary"] == "Origin"
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/registration/drafts/6af5c0ac00061dbde0a0",
+        "/v1/schedule/pendencies/6af5c0ac00061dbde0a0/decision",
+    ],
+)
+def test_preflight_covers_parameterized_public_api_paths(
+    monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://frequencia-ufmg-eduardo.web.app")
+    context = FakeContext(
+        FakeRequest(
+            "OPTIONS",
+            path,
+            headers={"origin": "https://frequencia-ufmg-eduardo.web.app"},
+        )
+    )
+
+    result = function.main(context)
+
+    assert result["status"] == 204
+    assert result["headers"]["Access-Control-Allow-Methods"] == ("GET,POST,PUT,DELETE,OPTIONS")
+    assert result["headers"]["Access-Control-Allow-Origin"] == (
+        "https://frequencia-ufmg-eduardo.web.app"
+    )
+
+
 def test_request_id_is_echoed_and_correlates_the_request_log(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3259,11 +3320,23 @@ def test_identity_route_fails_closed_on_guard_errors(
     result = function.main(context)
 
     assert result["status"] == status
-    assert result["body"] == {"error": error}
-    assert json.loads(context.errors[0]) == {"event": event}
     assert "private" not in "".join(context.errors)
     if isinstance(failure, RateLimitExceeded):
+        assert result["body"] == {"error": error, "error_code": "RATE_LIMITED"}
         assert result["headers"]["Retry-After"] == "37"
+        logged = json.loads(context.errors[0])
+        assert logged["event"] == event
+        assert logged["status_code"] == 429
+        assert logged["error_code"] == "RATE_LIMITED"
+        assert logged["retry_after"] == 37
+        diagnosis = function.production_telemetry.get_diagnosis(logged["request_id"])
+        assert diagnosis is not None
+        assert diagnosis["status_code"] == 429
+        assert diagnosis["error_code"] == "RATE_LIMITED"
+        assert diagnosis["retry_after"] == 37
+    else:
+        assert result["body"] == {"error": error}
+        assert json.loads(context.errors[0]) == {"event": event}
 
 
 def test_firebase_identity_uses_configured_project(
@@ -3418,3 +3491,1046 @@ def test_allowed_origin_supports_https_and_local_development(
 )
 def test_payload_length_boundary(headers: dict[str, str], body: bytes, error: str | None) -> None:
     assert function._payload_error(headers, body) == error
+
+
+class _FakePendencyRepo:
+    def __init__(self, documents: dict[str, dict[str, Any]] | None = None) -> None:
+        self.documents = documents or {}
+        self.decisions: list[tuple[str, str, str]] = []
+        self.fail_update = False
+        self.list_error: Exception | None = None
+        self.get_error: Exception | None = None
+        self.update_error: Exception | None = None
+
+    def _owned(self, pendency_id: str, user_id: str) -> dict[str, Any] | None:
+        document = self.documents.get(pendency_id)
+        if document is None or document.get("user_id") != user_id:
+            return None
+        return document
+
+    def list_pendencies(
+        self, user_id: str, course_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        if self.list_error is not None:
+            raise self.list_error
+        return [
+            document
+            for document in self.documents.values()
+            if document.get("user_id") == user_id
+            and (course_id is None or document.get("course_id") == course_id)
+            and (status is None or document.get("status") == status)
+        ]
+
+    def get_pendency(self, pendency_id: str, user_id: str) -> dict[str, Any] | None:
+        if self.get_error is not None:
+            raise self.get_error
+        return self._owned(pendency_id, user_id)
+
+    def update_decision(
+        self, pendency_id: str, user_id: str, decision: str, status: str = "resolved"
+    ) -> bool:
+        if self.fail_update:
+            return False
+        if self.update_error is not None:
+            raise self.update_error
+        document = self._owned(pendency_id, user_id)
+        if document is None:
+            return False
+        self.decisions.append((pendency_id, decision, status))
+        document["decision"] = decision
+        document["status"] = status
+        return True
+
+    def delete_pendency(self, pendency_id: str, user_id: str) -> bool:
+        if self._owned(pendency_id, user_id) is None:
+            return False
+        del self.documents[pendency_id]
+        return True
+
+
+class _FakeDraftRepo:
+    def __init__(self) -> None:
+        self.documents: dict[str, dict[str, Any]] = {}
+        self.fail_save = False
+        self.list_error: Exception | None = None
+        self.save_error: Exception | None = None
+        self.delete_error: Exception | None = None
+
+    def save_draft(self, **kwargs: Any) -> str:
+        if self.fail_save:
+            raise ValueError("rejected")
+        if self.save_error is not None:
+            raise self.save_error
+        draft_id = f"draft-{len(self.documents) + 1}"
+        self.documents[draft_id] = {"$id": draft_id, **kwargs}
+        return draft_id
+
+    def list_drafts(
+        self, user_id: str, course_id: str | None = None, session_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        if self.list_error is not None:
+            raise self.list_error
+        return [
+            document
+            for document in self.documents.values()
+            if document.get("user_id") == user_id
+            and (course_id is None or document.get("course_id") == course_id)
+            and (session_id is None or document.get("session_id") == session_id)
+        ]
+
+    def delete_draft(self, draft_id: str, user_id: str) -> bool:
+        if self.delete_error is not None:
+            raise self.delete_error
+        document = self.documents.get(draft_id)
+        if document is None or document.get("user_id") != user_id:
+            return False
+        del self.documents[draft_id]
+        return True
+
+
+def _pend_document(pendency_id: str = "pend-1", **overrides: Any) -> dict[str, Any]:
+    document = {
+        "$id": pendency_id,
+        "user_id": "user-1",
+        "course_id": "course-1",
+        "course_code": "DCC205",
+        "course_name": "Estruturas",
+        "current_schedule": "seg 08:00 (2 aulas)",
+        "new_schedule": "ter 10:00 (2 aulas)",
+        "reason": "manual_schedule_diverged",
+        "decision": None,
+        "status": "pending",
+        "created_at": "2026-11-11T00:00:00Z",
+        "updated_at": "2026-11-11T00:00:00Z",
+        "payload": json.dumps(
+            {
+                "starts_on": "2026-08-03T00:00:00Z",
+                "ends_on": "2026-12-05T00:00:00Z",
+                "meetings": [
+                    {
+                        "id": "ufmg-2-600-2",
+                        "weekday": 2,
+                        "start_minutes": 600,
+                        "lesson_count": 2,
+                        "call_count": 1,
+                    }
+                ],
+                "confirm_destructive": False,
+            }
+        ),
+    }
+    document.update(overrides)
+    return document
+
+
+def _auth_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user-1", None))
+
+
+def test_schedule_pendencies_list_returns_public_view(monkeypatch: pytest.MonkeyPatch) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakePendencyRepo({"pend-1": _pend_document()})
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo)
+
+    context = FakeContext(FakeRequest("GET", "/v1/schedule/pendencies"))
+    result = function.main(context)
+
+    assert result["status"] == 200
+    (item,) = result["body"]["pendencies"]
+    assert item["id"] == "pend-1"
+    assert item["course_code"] == "DCC205"
+    assert item["current_schedule"] == "seg 08:00 (2 aulas)"
+    assert item["new_schedule"] == "ter 10:00 (2 aulas)"
+    assert item["reason"] == "manual_schedule_diverged"
+    assert item["status"] == "pending"
+    assert "payload" not in item
+    assert json.loads(context.logs[0])["event"] == "schedule_pendencies_listed"
+
+
+def test_schedule_pendencies_list_fails_closed_without_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+
+    def no_store(_headers: dict[str, str]) -> Any:
+        raise SecurityStoreUnavailable("down")
+
+    monkeypatch.setattr(function, "_pendency_repository", no_store)
+    result = function.main(FakeContext(FakeRequest("GET", "/v1/schedule/pendencies")))
+    assert result["status"] == 503
+    assert result["body"]["error"] == "pendency_store_unavailable"
+
+
+def test_schedule_pendency_decision_requires_valid_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: _FakePendencyRepo())
+    path = "/v1/schedule/pendencies/pend-1/decision"
+
+    assert function.main(FakeContext(FakeRequest("POST", path, body_json="nope")))["status"] == 400
+    assert function.main(FakeContext(FakeRequest("POST", path, body_json={})))["status"] == 400
+    invalid = function.main(
+        FakeContext(FakeRequest("POST", path, body_json={"decision": "invalid"}))
+    )
+    assert invalid["status"] == 400
+    assert invalid["body"]["error"] == "pendency_decision_invalid"
+    pending = function.main(
+        FakeContext(FakeRequest("POST", path, body_json={"decision": "pendente"}))
+    )
+    assert pending["status"] == 400
+
+
+def test_schedule_pendency_decision_404_and_update_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakePendencyRepo()
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo)
+    missing = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/schedule/pendencies/missing/decision",
+                body_json={"decision": "manter_atual"},
+            )
+        )
+    )
+    assert missing["status"] == 404
+    assert missing["body"]["error"] == "pendency_not_found"
+
+    repo2 = _FakePendencyRepo({"pend-1": _pend_document()})
+    repo2.fail_update = True
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo2)
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/schedule/pendencies/pend-1/decision",
+                body_json={"decision": "manter_atual"},
+            )
+        )
+    )
+    assert result["status"] == 503
+    assert result["body"]["error"] == "pendency_store_unavailable"
+
+
+def test_schedule_pendency_decision_manter_atual_persists_without_apply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakePendencyRepo({"pend-1": _pend_document()})
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo)
+
+    def apply_should_not_run(*_args: Any, **_kwargs: Any) -> bool:
+        raise AssertionError("manter_atual must not touch the schedule")
+
+    monkeypatch.setattr(function, "_apply_pendency_payload", apply_should_not_run)
+    context = FakeContext(
+        FakeRequest(
+            "POST",
+            "/v1/schedule/pendencies/pend-1/decision",
+            body_json={"decision": "manter_atual"},
+        )
+    )
+    result = function.main(context)
+
+    assert result["status"] == 200
+    assert result["body"]["applied"] is False
+    assert result["body"]["pendency"]["decision"] == "manter_atual"
+    assert result["body"]["pendency"]["status"] == "resolved"
+    assert repo.decisions == [("pend-1", "manter_atual", "resolved")]
+    assert repo.documents["pend-1"]["decision"] == "manter_atual"
+    event = json.loads(context.logs[0])
+    assert event["event"] == "schedule_pendency_decided"
+    assert event["decision"] == "manter_atual"
+    assert event["applied"] is False
+
+
+def test_schedule_pendency_decision_aplicar_mudanca_applies_and_persists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakePendencyRepo({"pend-1": _pend_document()})
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo)
+    applied_calls: list[str] = []
+
+    def fake_apply(context: Any, user_id: str, document: dict[str, Any]) -> bool:
+        applied_calls.append(user_id)
+        return True
+
+    monkeypatch.setattr(function, "_apply_pendency_payload", fake_apply)
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/schedule/pendencies/pend-1/decision",
+                body_json={"decision": "aplicar_mudanca"},
+            )
+        )
+    )
+
+    assert result["status"] == 200
+    assert result["body"]["applied"] is True
+    assert result["body"]["pendency"]["decision"] == "aplicar_mudanca"
+    assert repo.decisions == [("pend-1", "aplicar_mudanca", "resolved")]
+    assert applied_calls == ["user-1"]
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (DestructiveScheduleChange(2), 409, "pendency_apply_conflict"),
+        (ScheduleOverlap("overlap"), 409, "pendency_apply_conflict"),
+        (FirestoreNotFound("missing"), 404, "course_not_found"),
+        (FirestoreAccessDenied("denied"), 403, "course_access_denied"),
+        (FirestoreUnavailable("down"), 503, "pendency_apply_failed"),
+        (FirestoreRequestRejected("bad"), 503, "pendency_apply_failed"),
+        (InvalidSchedule("bad"), 503, "pendency_apply_failed"),
+        (InvalidCourse("bad"), 503, "pendency_apply_failed"),
+        (TypeError("bad"), 503, "pendency_apply_failed"),
+        (ValueError("bad"), 503, "pendency_apply_failed"),
+    ],
+)
+def test_schedule_pendency_decision_apply_failures_do_not_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    status: int,
+    code: str,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakePendencyRepo({"pend-1": _pend_document()})
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo)
+
+    def failing_apply(*_args: Any, **_kwargs: Any) -> bool:
+        raise error
+
+    monkeypatch.setattr(function, "_apply_pendency_payload", failing_apply)
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/schedule/pendencies/pend-1/decision",
+                body_json={"decision": "aplicar_mudanca"},
+            )
+        )
+    )
+    assert result["status"] == status
+    assert result["body"]["error"] == code
+    assert repo.decisions == []
+
+
+def test_apply_pendency_payload_applies_stored_change_safely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    course = {"id": "course-1", "code": "DCC205"}
+    other = {"id": "course-2", "code": "MAT001"}
+    saved: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    loaded: list[list[dict[str, Any]]] = []
+
+    class CourseRepo:
+        def get_course(self, course_id: str) -> dict[str, Any]:
+            assert course_id == "course-1"
+            return course
+
+        def list_courses(self) -> list[dict[str, Any]]:
+            return [course, other]
+
+    class ScheduleRepo:
+        def load_import_schedules(self, courses: list[dict[str, Any]]) -> dict[str, Any]:
+            loaded.append(courses)
+            return {
+                "course-1": {"course": course, "meetings": []},
+                "course-2": {"course": other, "meetings": []},
+            }
+
+        def save_import_schedule(
+            self,
+            course_id: str,
+            payload: dict[str, Any],
+            schedules: dict[str, Any],
+        ) -> dict[str, Any]:
+            saved.append((course_id, dict(payload), dict(schedules)))
+            return {"changes": {}}
+
+    monkeypatch.setattr(function, "_course_repository", lambda _h, _u: CourseRepo())
+    monkeypatch.setattr(function, "_schedule_repository", lambda _h, _u: ScheduleRepo())
+
+    context = FakeContext(FakeRequest("POST", "/v1/schedule/pendencies/pend-1/decision"))
+    assert function._apply_pendency_payload(context, "user-1", _pend_document()) is True
+    course_id, payload, schedules = saved[0]
+    assert course_id == "course-1"
+    # the safe flow never forces destructive confirmation
+    assert payload["confirm_destructive"] is False
+    assert payload["meetings"][0]["id"] == "ufmg-2-600-2"
+    # every other course schedule participates in the overlap check
+    assert {item["id"] for item in loaded[0]} == {"course-1", "course-2"}
+    assert set(schedules) == {"course-1", "course-2"}
+
+
+def test_apply_pendency_payload_falls_back_to_course_when_listing_omits_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    course = {"id": "course-1", "code": "DCC205"}
+    loaded: list[list[dict[str, Any]]] = []
+
+    class CourseRepo:
+        def get_course(self, course_id: str) -> dict[str, Any]:
+            return course
+
+        def list_courses(self) -> list[dict[str, Any]]:
+            return []
+
+    class ScheduleRepo:
+        def load_import_schedules(self, courses: list[dict[str, Any]]) -> dict[str, Any]:
+            loaded.append(courses)
+            return {"course-1": {"course": course, "meetings": []}}
+
+        def save_import_schedule(
+            self, course_id: str, payload: dict[str, Any], schedules: dict[str, Any]
+        ) -> dict[str, Any]:
+            return {"changes": {}}
+
+    monkeypatch.setattr(function, "_course_repository", lambda _h, _u: CourseRepo())
+    monkeypatch.setattr(function, "_schedule_repository", lambda _h, _u: ScheduleRepo())
+
+    context = FakeContext(FakeRequest("POST", "/v1/schedule/pendencies/pend-1/decision"))
+    assert function._apply_pendency_payload(context, "user-1", _pend_document()) is True
+    assert loaded[0] == [course]
+
+
+def test_apply_pendency_payload_without_payload_returns_false() -> None:
+    context = FakeContext(FakeRequest("POST", "/v1/schedule/pendencies/pend-1/decision"))
+    assert (
+        function._apply_pendency_payload(context, "user-1", _pend_document(payload=None)) is False
+    )
+    with pytest.raises(ValueError):
+        function._apply_pendency_payload(context, "user-1", _pend_document(payload="[1]"))
+
+
+def test_registration_draft_routes_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakeDraftRepo()
+    monkeypatch.setattr(function, "_draft_repository", lambda _headers: repo)
+
+    save = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/registration/drafts",
+                body_json={
+                    "course_id": "course-1",
+                    "course_code": "DCC205",
+                    "session_id": "new",
+                    "form_data": {"code": "DCC205", "name": "Estruturas"},
+                    "last_error": "rate_limited",
+                    "attempt_count": 2,
+                },
+            )
+        )
+    )
+    assert save["status"] == 200
+    draft_id = save["body"]["draft"]["id"]
+
+    listed = function.main(FakeContext(FakeRequest("GET", "/v1/registration/drafts")))
+    assert listed["status"] == 200
+    (item,) = listed["body"]["drafts"]
+    assert item["id"] == draft_id
+    assert item["form_data"] == {"code": "DCC205", "name": "Estruturas"}
+    assert item["last_error"] == "rate_limited"
+    assert item["attempt_count"] == 2
+
+    deleted = function.main(
+        FakeContext(FakeRequest("DELETE", f"/v1/registration/drafts/{draft_id}"))
+    )
+    assert deleted["status"] == 200
+    assert deleted["body"] == {"deleted": True, "id": draft_id}
+    missing = function.main(FakeContext(FakeRequest("DELETE", "/v1/registration/drafts/nope")))
+    assert missing["status"] == 404
+
+
+def test_registration_draft_save_validates_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakeDraftRepo()
+    monkeypatch.setattr(function, "_draft_repository", lambda _headers: repo)
+    path = "/v1/registration/drafts"
+
+    assert function.main(FakeContext(FakeRequest("POST", path, body_json="nope")))["status"] == 400
+    assert function.main(FakeContext(FakeRequest("POST", path, body_json={})))["status"] == 400
+    bad_id = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                path,
+                body_json={
+                    "course_id": "bad/id",
+                    "course_code": "X",
+                    "session_id": "s",
+                    "form_data": {},
+                },
+            )
+        )
+    )
+    assert bad_id["status"] == 400
+    coerced = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                path,
+                body_json={
+                    "course_id": "course-1",
+                    "course_code": "X",
+                    "session_id": "s",
+                    "form_data": {"a": 1},
+                    "last_error": 5,
+                    "attempt_count": True,
+                },
+            )
+        )
+    )
+    assert coerced["status"] == 200
+
+    repo.fail_save = True
+    rejected = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                path,
+                body_json={
+                    "course_id": "course-1",
+                    "course_code": "X",
+                    "session_id": "s",
+                    "form_data": {},
+                },
+            )
+        )
+    )
+    assert rejected["status"] == 400
+    assert rejected["body"]["error"] == "draft_rejected"
+
+
+def test_registration_draft_routes_fail_closed_without_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+
+    def no_store(_headers: dict[str, str]) -> Any:
+        raise SecurityStoreUnavailable("down")
+
+    monkeypatch.setattr(function, "_draft_repository", no_store)
+    assert (
+        function.main(FakeContext(FakeRequest("GET", "/v1/registration/drafts")))["status"] == 503
+    )
+    posted = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/registration/drafts",
+                body_json={
+                    "course_id": "c",
+                    "course_code": "X",
+                    "session_id": "s",
+                    "form_data": {},
+                },
+            )
+        )
+    )
+    assert posted["status"] == 503
+    assert (
+        function.main(FakeContext(FakeRequest("DELETE", "/v1/registration/drafts/d1")))["status"]
+        == 503
+    )
+
+
+def test_firestore_rate_limited_becomes_429_with_preserved_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user-1", None))
+
+    class Service:
+        def list_courses(self) -> list[dict[str, Any]]:
+            raise FirestoreRateLimited(
+                "Firestore rate limit exceeded",
+                status_code=429,
+                error_code="RESOURCE_EXHAUSTED",
+                retry_after=42,
+            )
+
+    monkeypatch.setattr(function, "_course_repository", lambda _h, _u: Service())
+    context = FakeContext(FakeRequest("GET", "/v1/courses"))
+
+    result = function.main(context)
+
+    assert result["status"] == 429
+    assert result["body"] == {"error": "rate_limited", "error_code": "RESOURCE_EXHAUSTED"}
+    assert result["headers"]["Retry-After"] == "42"
+    events = [json.loads(row) for row in context.errors]
+    error_event = next(item for item in events if item["event"] == "resource_exhausted")
+    assert error_event["status_code"] == 429
+    assert error_event["error_code"] == "RESOURCE_EXHAUSTED"
+    assert error_event["retry_after"] == 42
+    diagnosis = function.production_telemetry.get_diagnosis(error_event["request_id"])
+    assert diagnosis is not None
+    assert diagnosis["status_code"] == 429
+    assert diagnosis["error_code"] == "RESOURCE_EXHAUSTED"
+
+
+def test_firestore_rate_limited_without_retry_after_omits_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(function, "_authentication", lambda *_args: ("user-1", None))
+
+    class Service:
+        def list_courses(self) -> list[dict[str, Any]]:
+            raise FirestoreRateLimited("Firestore rate limit exceeded")
+
+    monkeypatch.setattr(function, "_course_repository", lambda _h, _u: Service())
+    result = function.main(FakeContext(FakeRequest("GET", "/v1/courses")))
+
+    assert result["status"] == 429
+    assert "Retry-After" not in result["headers"]
+
+
+def test_repeated_identical_report_within_one_request_writes_one_log() -> None:
+    context = FakeContext(FakeRequest("GET", "/v1/identity"))
+    token = function._REQUEST_ID.set("req-repeat-1")
+    try:
+        function._log(context, "repeated_report", course_id="course-1", outcome="ok")
+        function._log(context, "repeated_report", course_id="course-1", outcome="ok", duration_ms=5)
+        function._log(context, "repeated_report", course_id="course-1", outcome="failed")
+        function._log(context, "other_report", course_id="course-1")
+    finally:
+        function._REQUEST_ID.reset(token)
+
+    events = [json.loads(row)["event"] for row in context.logs]
+    assert events == ["repeated_report", "repeated_report", "other_report"]
+    assert json.loads(context.logs[1])["outcome"] == "failed"
+
+
+def test_route_names_cover_pendency_and_draft_paths() -> None:
+    assert function._route_name("/v1/schedule/pendencies") == "/v1/schedule/pendencies"
+    assert (
+        function._route_name(
+            "/v1/schedule/dependencies/abc/decision".replace("dependencies", "pendencies")
+        )
+        == "/v1/schedule/pendencies/:pendency_id/decision"
+    )
+    assert function._route_name("/v1/registration/drafts") == "/v1/registration/drafts"
+    assert (
+        function._route_name("/v1/registration/drafts/xyz") == "/v1/registration/drafts/:draft_id"
+    )
+    assert function._is_public_api_path("/v1/schedule/pendencies")
+    assert function._is_public_api_path("/v1/registration/drafts")
+
+
+def test_appwrite_client_requires_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(function, "environ", {})
+    with pytest.raises(SecurityStoreUnavailable):
+        function._appwrite_client({})
+
+
+def test_new_route_auth_rejections(monkeypatch: pytest.MonkeyPatch) -> None:
+    rejection = {"status": 401}
+    monkeypatch.setattr(function, "_authentication", lambda *_args: (None, rejection))
+    assert function.main(FakeContext(FakeRequest("GET", "/v1/schedule/pendencies"))) is rejection
+    assert (
+        function.main(
+            FakeContext(
+                FakeRequest(
+                    "POST",
+                    "/v1/schedule/pendencies/p/decision",
+                    body_json={"decision": "manter_atual"},
+                )
+            )
+        )
+        is rejection
+    )
+    assert (
+        function.main(FakeContext(FakeRequest("POST", "/v1/registration/drafts", body_json={})))
+        is rejection
+    )
+    assert function.main(FakeContext(FakeRequest("GET", "/v1/registration/drafts"))) is rejection
+    assert (
+        function.main(FakeContext(FakeRequest("DELETE", "/v1/registration/drafts/d"))) is rejection
+    )
+
+
+def test_appwrite_client_builds_with_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        function,
+        "environ",
+        {
+            "APPWRITE_FUNCTION_API_ENDPOINT": "https://cloud.appwrite.io/v1",
+            "APPWRITE_FUNCTION_PROJECT_ID": "project",
+            "SECURITY_DATABASE_ID": "database",
+        },
+    )
+    client = function._appwrite_client({"X-Appwrite-Key": "key"})
+    assert client is not None
+    pendency_repo = function._pendency_repository({"X-Appwrite-Key": "key"})
+    assert pendency_repo.__class__.__name__ == "PendencyRepository"
+    assert pendency_repo._database_id == "database"
+    draft_repo = function._draft_repository({"X-Appwrite-Key": "key"})
+    assert draft_repo.__class__.__name__ == "DraftRepository"
+    assert draft_repo._database_id == "database"
+
+
+def test_pendency_and_draft_repositories_fail_loudly_without_database_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The runtime never defaults to a database id: missing configuration must
+    # raise instead of silently selecting a nonexistent database.
+    monkeypatch.setattr(
+        function,
+        "environ",
+        {
+            "APPWRITE_FUNCTION_API_ENDPOINT": "https://cloud.appwrite.io/v1",
+            "APPWRITE_FUNCTION_PROJECT_ID": "project",
+        },
+    )
+    with pytest.raises(SecurityStoreUnavailable):
+        function._pendency_repository({"X-Appwrite-Key": "key"})
+    with pytest.raises(SecurityStoreUnavailable):
+        function._draft_repository({"X-Appwrite-Key": "key"})
+
+
+def test_registration_drafts_list_skips_non_dict_form_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakeDraftRepo()
+    repo.documents["draft-raw"] = {
+        "$id": "draft-raw",
+        "user_id": "user-1",
+        "form_data": "not-a-dict",
+    }
+    monkeypatch.setattr(function, "_draft_repository", lambda _headers: repo)
+
+    result = function.main(FakeContext(FakeRequest("GET", "/v1/registration/drafts")))
+
+    assert result["status"] == 200
+    assert result["body"]["drafts"][0]["form_data"] == "not-a-dict"
+
+
+def test_schedule_pendency_decision_fails_closed_without_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+
+    def no_store(_headers: dict[str, str]) -> Any:
+        raise SecurityStoreUnavailable("down")
+
+    monkeypatch.setattr(function, "_pendency_repository", no_store)
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/schedule/pendencies/pend-1/decision",
+                body_json={"decision": "manter_atual"},
+            )
+        )
+    )
+    assert result["status"] == 503
+    assert result["body"]["error"] == "pendency_store_unavailable"
+
+
+def test_schedule_pendencies_list_is_scoped_to_the_authenticated_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakePendencyRepo(
+        {
+            "pend-1": _pend_document("pend-1", user_id="user-1"),
+            "pend-2": _pend_document("pend-2", user_id="user-2"),
+        }
+    )
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo)
+
+    result = function.main(FakeContext(FakeRequest("GET", "/v1/schedule/pendencies")))
+
+    assert result["status"] == 200
+    assert [item["id"] for item in result["body"]["pendencies"]] == ["pend-1"]
+
+
+def test_schedule_pendencies_list_fails_closed_on_storage_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakePendencyRepo({"pend-1": _pend_document()})
+    repo.list_error = StorageUnavailable("down")
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo)
+
+    result = function.main(FakeContext(FakeRequest("GET", "/v1/schedule/pendencies")))
+
+    assert result["status"] == 503
+    assert result["body"]["error"] == "pendency_store_unavailable"
+    repo.list_error = StorageNotProvisioned("collection_not_found")
+    result = function.main(FakeContext(FakeRequest("GET", "/v1/schedule/pendencies")))
+    assert result["status"] == 503
+
+
+def test_schedule_pendency_decision_cannot_touch_another_users_pendency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakePendencyRepo({"pend-1": _pend_document("pend-1", user_id="user-2")})
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo)
+
+    def apply_must_not_run(*_args: Any, **_kwargs: Any) -> bool:
+        raise AssertionError("another user's pendency must not be applied")
+
+    monkeypatch.setattr(function, "_apply_pendency_payload", apply_must_not_run)
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/schedule/pendencies/pend-1/decision",
+                body_json={"decision": "aplicar_mudanca"},
+            )
+        )
+    )
+    assert result["status"] == 404
+    assert result["body"]["error"] == "pendency_not_found"
+    assert repo.decisions == []
+
+
+def test_schedule_pendency_decision_get_failure_is_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakePendencyRepo({"pend-1": _pend_document()})
+    repo.get_error = StorageUnavailable("down")
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo)
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/schedule/pendencies/pend-1/decision",
+                body_json={"decision": "manter_atual"},
+            )
+        )
+    )
+    assert result["status"] == 503
+    assert result["body"]["error"] == "pendency_store_unavailable"
+
+
+def test_registration_drafts_are_isolated_per_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakeDraftRepo()
+    monkeypatch.setattr(function, "_draft_repository", lambda _headers: repo)
+
+    for user in ("user-1", "user-2"):
+        monkeypatch.setattr(function, "_authentication", lambda *_a, u=user: (u, None))
+        saved = function.main(
+            FakeContext(
+                FakeRequest(
+                    "POST",
+                    "/v1/registration/drafts",
+                    body_json={
+                        "course_id": "course-1",
+                        "course_code": "DCC205",
+                        "session_id": "course-create",
+                        "form_data": {"code": "DCC205"},
+                    },
+                )
+            )
+        )
+        assert saved["status"] == 200
+
+    monkeypatch.setattr(function, "_authentication", lambda *_a: ("user-1", None))
+    listed = function.main(FakeContext(FakeRequest("GET", "/v1/registration/drafts")))
+    assert listed["status"] == 200
+    assert len(listed["body"]["drafts"]) == 1
+    own_id = listed["body"]["drafts"][0]["id"]
+
+    # user-1 cannot delete user-2's draft
+    monkeypatch.setattr(function, "_authentication", lambda *_a: ("user-2", None))
+    listed2 = function.main(FakeContext(FakeRequest("GET", "/v1/registration/drafts")))
+    other_id = listed2["body"]["drafts"][0]["id"]
+    monkeypatch.setattr(function, "_authentication", lambda *_a: ("user-1", None))
+    denied = function.main(
+        FakeContext(FakeRequest("DELETE", f"/v1/registration/drafts/{other_id}"))
+    )
+    assert denied["status"] == 404
+    assert other_id in repo.documents
+    deleted = function.main(FakeContext(FakeRequest("DELETE", f"/v1/registration/drafts/{own_id}")))
+    assert deleted["status"] == 200
+
+
+def test_registration_drafts_list_fails_closed_on_storage_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakeDraftRepo()
+    repo.list_error = StorageNotProvisioned("collection_not_found")
+    monkeypatch.setattr(function, "_draft_repository", lambda _headers: repo)
+
+    result = function.main(FakeContext(FakeRequest("GET", "/v1/registration/drafts")))
+
+    assert result["status"] == 503
+    assert result["body"]["error"] == "draft_store_unavailable"
+
+
+def _real_schedule_factories(monkeypatch: pytest.MonkeyPatch, store: Any) -> None:
+    from test_schedule_repository import NOW
+
+    from course_repository import CourseRepository
+    from schedule_repository import ScheduleRepository
+
+    monkeypatch.setattr(
+        function, "_course_repository", lambda _h, _u: CourseRepository(store, now=lambda: NOW)
+    )
+    monkeypatch.setattr(
+        function, "_schedule_repository", lambda _h, _u: ScheduleRepository(store, now=lambda: NOW)
+    )
+
+
+def test_internal_storage_ensure_route_is_not_exposed_publicly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The provisioner is operator-run only (setup_storage.py, outside CI/deploy),
+    # never via the public function API: the route must 404 before any SDK client is built.
+    def forbidden_client(_headers: dict[str, str]) -> object:
+        raise AssertionError("public calls must not build an Appwrite client")
+
+    monkeypatch.setattr(function, "_appwrite_client", forbidden_client)
+    result = function.main(FakeContext(FakeRequest("POST", "/internal/storage/ensure")))
+    assert result["status"] == 404
+    assert result["body"] == {"error": "not_found"}
+
+
+def test_pendency_apply_rejects_overlap_with_another_course_and_keeps_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from test_schedule_repository import FakeFirestore
+
+    _auth_ok(monkeypatch)
+    store = FakeFirestore(overlap=True)
+    _real_schedule_factories(monkeypatch, store)
+    payload = {
+        "starts_on": "2026-08-04T00:00:00Z",
+        "ends_on": "2026-08-18T00:00:00Z",
+        "meetings": [
+            {
+                "id": "ufmg-2-1140-2",
+                "weekday": 2,
+                "start_minutes": 1140,
+                "lesson_count": 2,
+                "call_count": 1,
+            }
+        ],
+        "confirm_destructive": True,  # stored payload is overridden by the safe flow
+    }
+    repo = _FakePendencyRepo(
+        {"pend-1": _pend_document("pend-1", course_id="poo", payload=json.dumps(payload))}
+    )
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo)
+
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/schedule/pendencies/pend-1/decision",
+                body_json={"decision": "aplicar_mudanca"},
+            )
+        )
+    )
+
+    assert result["status"] == 409
+    assert result["body"]["error"] == "pendency_apply_conflict"
+    assert repo.decisions == []  # not resolved
+    assert store.commits == []  # nothing written
+
+
+def test_pendency_apply_preserves_sessions_with_attendance_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from test_schedule_repository import FakeFirestore
+
+    _auth_ok(monkeypatch)
+    store = FakeFirestore(protected=True)  # 2026-08-04 session has attendance_status=presente
+    _real_schedule_factories(monkeypatch, store)
+    payload = {
+        "starts_on": "2026-08-04T00:00:00Z",
+        "ends_on": "2026-08-18T00:00:00Z",
+        "meetings": [],  # would delete the evidence-bearing session
+        "confirm_destructive": True,  # stored payload is overridden by the safe flow
+    }
+    repo = _FakePendencyRepo(
+        {"pend-1": _pend_document("pend-1", course_id="poo", payload=json.dumps(payload))}
+    )
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo)
+
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/schedule/pendencies/pend-1/decision",
+                body_json={"decision": "aplicar_mudanca"},
+            )
+        )
+    )
+
+    assert result["status"] == 409
+    assert result["body"]["error"] == "pendency_apply_conflict"
+    assert result["body"]["destructive_sessions"] == 1
+    assert repo.decisions == []
+    assert store.commits == []  # the attended session is preserved, nothing deleted
+
+
+def test_schedule_pendency_decision_update_storage_failure_is_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakePendencyRepo({"pend-1": _pend_document()})
+    repo.update_error = StorageUnavailable("down")
+    monkeypatch.setattr(function, "_pendency_repository", lambda _headers: repo)
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/schedule/pendencies/pend-1/decision",
+                body_json={"decision": "manter_atual"},
+            )
+        )
+    )
+    assert result["status"] == 503
+    assert result["body"]["error"] == "pendency_store_unavailable"
+
+
+def test_registration_draft_save_storage_failure_is_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakeDraftRepo()
+    repo.save_error = StorageNotProvisioned("collection_not_found")
+    monkeypatch.setattr(function, "_draft_repository", lambda _headers: repo)
+    result = function.main(
+        FakeContext(
+            FakeRequest(
+                "POST",
+                "/v1/registration/drafts",
+                body_json={
+                    "course_id": "course-1",
+                    "course_code": "DCC205",
+                    "session_id": "s",
+                    "form_data": {"a": 1},
+                },
+            )
+        )
+    )
+    assert result["status"] == 503
+    assert result["body"]["error"] == "draft_store_unavailable"
+
+
+def test_registration_draft_delete_storage_failure_is_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _auth_ok(monkeypatch)
+    repo = _FakeDraftRepo()
+    repo.documents["draft-1"] = {"$id": "draft-1", "user_id": "user-1"}
+    repo.delete_error = StorageUnavailable("down")
+    monkeypatch.setattr(function, "_draft_repository", lambda _headers: repo)
+    result = function.main(FakeContext(FakeRequest("DELETE", "/v1/registration/drafts/draft-1")))
+    assert result["status"] == 503
+    assert result["body"]["error"] == "draft_store_unavailable"

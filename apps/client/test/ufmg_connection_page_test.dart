@@ -3724,6 +3724,102 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(UFMGConnectionPage), findsNothing);
   });
+  testWidgets(
+    'opens the schedule pendency review from the sync exceptions dialog',
+    (tester) async {
+      final gateway = _PendencyGateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      );
+      final logger = _Logger();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(
+            gateway: gateway,
+            logger: logger,
+            userId: 'user-1',
+            syncSchedule: UFMGSyncSchedule(
+              now: () => DateTime.utc(2026, 10, 24),
+            ),
+            onOpenCalendar: () async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('ufmg-sync-all')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Revisar última sincronização'));
+      await tester.tap(find.text('Revisar última sincronização'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pendências da sincronização'), findsOneWidget);
+      expect(
+        find.byKey(const Key('ufmg-review-schedule-pendencies')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const Key('ufmg-review-schedule-pendencies')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pendências da sincronização'), findsNothing);
+      expect(find.text('Pendências de horário'), findsOneWidget);
+      expect(find.textContaining('DCC203'), findsOneWidget);
+      expect(logger.actions, contains('ufmg_review_schedule_pendencies'));
+
+      await tester.tap(find.byKey(const Key('pendency-apply-pend-1')));
+      await tester.pumpAndSettle();
+      expect(gateway.decisions, [
+        ('pend-1', PythonScheduleDecision.aplicarMudanca),
+      ]);
+      expect(find.text('Mudança aplicada'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('pendency-review-close')));
+      await tester.pumpAndSettle();
+      expect(find.text('Pendências de horário'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'hides the pendency review when the gateway cannot list pendencies',
+    (tester) async {
+      final gateway = _UnifiedGateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(
+            gateway: gateway,
+            logger: _Logger(),
+            userId: 'user-1',
+            syncSchedule: UFMGSyncSchedule(
+              now: () => DateTime.utc(2026, 10, 24),
+            ),
+            onOpenCalendar: () async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('ufmg-sync-all')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Revisar última sincronização'));
+      await tester.tap(find.text('Revisar última sincronização'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pendências da sincronização'), findsOneWidget);
+      expect(
+        find.byKey(const Key('ufmg-review-schedule-pendencies')),
+        findsNothing,
+      );
+    },
+  );
 }
 
 PythonMoodleMaterialFile _materialFile(String name, int size) =>
@@ -3763,6 +3859,41 @@ PythonMoodleCourseContent _catalogCourse(
     ),
   ],
 );
+
+final class _PendencyGateway extends _UnifiedGateway
+    implements BackendSchedulePendencyGateway {
+  _PendencyGateway({required super.status});
+
+  final decisions = <(String, PythonScheduleDecision)>[];
+  bool _resolved = false;
+
+  PythonSchedulePendency get _pendency => PythonSchedulePendency(
+    id: 'pend-1',
+    courseId: 'course-1',
+    courseCode: 'DCC203',
+    courseName: 'POO',
+    currentSchedule: 'seg 07:30 (2 aulas)',
+    newSchedule: 'qua 10:00 (2 aulas)',
+    reason: 'manual_schedule_diverged',
+    status: _resolved ? 'resolved' : 'pending',
+    decision: _resolved ? 'aplicar_mudanca' : null,
+  );
+
+  @override
+  Future<List<PythonSchedulePendency>> listSchedulePendencies() async {
+    return [_pendency];
+  }
+
+  @override
+  Future<PythonSchedulePendency> decideSchedulePendency(
+    String pendencyId, {
+    required PythonScheduleDecision decision,
+  }) async {
+    decisions.add((pendencyId, decision));
+    _resolved = true;
+    return _pendency;
+  }
+}
 
 class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
   _Gateway({required this.status});
@@ -4071,6 +4202,7 @@ class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
       conflicts: 1,
       missingCourses: 1,
       meetingsImported: 3,
+      pendenciesCreated: 0,
     );
   }
 
@@ -4123,6 +4255,7 @@ class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
         conflicts: 1,
         missingCourses: 0,
         meetingsImported: 3,
+        pendenciesCreated: 0,
       ),
       checkedAt: DateTime.utc(2026, 10, 13, 12),
       nextAutomaticSyncAt: DateTime.utc(2026, 12, 6),

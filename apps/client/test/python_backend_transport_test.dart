@@ -65,6 +65,7 @@ void main() {
             'conflicts': 1,
             'missing_courses': 0,
             'meetings_imported': 2,
+            'pendencies_created': 1,
           },
           'checked_at': '2026-10-24T12:00:00Z',
           'next_automatic_sync_at': '2026-12-06T00:00:00Z',
@@ -680,6 +681,7 @@ void main() {
               'conflicts': 1,
               'missing_courses': 1,
               'meetings_imported': 3,
+              'pendencies_created': 1,
             }),
             200,
           );
@@ -691,6 +693,7 @@ void main() {
       expect(result.updated, 2);
       expect(result.conflicts, 1);
       expect(result.meetingsImported, 3);
+      expect(result.pendenciesCreated, 1);
       expect(captured.method, 'POST');
       expect(captured.url.path, '/v1/ufmg/import/schedules');
       expect(captured.body, '{}');
@@ -706,6 +709,7 @@ void main() {
         'conflicts': 1,
         'missing_courses': 1,
         'meetings_imported': 3,
+        'pendencies_created': 1,
       },
       {
         'total': 1,
@@ -1765,6 +1769,7 @@ void main() {
               'conflicts': 1,
               'missing_courses': 0,
               'meetings_imported': 2,
+              'pendencies_created': 1,
             },
             'checked_at': '2026-10-13T12:00:00Z',
             'next_automatic_sync_at': '2026-12-06T00:00:00Z',
@@ -1806,6 +1811,7 @@ void main() {
                   'conflicts': 1,
                   'missing_courses': 0,
                   'meetings_imported': 2,
+                  'pendencies_created': 1,
                 },
                 'checked_at': '2026-10-24T12:00:00Z',
                 'next_automatic_sync_at': '2026-12-06T00:00:00Z',
@@ -1910,6 +1916,7 @@ void main() {
           'conflicts': 1,
           'missing_courses': 0,
           'meetings_imported': 2,
+          'pendencies_created': 1,
         },
         'checked_at': '2026-10-13T12:00:00Z',
         'next_automatic_sync_at': '2026-12-06T00:00:00Z',
@@ -1923,6 +1930,7 @@ void main() {
           'conflicts': 1,
           'missing_courses': 0,
           'meetings_imported': 2,
+          'pendencies_created': 1,
         },
         'checked_at': 'not-a-date',
         'next_automatic_sync_at': '2026-12-06T00:00:00Z',
@@ -2930,6 +2938,377 @@ void main() {
       );
     },
   );
+  test(
+    'lists schedule pendencies through the authenticated contract',
+    () async {
+      late http.Request captured;
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((request) async {
+          captured = request;
+          return http.Response(
+            jsonEncode({
+              'pendencies': [_pendencyJson, _resolvedPendencyJson],
+            }),
+            200,
+          );
+        }),
+      );
+
+      final items = await transport.listSchedulePendencies();
+
+      expect(captured.method, 'GET');
+      expect(captured.url.path, '/v1/schedule/pendencies');
+      expect(items, hasLength(2));
+      expect(items.first.id, 'pend-1');
+      expect(items.first.courseCode, 'DCC203');
+      expect(items.first.currentSchedule, 'seg 07:30 (2 aulas)');
+      expect(items.first.newSchedule, 'qua 10:00 (2 aulas)');
+      expect(items.first.reason, 'manual_schedule_diverged');
+      expect(items.first.status, 'pending');
+      expect(items.first.decision, isNull);
+      expect(items.first.isResolved, isFalse);
+      expect(items.last.isResolved, isTrue);
+      expect(items.last.decision, 'manter_atual');
+    },
+  );
+
+  test('rejects malformed schedule pendency list responses', () async {
+    for (final body in [
+      <String, Object?>{},
+      {'pendencies': 'nope'},
+      {
+        'pendencies': [
+          {..._pendencyJson, 'decision': 7},
+        ],
+      },
+      {
+        'pendencies': [
+          {..._pendencyJson, 'created_at': 3},
+        ],
+      },
+      {
+        'pendencies': [
+          {..._pendencyJson, 'extra': 'field'},
+        ],
+      },
+      {
+        'pendencies': [
+          {..._pendencyJson, 'id': ''},
+        ],
+      },
+    ]) {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((_) async => http.Response(jsonEncode(body), 200)),
+      );
+      await expectLater(
+        transport.listSchedulePendencies(),
+        throwsA(
+          isA<PythonBackendException>().having(
+            (error) => error.code,
+            'code',
+            PythonBackendError.invalidResponse,
+          ),
+        ),
+      );
+    }
+  });
+
+  test('decides a schedule pendency with the wire decision', () async {
+    late http.Request captured;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'applied': true,
+            'pendency': {
+              ..._resolvedPendencyJson,
+              'decision': 'aplicar_mudanca',
+            },
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await transport.decideSchedulePendency(
+      'pend-1',
+      decision: PythonScheduleDecision.aplicarMudanca,
+    );
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/v1/schedule/pendencies/pend-1/decision');
+    expect(jsonDecode(captured.body), {'decision': 'aplicar_mudanca'});
+    expect(result.isResolved, isTrue);
+    expect(result.decision, 'aplicar_mudanca');
+    expect(PythonScheduleDecision.manterAtual.wire, 'manter_atual');
+  });
+
+  test(
+    'rejects unsafe pendency ids and malformed decision responses',
+    () async {
+      for (final badId in ['', 'a/b', ' pad', 'x' * 129]) {
+        final transport = PythonBackendTransport(
+          endpoint: Uri.parse('https://backend.example'),
+          tokens: _Tokens(),
+          client: MockClient((_) async => fail('must not call backend')),
+        );
+        await expectLater(
+          transport.decideSchedulePendency(
+            badId,
+            decision: PythonScheduleDecision.manterAtual,
+          ),
+          throwsArgumentError,
+        );
+      }
+      for (final body in [
+        <String, Object?>{},
+        {'pendency': 'nope'},
+        {
+          'pendency': {..._resolvedPendencyJson, 'status': 1},
+        },
+      ]) {
+        final transport = PythonBackendTransport(
+          endpoint: Uri.parse('https://backend.example'),
+          tokens: _Tokens(),
+          client: MockClient((_) async => http.Response(jsonEncode(body), 200)),
+        );
+        await expectLater(
+          transport.decideSchedulePendency(
+            'pend-1',
+            decision: PythonScheduleDecision.manterAtual,
+          ),
+          throwsA(
+            isA<PythonBackendException>().having(
+              (error) => error.code,
+              'code',
+              PythonBackendError.invalidResponse,
+            ),
+          ),
+        );
+      }
+    },
+  );
+
+  test('saves, lists and deletes registration drafts', () async {
+    final requests = <http.Request>[];
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        requests.add(request);
+        if (request.method == 'POST') {
+          return http.Response(
+            jsonEncode({
+              'draft': {'id': 'draft-1'},
+            }),
+            200,
+          );
+        }
+        if (request.method == 'GET') {
+          return http.Response(
+            jsonEncode({
+              'drafts': [_draftJson],
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({'deleted': true, 'id': 'draft-1'}),
+          200,
+        );
+      }),
+    );
+
+    final draftId = await transport.saveRegistrationDraft(
+      courseId: 'course-9',
+      courseCode: 'DCC203',
+      sessionId: 'course-create',
+      formData: const {'code': 'DCC203', 'name': 'POO'},
+      lastError: 'permission-denied',
+      attemptCount: 2,
+    );
+    expect(draftId, 'draft-1');
+    final post = requests.singleWhere((r) => r.method == 'POST');
+    expect(post.url.path, '/v1/registration/drafts');
+    expect(jsonDecode(post.body), {
+      'course_id': 'course-9',
+      'course_code': 'DCC203',
+      'session_id': 'course-create',
+      'form_data': {'code': 'DCC203', 'name': 'POO'},
+      'last_error': 'permission-denied',
+      'attempt_count': 2,
+    });
+
+    final drafts = await transport.listRegistrationDrafts();
+    expect(
+      requests.singleWhere((r) => r.method == 'GET').url.path,
+      '/v1/registration/drafts',
+    );
+    expect(drafts, hasLength(1));
+    expect(drafts.single.id, 'draft-1');
+    expect(drafts.single.sessionId, 'course-create');
+    expect(drafts.single.formData, {'code': 'DCC203', 'name': 'POO'});
+    expect(drafts.single.lastError, 'permission-denied');
+    expect(drafts.single.attemptCount, 2);
+
+    await transport.deleteRegistrationDraft('draft-1');
+    final delete = requests.singleWhere((r) => r.method == 'DELETE');
+    expect(delete.url.path, '/v1/registration/drafts/draft-1');
+  });
+
+  test(
+    'validates registration draft inputs before the network boundary',
+    () async {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((_) async => fail('must not call backend')),
+      );
+      Future<void> save({
+        String courseId = 'course-9',
+        String courseCode = 'DCC203',
+        String sessionId = 'course-create',
+        int attemptCount = 1,
+      }) => transport.saveRegistrationDraft(
+        courseId: courseId,
+        courseCode: courseCode,
+        sessionId: sessionId,
+        formData: const {},
+        attemptCount: attemptCount,
+      );
+      await expectLater(save(courseId: 'a/b'), throwsArgumentError);
+      await expectLater(save(courseCode: ''), throwsArgumentError);
+      await expectLater(save(courseCode: 'x' * 65), throwsArgumentError);
+      await expectLater(save(sessionId: ''), throwsArgumentError);
+      await expectLater(save(sessionId: 'x' * 129), throwsArgumentError);
+      await expectLater(save(attemptCount: 0), throwsArgumentError);
+      await expectLater(
+        transport.deleteRegistrationDraft(
+          'a${String.fromCharCode(92)}${String.fromCharCode(92)}b',
+        ),
+        throwsArgumentError,
+      );
+      await expectLater(
+        transport.deleteRegistrationDraft(''),
+        throwsArgumentError,
+      );
+    },
+  );
+
+  test('rejects malformed registration draft responses', () async {
+    for (final body in [
+      <String, Object?>{},
+      {'draft': 'nope'},
+      {
+        'draft': {'id': ''},
+      },
+    ]) {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((_) async => http.Response(jsonEncode(body), 200)),
+      );
+      await expectLater(
+        transport.saveRegistrationDraft(
+          courseId: 'course-9',
+          courseCode: 'DCC203',
+          sessionId: 'course-create',
+          formData: const {},
+        ),
+        throwsA(
+          isA<PythonBackendException>().having(
+            (error) => error.code,
+            'code',
+            PythonBackendError.invalidResponse,
+          ),
+        ),
+      );
+    }
+  });
+
+  test('rejects malformed registration draft list responses', () async {
+    for (final body in [
+      <String, Object?>{},
+      {'drafts': 'nope'},
+      {
+        'drafts': [
+          {..._draftJson, 'attempt_count': 0},
+        ],
+      },
+      {
+        'drafts': [
+          {..._draftJson, 'form_data': 'nope'},
+        ],
+      },
+      {
+        'drafts': [
+          {..._draftJson, 'unknown': 1},
+        ],
+      },
+      {
+        'drafts': [
+          {..._draftJson, 'updated_at': 5},
+        ],
+      },
+    ]) {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient((_) async => http.Response(jsonEncode(body), 200)),
+      );
+      await expectLater(
+        transport.listRegistrationDrafts(),
+        throwsA(
+          isA<PythonBackendException>().having(
+            (error) => error.code,
+            'code',
+            PythonBackendError.invalidResponse,
+          ),
+        ),
+      );
+    }
+  });
+
+  test(
+    'rejects schedule import summaries with more pendencies than conflicts',
+    () async {
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'total': 2,
+              'updated': 1,
+              'unchanged': 0,
+              'conflicts': 1,
+              'missing_courses': 0,
+              'meetings_imported': 2,
+              'pendencies_created': 2,
+            }),
+            200,
+          ),
+        ),
+      );
+      await expectLater(
+        transport.importUFMGSchedules(),
+        throwsA(
+          isA<PythonBackendException>().having(
+            (error) => error.code,
+            'code',
+            PythonBackendError.invalidResponse,
+          ),
+        ),
+      );
+    },
+  );
 }
 
 final class _SilentLogger implements AppLogger {
@@ -2945,6 +3324,46 @@ final class _SilentLogger implements AppLogger {
     Map<String, Object>? parameters,
   }) async {}
 }
+
+const _pendencyJson = <String, Object?>{
+  'id': 'pend-1',
+  'course_id': 'course-1',
+  'course_code': 'DCC203',
+  'course_name': 'Programação Orientada a Objetos',
+  'current_schedule': 'seg 07:30 (2 aulas)',
+  'new_schedule': 'qua 10:00 (2 aulas)',
+  'reason': 'manual_schedule_diverged',
+  'status': 'pending',
+  'decision': null,
+  'created_at': '2026-10-24T12:00:00Z',
+  'updated_at': '2026-10-24T12:00:00Z',
+};
+
+const _resolvedPendencyJson = <String, Object?>{
+  'id': 'pend-2',
+  'course_id': 'course-2',
+  'course_code': 'DCC204',
+  'course_name': 'Algoritmos',
+  'current_schedule': 'ter 10:00 (2 aulas)',
+  'new_schedule': 'qui 10:00 (2 aulas)',
+  'reason': 'schedule_overlap',
+  'status': 'resolved',
+  'decision': 'manter_atual',
+  'created_at': '2026-10-24T12:00:00Z',
+  'updated_at': '2026-10-25T12:00:00Z',
+};
+
+const _draftJson = <String, Object?>{
+  'id': 'draft-1',
+  'course_id': 'course-9',
+  'course_code': 'DCC203',
+  'session_id': 'course-create',
+  'form_data': {'code': 'DCC203', 'name': 'POO'},
+  'last_error': 'permission-denied',
+  'attempt_count': 2,
+  'created_at': '2026-10-24T12:00:00Z',
+  'updated_at': '2026-10-24T12:00:00Z',
+};
 
 const _courseJson = <String, Object?>{
   'id': 'course-1',

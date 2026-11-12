@@ -28,6 +28,7 @@ class CourseEditorDialog extends StatefulWidget {
     required this.initialTerm,
     required this.allowedTerms,
     this.course,
+    this.draftValues,
     super.key,
   });
 
@@ -36,6 +37,7 @@ class CourseEditorDialog extends StatefulWidget {
   final VoidCallback onValidationFailed;
   final String initialTerm;
   final List<String> allowedTerms;
+  final Map<String, Object?>? draftValues;
 
   @override
   State<CourseEditorDialog> createState() => _CourseEditorDialogState();
@@ -56,13 +58,28 @@ class _CourseEditorDialogState extends State<CourseEditorDialog> {
   void initState() {
     super.initState();
     final course = widget.course;
-    _modality = course?.modality ?? CourseModality.inPerson;
+    final draft = course == null ? widget.draftValues : null;
+    _modality = course?.modality ?? CourseModality.fromCode(draft?['modality']);
     _attendancePolicy =
-        course?.attendancePolicy ?? CourseAttendancePolicy.required;
-    _code = TextEditingController(text: course?.code);
-    _name = TextEditingController(text: course?.name);
-    _nickname = TextEditingController(text: course?.nickname);
-    _term = TextEditingController(text: widget.initialTerm);
+        course?.attendancePolicy ??
+        CourseAttendancePolicy.fromCode(draft?['attendance_policy']);
+    _code = TextEditingController(
+      text: course?.code ?? _draftString(draft, 'code'),
+    );
+    _name = TextEditingController(
+      text: course?.name ?? _draftString(draft, 'name'),
+    );
+    _nickname = TextEditingController(
+      text: course?.nickname ?? _draftString(draft, 'nickname'),
+    );
+    _term = TextEditingController(
+      text: course?.term ?? _draftString(draft, 'term') ?? widget.initialTerm,
+    );
+  }
+
+  static String? _draftString(Map<String, Object?>? draft, String key) {
+    final value = draft?[key];
+    return value is String && value.isNotEmpty ? value : null;
   }
 
   @override

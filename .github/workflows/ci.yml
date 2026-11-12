@@ -135,8 +135,7 @@ jobs:
           mkdir -p .bundle/src/frequencia_ufmg
           cp requirements.txt .bundle/
           cp -r src/*.py .bundle/src/
-          cp ../backend/src/frequencia_ufmg/__init__.py .bundle/src/frequencia_ufmg/
-          cp ../backend/src/frequencia_ufmg/models.py .bundle/src/frequencia_ufmg/
+          cp ../backend/src/frequencia_ufmg/*.py .bundle/src/frequencia_ufmg/
           tar -C .bundle -czf appwrite-python.tar.gz requirements.txt src
           tar -tzf appwrite-python.tar.gz
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
@@ -163,7 +162,10 @@ jobs:
           persist-credentials: false
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          channel: stable
+          # Pin the toolchain the lockfile/Android config support: stable >=3.50
+          # deprecates material.dart (analyzer infos fail `flutter analyze`) and
+          # requires AGP >=9.1.1.
+          flutter-version: '3.47.9'
           cache: true
       - run: flutter pub get --enforce-lockfile
       - run: dart format --output=none --set-exit-if-changed .

@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable, Mapping
 from os import environ
 from time import perf_counter
-from typing import Any
+from typing import Any, cast
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -35,6 +35,24 @@ class FirestoreNotFound(FirestoreRestError):
 
 class FirestoreRequestRejected(FirestoreRestError):
     """Firestore rejected a malformed request or credential."""
+
+
+class FirestoreRateLimited(FirestoreRestError):
+    """Firestore refused the request with HTTP 429, preserving its error code."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 429,
+        error_code: str = "RESOURCE_EXHAUSTED",
+        retry_after: float | None = None,
+    ) -> None:
+        """Keep the refusal status, machine error code, and optional retry hint."""
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_code = error_code
+        self.retry_after = retry_after
 
 
 class FirestoreUnavailable(FirestoreRestError):
@@ -224,6 +242,13 @@ class FirestoreRestClient:
                 raise FirestoreConflict("Firestore document changed concurrently")
             if status == 400:
                 raise FirestoreRequestRejected("Firestore rejected the request")
+            if status == 429:
+                outcome = "rate_limited"
+                raise FirestoreRateLimited(
+                    "Firestore rate limit exceeded",
+                    status_code=429,
+                    error_code=_error_code(response_body),
+                )
             if not 200 <= status < 300 or len(response_body) > MAX_PAYLOAD_BYTES:
                 raise FirestoreUnavailable("Firestore is unavailable")
             if not response_body and allow_empty:
@@ -246,6 +271,7 @@ class FirestoreRestClient:
                     "method": method,
                     "outcome": outcome,
                     "status_class": f"{status // 100}xx" if status is not None else "network",
+                    "status_code": status,
                 },
             )
 
@@ -276,6 +302,20 @@ class FirestoreRestClient:
         path = "/".join(("users", quote(self._user_id, safe=""), *safe_segments))
         project = quote(self._project_id, safe="")
         return f"projects/{project}/databases/(default)/documents/{path}"
+
+
+def _error_code(response_body: bytes) -> str:
+    """Extract the machine error code (for example RESOURCE_EXHAUSTED) from a 429 body."""
+    try:
+        decoded = json.loads(response_body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return "RESOURCE_EXHAUSTED"
+    if not isinstance(decoded, dict):
+        return "RESOURCE_EXHAUSTED"
+    error = decoded.get("error")
+    if isinstance(error, dict) and isinstance(error.get("status"), str) and error["status"]:
+        return cast(str, error["status"])
+    return "RESOURCE_EXHAUSTED"
 
 
 def _segment(value: str, field: str) -> str:

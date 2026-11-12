@@ -358,6 +358,7 @@ def test_request_emits_sanitized_dependency_telemetry() -> None:
                 "method": "GET",
                 "outcome": "succeeded",
                 "status_class": "2xx",
+                "status_code": 200,
             },
         )
     ]
@@ -386,6 +387,7 @@ def test_missing_document_is_an_observable_miss_not_a_dependency_failure() -> No
                 "method": "GET",
                 "outcome": "not_found",
                 "status_class": "4xx",
+                "status_code": 404,
             },
         )
     ]
@@ -522,3 +524,63 @@ def test_conditional_job_reservation_uses_atomic_firestore_preconditions():
         )
         with pytest.raises(FirestoreConflict):
             client.patch_user_document("syncJobs", "current", fields={}, create_only=True)
+
+
+def test_429_raises_rate_limited_preserving_status_and_error_code() -> None:
+    from firestore_rest import FirestoreRateLimited
+
+    events: list[tuple[str, dict[str, object]]] = []
+    body = json.dumps(
+        {"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}}
+    ).encode()
+    client = FirestoreRestClient(
+        "project",
+        "user",
+        "token",
+        transport=lambda _request, _timeout: (429, body),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    )
+
+    with pytest.raises(FirestoreRateLimited) as caught:
+        client.patch_user_document("courses", "course-1", fields={"name": {"stringValue": "x"}})
+
+    error = caught.value
+    assert error.status_code == 429
+    assert error.error_code == "RESOURCE_EXHAUSTED"
+    assert error.retry_after is None
+    assert events == [
+        (
+            "firestore_request_completed",
+            {
+                "duration_ms": pytest.approx(0, abs=100),
+                "kind": "write",
+                "method": "PATCH",
+                "outcome": "rate_limited",
+                "status_class": "4xx",
+                "status_code": 429,
+            },
+        )
+    ]
+    assert "Quota exceeded" not in str(error)
+
+
+def test_429_without_parseable_body_defaults_to_resource_exhausted() -> None:
+    from firestore_rest import FirestoreRateLimited, _error_code
+
+    assert _error_code(b"not json") == "RESOURCE_EXHAUSTED"
+    assert _error_code(b"[1]") == "RESOURCE_EXHAUSTED"
+    assert _error_code(json.dumps({"error": {"code": 429}}).encode()) == "RESOURCE_EXHAUSTED"
+    assert (
+        _error_code(json.dumps({"error": {"status": ""}}).encode()) == "RESOURCE_EXHAUSTED"
+    )
+
+    client = FirestoreRestClient(
+        "project",
+        "user",
+        "token",
+        transport=lambda _request, _timeout: (429, b""),
+    )
+    with pytest.raises(FirestoreRateLimited) as caught:
+        client.get_user_document("courses", "course-1")
+    assert caught.value.error_code == "RESOURCE_EXHAUSTED"
+    assert caught.value.status_code == 429

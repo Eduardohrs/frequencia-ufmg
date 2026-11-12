@@ -1,5 +1,7 @@
 """Tests for the object-oriented academic domain structure."""
 
+from datetime import datetime
+
 import pytest
 
 from frequencia_ufmg.models import (
@@ -7,7 +9,9 @@ from frequencia_ufmg.models import (
     Disciplina,
     EstadoPing,
     NumeroChamadas,
+    PendenciaHorario,
     QuantidadeAulas,
+    RascunhoCadastro,
     RegistroFrequencia,
     ResumoDisciplina,
     SessaoAula,
@@ -543,3 +547,90 @@ def test_course_finds_a_later_session_and_rejects_non_text_identity() -> None:
     assert registro.sessao is segunda_sessao
     with pytest.raises(TypeError, match="identificador"):
         disciplina.registrar_frequencia(2, SituacaoFrequencia.PRESENTE)  # type: ignore[arg-type]
+
+
+# ==================== Sessão 55,35 - Novos Testes ====================
+
+
+class TestPendenciaHorario:
+    """Testes para a classe PendenciaHorario."""
+
+    def test_pendencia_horario_criacao(self) -> None:
+        """Uma pendência de horário é criado com os dados corretos."""
+
+        pendencia = PendenciaHorario(
+            disciplina_codigo="DCC203",
+            disciplina_nome="POO",
+            horario_atual="10:00-12:00",
+            horario_novo="11:00-13:00",
+            motivo="Mudança de sala",
+        )
+
+        assert pendencia.disciplina_codigo == "DCC203"
+        assert pendencia.disciplina_nome == "POO"
+        assert pendencia.horario_atual == "10:00-12:00"
+        assert pendencia.horario_novo == "11:00-13:00"
+        assert pendencia.motivo == "Mudança de sala"
+        assert isinstance(pendencia.data_criacao, datetime)
+
+    def test_pendencia_horario_to_dict(self) -> None:
+        """Uma pendência pode ser serializada para dicionário."""
+
+        pendencia = PendenciaHorario(
+            disciplina_codigo="DCC203",
+            disciplina_nome="POO",
+            horario_atual="10:00-12:00",
+            horario_novo="11:00-13:00",
+            motivo="Mudança de sala",
+        )
+
+        result = pendencia.to_dict()
+
+        assert result["disciplina_codigo"] == "DCC203"
+        assert result["disciplina_nome"] == "POO"
+        assert result["horario_atual"] == "10:00-12:00"
+        assert result["horario_novo"] == "11:00-13:00"
+        assert result["motivo"] == "Mudança de sala"
+        assert "data_criacao" in result
+
+
+class TestRascunhoCadastro:
+    """Testes para RascunhoCadastro."""
+
+    def test_rascunho_criacao(self) -> None:
+        """Um rascunho é criado com os dados corretos."""
+
+        dados = {"ping1": "no_campus", "ping2": "fora"}
+        rascunho = RascunhoCadastro("DCC203", "aula-01", dados)
+
+        assert rascunho.disciplina_codigo == "DCC203"
+        assert rascunho.sessao_identificador == "aula-01"
+        assert rascunho.dados == dados
+        assert isinstance(rascunho.timestamp, datetime)
+
+    def test_rascunho_dados_nao_sao_modificados(self) -> None:
+        """Os dados do rascunho não são modificados externamente."""
+
+        dados = {"ping1": "no_campus"}
+        rascunho = RascunhoCadastro("DCC203", "aula-01", dados)
+
+        # Modificar o dicionário original
+        dados["ping1"] = "fora"
+
+        # O rascunho deve manter os dados originais
+        assert rascunho.dados["ping1"] == "no_campus"
+
+    def test_rascunho_to_dict(self) -> None:
+        """Um rascunho pode ser serializado para dicionário."""
+
+        dados = {"ping1": "no_campus", "ping2": "fora"}
+        rascunho = RascunhoCadastro("DCC203", "aula-01", dados)
+
+        result = rascunho.to_dict()
+
+        assert result["disciplina_codigo"] == "DCC203"
+        assert result["sessao_identificador"] == "aula-01"
+        assert result["dados"] == dados
+        assert "timestamp" in result
+
+

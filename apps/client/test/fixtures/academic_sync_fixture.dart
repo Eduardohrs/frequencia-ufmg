@@ -17,6 +17,7 @@ PythonUnifiedAcademicSyncResult syncResult({bool partial = false}) =>
           conflicts: 0,
           missingCourses: 0,
           meetingsImported: 0,
+          pendenciesCreated: 0,
         ),
         checkedAt: DateTime.utc(2026, 10, 25),
         nextAutomaticSyncAt: DateTime.utc(2027, 1),
