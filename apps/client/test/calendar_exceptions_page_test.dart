@@ -99,7 +99,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Como as aulas entram no cálculo'), findsOneWidget);
     expect(find.textContaining('presença garantida'), findsOneWidget);
-    expect(find.textContaining('continua aparecendo na agenda'), findsOneWidget);
+    expect(
+      find.textContaining('continua aparecendo na agenda'),
+      findsOneWidget,
+    );
     expect(find.textContaining('agenda operacional'), findsNothing);
     await tester.tap(find.text('Entendi'));
     await tester.pumpAndSettle();
