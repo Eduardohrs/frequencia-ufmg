@@ -22,6 +22,12 @@ class _Importer(Protocol):
     def import_enrollments(self, enrollments: list[dict[str, object]]) -> dict[str, int]: ...
 
 
+class _ScheduleImporter(Protocol):
+    def import_enrollments(
+        self, enrollments: list[dict[str, object]], *, user_id: str
+    ) -> dict[str, int]: ...
+
+
 class _DateImporter(Protocol):
     def import_dates(self, user_id: str, *, now: int) -> dict[str, int]: ...
 
@@ -34,7 +40,7 @@ class UFMGSyncService:
         sessions: _SessionStore,
         enrollments: _EnrollmentClient,
         courses: _Importer,
-        schedules: _Importer,
+        schedules: _ScheduleImporter,
         dates: _DateImporter,
         *,
         clock: Callable[[], datetime] | None = None,
@@ -75,7 +81,7 @@ class UFMGSyncService:
         )
         schedule_result = self._timed(
             "siga_schedule_import",
-            lambda: self._schedules.import_enrollments(enrollments),
+            lambda: self._schedules.import_enrollments(enrollments, user_id=user_id),
         )
         schedule_fields = (
             "total",
