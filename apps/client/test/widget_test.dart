@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/auth/auth_gateway.dart';
 import 'package:frequencia_ufmg/auth/auth_user.dart';
+import 'package:frequencia_ufmg/backend/firebase_python_backend.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
@@ -194,6 +195,33 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
       FlutterError.onError = previousFlutterHandler;
       PlatformDispatcher.instance.onError = previousPlatformHandler;
+    }
+  });
+
+  testWidgets('ignores a failing App Check warm-up during startup', (
+    tester,
+  ) async {
+    final gateway = _FakeAuthGateway();
+    final logger = _FakeAppLogger();
+    addTearDown(gateway.close);
+    final backend = _FakeAdaptiveBackend()
+      ..warmUpError = StateError('no token');
+    final previousBackend = app.backendIdentityVerifierFactory;
+    app.authGatewayFactory = () => gateway;
+    app.appLoggerFactory = () => logger;
+    app.courseRepositoryFactory = (_, _) => _FakeCourseRepository();
+    app.meetingRepositoryFactory = (_, _) => _FakeMeetingRepository();
+    app.sessionRepositoryFactory = (_, _) => _FakeSessionRepository();
+    app.backendIdentityVerifierFactory = () => backend;
+    try {
+      await app.main();
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(backend.warmUpCalls, 1);
+      expect(find.text('Entrar com Google'), findsOneWidget);
+    } finally {
+      app.backendIdentityVerifierFactory = previousBackend;
     }
   });
 
@@ -766,8 +794,17 @@ class _FirebaseCoreHostApi implements TestFirebaseCoreHostApi {
 }
 
 final class _FakeAdaptiveBackend extends _FakeOverviewBackend
-    implements BackendUnifiedAcademicSyncGateway {
+    implements BackendUnifiedAcademicSyncGateway, BackendWarmUp {
+  Object? warmUpError;
+  int warmUpCalls = 0;
+
   @override
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() async =>
       syncResult();
+
+  @override
+  Future<void> warmUp() async {
+    warmUpCalls++;
+    if (warmUpError case final error?) throw error;
+  }
 }

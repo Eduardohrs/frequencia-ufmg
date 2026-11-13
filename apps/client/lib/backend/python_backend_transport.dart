@@ -131,6 +131,32 @@ abstract interface class BackendUFMGSessionGateway {
   Future<PythonUFMGSigaSyncResult> syncSiga();
 }
 
+abstract interface class BackendTeachingPlanBatchGateway {
+  Future<PythonTeachingPlanBatchResult> importMoodleTeachingPlansBatch({
+    required List<PythonTeachingPlanBatchItem> plans,
+  });
+}
+
+final class PythonTeachingPlanBatchItem {
+  const PythonTeachingPlanBatchItem({
+    required this.courseId,
+    required this.term,
+    required this.sourceId,
+  });
+  final String courseId;
+  final String term;
+  final String sourceId;
+}
+
+final class PythonTeachingPlanBatchResult {
+  const PythonTeachingPlanBatchResult({
+    required this.imported,
+    required this.failed,
+  });
+  final List<PythonTeachingPlanImport> imported;
+  final int failed;
+}
+
 abstract interface class BackendDiarioPlanGateway {
   Future<PythonDiarioPlanProbe> probeMoodleDiarioPlan({
     required String term,
@@ -1768,7 +1794,8 @@ final class PythonBackendTransport
         BackendOfficialCalendarGateway,
         BackendSchedulePendencyGateway,
         BackendRegistrationDraftGateway,
-        BackendOverviewGateway {
+        BackendOverviewGateway,
+        BackendTeachingPlanBatchGateway {
   PythonBackendTransport({
     required Uri endpoint,
     required PythonBackendTokens tokens,
@@ -2471,6 +2498,95 @@ final class PythonBackendTransport
     } catch (_) {
       throw const PythonBackendException(PythonBackendError.invalidResponse);
     }
+  }
+
+  @override
+  Future<PythonTeachingPlanBatchResult> importMoodleTeachingPlansBatch({
+    required List<PythonTeachingPlanBatchItem> plans,
+  }) async {
+    if (plans.isEmpty || plans.length > 20) {
+      throw ArgumentError('teaching plan batch must contain 1 to 20 plans');
+    }
+    final response = await _authenticatedRequest(
+      path: '/v1/ufmg/import/teaching-plans',
+      method: _BackendMethod.post,
+      requestTimeout: longRunningTimeout,
+      body: {
+        'plans': [
+          for (final plan in plans)
+            {
+              'course_id': plan.courseId,
+              'term': plan.term,
+              'source_id': int.tryParse(plan.sourceId) ?? 0,
+            },
+        ],
+      },
+    );
+    try {
+      final value = jsonDecode(response.body);
+      if (value is! Map<String, dynamic> ||
+          !_hasExactKeys(value, const {'results', 'imported', 'failed'})) {
+        throw const FormatException();
+      }
+      final rawResults = value['results'];
+      final importedCount = value['imported'];
+      final failedCount = value['failed'];
+      if (rawResults is! List ||
+          importedCount is! int ||
+          failedCount is! int ||
+          importedCount + failedCount != rawResults.length ||
+          importedCount < 0 ||
+          failedCount < 0 ||
+          rawResults.length > 20) {
+        throw const FormatException();
+      }
+      final imported = <PythonTeachingPlanImport>[];
+      for (final raw in rawResults) {
+        if (raw is! Map<String, dynamic> || raw['ok'] != true) continue;
+        imported.add(
+          _teachingPlanImportFromJson(Map<String, Object?>.from(raw)),
+        );
+      }
+      if (imported.length != importedCount) throw const FormatException();
+      return PythonTeachingPlanBatchResult(
+        imported: imported,
+        failed: failedCount,
+      );
+    } catch (_) {
+      throw const PythonBackendException(PythonBackendError.invalidResponse);
+    }
+  }
+
+  static PythonTeachingPlanImport _teachingPlanImportFromJson(
+    Map<String, Object?> value,
+  ) {
+    int count(String key, int maximum) {
+      final result = value[key];
+      if (result is! int || result < 0 || result > maximum) {
+        throw const FormatException();
+      }
+      return result;
+    }
+
+    if (!const {
+          'created',
+          'updated',
+          'unchanged',
+          'not_published',
+        }.contains(value['plan']) ||
+        value['confidence'] != 'authoritative') {
+      throw const FormatException();
+    }
+    return PythonTeachingPlanImport(
+      notPublished: value['plan'] == 'not_published',
+      assessmentTotal: count('assessment_total', 100),
+      undatedAssessmentTotal: count('undated_assessment_total', 100),
+      criteriaTotal: count('criteria_total', 100),
+      scheduleTotal: count('schedule_total', 1000),
+      createdDates: count('dates_created', 100),
+      updatedDates: count('dates_updated', 100),
+      removedDates: count('dates_removed', 100),
+    );
   }
 
   Future<PythonTeachingPlanReconciliation> reconcileMoodleTeachingPlan({
@@ -3363,6 +3479,12 @@ final class PythonBackendTransport
       );
     }
     return (idToken, appCheckToken);
+  }
+
+  /// Warms the App Check token so the first authenticated call does not wait
+  /// for the provider exchange. Shares the in-flight request with real calls.
+  Future<void> warmUpAppCheckToken() async {
+    await _appCheckToken(limitedUse: false);
   }
 
   Future<String> _appCheckToken({required bool limitedUse}) async {

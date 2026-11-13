@@ -536,10 +536,86 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
   }
 
+  List<PythonTeachingPlanBatchItem> _teachingPlanBatchItems() {
+    final discovery = _contentDiscovery;
+    if (discovery == null) return const [];
+    final items = <PythonTeachingPlanBatchItem>[];
+    for (final course in discovery.courses) {
+      // Only unambiguous courses join the batch: with several teaching-plan
+      // links the authoritative source must be picked individually first.
+      final plans = [
+        for (final candidate in course.candidates)
+          if (candidate.kind == 'link' &&
+              candidate.relevance == 'teaching_plan')
+            candidate,
+      ];
+      if (plans.length != 1) continue;
+      items.add(
+        PythonTeachingPlanBatchItem(
+          courseId: course.courseId,
+          term: course.term,
+          sourceId: plans.single.sourceId,
+        ),
+      );
+    }
+    return items;
+  }
+
   bool _canProbeDiario(PythonMoodleContentCandidate candidate) =>
       candidate.kind == 'link' &&
       candidate.relevance == 'teaching_plan' &&
       widget.gateway is BackendDiarioPlanGateway;
+
+  Future<void> _probeDiarioPlansBatch() async {
+    final gateway = widget.gateway;
+    final plans = _teachingPlanBatchItems();
+    if (gateway is! BackendTeachingPlanBatchGateway || plans.length < 2) return;
+    final batchGateway = gateway as BackendTeachingPlanBatchGateway;
+    _logInteraction('moodle_teaching_plan_batch_import');
+    try {
+      var imported = 0;
+      var failed = 0;
+      // The API accepts at most 20 plans per request: split and aggregate.
+      for (var offset = 0; offset < plans.length; offset += 20) {
+        final end = offset + 20 > plans.length ? plans.length : offset + 20;
+        final result = await runAuditedOperation(
+          logger: widget.logger,
+          operation: AuditedOperation.moodleTeachingPlanImport,
+          action: () => batchGateway.importMoodleTeachingPlansBatch(
+            plans: plans.sublist(offset, end),
+          ),
+        );
+        imported += result.imported.length;
+        failed += result.failed;
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            failed == 0
+                ? '$imported planos de ensino importados.'
+                : '$imported planos importados, $failed falharam.',
+          ),
+        ),
+      );
+      await _load();
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'moodle_teaching_plan_batch',
+        {'plans': plans.length},
+        failureCode: 'moodle_teaching_plan_batch_failed',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível importar os planos agora.'),
+        ),
+      );
+    }
+  }
 
   Future<void> _probeDiarioPlan(
     PythonMoodleCourseContent course,
@@ -2172,6 +2248,15 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                 ),
           icon: const Icon(Icons.download_for_offline_outlined),
           label: const Text('Baixar tudo'),
+        ),
+      if (!widget.isMaterialScope && _teachingPlanBatchItems().length >= 2)
+        OutlinedButton.icon(
+          key: const Key('moodle-teaching-plan-batch'),
+          onPressed: _probeDiarioPlansBatch,
+          icon: const Icon(Icons.playlist_add_check_outlined),
+          label: Text(
+            'Validar ${_teachingPlanBatchItems().length} planos em lote',
+          ),
         ),
       if (_materialBatchTotal > 0) ...[
         const SizedBox(height: 8),

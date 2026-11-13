@@ -1741,6 +1741,222 @@ void main() {
     expect(logger.events, contains('moodle_sync_succeeded'));
   });
 
+  testWidgets('imports teaching plans in one batch from the overview', (
+    tester,
+  ) async {
+    PythonMoodleContentDiscovery discoveryWithPlans(int count) {
+      return PythonMoodleContentDiscovery(
+        candidateTotal: count,
+        metaturmaCandidateTotal: 0,
+        courses: [
+          for (var i = 0; i < count; i++)
+            PythonMoodleCourseContent(
+              courseId: 'course-$i',
+              courseCode: 'C$i',
+              term: '2026-2',
+              moodleCourseId: '${100 + i}',
+              status: PythonMoodleContentStatus.found,
+              candidates: [
+                PythonMoodleContentCandidate(
+                  sourceId: '${700 + i}',
+                  moodleCourseId: '${100 + i}',
+                  kind: 'link',
+                  title: 'Plano de ensino',
+                  url: Uri.parse(
+                    'https://virtual.ufmg.br/20262/mod/url/view.php?id=${700 + i}',
+                  ),
+                  relevance: 'teaching_plan',
+                  origin: PythonMoodleContentOrigin.canonical,
+                ),
+              ],
+            ),
+        ],
+      );
+    }
+
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: true,
+        reauthenticationRequired: false,
+      ),
+    )..materialCatalog = discoveryWithPlans(2);
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          view: UFMGView.materials,
+          gateway: gateway,
+          logger: logger,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final batchButton = find.byKey(const Key('moodle-teaching-plan-batch'));
+    await tester.ensureVisible(batchButton);
+    expect(find.text('Validar 2 planos em lote'), findsOneWidget);
+    await tester.tap(batchButton);
+    await tester.pumpAndSettle();
+
+    expect(gateway.teachingPlanBatchRequests, hasLength(1));
+    expect(
+      gateway.teachingPlanBatchRequests.single
+          .map((plan) => plan.sourceId)
+          .toList(),
+      ['700', '701'],
+    );
+    expect(find.text('2 planos de ensino importados.'), findsOneWidget);
+    expect(logger.actions, contains('moodle_teaching_plan_batch_import'));
+    expect(logger.events, contains('moodle_teaching_plan_import_succeeded'));
+
+    gateway.teachingPlanBatchFailed = 1;
+    await tester.ensureVisible(batchButton);
+    await tester.tap(batchButton);
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(gateway.teachingPlanBatchRequests, hasLength(2));
+    expect(find.text('2 planos importados, 1 falharam.'), findsOneWidget);
+  });
+
+  testWidgets('batch skips ambiguous courses and splits beyond 20 plans', (
+    tester,
+  ) async {
+    PythonMoodleCourseContent courseWithPlan(String id, int planCount) {
+      return PythonMoodleCourseContent(
+        courseId: id,
+        courseCode: id.toUpperCase(),
+        term: '2026-2',
+        moodleCourseId: id,
+        status: PythonMoodleContentStatus.found,
+        candidates: [
+          for (var i = 0; i < planCount; i++)
+            PythonMoodleContentCandidate(
+              sourceId: '$id-$i',
+              moodleCourseId: id,
+              kind: 'link',
+              title: 'Plano de ensino $i',
+              url: Uri.parse(
+                'https://virtual.ufmg.br/20262/mod/url/view.php?id=$i',
+              ),
+              relevance: 'teaching_plan',
+              origin: PythonMoodleContentOrigin.canonical,
+            ),
+        ],
+      );
+    }
+
+    final gateway =
+        _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..materialCatalog = PythonMoodleContentDiscovery(
+            candidateTotal: 26,
+            metaturmaCandidateTotal: 0,
+            courses: [
+              for (var i = 0; i < 25; i++) courseWithPlan('c$i', 1),
+              courseWithPlan('amb', 2),
+            ],
+          );
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          view: UFMGView.materials,
+          gateway: gateway,
+          logger: logger,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final batchButton = find.byKey(const Key('moodle-teaching-plan-batch'));
+    await tester.ensureVisible(batchButton);
+    expect(find.text('Validar 25 planos em lote'), findsOneWidget);
+    await tester.tap(batchButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      gateway.teachingPlanBatchRequests.map((plans) => plans.length).toList(),
+      [20, 5],
+    );
+    expect(
+      gateway.teachingPlanBatchRequests
+          .expand((plans) => plans)
+          .any((plan) => plan.courseId == 'amb'),
+      isFalse,
+    );
+    expect(find.text('25 planos de ensino importados.'), findsOneWidget);
+  });
+
+  testWidgets('shows a failure snackbar when the batch import fails', (
+    tester,
+  ) async {
+    final gateway =
+        _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..materialCatalog = PythonMoodleContentDiscovery(
+            candidateTotal: 2,
+            metaturmaCandidateTotal: 0,
+            courses: [
+              for (var i = 0; i < 2; i++)
+                PythonMoodleCourseContent(
+                  courseId: 'course-$i',
+                  courseCode: 'C$i',
+                  term: '2026-2',
+                  moodleCourseId: '${100 + i}',
+                  status: PythonMoodleContentStatus.found,
+                  candidates: [
+                    PythonMoodleContentCandidate(
+                      sourceId: '${700 + i}',
+                      moodleCourseId: '${100 + i}',
+                      kind: 'link',
+                      title: 'Plano de ensino',
+                      url: Uri.parse(
+                        'https://virtual.ufmg.br/20262/mod/url/view.php?id=${700 + i}',
+                      ),
+                      relevance: 'teaching_plan',
+                      origin: PythonMoodleContentOrigin.canonical,
+                    ),
+                  ],
+                ),
+            ],
+          )
+          ..teachingPlanBatchError = StateError('boom');
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          view: UFMGView.materials,
+          gateway: gateway,
+          logger: logger,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(
+      find.byKey(const Key('moodle-teaching-plan-batch')),
+    );
+    await tester.tap(find.byKey(const Key('moodle-teaching-plan-batch')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.teachingPlanBatchRequests, hasLength(1));
+    expect(
+      find.text('Não foi possível importar os planos agora.'),
+      findsOneWidget,
+    );
+    expect(logger.events, contains('moodle_teaching_plan_import_failed'));
+    expect(logger.errorContexts, contains('moodle_teaching_plan_batch'));
+  });
+
   testWidgets('validates an official Diario plan without downloading it', (
     tester,
   ) async {
@@ -4126,7 +4342,11 @@ final class _PendencyGateway extends _UnifiedGateway
   }
 }
 
-class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
+class _Gateway
+    implements
+        BackendUFMGSessionGateway,
+        BackendDiarioPlanGateway,
+        BackendTeachingPlanBatchGateway {
   _Gateway({required this.status});
 
   PythonUFMGSessionStatus status;
@@ -4165,6 +4385,9 @@ class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
   final materialFileRequests = <(String, String, String)>[];
   final diarioProbeRequests = <(String, String)>[];
   final diarioImportRequests = <(String, String, String)>[];
+  final teachingPlanBatchRequests = <List<PythonTeachingPlanBatchItem>>[];
+  Object? teachingPlanBatchError;
+  int teachingPlanBatchFailed = 0;
   final reconciliationRequests = <(String, bool)>[];
   Object? diarioProbeError;
   bool diarioNotPublished = false;
@@ -4251,6 +4474,30 @@ class _Gateway implements BackendUFMGSessionGateway, BackendDiarioPlanGateway {
       createdDates: 2,
       updatedDates: 0,
       removedDates: 0,
+    );
+  }
+
+  @override
+  Future<PythonTeachingPlanBatchResult> importMoodleTeachingPlansBatch({
+    required List<PythonTeachingPlanBatchItem> plans,
+  }) async {
+    teachingPlanBatchRequests.add(plans);
+    if (teachingPlanBatchError case final error?) throw error;
+    return PythonTeachingPlanBatchResult(
+      imported: [
+        for (final _ in plans)
+          PythonTeachingPlanImport(
+            notPublished: false,
+            assessmentTotal: 2,
+            undatedAssessmentTotal: 0,
+            criteriaTotal: 1,
+            scheduleTotal: 30,
+            createdDates: 2,
+            updatedDates: 0,
+            removedDates: 0,
+          ),
+      ],
+      failed: teachingPlanBatchFailed,
     );
   }
 
