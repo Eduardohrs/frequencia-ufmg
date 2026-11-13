@@ -2443,9 +2443,9 @@ void main() {
     await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('moodle-download-all-dcc203')));
+    await tester.tap(find.byKey(const Key('moodle-download-all')));
     await tester.pumpAndSettle();
-    expect(find.text('Baixar todos de DCC203?'), findsOneWidget);
+    expect(find.text('Baixar todos os materiais?'), findsOneWidget);
     await tester.tap(find.text('Baixar'));
     await tester.pumpAndSettle();
 
@@ -3204,8 +3204,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(cache.clearCalls, 1);
     expect(cache.progress, isEmpty);
-    expect(find.text('Arquivos neste dispositivo'), findsOneWidget);
-    expect(find.text('Nenhuma cópia offline'), findsOneWidget);
+    expect(find.text('Arquivos neste dispositivo'), findsNothing);
   });
 
   testWidgets('downloads to the local cache without a duplicate action sheet', (
@@ -3466,7 +3465,7 @@ void main() {
     await tester.tap(find.byKey(const Key('moodle-material-open-102')));
     await tester.pumpAndSettle();
     expect(
-      find.text('Sincronize o Moodle novamente para baixar este material.'),
+      find.text('Sincronize o Moodle novamente para baixar "Cronograma".'),
       findsOneWidget,
     );
     await tester.pump(const Duration(seconds: 5));
@@ -3477,10 +3476,242 @@ void main() {
     await tester.tap(find.byKey(const Key('moodle-material-open-102')));
     await tester.pumpAndSettle();
     expect(
-      find.text('Não foi possível abrir este material no Moodle.'),
+      find.text('Não foi possível preparar "Cronograma" para download.'),
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'CW18: a failed preparation is named, classified and retryable from the file hub',
+    (tester) async {
+      final gateway =
+          _Gateway(
+              status: const PythonUFMGSessionStatus(
+                connected: true,
+                reauthenticationRequired: false,
+              ),
+            )
+            ..materialFilesError = const PythonBackendException(
+              PythonBackendError.unavailable,
+            );
+      final cache = _BackgroundMaterialCache();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(
+            view: UFMGView.materials,
+            gateway: gateway,
+            logger: _Logger(),
+            userId: 'user-1',
+            materialFileCache: cache,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('moodle-content-dcc203')),
+      );
+      await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('moodle-material-open-102')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'Sem conexão com a UFMG para baixar "Cronograma". '
+          'Tente novamente quando estiver online.',
+        ),
+        findsOneWidget,
+      );
+      // falha de preparação entra na central de arquivos com retry
+      await tester.ensureVisible(
+        find.byKey(const Key('material-download-retry-2026-2/3701/102')),
+      );
+      expect(
+        find.byKey(const Key('material-download-retry-2026-2/3701/102')),
+        findsOneWidget,
+      );
+      // retry com a rede de volta enfileira e limpa a falha persistente
+      gateway.materialFilesError = null;
+      await tester.tap(
+        find.byKey(const Key('material-download-retry-2026-2/3701/102')),
+      );
+      await tester.pumpAndSettle();
+      expect(cache.queued.single.name, 'Cronograma.pdf');
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('material-download-retry-2026-2/3701/102')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'CW19: one batch action per scope and the empty cache card stays hidden',
+    (tester) async {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      );
+      final cache = _BackgroundMaterialCache();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(
+            view: UFMGView.materials,
+            gateway: gateway,
+            logger: _Logger(),
+            userId: 'user-1',
+            materialFileCache: cache,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+      await tester.pumpAndSettle();
+      // só uma disciplina com materiais baixáveis: só o botão global
+      expect(find.byKey(const Key('moodle-download-all')), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const Key('moodle-content-dcc203')),
+      );
+      await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('moodle-download-all-dcc203')), findsNothing);
+      // cartão de cópias vazio não aparece
+      expect(find.text('Arquivos neste dispositivo'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'CW19: with two disciplines the per-discipline batch action appears inside the card',
+    (tester) async {
+      final gateway = _Gateway(
+        status: const PythonUFMGSessionStatus(
+          connected: true,
+          reauthenticationRequired: false,
+        ),
+      );
+      final original = await gateway.discoverMoodleContent();
+      final second = PythonMoodleCourseContent(
+        courseId: 'mat001',
+        courseCode: 'MAT001',
+        term: '2026-2',
+        moodleCourseId: '4953',
+        status: PythonMoodleContentStatus.found,
+        candidates: [
+          PythonMoodleContentCandidate(
+            sourceId: '201',
+            moodleCourseId: '4953',
+            kind: 'file',
+            title: 'Slides',
+            url: Uri.parse(
+              'https://virtual.ufmg.br/20262/mod/resource/view.php?id=201',
+            ),
+            relevance: 'other',
+            origin: PythonMoodleContentOrigin.canonical,
+          ),
+        ],
+      );
+      gateway.materialCatalog = PythonMoodleContentDiscovery(
+        candidateTotal: original.candidateTotal + 1,
+        metaturmaCandidateTotal: original.metaturmaCandidateTotal,
+        courses: [
+          ...original.courses.where(
+            (c) => c.status != PythonMoodleContentStatus.empty,
+          ),
+          second,
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(
+            view: UFMGView.materials,
+            gateway: gateway,
+            logger: _Logger(),
+            userId: 'user-1',
+            materialFileCache: _BackgroundMaterialCache(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('moodle-download-all')), findsOneWidget);
+      expect(find.textContaining('MAT001'), findsWidgets);
+      await tester.ensureVisible(
+        find.byKey(const Key('moodle-content-dcc203')),
+      );
+      await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('moodle-download-all-dcc203')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('moodle-download-all-mat001')), findsNothing);
+      await tester.tap(find.byKey(const Key('moodle-download-all-dcc203')));
+      await tester.pumpAndSettle();
+      expect(find.text('Baixar todos de DCC203?'), findsOneWidget);
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
+    'CW18: dismissing a preparation failure removes it from the file hub',
+    (tester) async {
+      final gateway =
+          _Gateway(
+              status: const PythonUFMGSessionStatus(
+                connected: true,
+                reauthenticationRequired: false,
+              ),
+            )
+            ..materialFilesError = const PythonBackendException(
+              PythonBackendError.ufmgUnavailable,
+            );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: UFMGConnectionPage(
+            view: UFMGView.materials,
+            gateway: gateway,
+            logger: _Logger(),
+            userId: 'user-1',
+            materialFileCache: _BackgroundMaterialCache(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ufmg-sync-moodle')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('moodle-content-dcc203')),
+      );
+      await tester.tap(find.byKey(const Key('moodle-content-dcc203')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('moodle-material-open-102')));
+      await tester.pumpAndSettle();
+      // ufmgUnavailable também classifica como falta de rede
+      expect(
+        find.text(
+          'Sem conexão com a UFMG para baixar "Cronograma". '
+          'Tente novamente quando estiver online.',
+        ),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(
+        find.byKey(const Key('material-download-dismiss-2026-2/3701/102')),
+      );
+      await tester.tap(
+        find.byKey(const Key('material-download-dismiss-2026-2/3701/102')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('material-download-progress-2026-2/3701/102')),
+        findsNothing,
+      );
+      expect(find.text('Arquivos neste dispositivo'), findsNothing);
+    },
+  );
 
   testWidgets('does not launch a late Moodle file response after disposal', (
     tester,
@@ -3581,7 +3812,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Não foi possível abrir este material no Moodle.'),
+      find.text('Não foi possível preparar "Plano de ensino" para download.'),
       findsOneWidget,
     );
     expect(logger.events, contains('moodle_material_open_failed'));

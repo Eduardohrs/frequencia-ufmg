@@ -668,6 +668,91 @@ void main() {
     },
   );
   testWidgets(
+    'CW28: hub workspace reuses the calendar dates snapshot when offline',
+    (tester) async {
+      final course = CourseRecord(
+        id: 'poo',
+        code: 'DCC203',
+        name: 'POO',
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final gateway =
+          _WorkspaceGateway(); // listCourseDates falha (noSuchMethod)
+      await tester.pumpWidget(
+        _NavigationApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
+          key: UniqueKey(),
+          home: CourseHubPage(
+            course: course,
+            allCourses: [course],
+            courseRepository: _FakeCourseRepository(courses: [course]),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository({'poo': []}),
+            logger: _RecordingAppLogger(),
+            now: () => now,
+            workspaceGateway: gateway,
+            datesByCourse: {
+              'poo': [
+                PythonMoodleDate(
+                  id: 'moodle-1',
+                  courseId: 'poo',
+                  courseCode: 'DCC203',
+                  title: 'Entrega futura',
+                  dueAt: DateTime.utc(2026, 10, 5, 12),
+                  kind: 'assignment',
+                ),
+              ],
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('course-hub-workspace')));
+      await tester.tap(find.byKey(const Key('course-hub-workspace')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Prazos'));
+      await tester.pumpAndSettle();
+      expect(find.text('Entrega futura'), findsOneWidget);
+      expect(find.text('Cópia local dos prazos (agenda).'), findsOneWidget);
+    },
+  );
+
+  test('overviewDatesCache reads the local-first agenda snapshot', () async {
+    final snapshot = AcademicOverviewSnapshot(
+      courses: const [],
+      sessionsByCourse: const {},
+      datesByCourse: {
+        'poo': [
+          PythonMoodleDate(
+            id: 'moodle-1',
+            courseId: 'poo',
+            courseCode: 'DCC203',
+            title: 'Entrega futura',
+            dueAt: DateTime.utc(2026, 10, 5, 12),
+            kind: 'assignment',
+          ),
+        ],
+      },
+    );
+    final local = _LocalFirstOverviewRepository(
+      cached: snapshot,
+      refreshed: Future.value(snapshot),
+    );
+    final reader = overviewDatesCache(local, 'poo');
+    expect(reader, isNotNull);
+    expect(await reader!(), hasLength(1));
+    expect(await overviewDatesCache(local, 'outra')!(), isNull);
+    expect(overviewDatesCache(null, 'poo'), isNull);
+    expect(
+      overviewDatesCache(_FakeOverviewRepository(snapshot), 'poo'),
+      isNull,
+    );
+  });
+
+  testWidgets(
     'hub refreshes metadata and sessions on schedule return, retaining data on failure',
     (tester) async {
       CourseRecord makeCourse(String name) => CourseRecord(

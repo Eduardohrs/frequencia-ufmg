@@ -26,6 +26,9 @@ final class MaterialCacheCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final totalBytes = files.fold<int>(0, (total, file) => total + file.size);
     final visibleDownloads = downloads.where(_isActionable).toList();
+    if (files.isEmpty && visibleDownloads.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return Card(
       margin: EdgeInsets.zero,
       child: ExpansionTile(

@@ -1,4 +1,3 @@
-import '../../design/app_feedback.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
 import '../../observability/operation_diagnostics.dart';
@@ -282,10 +281,6 @@ class _AbsenceDashboardPageState extends State<AbsenceDashboardPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const AppPageIntro(
-            title: 'Sua frequência',
-            subtitle: 'Veja primeiro onde sua atenção é necessária.',
-          ),
           _GlobalSnapshot(summaries: _summaries),
           const SizedBox(height: 24),
           Text('Por disciplina', style: Theme.of(context).textTheme.titleLarge),
@@ -337,12 +332,19 @@ class _GlobalSnapshot extends StatelessWidget {
           final courseLabel = summaries.length == 1
               ? 'disciplina acompanhada'
               : 'disciplinas acompanhadas';
+          final counters = [
+            if (pending > 0)
+              _SnapshotValue(value: '$pending', label: 'registros pendentes'),
+            if (atLimit > 0)
+              _SnapshotValue(value: '$atLimit', label: 'no limite de faltas'),
+          ];
           if (constraints.maxWidth < 520) {
             return Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
-                '${summaries.length} $courseLabel  ·  '
-                '$pending pendentes  ·  $atLimit no limite',
+                counters.isEmpty
+                    ? '${summaries.length} $courseLabel · tudo em dia'
+                    : '${summaries.length} $courseLabel · ${counters.map((c) => '${c.value} ${c.label}').join(' · ')}',
                 style: Theme.of(
                   context,
                 ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
@@ -359,8 +361,9 @@ class _GlobalSnapshot extends StatelessWidget {
                   value: '${summaries.length}',
                   label: courseLabel,
                 ),
-                _SnapshotValue(value: '$pending', label: 'registros pendentes'),
-                _SnapshotValue(value: '$atLimit', label: 'no limite de faltas'),
+                ...counters,
+                if (counters.isEmpty)
+                  _SnapshotValue(value: 'Tudo em dia', label: 'neste momento'),
               ],
             ),
           );

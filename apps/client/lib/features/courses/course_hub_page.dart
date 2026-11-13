@@ -497,6 +497,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
           now: widget.now,
           userId: widget.userId,
           focusActivityTitle: activityTitle,
+          datesCache: () async => widget.datesByCourse[_course.id],
           onOpenCalendar: fromCalendar
               ? () async => Navigator.of(context).pop()
               : null,

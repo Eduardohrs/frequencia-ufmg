@@ -424,6 +424,52 @@ void main() {
     expect(find.text('0 encontros restantes'), findsOneWidget);
     expect(repository.listCalls, 0);
   });
+
+  testWidgets('CW10: global snapshot drops zero counters and the intro', (
+    tester,
+  ) async {
+    final repository = _Repository({'poo': []});
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AbsenceDashboardPage(
+          courses: [poo],
+          repository: repository,
+          location: location,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Sua frequência'), findsNothing);
+    expect(find.byKey(const Key('global-absence-snapshot')), findsOneWidget);
+    expect(find.text('Tudo em dia'), findsOneWidget);
+    expect(find.text('registros pendentes'), findsNothing);
+    expect(find.text('no limite de faltas'), findsNothing);
+  });
+
+  testWidgets('CW10: non-zero counters stay visible in the global snapshot', (
+    tester,
+  ) async {
+    final repository = _Repository({
+      'poo': [
+        _session('absent', now.subtract(const Duration(days: 1)), absences: 2),
+        _session('pending', now.subtract(const Duration(days: 2))),
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AbsenceDashboardPage(
+          courses: [poo],
+          repository: repository,
+          location: location,
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('registros pendentes'), findsOneWidget);
+    expect(find.text('Tudo em dia'), findsNothing);
+  });
 }
 
 CourseRecord _course(String id, String code, int workload, DateTime now) =>
