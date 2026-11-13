@@ -11,6 +11,7 @@ import '../../data/material_file_cache.dart';
 import '../../data/material_file_cache_factory.dart';
 import '../../observability/app_logger.dart';
 import '../../observability/audited_operation.dart';
+import '../../observability/error_log_details.dart';
 import '../../observability/operation_diagnostics.dart';
 
 enum _Section { activities, dates, plan }
@@ -28,6 +29,7 @@ class CourseWorkspacePage extends StatefulWidget {
     this.openExternalUri,
     this.snapshotCache,
     this.focusActivityTitle,
+    this.datesCache,
     super.key,
   });
   final CourseActivitySnapshotCache? snapshotCache;
@@ -41,6 +43,10 @@ class CourseWorkspacePage extends StatefulWidget {
   final MaterialFileCache? materialFileCache;
   final Future<bool> Function(Uri)? openExternalUri;
   final String? focusActivityTitle;
+
+  /// Same offline snapshot the calendar uses; consulted when the remote
+  /// dates read fails (CW28).
+  final Future<List<PythonMoodleDate>?> Function()? datesCache;
   @override
   State<CourseWorkspacePage> createState() => _CourseWorkspacePageState();
 }
@@ -56,6 +62,8 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
   late final _snapshotCache =
       widget.snapshotCache ?? CourseActivitySnapshotCache();
   List<PythonMoodleDate> _dates = [];
+  bool _localDates = false;
+  final Map<_Section, Object> _lastError = {};
   Map<String, Object?>? _plan;
   bool _saving = false;
   bool? _planSyncPaused;
@@ -222,10 +230,33 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
             }
           }
         case _Section.dates:
-          final entries = await widget.gateway.listCourseDates(
-            widget.course.id,
-          );
-          if (mounted) _dates = entries;
+          try {
+            final entries = await widget.gateway.listCourseDates(
+              widget.course.id,
+            );
+            if (mounted) {
+              _dates = entries;
+              _localDates = false;
+            }
+          } catch (error, stack) {
+            final cached = await _cachedDates();
+            if (cached == null) {
+              Error.throwWithStackTrace(error, stack);
+            }
+            emitOperationalEvent(
+              widget.logger,
+              'course_workspace_dates_cache_fallback',
+              {
+                ...fields,
+                'item_count': cached.length,
+                'cause': ErrorLogDetails.from(error).code ?? 'unknown',
+              },
+            );
+            if (mounted) {
+              _dates = cached;
+              _localDates = true;
+            }
+          }
         case _Section.plan:
           await _planCache(write: false);
           await _loadPlanPolicy();
@@ -266,10 +297,36 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
         },
         failureCode: 'course_workspace_read_failed',
       );
+      _lastError[section] = error;
       if (mounted) setState(() => _failed.add(section));
     } finally {
       if (mounted) setState(() => _loading.remove(section));
     }
+  }
+
+  Future<List<PythonMoodleDate>?> _cachedDates() async {
+    final reader = widget.datesCache;
+    if (reader == null) return null;
+    try {
+      return await reader();
+    } catch (error, stack) {
+      recordOperationalFailure(
+        widget.logger,
+        error,
+        stack,
+        'course_workspace_dates_cache_read',
+        _fields('dates_cache_read'),
+        failureCode: 'course_workspace_dates_cache_read_failed',
+      );
+      return null;
+    }
+  }
+
+  bool _isAuthFailure(_Section section) {
+    final error = _lastError[section];
+    return error is PythonBackendException &&
+        (error.code == PythonBackendError.ufmgReauthenticationRequired ||
+            error.code == PythonBackendError.moodleAuthorizationRequired);
   }
 
   Future<void> _planCache({required bool write}) async {
@@ -791,7 +848,8 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
                             onPressed: () => _load(_section),
                             child: const Text('Tentar novamente'),
                           ),
-                          if (widget.onConnect != null)
+                          if (widget.onConnect != null &&
+                              _isAuthFailure(_section))
                             TextButton(
                               onPressed: _requestSync,
                               child: const Text('Conexão UFMG'),
@@ -803,6 +861,8 @@ class _CourseWorkspacePageState extends State<CourseWorkspacePage> {
                 ),
               if (_section == _Section.plan && _localPlan)
                 const Text('Cópia local do plano de ensino.'),
+              if (_section == _Section.dates && _localDates)
+                const Text('Cópia local dos prazos (agenda).'),
 
               Expanded(
                 child: _section == _Section.activities

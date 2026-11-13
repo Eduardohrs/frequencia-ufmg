@@ -667,7 +667,10 @@ void main() {
   testWidgets(
     'reconnect is explicit and empty sections remain distinct from failures',
     (tester) async {
-      final gateway = _Gateway()..readError = StateError('expired');
+      final gateway = _Gateway()
+        ..readError = const PythonBackendException(
+          PythonBackendError.ufmgReauthenticationRequired,
+        );
       final store = _Logs();
       var connections = 0;
       await tester.pumpWidget(
@@ -690,6 +693,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      // CW11: botão de conexão só para falha de autenticação UFMG
+      expect(find.text('Conexão UFMG'), findsOneWidget);
       await tester.tap(find.text('Conexão UFMG'));
       await tester.pumpAndSettle();
       expect(connections, 1);
@@ -709,6 +714,110 @@ void main() {
       await tester.tap(find.text('Plano'));
       await tester.pumpAndSettle();
       expect(find.text('Não informados no plano.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'CW11: network failure offers retry only, not a reconnect shortcut',
+    (tester) async {
+      final gateway = _Gateway()..readError = StateError('offline');
+      final store = _Logs();
+      await tester.pumpWidget(_app(gateway, store, onConnect: () async {}));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Não foi possível carregar'), findsOneWidget);
+      expect(find.text('Tentar novamente'), findsOneWidget);
+      expect(find.text('Conexão UFMG'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'CW28: offline dates tab reuses the calendar snapshot and says so',
+    (tester) async {
+      final gateway = _Gateway()..datesError = StateError('offline');
+      final store = _Logs();
+      await tester.pumpWidget(
+        _app(
+          gateway,
+          store,
+          onConnect: () async {},
+          datesCache: () async => [date('moodle-1', 'Prova importada')],
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Prazos'));
+      await tester.pumpAndSettle();
+      expect(find.text('Prova importada'), findsOneWidget);
+      expect(find.text('Cópia local dos prazos (agenda).'), findsOneWidget);
+      expect(find.text('Não foi possível carregar'), findsNothing);
+      expect(find.text('Conexão UFMG'), findsNothing);
+      expect(
+        store.documents.any(
+          (d) => d['event'] == 'course_workspace_dates_cache_fallback',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets(
+    'CW28: a broken local dates cache falls back to the plain failure',
+    (tester) async {
+      final gateway = _Gateway()..datesError = StateError('offline');
+      final store = _Logs();
+      await tester.pumpWidget(
+        _app(
+          gateway,
+          store,
+          onConnect: () async {},
+          datesCache: () async => throw StateError('cache corrompido'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Prazos'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Ainda não há dados salvos desta seção.'),
+        findsOneWidget,
+      );
+      expect(
+        store.documents
+            .where((d) => d['event'] == 'app_exception')
+            .any(
+              (d) => d.toString().contains('course_workspace_dates_cache_read'),
+            ),
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets(
+    'CW11: moodle authorization failure also offers the reconnect action',
+    (tester) async {
+      final gateway = _Gateway()
+        ..readError = const PythonBackendException(
+          PythonBackendError.moodleAuthorizationRequired,
+        );
+      await tester.pumpWidget(_app(gateway, _Logs(), onConnect: () async {}));
+      await tester.pumpAndSettle();
+      expect(find.text('Conexão UFMG'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'CW28: offline dates tab without any cached snapshot still reports a failure',
+    (tester) async {
+      final gateway = _Gateway()..datesError = StateError('offline');
+      final store = _Logs();
+      await tester.pumpWidget(_app(gateway, store, onConnect: () async {}));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Prazos'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Ainda não há dados salvos desta seção.'),
+        findsOneWidget,
+      );
+      expect(find.text('Tentar novamente'), findsOneWidget);
+      expect(find.text('Conexão UFMG'), findsNothing);
     },
   );
 
@@ -830,6 +939,8 @@ Widget _app(
   String? userId,
   CourseActivitySnapshotCache? cache,
   String? focus,
+  Future<List<PythonMoodleDate>?> Function()? datesCache,
+  Future<void> Function()? onConnect,
 }) => MaterialApp(
   home: CourseWorkspacePage(
     course: course,
@@ -845,12 +956,14 @@ Widget _app(
     focusActivityTitle: focus,
     snapshotCache: cache,
     openExternalUri: open,
+    datesCache: datesCache,
+    onConnect: onConnect,
   ),
 );
 
 class _Gateway implements BackendAcademicWorkspaceGateway {
   final dates = [date('moodle-1', 'Prova importada')];
-  Object? readError, detailError, saveError;
+  Object? readError, detailError, saveError, datesError;
   int detailCalls = 0;
   List<PythonMoodleActivity> activities = [activity];
   PythonMoodleActivityDetail? detail;
@@ -926,8 +1039,11 @@ class _Gateway implements BackendAcademicWorkspaceGateway {
   }
 
   @override
-  Future<List<PythonMoodleDate>> listCourseDates(String id) async =>
-      List.of(dates);
+  Future<List<PythonMoodleDate>> listCourseDates(String id) async {
+    if (datesError != null) throw datesError!;
+    return List.of(dates);
+  }
+
   @override
   Future<Map<String, Object?>?> loadCoursePlan(String id) async {
     if (readError != null) throw readError!;

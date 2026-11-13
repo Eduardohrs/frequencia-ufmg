@@ -1154,6 +1154,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
           now: widget.now,
           userId: widget.user.id,
           focusActivityTitle: activityTitle,
+          datesCache: overviewDatesCache(widget.overviewRepository, course.id),
           onOpenCalendar: () async => Navigator.of(context).pop(),
           onConnect: _openUFMGConnection,
         ),
@@ -2322,4 +2323,14 @@ String _shortDate(DateTime value) {
   final local = tz.TZDateTime.from(value, tz.getLocation('America/Sao_Paulo'));
   return '${local.day.toString().padLeft(2, '0')}/'
       '${local.month.toString().padLeft(2, '0')}/${local.year}';
+}
+
+Future<List<PythonMoodleDate>?> Function()? overviewDatesCache(
+  AcademicOverviewRepository? repository,
+  String courseId,
+) {
+  if (repository is! LocalFirstAcademicOverviewRepository) return null;
+  final local = repository;
+  return () async =>
+      (await local.loadCachedOverview())?.datesByCourse[courseId];
 }
