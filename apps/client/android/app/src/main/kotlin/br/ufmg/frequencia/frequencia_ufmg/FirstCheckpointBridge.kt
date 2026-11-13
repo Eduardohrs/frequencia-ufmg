@@ -42,7 +42,11 @@ class FirstCheckpointBridge(private val context: Context) {
                         if (method == "clear_completed") FirstCheckpointPolicy.canClear(current.getValue(it), current.values.toList(), System.currentTimeMillis())
                         else FirstCheckpointPolicy.canClearAutomatic(current.getValue(it), current.values.toList(), System.currentTimeMillis(), CheckpointNotifications.reviewed(context))
                     }
-                    ended.forEach { key -> stores.remove(key); context.getSharedPreferences(key, 0).edit().clear().commit() }
+                    ended.forEach { key ->
+                        stores.remove(key)
+                        FirstCheckpointBootIndex.remove(context, key)
+                        context.getSharedPreferences(key, 0).edit().clear().commit()
+                    }
                     check(prefs.edit().putStringSet("stores", stores).commit())
                     CheckpointNotifications.refresh(context)
                     result.success(reports(account))
@@ -121,6 +125,7 @@ class FirstCheckpointBridge(private val context: Context) {
                                 !FirstCheckpointPolicy.sameRevision(old, report))) {
                             alarms.cancel(oldKey)
                             work.cancelUniqueWork(oldKey)
+                            FirstCheckpointBootIndex.remove(context, oldKey)
                             old.put("status", "superseded").put(FirstCheckpointPolicy.pingField(old), "indisponivel")
                             context.getSharedPreferences(oldKey, 0).edit().putString("report", old.toString()).commit()
                         }
@@ -147,6 +152,12 @@ class FirstCheckpointBridge(private val context: Context) {
     private fun load(key: String) = JSONObject(context.getSharedPreferences(key, 0).getString("report", "{}")!!)
     private fun save(key: String, report: JSONObject) {
         check(context.getSharedPreferences(key, 0).edit().putString("report", report.toString()).commit())
+        // The boot index mirrors only pending alarms; terminal states drop out.
+        if (report.optString("status") in listOf("scheduled", "running")) {
+            FirstCheckpointBootIndex.put(context, key, report.getLong("checkpoint_expected_at_ms"))
+        } else {
+            FirstCheckpointBootIndex.remove(context, key)
+        }
         BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(report))
         CheckpointNotifications.refresh(context)
     }

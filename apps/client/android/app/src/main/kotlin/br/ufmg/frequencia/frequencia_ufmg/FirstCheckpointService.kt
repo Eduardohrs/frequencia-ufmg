@@ -46,6 +46,16 @@ class FirstCheckpointService : Service() {
             if (pending.get() == 0) stopSelfResult(startId)
             return START_NOT_STICKY
         }
+        if (FirstCheckpointBootIndex.isDirectBoot(this)) {
+            // Credential-protected stores are unreadable before the first unlock;
+            // defer delivery: BOOT_COMPLETED after unlock revalidates every alarm.
+            BackgroundLocationProof.emit(org.json.JSONObject()
+                .put("event_stage", "alarm_dispatch")
+                .put("moment", "first")
+                .put("status", "deferred_direct_boot")
+                .put("checkpoint_key", key))
+            finishIfIdle(); return START_NOT_STICKY
+        }
         val report = FirstCheckpointBridge(this).dispatch(key) ?: run {
             finishIfIdle(); return START_NOT_STICKY
         }
