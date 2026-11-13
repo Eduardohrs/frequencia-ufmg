@@ -19,6 +19,7 @@ import 'data/academic_repositories.dart';
 import 'data/academic_agenda.dart';
 import 'data/document_store.dart';
 import 'data/firebase_document_store.dart';
+import 'data/identity_verification_cache.dart';
 import 'data/cached_academic_overview_repository.dart';
 import 'data/firebase_current_user.dart';
 import 'data/firebase_course_repository.dart';
@@ -247,6 +248,8 @@ class FrequenciaUFMGApp extends StatelessWidget {
           meetingRepositoryFactory: meetingRepositoryFactory,
           sessionRepositoryFactory: sessionRepositoryFactory,
           backendIdentityVerifier: backendIdentityVerifier,
+          identityVerificationCache:
+              SharedPreferencesIdentityVerificationCache(),
           attendanceEvaluator: attendanceEvaluator,
           scheduleGateway: scheduleGateway,
           sessionGateway: sessionGateway,

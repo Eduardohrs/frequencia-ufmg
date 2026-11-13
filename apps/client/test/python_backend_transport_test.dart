@@ -223,6 +223,41 @@ void main() {
   );
 
   test(
+    'job polling waits 20s between attempts and caps at 90 attempts',
+    () async {
+      final delays = <Duration>[];
+      var posts = 0;
+      var polls = 0;
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        jobDelay: (d) async {
+          delays.add(d);
+        },
+        client: MockClient((r) async {
+          if (r.method == 'POST') {
+            posts++;
+            return http.Response('{"operation_id":"sync-test123"}', 202);
+          }
+          polls++;
+          return http.Response(
+            '{"operation_id":"sync-test123","status":"running"}',
+            200,
+          );
+        }),
+      );
+      await expectLater(
+        transport.syncAllAcademicData(background: true),
+        throwsA(isA<PythonBackendException>()),
+      );
+      expect(posts, 1);
+      expect(polls, 90);
+      expect(delays, hasLength(90));
+      expect(delays.toSet(), {const Duration(seconds: 20)});
+    },
+  );
+
+  test(
     'observation expiration does not cancel or restart the server job',
     () async {
       var posts = 0;

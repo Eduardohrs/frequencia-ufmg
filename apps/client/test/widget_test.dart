@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'fixtures/attendance_permission_fixture.dart';
 import 'package:frequencia_ufmg/data/first_checkpoint.dart';
@@ -18,6 +19,7 @@ import 'package:frequencia_ufmg/data/python_overview_repository.dart';
 import 'package:frequencia_ufmg/main.dart' as app;
 import 'package:frequencia_ufmg/observability/app_logger.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 
@@ -58,6 +60,8 @@ void main() {
   );
 
   setUp(() {
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.empty();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel(
@@ -309,6 +313,41 @@ void main() {
 
       await tester.pump();
       expect(verifier.calls, 1);
+    },
+  );
+
+  testWidgets(
+    'skips the backend identity probe while the local cache is fresh',
+    (tester) async {
+      final gateway = _FakeAuthGateway(
+        initialUser: AuthUser(id: 'user-cache', email: 'aluno@ufmg.br'),
+      );
+      final logger = _FakeAppLogger();
+      final verifier = _FakeBackendVerifier();
+      addTearDown(gateway.close);
+      final encoded = base64Url
+          .encode(utf8.encode('user-cache'))
+          .replaceAll('=', '');
+      await SharedPreferencesAsync().setString(
+        'identity_verified.v1.$encoded',
+        DateTime.now().toUtc().toIso8601String(),
+      );
+
+      await tester.pumpWidget(
+        app.FrequenciaUFMGApp(
+          authGateway: gateway,
+          logger: logger,
+          backendIdentityVerifier: verifier,
+          courseRepositoryFactory: (_) => _FakeCourseRepository(),
+          meetingRepositoryFactory: (_) => _FakeMeetingRepository(),
+          sessionRepositoryFactory: (_) => _FakeSessionRepository(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.pump();
+
+      expect(verifier.calls, 0);
+      expect(logger.events, contains('python_backend_identity_skipped_cached'));
     },
   );
 
