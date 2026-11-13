@@ -539,17 +539,26 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   List<PythonTeachingPlanBatchItem> _teachingPlanBatchItems() {
     final discovery = _contentDiscovery;
     if (discovery == null) return const [];
-    return [
-      for (final course in discovery.courses)
+    final items = <PythonTeachingPlanBatchItem>[];
+    for (final course in discovery.courses) {
+      // Only unambiguous courses join the batch: with several teaching-plan
+      // links the authoritative source must be picked individually first.
+      final plans = [
         for (final candidate in course.candidates)
           if (candidate.kind == 'link' &&
               candidate.relevance == 'teaching_plan')
-            PythonTeachingPlanBatchItem(
-              courseId: course.courseId,
-              term: course.term,
-              sourceId: candidate.sourceId,
-            ),
-    ];
+            candidate,
+      ];
+      if (plans.length != 1) continue;
+      items.add(
+        PythonTeachingPlanBatchItem(
+          courseId: course.courseId,
+          term: course.term,
+          sourceId: plans.single.sourceId,
+        ),
+      );
+    }
+    return items;
   }
 
   bool _canProbeDiario(PythonMoodleContentCandidate candidate) =>
@@ -564,18 +573,28 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     final batchGateway = gateway as BackendTeachingPlanBatchGateway;
     _logInteraction('moodle_teaching_plan_batch_import');
     try {
-      final result = await runAuditedOperation(
-        logger: widget.logger,
-        operation: AuditedOperation.moodleTeachingPlanImport,
-        action: () => batchGateway.importMoodleTeachingPlansBatch(plans: plans),
-      );
+      var imported = 0;
+      var failed = 0;
+      // The API accepts at most 20 plans per request: split and aggregate.
+      for (var offset = 0; offset < plans.length; offset += 20) {
+        final end = offset + 20 > plans.length ? plans.length : offset + 20;
+        final result = await runAuditedOperation(
+          logger: widget.logger,
+          operation: AuditedOperation.moodleTeachingPlanImport,
+          action: () => batchGateway.importMoodleTeachingPlansBatch(
+            plans: plans.sublist(offset, end),
+          ),
+        );
+        imported += result.imported.length;
+        failed += result.failed;
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            result.failed == 0
-                ? '${result.imported.length} planos de ensino importados.'
-                : '${result.imported.length} planos importados, ${result.failed} falharam.',
+            failed == 0
+                ? '$imported planos de ensino importados.'
+                : '$imported planos importados, $failed falharam.',
           ),
         ),
       );

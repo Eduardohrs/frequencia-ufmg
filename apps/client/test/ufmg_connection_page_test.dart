@@ -1819,6 +1819,79 @@ void main() {
     expect(find.text('2 planos importados, 1 falharam.'), findsOneWidget);
   });
 
+  testWidgets('batch skips ambiguous courses and splits beyond 20 plans', (
+    tester,
+  ) async {
+    PythonMoodleCourseContent courseWithPlan(String id, int planCount) {
+      return PythonMoodleCourseContent(
+        courseId: id,
+        courseCode: id.toUpperCase(),
+        term: '2026-2',
+        moodleCourseId: id,
+        status: PythonMoodleContentStatus.found,
+        candidates: [
+          for (var i = 0; i < planCount; i++)
+            PythonMoodleContentCandidate(
+              sourceId: '$id-$i',
+              moodleCourseId: id,
+              kind: 'link',
+              title: 'Plano de ensino $i',
+              url: Uri.parse(
+                'https://virtual.ufmg.br/20262/mod/url/view.php?id=$i',
+              ),
+              relevance: 'teaching_plan',
+              origin: PythonMoodleContentOrigin.canonical,
+            ),
+        ],
+      );
+    }
+
+    final gateway =
+        _Gateway(
+            status: const PythonUFMGSessionStatus(
+              connected: true,
+              reauthenticationRequired: false,
+            ),
+          )
+          ..materialCatalog = PythonMoodleContentDiscovery(
+            candidateTotal: 26,
+            metaturmaCandidateTotal: 0,
+            courses: [
+              for (var i = 0; i < 25; i++) courseWithPlan('c$i', 1),
+              courseWithPlan('amb', 2),
+            ],
+          );
+    final logger = _Logger();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(
+          view: UFMGView.materials,
+          gateway: gateway,
+          logger: logger,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final batchButton = find.byKey(const Key('moodle-teaching-plan-batch'));
+    await tester.ensureVisible(batchButton);
+    expect(find.text('Validar 25 planos em lote'), findsOneWidget);
+    await tester.tap(batchButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      gateway.teachingPlanBatchRequests.map((plans) => plans.length).toList(),
+      [20, 5],
+    );
+    expect(
+      gateway.teachingPlanBatchRequests
+          .expand((plans) => plans)
+          .any((plan) => plan.courseId == 'amb'),
+      isFalse,
+    );
+    expect(find.text('25 planos de ensino importados.'), findsOneWidget);
+  });
+
   testWidgets('shows a failure snackbar when the batch import fails', (
     tester,
   ) async {

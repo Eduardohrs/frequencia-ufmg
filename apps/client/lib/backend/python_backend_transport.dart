@@ -2510,6 +2510,7 @@ final class PythonBackendTransport
     final response = await _authenticatedRequest(
       path: '/v1/ufmg/import/teaching-plans',
       method: _BackendMethod.post,
+      requestTimeout: longRunningTimeout,
       body: {
         'plans': [
           for (final plan in plans)
