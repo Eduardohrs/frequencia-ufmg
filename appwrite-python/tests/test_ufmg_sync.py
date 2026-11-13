@@ -61,10 +61,15 @@ class _ScheduleImporter:
     def __init__(self, courses: _CourseImporter) -> None:
         self._courses = courses
         self.received: list[dict[str, object]] | None = None
+        self.user_id: str | None = None
 
-    def import_enrollments(self, values: list[dict[str, object]]) -> dict[str, int]:
+    def import_enrollments(
+        self, values: list[dict[str, object]], *, user_id: str
+    ) -> dict[str, int]:
         assert self._courses.received is values
+        assert user_id == "user"
         self.received = values
+        self.user_id = user_id
         return {
             "total": 1,
             "updated": 1,
@@ -132,6 +137,7 @@ def test_sync_fetches_once_and_reuses_the_snapshot_for_every_stage() -> None:
 
     assert client.calls == 1
     assert courses.received is schedules.received
+    assert schedules.user_id == "user"
     assert dates.called
     assert result == {
         "courses": {"created": 1, "existing": 0, "total": 1},
