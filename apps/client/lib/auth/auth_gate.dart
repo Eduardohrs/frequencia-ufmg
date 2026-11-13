@@ -7,6 +7,7 @@ import 'auth_gateway.dart';
 import 'auth_user.dart';
 import '../backend/python_backend_transport.dart';
 import '../data/academic_repositories.dart';
+import '../data/identity_verification_cache.dart';
 import '../data/python_overview_repository.dart';
 import '../data/ufmg_sync_schedule.dart';
 import '../features/courses/course_page.dart';
@@ -22,6 +23,7 @@ class AuthGate extends StatefulWidget {
     required this.meetingRepositoryFactory,
     required this.sessionRepositoryFactory,
     this.backendIdentityVerifier,
+    this.identityVerificationCache,
     this.attendanceEvaluator,
     this.scheduleGateway,
     this.sessionGateway,
@@ -46,6 +48,7 @@ class AuthGate extends StatefulWidget {
   final MeetingRepository Function(String userId) meetingRepositoryFactory;
   final SessionRepository Function(String userId) sessionRepositoryFactory;
   final BackendIdentityVerifier? backendIdentityVerifier;
+  final IdentityVerificationCache? identityVerificationCache;
   final BackendAttendanceEvaluator? attendanceEvaluator;
   final BackendScheduleGateway? scheduleGateway;
   final BackendSessionGateway? sessionGateway;
@@ -78,13 +81,22 @@ class _AuthGateState extends State<AuthGate> {
     final verifier = widget.backendIdentityVerifier;
     if (verifier == null || _verifiedBackendUserId == userId) return;
     _verifiedBackendUserId = userId;
-    unawaited(_verifyBackend(verifier));
+    unawaited(_verifyBackend(verifier, userId));
   }
 
-  Future<void> _verifyBackend(BackendIdentityVerifier verifier) async {
+  Future<void> _verifyBackend(
+    BackendIdentityVerifier verifier,
+    String userId,
+  ) async {
+    final cache = widget.identityVerificationCache;
+    if (cache != null && await cache.isFresh(userId)) {
+      await widget.logger.logEvent('python_backend_identity_skipped_cached');
+      return;
+    }
     try {
       await verifier.verifyIdentity();
       await widget.logger.logEvent('python_backend_identity_succeeded');
+      await cache?.record(userId, DateTime.now().toUtc());
     } catch (error, stackTrace) {
       await widget.logger.recordError(
         error,

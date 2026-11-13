@@ -159,6 +159,8 @@ _REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="")
 _RESPONSE_STATUS: ContextVar[int] = ContextVar("response_status", default=200)
 _REQUEST_METRICS: ContextVar["_RequestMetrics | None"] = ContextVar("request_metrics", default=None)
 _SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}")
+# 24h: the browser caches the preflight, so reopening the app skips OPTIONS
+_PREFLIGHT_MAX_AGE = "86400"
 
 
 class _RequestMetrics:
@@ -287,7 +289,7 @@ def _dispatch(context: Any) -> Any:
                     "Authorization,Content-Type,X-Firebase-AppCheck,X-Request-ID,X-Academic-Contract"
                 ),
                 "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
-                "Access-Control-Max-Age": "600",
+                "Access-Control-Max-Age": _PREFLIGHT_MAX_AGE,
             },
         )
 

@@ -3019,6 +3019,7 @@ def test_preflight_allows_only_configured_exact_origin(
         "https://frequencia-ufmg-eduardo.web.app"
     )
     assert result["headers"]["Access-Control-Allow-Methods"] == ("GET,POST,PUT,DELETE,OPTIONS")
+    assert result["headers"]["Access-Control-Max-Age"] == "86400"
     assert "X-Firebase-AppCheck" in result["headers"]["Access-Control-Allow-Headers"]
     assert "X-Request-ID" in result["headers"]["Access-Control-Allow-Headers"]
     assert result["headers"]["Access-Control-Expose-Headers"] == "X-Request-ID"
@@ -3048,6 +3049,7 @@ def test_preflight_covers_parameterized_public_api_paths(
 
     assert result["status"] == 204
     assert result["headers"]["Access-Control-Allow-Methods"] == ("GET,POST,PUT,DELETE,OPTIONS")
+    assert result["headers"]["Access-Control-Max-Age"] == "86400"
     assert result["headers"]["Access-Control-Allow-Origin"] == (
         "https://frequencia-ufmg-eduardo.web.app"
     )
