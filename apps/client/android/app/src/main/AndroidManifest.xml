@@ -13,6 +13,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
+        android:directBootAware="true"
         android:label="Frequência UFMG"
         android:name="${applicationName}"
         android:allowBackup="false"
@@ -47,7 +48,7 @@
             android:value="2" />
         <service android:name=".FirstCheckpointService" android:exported="false"
             android:foregroundServiceType="location" />
-        <receiver android:name=".FirstCheckpointRestoreReceiver" android:exported="false">
+        <receiver android:name=".FirstCheckpointRestoreReceiver" android:exported="false" android:directBootAware="true">
             <intent-filter>
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

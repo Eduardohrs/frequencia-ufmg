@@ -55,6 +55,7 @@ class FirstCheckpointBridge(private val context: Context) {
                     val report = load(key)
                     require(FirstCheckpointPolicy.canUnscheduleAutomatic(report)) { "checkpoint_not_removable" }
                     alarms.cancel(key); work.cancelUniqueWork(key)
+                    FirstCheckpointBootIndex.remove(context, key)
                     stores.remove(key)
                     check(prefs.edit().putStringSet("stores", stores).commit())
                     check(context.getSharedPreferences(key, 0).edit().clear().commit())
@@ -70,6 +71,7 @@ class FirstCheckpointBridge(private val context: Context) {
                     val report = load(key)
                     alarms.cancel(key)
                     work.cancelUniqueWork(key)
+                    FirstCheckpointBootIndex.remove(context, key)
                     report.put("status", "cancelled").put(FirstCheckpointPolicy.pingField(report), "indisponivel")
                         .put("updated_at_ms", System.currentTimeMillis())
                     check(context.getSharedPreferences(key, 0).edit().putString("report", report.toString()).commit())
@@ -126,6 +128,7 @@ class FirstCheckpointBridge(private val context: Context) {
                     stores.add(key); check(prefs.edit().putStringSet("stores", stores).commit())
                     try {
                         alarms.schedule(key, report.getLong("checkpoint_expected_at_ms"))
+                        FirstCheckpointBootIndex.put(context, key, report.getLong("checkpoint_expected_at_ms"))
                         CheckpointDelivery.enqueueSafely(context, report)
                         BackgroundLocationProof.emit(FirstCheckpointPolicy.logFields(report))
                         result.success(reports(account))
@@ -212,8 +215,10 @@ class FirstCheckpointBridge(private val context: Context) {
         prefs.getStringSet("stores", emptySet())!!.forEach { key ->
             alarms.cancel(key)
             work.cancelUniqueWork(key)
+            FirstCheckpointBootIndex.remove(context, key)
             context.getSharedPreferences(key, 0).edit().clear().commit()
         }
+        FirstCheckpointBootIndex.clear(context)
         check(prefs.edit().clear().commit())
     }
     companion object {

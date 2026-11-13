@@ -49,7 +49,14 @@ class FirstCheckpointRestoreReceiver : BroadcastReceiver() {
         if (!handles(intent.action)) return
         val pending = goAsync()
         Thread {
-            try { FirstCheckpointBridge(context).restore(intent.action ?: "unknown") }
+            try {
+                if (FirstCheckpointBootIndex.isDirectBoot(context)) {
+                    // Before the first unlock only the device-protected alarm index is readable.
+                    FirstCheckpointBootIndex.restoreAlarms(context, intent.action ?: "unknown")
+                } else {
+                    FirstCheckpointBridge(context).restore(intent.action ?: "unknown")
+                }
+            }
             catch (error: Exception) {
                 BackgroundLocationProof.emit(JSONObject().put("event_stage", "alarm_restore")
                     .put("moment", "first").put("status", "alarm_restore_failed")
