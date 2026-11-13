@@ -1387,6 +1387,229 @@ void main() {
     );
   });
 
+  test('imports teaching plans in one batch request', () async {
+    http.Request? captured;
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'imported': 1,
+            'failed': 1,
+            'results': [
+              {
+                'course_id': 'dcc203',
+                'term': '2026-2',
+                'source_id': '701',
+                'plan': 'created',
+                'assessment_total': 2,
+                'undated_assessment_total': 3,
+                'dates_created': 2,
+                'dates_updated': 0,
+                'dates_unchanged': 0,
+                'dates_removed': 0,
+                'criteria_total': 1,
+                'schedule_total': 30,
+                'confidence': 'authoritative',
+                'ok': true,
+              },
+              {'ok': false, 'error': 'moodle_unavailable'},
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await transport.importMoodleTeachingPlansBatch(
+      plans: const [
+        PythonTeachingPlanBatchItem(
+          courseId: 'dcc203',
+          term: '2026-2',
+          sourceId: '701',
+        ),
+        PythonTeachingPlanBatchItem(
+          courseId: 'dcc204',
+          term: '2026-2',
+          sourceId: '702',
+        ),
+      ],
+    );
+
+    expect(captured!.url.path, '/v1/ufmg/import/teaching-plans');
+    expect(jsonDecode(captured!.body), {
+      'plans': [
+        {'course_id': 'dcc203', 'term': '2026-2', 'source_id': 701},
+        {'course_id': 'dcc204', 'term': '2026-2', 'source_id': 702},
+      ],
+    });
+    expect(result.imported, hasLength(1));
+    expect(result.imported.single.assessmentTotal, 2);
+    expect(result.imported.single.undatedAssessmentTotal, 3);
+    expect(result.imported.single.scheduleTotal, 30);
+    expect(result.failed, 1);
+  });
+
+  test('rejects teaching plan batches outside 1..20 plans', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient((_) async => http.Response(jsonEncode({}), 200)),
+    );
+
+    expect(
+      () => transport.importMoodleTeachingPlansBatch(plans: const []),
+      throwsArgumentError,
+    );
+    expect(
+      () => transport.importMoodleTeachingPlansBatch(
+        plans: List.filled(
+          21,
+          const PythonTeachingPlanBatchItem(
+            courseId: 'dcc203',
+            term: '2026-2',
+            sourceId: '701',
+          ),
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test(
+    'maps malformed teaching plan batch responses to invalidResponse',
+    () async {
+      const okItem = {
+        'course_id': 'dcc203',
+        'term': '2026-2',
+        'source_id': '701',
+        'plan': 'created',
+        'assessment_total': 2,
+        'undated_assessment_total': 0,
+        'dates_created': 2,
+        'dates_updated': 0,
+        'dates_unchanged': 0,
+        'dates_removed': 0,
+        'criteria_total': 1,
+        'schedule_total': 30,
+        'confidence': 'authoritative',
+        'ok': true,
+      };
+      final bodies = <String>[
+        'not-json',
+        jsonEncode({'imported': 0, 'failed': 0}),
+        jsonEncode({
+          'imported': 1,
+          'failed': 0,
+          'results': [okItem],
+          'extra': 1,
+        }),
+        jsonEncode({
+          'imported': '1',
+          'failed': 0,
+          'results': [okItem],
+        }),
+        jsonEncode({
+          'imported': 1,
+          'failed': 0,
+          'results': [okItem, okItem],
+        }),
+        jsonEncode({
+          'imported': 3,
+          'failed': 0,
+          'results': [okItem, okItem],
+        }),
+        jsonEncode({'imported': 0, 'failed': -1, 'results': []}),
+        jsonEncode({
+          'imported': 1,
+          'failed': 0,
+          'results': [
+            {for (final entry in okItem.entries) entry.key: entry.value}
+              ..['plan'] = 'deleted',
+          ],
+        }),
+        jsonEncode({
+          'imported': 1,
+          'failed': 0,
+          'results': [
+            {for (final entry in okItem.entries) entry.key: entry.value}
+              ..['confidence'] = 'heuristic',
+          ],
+        }),
+        jsonEncode({
+          'imported': 1,
+          'failed': 0,
+          'results': [
+            {for (final entry in okItem.entries) entry.key: entry.value}
+              ..['assessment_total'] = 101,
+          ],
+        }),
+        jsonEncode({
+          'imported': 1,
+          'failed': 0,
+          'results': [
+            {for (final entry in okItem.entries) entry.key: entry.value}
+              ..['schedule_total'] = 1001,
+          ],
+        }),
+        jsonEncode({
+          'imported': 1,
+          'failed': 0,
+          'results': [okItem, for (var i = 0; i < 20; i++) okItem],
+        }),
+      ];
+      for (final body in bodies) {
+        final transport = PythonBackendTransport(
+          endpoint: Uri.parse('https://backend.example'),
+          tokens: _Tokens(),
+          client: MockClient((_) async => http.Response(body, 200)),
+        );
+        await expectLater(
+          transport.importMoodleTeachingPlansBatch(
+            plans: const [
+              PythonTeachingPlanBatchItem(
+                courseId: 'dcc203',
+                term: '2026-2',
+                sourceId: '701',
+              ),
+            ],
+          ),
+          throwsA(
+            isA<PythonBackendException>().having(
+              (error) => error.code,
+              'code',
+              PythonBackendError.invalidResponse,
+            ),
+          ),
+        );
+      }
+    },
+  );
+
+  test(
+    'warmUpAppCheckToken shares one in-flight regular token request',
+    () async {
+      final tokens = _DelayedRegularAppCheckTokens();
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: tokens,
+        client: MockClient(
+          (_) async => http.Response(jsonEncode({'ok': true}), 200),
+        ),
+      );
+
+      final first = transport.warmUpAppCheckToken();
+      final second = transport.warmUpAppCheckToken();
+      tokens.regularToken.complete('warm');
+      await first;
+      await second;
+
+      expect(tokens.regularCalls, 1);
+    },
+  );
+
   test('previews and applies teaching plan reconciliation', () async {
     final requests = <http.Request>[];
     final transport = PythonBackendTransport(

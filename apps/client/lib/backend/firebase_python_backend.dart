@@ -29,6 +29,11 @@ const pythonOverviewReadsEnabled = bool.fromEnvironment(
   'ENABLE_PYTHON_OVERVIEW_READS',
 );
 
+/// Optional warm-up hook: primes App Check before the first authenticated call.
+abstract interface class BackendWarmUp {
+  Future<void> warmUp();
+}
+
 BackendIdentityVerifier? createFirebasePythonBackendVerifier() {
   final endpoint = _settings.endpointUri;
   if (endpoint == null) return null;
@@ -38,6 +43,8 @@ BackendIdentityVerifier? createFirebasePythonBackendVerifier() {
 final class _FirebasePythonBackendVerifier
     implements
         BackendIdentityVerifier,
+        BackendWarmUp,
+        BackendTeachingPlanBatchGateway,
         BackendAcademicWorkspaceGateway,
         BackendCourseSyncPolicyGateway,
         BackendAttendanceEvaluator,
@@ -67,6 +74,12 @@ final class _FirebasePythonBackendVerifier
   Future<void> verifyIdentity() async {
     await (_activation ??= _activateAppCheck());
     await _transport.verifyIdentity();
+  }
+
+  @override
+  Future<void> warmUp() async {
+    await (_activation ??= _activateAppCheck());
+    await _transport.warmUpAppCheckToken();
   }
 
   @override
@@ -306,6 +319,15 @@ final class _FirebasePythonBackendVerifier
   }) async {
     await (_activation ??= _activateAppCheck());
     return _transport.probeMoodleDiarioPlan(term: term, sourceId: sourceId);
+  }
+
+  @override
+  @override
+  Future<PythonTeachingPlanBatchResult> importMoodleTeachingPlansBatch({
+    required List<PythonTeachingPlanBatchItem> plans,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.importMoodleTeachingPlansBatch(plans: plans);
   }
 
   @override

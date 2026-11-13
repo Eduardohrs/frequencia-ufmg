@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'features/navigation/product_navigation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'design/course_visuals.dart';
@@ -90,6 +92,11 @@ Future<void> main() async {
   }
   final logger = ResilientAppLogger(appLoggerFactory());
   final backend = backendIdentityVerifierFactory();
+  if (backend case BackendWarmUp warmUp) {
+    // Cold start: prime App Check in the background so the first authenticated
+    // backend call does not wait for the provider exchange.
+    unawaited(warmUp.warmUp().catchError((Object _) => ''));
+  }
   final effectiveCourseRepositoryFactory = resolveCourseRepositoryFactory(
     backend,
   );

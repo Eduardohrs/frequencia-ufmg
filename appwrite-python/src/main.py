@@ -329,6 +329,8 @@ def _dispatch(context: Any) -> Any:
         return _moodle_diario_plan(context, allowed_origin)
     if path == "/v1/ufmg/import/teaching-plan" and method == "POST":
         return _moodle_teaching_plan_import(context, allowed_origin)
+    if path == "/v1/ufmg/import/teaching-plans" and method == "POST":
+        return _moodle_teaching_plan_import_batch(context, allowed_origin)
     if path == "/v1/ufmg/reconcile/teaching-plan" and method == "POST":
         return _teaching_plan_reconciliation(context, allowed_origin)
     if path == "/v1/ufmg/sync/moodle" and method == "POST":
@@ -1679,6 +1681,132 @@ def _moodle_teaching_plan_import(context: Any, origin: str | None) -> Any:
     return _respond(context, result, origin=origin)
 
 
+def _moodle_teaching_plan_import_batch(context: Any, origin: str | None) -> Any:
+    """Import several teaching plans in one execution, reusing a single UFMG session."""
+    user_id, rejected = _authentication(context, origin, "/v1/ufmg/import/teaching-plans/post")
+    if rejected is not None:
+        return rejected
+    payload = context.req.body_json
+    if not isinstance(payload, Mapping) or set(payload) != {"plans"}:
+        return _ufmg_session_error(context, origin, "teaching_plan_batch_rejected", 400)
+    plans = payload["plans"]
+    if (
+        not isinstance(plans, list)
+        or not 1 <= len(plans) <= 20
+        or not all(isinstance(item, Mapping) for item in plans)
+    ):
+        return _ufmg_session_error(context, origin, "teaching_plan_batch_rejected", 400)
+    seen: set[tuple[str, str, int]] = set()
+    normalized: list[dict[str, object]] = []
+    for item in plans:
+        if (
+            set(item) != {"course_id", "term", "source_id"}
+            or not isinstance(item["course_id"], str)
+            or not isinstance(item["term"], str)
+            or re.fullmatch(r"20[2-9][0-9]-[12]", item["term"]) is None
+            or type(item["source_id"]) is not int
+            or not 1 <= item["source_id"] <= 2_147_483_647
+        ):
+            return _ufmg_session_error(context, origin, "teaching_plan_batch_rejected", 400)
+        key = (item["course_id"], item["term"], item["source_id"])
+        if key in seen:
+            return _ufmg_session_error(context, origin, "teaching_plan_batch_rejected", 400)
+        seen.add(key)
+        normalized.append(
+            {
+                "course_id": item["course_id"],
+                "term": item["term"],
+                "source_id": item["source_id"],
+            }
+        )
+    service = _moodle_teaching_plan_batch_service(context.req.headers, cast(str, user_id))
+    now = int(time())
+    _log(
+        context,
+        "teaching_plan_batch_started",
+        total=len(normalized),
+        request_id=_REQUEST_ID.get(),
+    )
+    results: list[dict[str, object]] = []
+    imported = 0
+    failed = 0
+    for item in normalized:
+        item_context = {
+            "course_id": item["course_id"],
+            "term": item["term"],
+            "source_id": str(item["source_id"]),
+        }
+        try:
+            result = service.import_plan(
+                cast(str, user_id),
+                course_id=cast(str, item["course_id"]),
+                term=cast(str, item["term"]),
+                source_id=cast(int, item["source_id"]),
+                now=now,
+            )
+        except UFMGReauthenticationRequired:
+            # One shared session: if it expired, the whole batch needs reauth.
+            _log(
+                context,
+                "teaching_plan_batch_aborted",
+                reason="reauthentication_required",
+                **item_context,
+            )
+            return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
+        except MoodleUnavailable:
+            failed += 1
+            results.append({**item_context, "ok": False, "error": "moodle_unavailable"})
+            _log(
+                context,
+                "teaching_plan_batch_item_failed",
+                reason="moodle_unavailable",
+                **item_context,
+            )
+            continue
+        except (
+            InvalidMoodleResponse,
+            InvalidAcademicDate,
+            InvalidTeachingPlan,
+            InvalidCourse,
+            TypeError,
+            ValueError,
+        ) as error:
+            failed += 1
+            reason = type(error).__name__
+            results.append({**item_context, "ok": False, "error": "invalid_response"})
+            _log(
+                context,
+                "teaching_plan_batch_item_failed",
+                reason=str(reason)[:120],
+                **item_context,
+            )
+            continue
+        except (FirestoreUnavailable, UFMGSessionStoreUnavailable):
+            return _ufmg_session_error(context, origin, "teaching_plan_store_unavailable", 503)
+        imported += 1
+        results.append({**result, "ok": True})
+        _log(
+            context,
+            "teaching_plan_batch_item_succeeded",
+            plan_outcome=result["plan"],
+            dates_created=result["dates_created"],
+            **item_context,
+        )
+    _log(
+        context,
+        "teaching_plan_batch_finished",
+        total=len(normalized),
+        imported=imported,
+        failed=failed,
+        request_id=_REQUEST_ID.get(),
+    )
+    return _respond(
+        context,
+        {"results": results, "imported": imported, "failed": failed},
+        origin=origin,
+    )
+
+
 def _teaching_plan_reconciliation(context: Any, origin: str | None) -> Any:
     user_id, rejected = _authentication(context, origin, "/v1/ufmg/reconcile/teaching-plan/post")
     if rejected is not None:
@@ -2517,6 +2645,20 @@ def _moodle_teaching_plan_import_service(
     )
 
 
+def _moodle_teaching_plan_batch_service(
+    headers: dict[str, str], user_id: str
+) -> MoodleTeachingPlanImportService:
+    """Batch import reuses one decrypted UFMG session for the whole request."""
+    firestore = _firestore(headers, user_id)
+    return MoodleTeachingPlanImportService(
+        RequestCachedUFMGSessionStore(_ufmg_session_store(headers)),
+        MoodleStructuredDatesClient(),
+        _course_repository(headers, user_id),
+        TeachingPlanRepository(firestore),
+        AcademicDateRepository(firestore),
+    )
+
+
 def _ufmg_session_store(headers: dict[str, str]) -> AppwriteUFMGSessionStore:
     endpoint = environ.get("APPWRITE_FUNCTION_API_ENDPOINT", "")
     project = environ.get("APPWRITE_FUNCTION_PROJECT_ID", "")
@@ -2649,6 +2791,7 @@ def _is_public_api_path(path: str) -> bool:
             "/v1/ufmg/moodle/material-files",
             "/v1/ufmg/moodle/diario-plan",
             "/v1/ufmg/import/teaching-plan",
+            "/v1/ufmg/import/teaching-plans",
             "/v1/ufmg/reconcile/teaching-plan",
             "/v1/ufmg/sync/moodle",
             "/v1/ufmg/sync/all",
