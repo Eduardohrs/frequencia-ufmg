@@ -2803,7 +2803,7 @@ final class PythonBackendTransport
 
   Future<http.Response> _waitForAcademicSync(String operation) async {
     // Poll the saved result, never restart the job after a dropped read.
-    for (var attempt = 0; attempt < 180; attempt++) {
+    for (var attempt = 0; attempt < 90; attempt++) {
       http.Response response;
       try {
         response = await _authenticatedRequest(path: '/v1/ufmg/sync/job');
@@ -2812,7 +2812,7 @@ final class PythonBackendTransport
             failure.code != PythonBackendError.timeout) {
           rethrow;
         }
-        await _jobDelay(const Duration(seconds: 10));
+        await _jobDelay(const Duration(seconds: 20));
         continue;
       }
       final value = Map<String, Object?>.from(jsonDecode(response.body) as Map);
@@ -2835,7 +2835,7 @@ final class PythonBackendTransport
               'backend_error=${value['failure_code']}',
         );
       }
-      await _jobDelay(const Duration(seconds: 10));
+      await _jobDelay(const Duration(seconds: 20));
     }
     throw PythonBackendException(
       PythonBackendError.timeout,
