@@ -5,6 +5,7 @@ import 'package:frequencia_ufmg/data/calendar_status.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/data/automatic_checkpoint_scheduler.dart';
+import 'package:frequencia_ufmg/observability/error_log_details.dart';
 import 'package:frequencia_ufmg/data/python_overview_repository.dart';
 import 'fixtures/campus_location_fixture.dart';
 import 'first_checkpoint_test.dart' show course, session, now, Selection;
@@ -185,14 +186,50 @@ void main() {
       expect(h.logger.events.last.$2!['failed'], 2);
     },
   );
-  test('capacity does not silently evict evidence', () async {
+  test(
+    'capacity overflow is surfaced as an explicit diagnostic, never silent',
+    () async {
+      final h = Harness();
+      h.reports.addAll(
+        List.generate(50, (i) => {'operation_id': '$i', 'status': 'succeeded'}),
+      );
+      await h.run();
+      expect(h.reports, hasLength(50));
+      final finished = h.logger.events.last;
+      expect(finished.$1, 'automatic_checkpoint_reconcile_finished');
+      expect(finished.$2!['deferred_capacity'], 2);
+      expect(finished.$2!['capacity_warning'], isTrue);
+      final warning = h.logger.events
+          .where((e) => e.$1 == 'automatic_checkpoint_capacity_exceeded')
+          .toList();
+      expect(warning, hasLength(1));
+      expect(warning.single.$2!['deferred_capacity'], 2);
+      expect(warning.single.$2!['capacity_limit'], 50);
+      expect(
+        h.logger.errors.where(
+          (e) =>
+              e.$1 is StructuredAppError &&
+              (e.$1 as StructuredAppError).logCode ==
+                  'automatic_checkpoint_capacity_exceeded',
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  test('capacity warning is absent when everything fits', () async {
     final h = Harness();
-    h.reports.addAll(
-      List.generate(50, (i) => {'operation_id': '$i', 'status': 'succeeded'}),
-    );
     await h.run();
-    expect(h.reports, hasLength(50));
-    expect(h.logger.events.last.$2!['deferred_capacity'], 2);
+    final finished = h.logger.events.last;
+    expect(finished.$1, 'automatic_checkpoint_reconcile_finished');
+    expect(finished.$2!['capacity_warning'], isFalse);
+    expect(
+      h.logger.events.where(
+        (e) => e.$1 == 'automatic_checkpoint_capacity_exceeded',
+      ),
+      isEmpty,
+    );
+    expect(h.logger.errors, isEmpty);
   });
   test(
     'calendar exceptions and manual attendance never create alarms',

@@ -33,12 +33,30 @@ class FirstCheckpointAlarm(private val context: Context) {
 
 /** Rebuild alarms from the local account-scoped index after reboot, update, or clock changes. */
 class FirstCheckpointRestoreReceiver : BroadcastReceiver() {
+    companion object {
+        private val RESTORE_ACTIONS = setOf(
+            Intent.ACTION_LOCKED_BOOT_COMPLETED, // direct boot: revalidate before unlock
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_MY_PACKAGE_REPLACED,
+            Intent.ACTION_TIME_CHANGED,
+            Intent.ACTION_TIMEZONE_CHANGED,
+            AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED,
+        )
+        fun handles(action: String?): Boolean = action in RESTORE_ACTIONS
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action !in setOf(Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED,
-                Intent.ACTION_TIME_CHANGED, AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED)) return
+        if (!handles(intent.action)) return
         val pending = goAsync()
         Thread {
-            try { FirstCheckpointBridge(context).restore(intent.action ?: "unknown") }
+            try {
+                if (FirstCheckpointBootIndex.isDirectBoot(context)) {
+                    // Before the first unlock only the device-protected alarm index is readable.
+                    FirstCheckpointBootIndex.restoreAlarms(context, intent.action ?: "unknown")
+                } else {
+                    FirstCheckpointBridge(context).restore(intent.action ?: "unknown")
+                }
+            }
             catch (error: Exception) {
                 BackgroundLocationProof.emit(JSONObject().put("event_stage", "alarm_restore")
                     .put("moment", "first").put("status", "alarm_restore_failed")

@@ -256,6 +256,27 @@ class AutomaticCheckpointScheduler {
           _failure(error, stack, fields, 'schedule', target);
         }
       }
+      if (deferred > 0) {
+        // The 50-item capacity must never silently truncate the semester:
+        // desired items are ordered by expected time, so the farthest ones
+        // are deferred first, and the shortfall is surfaced as a diagnostic.
+        emitOperationalEvent(logger, 'automatic_checkpoint_capacity_exceeded', {
+          ...fields,
+          'stage': 'finished',
+          'duration_ms': watch.elapsedMilliseconds,
+          'desired': desired.length,
+          'deferred_capacity': deferred,
+          'capacity_limit': 50,
+        });
+        recordOperationalFailure(
+          logger,
+          StateError('automatic_checkpoint_capacity_exceeded'),
+          StackTrace.current,
+          'automatic_checkpoint_reconcile',
+          {...fields, 'stage': 'capacity', 'deferred_capacity': deferred},
+          failureCode: 'automatic_checkpoint_capacity_exceeded',
+        );
+      }
       emitOperationalEvent(logger, 'automatic_checkpoint_reconcile_finished', {
         ...fields,
         'stage': 'finished',
@@ -266,6 +287,7 @@ class AutomaticCheckpointScheduler {
         'failed': failed,
         'deferred_capacity': deferred,
         'desired': desired.length,
+        'capacity_warning': deferred > 0,
       });
     } catch (error, stack) {
       _failure(
