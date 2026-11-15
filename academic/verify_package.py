@@ -49,7 +49,7 @@ def main():
             demo = root / "demo"
             product = root / "relatorio" / "Frequencia_UFMG_Produto_Final.pdf"
             verification = root / "relatorio" / "Frequencia_UFMG_Verificacao.pdf"
-            check_pdf(product, 8, [f"F0{i}" for i in range(1, 8)])
+            check_pdf(product, 8, [*[f"F0{i}" for i in range(1, 8)], ARCHIVE.name])
             check_pdf(verification, 7, [f"F0{i}" for i in range(1, 8)])
             evidence = (root / "evidencias" / "unittest.txt").read_text(
                 encoding="utf-8-sig"

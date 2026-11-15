@@ -50,7 +50,10 @@ def product():
                 ("Integrante", "Eduardo Henrique Rodrigues Silva"),
                 ("Disciplina e período", "APPOO · 2026/2"),
                 ("Versão entregue", VERSION),
-                ("Executável", "ZIP com demo/, banco SQLite, dados fictícios e testes"),
+                (
+                    "Executável",
+                    "<b>Frequencia_UFMG_Entrega_Final.zip</b> — demo/, SQLite, dados fictícios e testes",
+                ),
             ],
             [4.2 * cm, 12.8 * cm],
         )

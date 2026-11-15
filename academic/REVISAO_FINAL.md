@@ -14,6 +14,7 @@ Revisão interna do pacote `Frequencia_UFMG_Entrega_Final.zip`. Este registro **
 | Iniciante sem contexto | O README não especificava que o terminal precisava estar dentro de `demo/`; após reiniciar, o menu exigia lembrar o código. | O README informa a pasta de trabalho e o menu lista código e nome das disciplinas cadastradas. | O comando foi repetido a partir do ZIP extraído; o teste de reabertura verifica a lista. |
 | Professora exigente | A opção Corrigir aceitava uma aula pendente, embora o contrato reservasse o primeiro registro à opção Registrar. | Corrigir agora exige situação já resolvida; a mensagem indica a opção certa. O contrato F03 e o cenário C12 registram a rejeição. | O teste compara grade e totais antes e depois das duas rejeições de C12. |
 | Usuário sem suporte | Falha do SQLite ao iniciar produzia exceção antes de o menu aparecer. | O programa apresenta uma mensagem compreensível e encerra sem permitir ações que não poderia salvar. | Um teste simula a falha na abertura do banco. |
+| Professora exigente, terceira leitura | O relatório dava o identificador da versão, mas não nomeava literalmente o arquivo ZIP exigido no enunciado. | A primeira página agora indica `Frequencia_UFMG_Entrega_Final.zip` e resume seu conteúdo. | O texto da primeira página foi extraído do PDF final e comparado ao nome do arquivo entregue. |
 
 ## Conferência pelos dois enunciados
 
