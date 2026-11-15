@@ -89,6 +89,52 @@ def diagram(nodes):
                 strokeColor=TEAL, strokeWidth=1.2))
     return d
 
+def class_diagram():
+    """Diagrama de classes compacto com especialização e composição."""
+    d = Drawing(480, 210)
+    boxes = [
+        (6,132,110,62,'ControleAcademico','criar; obter'),
+        (154,132,110,62,'Disciplina','registrar; resumo'),
+        (344,132,110,62,'Registro','dia; situação; faltas'),
+        (154,38,125,62,'PoliticaChamada','calcular_faltas()'),
+        (18,8,105,35,'ChamadaUnica','calcular_faltas()'),
+        (350,8,110,35,'ChamadaDupla','calcular_faltas()'),
+    ]
+    for x,y,w,h,label,detail in boxes:
+        d.add(Rect(x,y,w,h,fillColor=PALE,strokeColor=TEAL,strokeWidth=1))
+        d.add(Line(x,y+h-25,x+w,y+h-25,strokeColor=TEAL))
+        d.add(String(x+w/2,y+h-16,label,fontName='ArialB',fontSize=8,
+            textAnchor='middle',fillColor=NAVY))
+        d.add(String(x+w/2,y+h-41,detail,fontName='ArialA',fontSize=7,
+            textAnchor='middle',fillColor=NAVY))
+    for a,b,c,e in [(116,163,154,163),(264,163,344,163),(209,132,209,100),
+                     (70,43,154,70),(350,43,279,70)]:
+        d.add(Line(a,b,c,e,strokeColor=TEAL,strokeWidth=1.1))
+    d.add(String(120,174,'1..*',fontName='ArialA',fontSize=7,fillColor=NAVY))
+    d.add(String(300,174,'1..*',fontName='ArialA',fontSize=7,fillColor=NAVY))
+    d.add(String(210,107,'usa',fontName='ArialA',fontSize=7,fillColor=NAVY))
+    d.add(String(209,58,'abstrata',fontName='ArialA',fontSize=7,fillColor=NAVY))
+    return d
+
+def sequence_diagram():
+    """Sequência com linhas de vida e mensagens na ordem de execução."""
+    d = Drawing(480, 190)
+    labels = ['Estudante','Menu','Disciplina','Política','SQLite']
+    xs = [35,135,235,335,435]
+    for x,label in zip(xs,labels):
+        d.add(String(x,175,label,fontName='ArialB',fontSize=8,
+            textAnchor='middle',fillColor=NAVY))
+        d.add(Line(x,166,x,8,strokeColor=colors.HexColor('#9BADB8'),strokeWidth=.7))
+    steps = [(0,1,147,'código, data, situação'),(1,2,120,'registrar_presenca'),
+             (2,3,93,'calcular_faltas'),(2,4,66,'salvar / commit'),
+             (2,1,39,'registro e resumo'),(1,0,17,'resultado')]
+    for src,dst,y,label in steps:
+        a,b=xs[src],xs[dst]
+        d.add(Line(a,y,b,y,strokeColor=TEAL,strokeWidth=1))
+        d.add(String((a+b)/2,y+4,label,fontName='ArialA',fontSize=6.8,
+            textAnchor='middle',fillColor=NAVY))
+    return d
+
 def product():
     s=[]
     cover(s, "Quarta etapa - Produto final")
@@ -123,7 +169,7 @@ def product():
         ("Sem chamada","A=0 e encontro continua em E","Aula mantida sem penalizar o aluno."),
     ],[4.1*cm,4.9*cm,8*cm]))
     heading(s, "5. Modelo de classes atualizado")
-    s.append(diagram(['Controle', 'Disciplina', 'Registro', 'Política']))
+    s.append(class_diagram())
     s.append(t(["Classe","Estado e responsabilidade","Relação"],[
         ("ControleAcademico","Coleção privada de disciplinas; cadastro e recuperação.","Contém 0..* Disciplina."),
         ("Disciplina","Grade e registros privados; valida, substitui e resume.","Contém 1..* Registro e usa uma política."),
@@ -134,7 +180,7 @@ def product():
     ],[4.2*cm,8.1*cm,4.7*cm]))
     s.append(p("Atributos são expostos por propriedades somente de leitura. Não há setter para faltas porque a mudança requer validar situação, data e política; registrar_presenca é a operação controlada."))
     heading(s, "6. Sequência principal: registro e correção")
-    s.append(diagram(['Menu', 'Domínio', 'Política', 'SQLite']))
+    s.append(sequence_diagram())
     s.append(t(["Ordem","Participante","Ação e retorno"],[
         ("1","Estudante → main.py","Informa código, data e situação."),
         ("2","Controle → Disciplina","Localiza disciplina; valida data e repetição."),
@@ -148,7 +194,6 @@ def product():
         "A tabela disciplinas tem código como chave, nome, quantidade de chamadas e aulas por encontro. A tabela registros guarda código da disciplina, data ISO, situação e faltas; a chave composta (código, data) impede duplicação de uma data. No início, o controle lê as duas tabelas e reconstrói objetos Disciplina e Registro. Para registrar ou corrigir, a validação e o cálculo criam um novo valor; o SQL confirma a atualização e só depois a grade em memória é substituída. Assim, um erro de escrita não apresenta ao usuário um registro que não existe no banco.")
     heading(s, "7.2 Exemplo de uso completo",
         "No primeiro início, informe DEMO01, nome Disciplina de teste, duas chamadas, duas aulas por encontro e quatro datas: 02, 04, 09 e 11/11/2026. A base é oito aulas e o limite é duas. Marque ausência em 02/11 e presença em 04/11: são duas faltas usadas e ainda há quatro aulas pendentes, então o percentual permanece indeterminado. Corrija 02/11 para presença: as faltas voltam a zero. Feche e reabra o programa; a disciplina e a correção continuam disponíveis. Os dados são fictícios e podem ser reproduzidos no ZIP sem acesso à internet.")
-    s.append(PageBreak())
     heading(s, "7.3 Falhas, rejeições e integridade",
         "A conversão de data no menu exige DD/MM/AAAA e rejeita, por exemplo, 31/02/2026. Quantidades de chamadas e aulas exigem inteiros aceitos pelo domínio; texto no lugar de número gera mensagem de erro. O cadastro valida código, nome, configuração e todas as datas antes de escrever. A transação SQL grava a disciplina e os encontros juntos; erro durante a operação desfaz a escrita. Para registrar, a validação ocorre antes do cálculo e da gravação. A memória só recebe o novo Registro depois que a escrita termina. Um teste simula disco indisponível e confirma que memória e SQLite continuam com a aula pendente. Não são gravados totais calculados: isso evita divergência entre o histórico e o resumo.")
     heading(s, "7.4 Correspondência com as etapas anteriores",
