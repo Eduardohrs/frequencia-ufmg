@@ -1,23 +1,156 @@
 """Cenários independentes: cada teste começa com um cadastro vazio."""
 
-import unittest
+import sqlite3
 import tempfile
-from pathlib import Path
-from unittest.mock import patch
+import unittest
 from dataclasses import FrozenInstanceError
 from datetime import date
+from pathlib import Path
+from unittest.mock import patch
 
+import database
 from models import SITUACOES, ControleAcademico, Disciplina, PoliticaChamada
 
 DIAS = [date(2026, 11, d) for d in (2, 4, 9, 11)]
 
 
 class TesteFrequencia(unittest.TestCase):
+    def test_renomear_disciplina_valida_e_persiste(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "teste.db"
+            controle = ControleAcademico(persistente=True, caminho_banco=caminho)
+            disciplina = controle.criar_disciplina("DEMO01", "Nome antigo", 1, 2, DIAS)
+            grade_antes = disciplina.registros
+            controle.renomear_disciplina("demo01", " Nome novo ")
+            self.assertEqual(disciplina.nome, "Nome novo")
+            self.assertEqual(disciplina.registros, grade_antes)
+            reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
+            self.assertEqual(reaberto.obter_disciplina("DEMO01").nome, "Nome novo")
+
+    def test_renomear_invalido_ou_falha_de_banco_preserva_nome(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "teste.db"
+            controle = ControleAcademico(persistente=True, caminho_banco=caminho)
+            disciplina = controle.criar_disciplina("DEMO01", "Original", 1, 2, DIAS)
+            for invalido in ("", "   ", None):
+                with self.subTest(invalido=invalido):
+                    with self.assertRaises(ValueError):
+                        controle.renomear_disciplina("DEMO01", invalido)
+                    self.assertEqual(disciplina.nome, "Original")
+            puro = Disciplina("D", "Original", 1, 2, DIAS)
+            with self.assertRaises(ValueError):
+                puro.nome = " "
+            self.assertEqual(puro.nome, "Original")
+            with (
+                patch(
+                    "database.atualizar_nome", side_effect=OSError("disco indisponível")
+                ),
+                self.assertRaises(OSError),
+            ):
+                controle.renomear_disciplina("DEMO01", "Novo")
+            self.assertEqual(disciplina.nome, "Original")
+            self.assertEqual(
+                ControleAcademico(persistente=True, caminho_banco=caminho)
+                .obter_disciplina("DEMO01")
+                .nome,
+                "Original",
+            )
+
+    def test_nome_inexistente_no_banco_e_rejeitado(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "teste.db"
+            database.inicializar_banco(caminho)
+            with self.assertRaises(ValueError):
+                database.atualizar_nome("OUTRA", "Nome", caminho)
+            self.assertEqual(database.listar_disciplinas(caminho), [])
+
+    def test_falha_no_segundo_insert_desfaz_cadastro_e_grade(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "teste.db"
+            controle = ControleAcademico(persistente=True, caminho_banco=caminho)
+            with database.conexao(caminho) as banco:
+                banco.execute("""
+                    CREATE TRIGGER falhar_grade BEFORE INSERT ON registros
+                    WHEN NEW.dia = '2026-11-04'
+                    BEGIN SELECT RAISE(FAIL, 'falha injetada'); END
+                """)
+            with self.assertRaises(sqlite3.IntegrityError):
+                controle.criar_disciplina("DEMO01", "Teste", 1, 2, DIAS[:2])
+            self.assertEqual(controle.disciplinas, ())
+            self.assertEqual(database.listar_disciplinas(caminho), [])
+
+    def test_atividade_valida_persiste_sem_alterar_frequencia(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "teste.db"
+            controle = ControleAcademico(persistente=True, caminho_banco=caminho)
+            disciplina = controle.criar_disciplina("DEMO01", "Teste", 1, 2, DIAS)
+            antes = (disciplina.registros, disciplina.resumo())
+            atividade = controle.adicionar_atividade("demo01", DIAS[1], "prova", "P1")
+            self.assertEqual(
+                (atividade.codigo_disciplina, atividade.titulo), ("DEMO01", "P1")
+            )
+            self.assertEqual((disciplina.registros, disciplina.resumo()), antes)
+            reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
+            self.assertEqual(reaberto.atividades, (atividade,))
+            self.assertEqual(reaberto.obter_disciplina("DEMO01").resumo(), antes[1])
+
+    def test_atividade_invalida_e_falha_de_escrita_preservam_agenda(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "teste.db"
+            controle = ControleAcademico(persistente=True, caminho_banco=caminho)
+            controle.criar_disciplina("DEMO01", "Teste", 1, 2, DIAS)
+            for codigo, dia, tipo, titulo in [
+                ("OUTRA", DIAS[0], "prova", "P1"),
+                ("DEMO01", "02/11/2026", "prova", "P1"),
+                ("DEMO01", DIAS[0], "seminário", "P1"),
+                ("DEMO01", DIAS[0], "prova", "   "),
+            ]:
+                with self.subTest(codigo=codigo, dia=dia, tipo=tipo, titulo=titulo):
+                    with self.assertRaises(ValueError):
+                        controle.adicionar_atividade(codigo, dia, tipo, titulo)
+                    self.assertEqual(controle.atividades, ())
+            with (
+                patch(
+                    "database.salvar_atividade",
+                    side_effect=OSError("disco indisponível"),
+                ),
+                self.assertRaises(OSError),
+            ):
+                controle.adicionar_atividade("DEMO01", DIAS[0], "prova", "P1")
+            self.assertEqual(controle.atividades, ())
+            self.assertEqual(
+                ControleAcademico(persistente=True, caminho_banco=caminho).atividades,
+                (),
+            )
+
+    def test_correcao_invalida_preserva_registro_e_resumo(self):
+        disciplina = Disciplina("D", "Teste", 2, 2, DIAS)
+        disciplina.registrar_presenca(DIAS[0], "ausente")
+        antes = (disciplina.registros, disciplina.resumo())
+        with self.assertRaises(ValueError):
+            disciplina.registrar_presenca(DIAS[0], "desconhecida", corrigir=True)
+        self.assertEqual((disciplina.registros, disciplina.resumo()), antes)
+
+    def test_consulta_nao_altera_registros(self):
+        controle = ControleAcademico()
+        disciplina = controle.criar_disciplina("D", "Teste", 1, 2, DIAS)
+        antes = (disciplina.registros, disciplina.resumo())
+        self.assertEqual(controle.obter_disciplina("d").resumo(), antes[1])
+        self.assertEqual((disciplina.registros, disciplina.resumo()), antes)
+        with self.assertRaises(ValueError):
+            controle.obter_disciplina("OUTRA")
+        self.assertEqual(
+            (controle.disciplinas, disciplina.registros, disciplina.resumo()),
+            ((disciplina,), *antes),
+        )
+
     def test_sqlite_preserva_disciplina_entre_aberturas(self):
         with tempfile.TemporaryDirectory() as pasta:
             caminho = Path(pasta) / "teste.db"
             primeiro = ControleAcademico(persistente=True, caminho_banco=caminho)
-            disciplina = primeiro.criar_disciplina("DB01", "Persistente", 1, 1, [DIAS[0]])
+            disciplina = primeiro.criar_disciplina(
+                "DB01", "Persistente", 1, 1, [DIAS[0]]
+            )
             disciplina.registrar_presenca(DIAS[0], "presente")
             segundo = ControleAcademico(persistente=True, caminho_banco=caminho)
             recuperada = segundo.obter_disciplina("DB01")
@@ -30,12 +163,19 @@ class TesteFrequencia(unittest.TestCase):
             controle = ControleAcademico(persistente=True, caminho_banco=caminho)
             disciplina = controle.criar_disciplina("DB02", "Teste", 1, 2, [DIAS[0]])
             antes = (disciplina.registros, disciplina.resumo())
-            with patch("database.salvar_registro", side_effect=OSError("disco indisponível")):
-                with self.assertRaises(OSError):
-                    disciplina.registrar_presenca(DIAS[0], "ausente")
+            with (
+                patch(
+                    "database.salvar_registro",
+                    side_effect=OSError("disco indisponível"),
+                ),
+                self.assertRaises(OSError),
+            ):
+                disciplina.registrar_presenca(DIAS[0], "ausente")
             self.assertEqual((disciplina.registros, disciplina.resumo()), antes)
             reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
-            self.assertEqual(reaberto.obter_disciplina("DB02").registros[0].situacao, "pendente")
+            self.assertEqual(
+                reaberto.obter_disciplina("DB02").registros[0].situacao, "pendente"
+            )
 
     def test_criar_e_registrar_do_zero(self):
         controle = ControleAcademico()

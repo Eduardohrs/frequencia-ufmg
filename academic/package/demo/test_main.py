@@ -2,25 +2,99 @@
 
 import io
 import os
-import tempfile
 import runpy
+import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
+from dados_exemplo import criar_exemplo
 from main import executar
+from models import ControleAcademico
 
 
 class TesteMenu(unittest.TestCase):
+    def test_falha_de_gravacao_mostra_erro_e_mantem_aula_pendente(self):
+        with patch(
+            "database.salvar_registro", side_effect=OSError("disco indisponível")
+        ):
+            saida = self.rodar(
+                [
+                    "1",
+                    "DEMO01",
+                    "Teste",
+                    "1",
+                    "2",
+                    "02/11/2026",
+                    "2",
+                    "DEMO01",
+                    "02/11/2026",
+                    "ausente",
+                    "0",
+                ]
+            )
+        self.assertIn("Não foi possível salvar no banco", saida)
+        controle = ControleAcademico(persistente=True, caminho_banco=self._db_path)
+        registro = controle.obter_disciplina("DEMO01").registros[0]
+        self.assertEqual(
+            (registro.dia, registro.situacao), (date(2026, 11, 2), "pendente")
+        )
+
+    def test_agenda_pelo_menu_comeca_vazia_e_exibe_atividade(self):
+        saida = self.rodar(
+            [
+                "6",
+                "1",
+                "DEMO01",
+                "Teste",
+                "1",
+                "2",
+                "02/11/2026",
+                "5",
+                "DEMO01",
+                "03/11/2026",
+                "prova",
+                "Avaliação 1",
+                "7",
+                "DEMO01",
+                "Nome corrigido",
+                "6",
+                "0",
+            ]
+        )
+        self.assertIn("Agenda vazia", saida)
+        self.assertIn("Atividade salva: Avaliação 1", saida)
+        self.assertIn("Disciplina renomeada", saida)
+        self.assertIn("Nome corrigido", saida)
+        self.assertIn("03/11/2026 | DEMO01 | prova | Avaliação 1", saida)
+
     def setUp(self):
-        self._arquivo_banco = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        self._arquivo_banco.close()
-        os.environ["FREQUENCIA_DB_PATH"] = self._arquivo_banco.name
+        self._db_path = (
+            Path(self.enterContext(tempfile.TemporaryDirectory())) / "teste.db"
+        )
+        os.environ["FREQUENCIA_DB_PATH"] = str(self._db_path)
 
     def tearDown(self):
         os.environ.pop("FREQUENCIA_DB_PATH", None)
-        Path(self._arquivo_banco.name).unlink(missing_ok=True)
+
+    def test_dados_exemplo_criam_arquivo_isolado_e_nao_duplicam(self):
+        caminho = self._db_path.with_name("exemplo.db")
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(criar_exemplo(caminho), caminho)
+            self.assertEqual(criar_exemplo(caminho), caminho)
+        controle = ControleAcademico(persistente=True, caminho_banco=caminho)
+        self.assertEqual(len(controle.disciplinas), 1)
+        self.assertEqual(len(controle.atividades), 1)
+        with (
+            patch.dict(os.environ, {"FREQUENCIA_EXEMPLO_DB_PATH": str(caminho)}),
+            redirect_stdout(io.StringIO()),
+        ):
+            runpy.run_path(
+                str(Path(__file__).with_name("dados_exemplo.py")),
+                run_name="__main__",
+            )
 
     def rodar(self, entradas):
         saida = io.StringIO()
