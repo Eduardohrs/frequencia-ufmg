@@ -1,6 +1,8 @@
 """Cenários independentes: cada teste começa com um cadastro vazio."""
 
 import unittest
+import tempfile
+from pathlib import Path
 from dataclasses import FrozenInstanceError
 from datetime import date
 
@@ -10,6 +12,17 @@ DIAS = [date(2026, 11, d) for d in (2, 4, 9, 11)]
 
 
 class TesteFrequencia(unittest.TestCase):
+    def test_sqlite_preserva_disciplina_entre_aberturas(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "teste.db"
+            primeiro = ControleAcademico(persistente=True, caminho_banco=caminho)
+            disciplina = primeiro.criar_disciplina("DB01", "Persistente", 1, 1, [DIAS[0]])
+            disciplina.registrar_presenca(DIAS[0], "presente")
+            segundo = ControleAcademico(persistente=True, caminho_banco=caminho)
+            recuperada = segundo.obter_disciplina("DB01")
+            self.assertEqual(recuperada.nome, "Persistente")
+            self.assertEqual(recuperada.registros[0].situacao, "presente")
+
     def test_criar_e_registrar_do_zero(self):
         controle = ControleAcademico()
         self.assertEqual(controle.disciplinas, ())

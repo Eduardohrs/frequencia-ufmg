@@ -1,6 +1,7 @@
-"""Menu de terminal: python main.py. Começa sem disciplinas cadastradas."""
+"""Menu de terminal: python main.py. O banco local preserva a sessão entre aberturas."""
 
 from datetime import datetime
+import os
 
 from models import SITUACOES, ControleAcademico
 
@@ -41,9 +42,12 @@ def mostrar(disciplina):
 
 
 def executar():
-    controle = ControleAcademico()
+    controle = ControleAcademico(
+        persistente=True,
+        caminho_banco=os.environ.get("FREQUENCIA_DB_PATH"),
+    )
     print("Frequência UFMG - protótipo de POO")
-    print("Cadastro vazio. Dados em memória; ao sair, as alterações são perdidas.")
+    print("Os dados ficam em SQLite local e continuam disponíveis ao reabrir o programa.")
     while True:
         try:
             print(

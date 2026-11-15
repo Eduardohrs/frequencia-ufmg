@@ -1,6 +1,8 @@
 """Exercita o menu a partir de uma instalação vazia."""
 
 import io
+import os
+import tempfile
 import runpy
 import unittest
 from contextlib import redirect_stdout
@@ -11,6 +13,15 @@ from main import executar
 
 
 class TesteMenu(unittest.TestCase):
+    def setUp(self):
+        self._arquivo_banco = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._arquivo_banco.close()
+        os.environ["FREQUENCIA_DB_PATH"] = self._arquivo_banco.name
+
+    def tearDown(self):
+        os.environ.pop("FREQUENCIA_DB_PATH", None)
+        Path(self._arquivo_banco.name).unlink(missing_ok=True)
+
     def rodar(self, entradas):
         saida = io.StringIO()
         with patch("builtins.input", side_effect=entradas), redirect_stdout(saida):
@@ -43,7 +54,7 @@ class TesteMenu(unittest.TestCase):
                 "0",
             ]
         )
-        self.assertIn("Cadastro vazio", saida)
+        self.assertIn("SQLite local", saida)
         self.assertIn("Disciplina criada", saida)
         self.assertIn("Limite excedido", saida)
         self.assertIn("Frequência: 50.0%", saida)
