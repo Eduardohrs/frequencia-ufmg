@@ -1,4 +1,5 @@
 test_agenda_pelo_menu_comeca_vazia_e_exibe_atividade (test_main.TesteMenu.test_agenda_pelo_menu_comeca_vazia_e_exibe_atividade) ... ok
+test_banco_inacessivel_mostra_erro_sem_abrir_menu (test_main.TesteMenu.test_banco_inacessivel_mostra_erro_sem_abrir_menu) ... ok
 test_dados_exemplo_criam_arquivo_isolado_e_nao_duplicam (test_main.TesteMenu.test_dados_exemplo_criam_arquivo_isolado_e_nao_duplicam) ... ok
 test_falha_de_gravacao_mostra_erro_e_mantem_aula_pendente (test_main.TesteMenu.test_falha_de_gravacao_mostra_erro_e_mantem_aula_pendente) ... ok
 test_fim_de_entrada_e_interrupcao_encerram (test_main.TesteMenu.test_fim_de_entrada_e_interrupcao_encerram) ... ok
@@ -23,6 +24,6 @@ test_renomear_invalido_ou_falha_de_banco_preserva_nome (test_models.TesteFrequen
 test_sqlite_preserva_disciplina_entre_aberturas (test_models.TesteFrequencia.test_sqlite_preserva_disciplina_entre_aberturas) ... ok
 
 ----------------------------------------------------------------------
-Ran 23 tests in 0.874s
+Ran 24 tests in 0.598s
 
 OK

@@ -9,8 +9,11 @@ Revisão interna do pacote `Frequencia_UFMG_Entrega_Final.zip`. Este registro **
 | Formatação | A versão anterior tinha blocos de texto desalinhados e diagramas pouco legíveis. | Os relatórios foram refeitos em A4 com tipografia, margens, cabeçalhos, rodapés, tabelas e diagramas vetoriais consistentes. | Todas as 9 páginas do Produto e 8 da Verificação foram renderizadas e examinadas visualmente; não há texto sobreposto, cortado ou página órfã. |
 | Professora exigente | O protótipo anterior não bastava, por si só, para evidenciar produto completo, persistência e contratos verificáveis. | A entrega ganhou agenda de provas/trabalhos, consulta, correção e renomeação, SQLite, dados fictícios isolados, contratos F01–F07 e diagramas atualizados. | O ZIP extraído executa o menu desde banco vazio, grava presença/atividade/nome e recupera os três após reiniciar. |
 | Professora exigente | Uma frase do cálculo usava “A soma as faltas”, deixando a variável A pouco clara. | A definição passou a ser “A é a soma das faltas de registros resolvidos.” | O texto extraído da página 5 do Produto foi relido após gerar o PDF final. |
-| Professora exigente | Código e evidência anteriores à última revisão poderiam divergir do pacote enviado. | A evidência de unittest foi regenerada, os arquivos da demo e os PDFs foram copiados novamente para o pacote, e o ZIP foi reconstruído. | 23 testes aprovados; os quatro módulos do programa têm 100% de cobertura de linhas; `verify_package.py` repete testes e fluxo sobre o ZIP extraído. |
+| Professora exigente | Código e evidência anteriores à última revisão poderiam divergir do pacote enviado. | A evidência de unittest foi regenerada, os arquivos da demo e os PDFs foram copiados novamente para o pacote, e o ZIP foi reconstruído. | 24 testes aprovados; os quatro módulos do programa têm 100% de cobertura de linhas; `verify_package.py` repete testes e fluxo sobre o ZIP extraído. |
 | Apresentação oral | Algumas operações do domínio ainda tinham comentários curtos demais para explicar entradas, unidades e momento da persistência. | Foram ampliados os docstrings de cadastro, registro, cálculo, agenda, consulta e renomeação, além das funções do menu. | Leitura do código em `demo/models.py`, `demo/database.py` e `demo/main.py`; testes e formatação continuaram passando. |
+| Iniciante sem contexto | O README não especificava que o terminal precisava estar dentro de `demo/`; após reiniciar, o menu exigia lembrar o código. | O README informa a pasta de trabalho e o menu lista código e nome das disciplinas cadastradas. | O comando foi repetido a partir do ZIP extraído; o teste de reabertura verifica a lista. |
+| Professora exigente | A opção Corrigir aceitava uma aula pendente, embora o contrato reservasse o primeiro registro à opção Registrar. | Corrigir agora exige situação já resolvida; a mensagem indica a opção certa. O contrato F03 e o cenário C12 registram a rejeição. | O teste compara grade e totais antes e depois das duas rejeições de C12. |
+| Usuário sem suporte | Falha do SQLite ao iniciar produzia exceção antes de o menu aparecer. | O programa apresenta uma mensagem compreensível e encerra sem permitir ações que não poderia salvar. | Um teste simula a falha na abertura do banco. |
 
 ## Conferência pelos dois enunciados
 
@@ -25,7 +28,7 @@ Revisão interna do pacote `Frequencia_UFMG_Entrega_Final.zip`. Este registro **
 | Dados fictícios, instruções e dependências | Produto, p. 9; `demo/README.md`; `demo/dados_exemplo.py` | Banco vazio incluído e script cria exemplo separado; Python 3.11+, sem dependência externa no programa. |
 | Tabela de verificação por funcionalidade | Verificação, pp. 2–6 | F01–F07 têm estado inicial e tabelas com ID, entrada, esperado, observado, situação e evidência. |
 | Testes independentes e dados separados | Verificação, pp. 1 e 8; `demo/test_*.py` | Cada teste constrói objetos ou SQLite temporário; base da demo fica intacta. |
-| Evidências da última execução e defeitos | Verificação, pp. 7–8; `evidencias/unittest.txt` | IDs T01–T19 mapeados para métodos; 23 resultados exibidos; defeitos, reprodução, consequência e reteste descritos. |
+| Evidências da última execução e defeitos | Verificação, pp. 7–8; `evidencias/unittest.txt` | IDs T01–T19 mapeados para métodos; 24 resultados exibidos; defeitos, reprodução, consequência e reteste descritos. |
 
 ## Leitura pelo primeiro usuário e pelas personas
 
@@ -33,12 +36,16 @@ Esta aplicação acadêmica usa terminal; a análise de Impeccable foi adaptada 
 
 | Lente | Percurso ou pergunta feita | Resultado final |
 | --- | --- | --- |
-| Pessoa que nunca viu o projeto | Encontrar o comando de início, criar uma disciplina vazia, registrar frequência, sair e voltar. | README começa por requisitos e comandos; o programa explica valores aceitos e mostra o registro recuperado. |
-| Jordan, iniciante confuso | Entender o que significa “duas chamadas”, “aulas de 50 min” e “pendente”. | Os termos aparecem nos prompts, na explicação do README e nas regras do Produto. |
+| Pessoa que nunca viu o projeto | Encontrar a pasta correta, iniciar, criar uma disciplina vazia, registrar frequência, sair e voltar. | README informa a pasta `demo/`; o menu mostra os códigos disponíveis ao reabrir. |
+| Jordan, iniciante confuso | Entender o que significa “duas chamadas”, “aulas de 50 min” e quando usar Registrar ou Corrigir. | O prompt explica uma ou duas chamadas; entrada incorreta em Corrigir orienta o caminho certo. |
 | Riley, testador exigente | Repetir código e data, inserir data impossível, trocar um registro já resolvido e simular falha de escrita. | Rejeições preservam cadastro, grade, registro ou agenda; testes conferem memória e SQLite. |
-| Casey, usuário distraído | Fechar após registrar e consultar novamente sem lembrar a sessão anterior. | O SQLite persiste os dados; há um script de exemplo separado para experimentar sem alterar a base principal. |
+| Casey, usuário distraído | Fechar após registrar e consultar novamente sem lembrar o código da disciplina. | O SQLite persiste os dados e o menu mostra código e nome; o exemplo usa banco separado. |
 | Alex, usuário impaciente | Seguir um exemplo curto sem montar várias configurações. | O roteiro da página 9 e os dados fictícios permitem demonstrar o fluxo principal diretamente. |
 | Leitora rigorosa com formatação | Percorrer páginas sem ler o conteúdo e procurar texto encostado, cabeçalhos isolados, células cortadas e diagramas ilegíveis. | Conferência visual de todas as páginas renderizadas: hierarquia e espaçamento consistentes; nenhuma dessas falhas remanesceu. |
+
+## Última rodada, depois das correções
+
+As lentes foram aplicadas novamente ao ZIP reconstruído, não à versão anterior. A professora exigente conferiu cada item dos dois enunciados contra uma página, arquivo ou teste; Jordan refez o início desde o README; Riley repetiu rejeições e abertura com banco indisponível; Casey fechou e reabriu o programa; Alex percorreu o exemplo fictício; a leitora de formatação examinou as páginas alteradas em imagem e o restante dos relatórios já renderizado. **Nenhuma dessas leituras encontrou um comentário acionável dentro do escopo aprovado.** O verificador do ZIP extraiu o pacote, executou os 24 testes e confirmou persistência desde um banco vazio. Esta conclusão é da revisão interna e não prevê a nota da docente.
 
 ## Limites que permanecem explícitos
 

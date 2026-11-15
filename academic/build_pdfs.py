@@ -178,15 +178,15 @@ def product():
     contract(
         s,
         "F03 · Corrigir frequência",
-        "Disciplina e data existentes. O usuário escolhe Corrigir e informa uma das seis situações, inclusive para substituir cancelada ou sem chamada.",
+        "Disciplina e data da grade já resolvida. O usuário escolhe Corrigir e informa uma das seis situações, inclusive para substituir cancelada ou sem chamada.",
         "Substitui apenas o registro daquela data; não acumula uma segunda falta. Recalcula os mesmos totais de F02 depois do commit.",
-        "Situação ou data inválida: registro antigo e totais ficam iguais. Não cria nem remove outras datas da grade.",
+        "Data pendente, situação ou data inválida: rejeita e preserva registro e totais. Para a pendente, use Registrar presença. Não altera outras datas.",
     )
     contract(
         s,
         "F04 · Consultar frequência",
         "Disciplina cadastrada; entrada é o código, aceito em minúsculas ou maiúsculas.",
-        "Exibe grade, situação e faltas por data, base elegível E, pendências, faltas A, limite L, saldo, excesso e frequência quando definida. Não grava dados.",
+        "O menu lista código e nome das disciplinas para orientar a escolha. A consulta exibe grade, situação e faltas por data, base E, pendências, faltas A, limite L, saldo, excesso e frequência quando definida. Não grava dados.",
         "Código ausente: mensagem de não encontrada; nenhum dado é criado ou alterado.",
     )
     contract(
@@ -635,9 +635,9 @@ def verification():
             ),
             (
                 "C12",
-                "Após registrar ausência, corrige com situação desconhecida.",
-                "Rejeita; situação e todos os totais anteriores iguais.",
-                "ValueError; registros e resumo comparados e iguais.",
+                "Em grade pendente, tenta Corrigir; depois registra ausência e tenta corrigir com situação desconhecida.",
+                "Rejeita as duas tentativas; o estado anterior de cada uma permanece.",
+                "ValueError nos dois casos; registros e resumo comparados e iguais ao antes.",
                 "Aprovado",
                 "T09",
             ),

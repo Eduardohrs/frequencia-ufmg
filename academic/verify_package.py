@@ -54,7 +54,7 @@ def main():
             evidence = (root / "evidencias" / "unittest.txt").read_text(
                 encoding="utf-8-sig"
             )
-            assert "Ran 23 tests" in evidence and evidence.rstrip().endswith("OK")
+            assert "Ran 24 tests" in evidence and evidence.rstrip().endswith("OK")
             tests = subprocess.run(
                 ["py", "-m", "unittest", "discover", "-v"],
                 cwd=demo,
@@ -122,7 +122,7 @@ def main():
             )
             assert again.returncode == 0, again.stderr
             assert "Nome corrigido" in again.stdout and "P1" in again.stdout
-            print("ZIP íntegro; PDFs, 23 testes, fluxo vazio e persistência aprovados.")
+            print("ZIP íntegro; PDFs, 24 testes, fluxo vazio e persistência aprovados.")
 
 
 if __name__ == "__main__":

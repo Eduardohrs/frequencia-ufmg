@@ -158,7 +158,7 @@ class Disciplina:
     ):
         """Resolve uma aula da grade e devolve o novo registro.
 
-        ``corrigir=True`` permite substituir um registro já resolvido; sem
+        ``corrigir=True`` substitui apenas um registro já resolvido; sem
         isso, uma segunda gravação é rejeitada. ``salvar`` é a operação de
         persistência opcional: ela deve terminar antes da troca em memória.
         Assim, erro de validação ou do banco preserva o estado anterior.
@@ -168,6 +168,8 @@ class Disciplina:
         if situacao not in SITUACOES:
             raise ValueError("Situação de frequência inválida.")
         anterior = self._registros[dia]
+        if corrigir and anterior.situacao == "pendente":
+            raise ValueError("Esta data está pendente. Use Registrar presença.")
         if anterior.situacao != "pendente" and not corrigir:
             raise ValueError("Esta data já foi registrada. Use Corrigir registro.")
         faltas = self._politica.calcular_faltas(situacao, anterior.aulas)

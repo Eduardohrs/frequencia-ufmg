@@ -1,7 +1,8 @@
 # Frequência UFMG — produto acadêmico PF-02-AGENDA
 
 Python 3.11 ou superior. Usa somente a biblioteca padrão, incluindo SQLite. Não exige contas ou internet.
-Extraia este ZIP em uma pasta e abra o terminal nela.
+Extraia o ZIP e abra o terminal **dentro da pasta `demo/`**. Os comandos abaixo
+são executados a partir dessa pasta, não da raiz do ZIP.
 
 ```text
 python main.py
@@ -12,6 +13,9 @@ Na primeira execução o programa começa vazio. Use **1 Criar disciplina** para
 nome, chamadas, aulas por encontro e datas da grade. Depois use **2 Registrar
 presença** para escolher uma data e uma situação. **3 Consultar** mostra a
 grade e o saldo de faltas; **4 Corrigir registro** substitui um registro existente.
+Ao reabrir, o menu mostra o código e o nome das disciplinas cadastradas; não é
+preciso memorizar o código. Use **Corrigir** apenas quando a aula já tiver uma
+situação registrada; para uma aula pendente, use **Registrar presença**.
 Use **5 Adicionar atividade** para registrar uma prova ou trabalho vinculado a uma
 disciplina; **6 Ver agenda** lista as atividades por data. A agenda não altera faltas.
 Use **7 Renomear disciplina** para corrigir um nome sem alterar código, aulas ou presenças.

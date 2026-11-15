@@ -51,16 +51,26 @@ def executar():
     O arquivo SQLite é reaberto a cada execução. O tratamento de erros mantém
     o menu disponível e explica uma rejeição sem inventar um salvamento.
     """
-    controle = ControleAcademico(
-        persistente=True,
-        caminho_banco=os.environ.get("FREQUENCIA_DB_PATH"),
-    )
+    try:
+        controle = ControleAcademico(
+            persistente=True,
+            caminho_banco=os.environ.get("FREQUENCIA_DB_PATH"),
+        )
+    except (sqlite3.Error, OSError) as erro:
+        print(f"Não foi possível abrir o banco local: {erro}")
+        return
     print("Frequência UFMG - produto acadêmico")
     print(
         "Os dados ficam em SQLite local e continuam disponíveis ao reabrir o programa."
     )
     while True:
         try:
+            if controle.disciplinas:
+                nomes = ", ".join(
+                    f"{disciplina.codigo} — {disciplina.nome}"
+                    for disciplina in controle.disciplinas
+                )
+                print(f"Disciplinas: {nomes}")
             print(
                 "\n1 Criar disciplina | 2 Registrar presença | 3 Consultar"
                 " | 4 Corrigir registro | 5 Adicionar atividade"
@@ -73,7 +83,9 @@ def executar():
             if acao == "1":
                 codigo = input("Código: ")
                 nome = input("Nome: ")
-                chamadas = ler_inteiro("Chamadas por encontro (1 ou 2): ")
+                chamadas = ler_inteiro(
+                    "Chamadas por encontro (1: encontro inteiro; 2: início e fim): "
+                )
                 aulas = ler_inteiro("Aulas de 50 min por encontro (1, 2 ou 4): ")
                 datas = [
                     ler_data(d)

@@ -125,6 +125,10 @@ class TesteFrequencia(unittest.TestCase):
 
     def test_correcao_invalida_preserva_registro_e_resumo(self):
         disciplina = Disciplina("D", "Teste", 2, 2, DIAS)
+        inicial = (disciplina.registros, disciplina.resumo())
+        with self.assertRaisesRegex(ValueError, "pendente"):
+            disciplina.registrar_presenca(DIAS[0], "presente", corrigir=True)
+        self.assertEqual((disciplina.registros, disciplina.resumo()), inicial)
         disciplina.registrar_presenca(DIAS[0], "ausente")
         antes = (disciplina.registros, disciplina.resumo())
         with self.assertRaises(ValueError):
