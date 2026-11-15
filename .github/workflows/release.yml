@@ -118,7 +118,7 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
             "frequencia-ufmg-$APP_VERSION.apk" \
-            "frequencia-ufmg.apk"
+            "frequencia-ufmg.apk" \
             "frequencia-ufmg-web-$APP_VERSION.zip" \
             --repo "$GITHUB_REPOSITORY" \
             --generate-notes \
