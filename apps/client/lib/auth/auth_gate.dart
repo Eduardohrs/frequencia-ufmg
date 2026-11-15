@@ -2,6 +2,7 @@ import '../design/course_visuals.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/link.dart';
 
 import 'auth_gateway.dart';
 import 'auth_user.dart';
@@ -238,6 +239,17 @@ class _AuthGateState extends State<AuthGate> {
                 )
               : const Icon(Icons.login),
           label: const Text('Entrar com Google'),
+        ),
+        const SizedBox(height: 24),
+        Link(
+          uri: Uri.parse(
+            'https://github.com/Eduardohrs/frequencia-ufmg/releases/latest/download/frequencia-ufmg.apk',
+          ),
+          builder: (context, follow) => TextButton.icon(
+            onPressed: follow,
+            icon: const Icon(Icons.android),
+            label: const Text('Baixar para Android'),
+          ),
         ),
         if (_error != null) ...[
           const SizedBox(height: 16),

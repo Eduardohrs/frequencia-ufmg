@@ -98,6 +98,36 @@ void main() {
     expect(repository, isA<PythonCourseRepository>());
   });
 
+  testWidgets('shows Android download link on signed-out home', (tester) async {
+    final gateway = _FakeAuthGateway();
+    final logger = _FakeAppLogger();
+    addTearDown(gateway.close);
+    final previousGateway = app.authGatewayFactory;
+    final previousLogger = app.appLoggerFactory;
+    final previousCourse = app.courseRepositoryFactory;
+    final previousMeeting = app.meetingRepositoryFactory;
+    final previousSession = app.sessionRepositoryFactory;
+    final previousBackend = app.backendIdentityVerifierFactory;
+    app.authGatewayFactory = () => gateway;
+    app.appLoggerFactory = () => logger;
+    app.courseRepositoryFactory = (_, _) => _FakeCourseRepository();
+    app.meetingRepositoryFactory = (_, _) => _FakeMeetingRepository();
+    app.sessionRepositoryFactory = (_, _) => _FakeSessionRepository();
+    app.backendIdentityVerifierFactory = () => _FakeAdaptiveBackend();
+    try {
+      await app.main();
+      await tester.pumpAndSettle();
+      expect(find.text('Baixar para Android'), findsOneWidget);
+    } finally {
+      app.authGatewayFactory = previousGateway;
+      app.appLoggerFactory = previousLogger;
+      app.courseRepositoryFactory = previousCourse;
+      app.meetingRepositoryFactory = previousMeeting;
+      app.sessionRepositoryFactory = previousSession;
+      app.backendIdentityVerifierFactory = previousBackend;
+    }
+  });
+
   testWidgets(
     'bootstrap wires academic refresh without blocking signed-out startup',
     (tester) async {
