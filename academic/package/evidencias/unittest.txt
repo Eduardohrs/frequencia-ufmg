@@ -1,0 +1,23 @@
+Frequência UFMG — versão PF-01-SQLITE
+Comando: cd demo && python -m unittest discover -v
+Python: 3.11
+
+test_fim_de_entrada_e_interrupcao_encerram ... ok
+test_fluxo_completo_sem_dados_preparados ... ok
+test_ponto_de_entrada ... ok
+test_rejeicoes_e_conversoes_sao_tratadas ... ok
+test_codigo_duplicado_preserva_cadastro_e_frequencia ... ok
+test_correcao_substitui_e_recalcula ... ok
+test_criar_e_registrar_do_zero ... ok
+test_entrada_invalida_nao_cria_disciplina ... ok
+test_falha_na_gravacao_preserva_memoria_e_banco ... ok
+test_mesma_operacao_tem_resultado_conforme_chamada ... ok
+test_registro_invalido_nao_muda_grade_nem_totais ... ok
+test_sqlite_preserva_disciplina_entre_aberturas ... ok
+
+Ran 12 tests in 0.256s
+
+OK
+
+Esta transcrição resume a saída da execução local; os testes completos são
+reproduzíveis pelos comandos do README, em banco temporário separado.

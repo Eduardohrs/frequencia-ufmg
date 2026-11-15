@@ -1,4 +1,9 @@
-"""Regras do protótipo. Uma aula corresponde a 50 minutos."""
+"""Regras do Frequência UFMG acadêmico.
+
+Uma aula equivale a 50 minutos. Este módulo não lê teclado nem executa SQL:
+ele valida as entradas e mantém o estado do domínio. O menu e a persistência
+ficam em módulos próprios para que as mesmas regras possam ser testadas isoladas.
+"""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -18,7 +23,11 @@ SITUACOES = (
 
 
 class PoliticaChamada(ABC):
-    """Calcula faltas após a disciplina validar a situação e a quantidade de aulas."""
+    """Contrato comum para políticas de chamada diferentes.
+
+    A disciplina usa sempre ``calcular_faltas``. A subclasse escolhida muda o
+    resultado, demonstrando polimorfismo sem espalhar condições pelo domínio.
+    """
 
     @abstractmethod
     def calcular_faltas(self, situacao: str, aulas: int) -> int:
@@ -26,14 +35,14 @@ class PoliticaChamada(ABC):
 
 
 class ChamadaUnica(PoliticaChamada):
-    """Atraso ou saída antecipada não gera falta no bloco."""
+    """Uma chamada registra o encontro inteiro; atraso não fraciona faltas."""
 
     def calcular_faltas(self, situacao, aulas):
         return aulas if situacao == "ausente" else 0
 
 
 class ChamadaDupla(PoliticaChamada):
-    """Atraso ou saída antecipada perde metade das aulas do bloco."""
+    """Duas chamadas representam início e fim; atraso/saída perde metade."""
 
     def calcular_faltas(self, situacao, aulas):
         if situacao == "ausente":
@@ -43,7 +52,11 @@ class ChamadaDupla(PoliticaChamada):
 
 @dataclass(frozen=True)
 class Registro:
-    """Retrato imutável de uma aula prevista e de sua frequência atual."""
+    """Retrato imutável de um encontro da grade e de sua situação.
+
+    ``faltas=None`` significa pendente. O valor zero é diferente: indica que
+    a aula foi resolvida sem gerar falta.
+    """
 
     dia: date
     aulas: int
@@ -52,7 +65,11 @@ class Registro:
 
 
 class Disciplina:
-    """Guarda a grade e valida cada registro antes de substituir seu estado."""
+    """Agregado de domínio que protege a grade e seus registros.
+
+    Toda validação ocorre antes da troca do registro. Por isso uma data ou
+    situação inválida não altera o estado nem os totais calculados.
+    """
 
     def __init__(self, codigo, nome, chamadas, aulas, datas, registros=None):
         if not isinstance(codigo, str) or not codigo.strip():
@@ -95,7 +112,7 @@ class Disciplina:
         """A tupla e seus registros não permitem alterar a coleção interna."""
         return tuple(self._registros.values())
 
-    def registrar_presenca(self, dia: date, situacao: str, *, corrigir=False):
+    def registrar_presenca(self, dia: date, situacao: str, *, corrigir=False, salvar=None):
         """Registra uma data da grade; repetir exige correção explícita."""
         if type(dia) is not date or dia not in self._registros:
             raise ValueError("A data não faz parte da grade desta disciplina.")
@@ -106,6 +123,10 @@ class Disciplina:
             raise ValueError("Esta data já foi registrada. Use Corrigir registro.")
         faltas = self._politica.calcular_faltas(situacao, anterior.aulas)
         novo = Registro(dia, anterior.aulas, situacao, faltas)
+        # A gravação, quando existe, ocorre antes da troca em memória. Uma falha
+        # no disco não deixa a interface mostrando um estado que não foi salvo.
+        if salvar is not None:
+            salvar(novo)
         self._registros[dia] = novo
         return novo
 
@@ -130,7 +151,12 @@ class Disciplina:
 
 
 class ControleAcademico:
-    """Cadastro iniciado vazio; impede dois códigos iguais."""
+    """Coordena disciplinas e pode carregar/salvar dados em SQLite.
+
+    Com ``persistente=False`` o controle serve aos testes puros de domínio.
+    O programa de terminal usa ``persistente=True``; ambos percorrem as mesmas
+    regras de ``Disciplina``.
+    """
 
     def __init__(self, *, persistente=False, caminho_banco=None):
         self._persistente = persistente
@@ -141,6 +167,7 @@ class ControleAcademico:
             self._carregar()
 
     def _carregar(self):
+        """Reconstrói objetos do domínio a partir das linhas persistidas."""
         for codigo, nome, chamadas, aulas in database.listar_disciplinas(self._caminho_banco):
             linhas = database.obter_registros(codigo, self._caminho_banco)
             datas = [date.fromisoformat(linha[0]) for linha in linhas]
@@ -164,13 +191,14 @@ class ControleAcademico:
         nova = Disciplina(codigo, nome, chamadas, aulas, datas)
         if nova.codigo in self._disciplinas:
             raise ValueError("Já existe uma disciplina com esse código.")
-        self._disciplinas[nova.codigo] = nova
         if self._persistente:
             database.salvar_disciplina(
                 nova.codigo, nova.nome, nova.chamadas,
                 nova.registros[0].aulas, [registro.dia for registro in nova.registros],
                 self._caminho_banco,
             )
+        # Só entra no cadastro depois do commit SQL bem-sucedido.
+        self._disciplinas[nova.codigo] = nova
         return _DisciplinaPersistente(nova, self) if self._persistente else nova
 
     def obter_disciplina(self, codigo):
@@ -189,7 +217,7 @@ class ControleAcademico:
 
 
 class _DisciplinaPersistente:
-    """Fachada que persiste cada alteração sem poluir as regras de domínio."""
+    """Fachada que grava uma alteração somente depois da validação de domínio."""
 
     def __init__(self, disciplina, controle):
         self._disciplina = disciplina
@@ -199,6 +227,10 @@ class _DisciplinaPersistente:
         return getattr(self._disciplina, nome)
 
     def registrar_presenca(self, *args, **kwargs):
-        registro = self._disciplina.registrar_presenca(*args, **kwargs)
-        self._controle._salvar_registro(self._disciplina, registro)
-        return registro
+        return self._disciplina.registrar_presenca(
+            *args,
+            salvar=lambda registro: self._controle._salvar_registro(
+                self._disciplina, registro
+            ),
+            **kwargs,
+        )

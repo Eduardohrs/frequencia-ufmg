@@ -3,6 +3,7 @@
 import unittest
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 from dataclasses import FrozenInstanceError
 from datetime import date
 
@@ -22,6 +23,19 @@ class TesteFrequencia(unittest.TestCase):
             recuperada = segundo.obter_disciplina("DB01")
             self.assertEqual(recuperada.nome, "Persistente")
             self.assertEqual(recuperada.registros[0].situacao, "presente")
+
+    def test_falha_na_gravacao_preserva_memoria_e_banco(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "teste.db"
+            controle = ControleAcademico(persistente=True, caminho_banco=caminho)
+            disciplina = controle.criar_disciplina("DB02", "Teste", 1, 2, [DIAS[0]])
+            antes = (disciplina.registros, disciplina.resumo())
+            with patch("database.salvar_registro", side_effect=OSError("disco indisponível")):
+                with self.assertRaises(OSError):
+                    disciplina.registrar_presenca(DIAS[0], "ausente")
+            self.assertEqual((disciplina.registros, disciplina.resumo()), antes)
+            reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
+            self.assertEqual(reaberto.obter_disciplina("DB02").registros[0].situacao, "pendente")
 
     def test_criar_e_registrar_do_zero(self):
         controle = ControleAcademico()
