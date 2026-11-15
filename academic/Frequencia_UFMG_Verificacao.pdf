@@ -1,0 +1,155 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 2902 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+(FREQUÊNCIA UFMG ? VERIFICAÇÃO DO PRODUTO FINAL) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Versão testada: produto-final-local-sqlite) Tj
+0 -14 Td
+(Integrante: Eduardo Henrique Rodrigues Silva) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(   ID    Cenário    Resultado esperado    Resultado observado    Status) Tj
+0 -14 Td
+(  ---  ---  ---  ---  ---) Tj
+0 -14 Td
+(   V01    Abrir a demo sem banco    Programa inicia e cria SQLite vazio    Menu iniciou e) Tj
+0 -14 Td
+(banco foi criado    PASS) Tj
+0 -14 Td
+(   V02    Criar disciplina válida    Disciplina e datas pendentes são persistidas) Tj
+0 -14 Td
+(Disciplina apareceu no resumo    PASS) Tj
+0 -14 Td
+(   V03    Fechar e reabrir    Disciplina e registros continuam disponíveis    Teste SQLite) Tj
+0 -14 Td
+(recuperou o registro presente    PASS) Tj
+0 -14 Td
+(   V04    Código duplicado    Rejeitar sem alterar o primeiro cadastro    Exceção e estado) Tj
+0 -14 Td
+(preservado    PASS) Tj
+0 -14 Td
+(   V05    Data fora da grade    Rejeitar sem alterar totais    Exceção e resumo inalterado) Tj
+0 -14 Td
+(PASS) Tj
+0 -14 Td
+(   V06    Situação inválida    Rejeitar sem alterar o registro    Exceção e estado) Tj
+0 -14 Td
+(preservado    PASS) Tj
+0 -14 Td
+(   V07    Registrar ausência    Somar as aulas do encontro    Faltas e limite recalculados) Tj
+0 -14 Td
+(PASS) Tj
+0 -14 Td
+(   V08    Repetir registro sem correção    Rejeitar duplicação    Exceção orienta usar) Tj
+0 -14 Td
+(correção    PASS) Tj
+0 -14 Td
+(   V09    Corrigir presença    Substituir a situação e recalcular    Faltas diminuíram sem) Tj
+0 -14 Td
+(duplicação    PASS) Tj
+0 -14 Td
+(   V10    Aula cancelada    Remover da base elegível    Limite e percentual recalculados) Tj
+0 -14 Td
+(PASS) Tj
+0 -14 Td
+(   V11    Aula sem chamada    Manter aula e acrescentar zero faltas    Resumo manteve a aula) Tj
+0 -14 Td
+(sem falta    PASS) Tj
+0 -14 Td
+(   V12    Entrada textual não numérica    Rejeitar conversão    Menu exibiu operação) Tj
+0 -14 Td
+(rejeitada    PASS) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(EVIDÊNCIA AUTOMATIZADA) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Comandos executados dentro de demo/:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(text) Tj
+0 -14 Td
+(python -m unittest discover -v) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Resultado: 11 testes aprovados, incluindo persistência entre duas aberturas do sistema,) Tj
+0 -14 Td
+(validações, cálculo, correção e fluxo do menu.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(INDEPENDÊNCIA DOS TESTES) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Os testes de menu usam arquivo SQLite temporário. Os testes de domínio começam com cadastro) Tj
+0 -14 Td
+(vazio e não dependem de dados reais, rede, conta ou serviço externo.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(LIMITAÇÕES REGISTRADAS) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Não são testados nesta versão login, sincronização acadêmica, GPS, Moodle, SIGA ou) Tj
+0 -14 Td
+(aplicativo Android. Essas partes pertencem ao produto real e são apresentadas como extensão) Tj
+0 -14 Td
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 70 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+(do mesmo núcleo de frequência.) Tj
+0 -14 Td
+ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000191 00000 n 
+0000000317 00000 n 
+0000003271 00000 n 
+0000003397 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+3517
+%%EOF

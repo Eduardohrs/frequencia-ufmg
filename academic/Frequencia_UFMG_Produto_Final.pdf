@@ -1,0 +1,191 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 2887 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+(FREQUÊNCIA UFMG ? PRODUTO FINAL) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Versão: produto-final-local-sqlite) Tj
+0 -14 Td
+(Integrante: Eduardo Henrique Rodrigues Silva) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(1. ESCOPO) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Este produto final é uma versão acadêmica reduzida do sistema Frequência UFMG. Ele) Tj
+0 -14 Td
+(demonstra, em Python no terminal, o núcleo do problema: cadastrar uma disciplina, registrar) Tj
+0 -14 Td
+(a situação de cada aula e acompanhar o saldo de faltas. O aplicativo completo, com) Tj
+0 -14 Td
+(autenticação, integrações acadêmicas, localização e interface web/Android, é uma extensão) Tj
+0 -14 Td
+(prática e não é necessário para executar esta demonstração.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2. FUNCIONALIDADES ENTREGUES) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(F01 ? CADASTRAR DISCIPLINA E GRADE) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Entrada: código, nome, uma ou duas chamadas, uma/duas/quatro aulas de 50 minutos por) Tj
+0 -14 Td
+(encontro e datas válidas.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Sucesso: a disciplina é criada a partir de um cadastro vazio e suas datas ficam pendentes.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Rejeições: campos vazios, tipos inválidos, chamadas incompatíveis com uma aula, datas) Tj
+0 -14 Td
+(repetidas ou código já cadastrado. A rejeição não altera o cadastro.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(F02 ? REGISTRAR E CORRIGIR FREQUÊNCIA) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Entrada: uma data da grade e uma situação \(presente, ausente, atrasado, saiu mais cedo,) Tj
+0 -14 Td
+(cancelada ou sem chamada\).) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Sucesso: o registro é salvo e o resumo é recalculado. Uma correção exige uma ação explícita) Tj
+0 -14 Td
+(e substitui o registro, sem somar faltas duplicadas.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(3. REGRAS DO DOMÍNIO) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(- Cada aula equivale a 50 minutos.) Tj
+0 -14 Td
+(- O limite de faltas é o piso de 25% das aulas elegíveis.) Tj
+0 -14 Td
+(- Registro pendente não é contado como presença nem como falta.) Tj
+0 -14 Td
+(- Aula cancelada deixa de compor a base elegível.) Tj
+0 -14 Td
+(- Aula sem chamada permanece na grade, mas acrescenta zero faltas.) Tj
+0 -14 Td
+(- Com uma chamada, atraso e saída antecipada não geram falta neste recorte.) Tj
+0 -14 Td
+(- Com duas chamadas, atraso e saída antecipada geram metade das aulas do encontro,) Tj
+0 -14 Td
+(arredondada para baixo.) Tj
+0 -14 Td
+(- O percentual só aparece quando não existem pendências.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(4. ORGANIZAÇÃO DO CÓDIGO) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(- demo/models.py: entidades, regras, encapsulamento, classe abstrata e especializações de) Tj
+0 -14 Td
+(chamada.) Tj
+0 -14 Td
+(- demo/database.py: persistência SQLite local, sem dependências externas.) Tj
+0 -14 Td
+(- demo/main.py: interação de terminal e conversão de entradas.) Tj
+0 -14 Td
+(- demo/test_models.py e demo/test_main.py: testes unitários e de fluxo.) Tj
+0 -14 Td
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 858 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+() Tj
+0 -14 Td
+(O banco demo/frequencia.db é criado automaticamente. Removê-lo reinicia a demonstração.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(5. ARQUITETURA E LIMITAÇÕES) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(A apresentação chama o serviço de domínio; o domínio valida e calcula; a camada SQLite) Tj
+0 -14 Td
+(persiste. As integrações externas e a autenticação ficam fora do recorte e são simuladas) Tj
+0 -14 Td
+(pelo cadastro manual. A versão real do aplicativo usa outras fontes e interfaces, mas) Tj
+0 -14 Td
+(preserva estas regras centrais.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(6. EXECUÇÃO) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Requer Python 3.11 ou superior. Não requer instalação de pacotes nem internet:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(text) Tj
+0 -14 Td
+(cd demo) Tj
+0 -14 Td
+(python main.py) Tj
+0 -14 Td
+(python -m unittest discover -v) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000191 00000 n 
+0000000317 00000 n 
+0000003256 00000 n 
+0000003382 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+4291
+%%EOF
