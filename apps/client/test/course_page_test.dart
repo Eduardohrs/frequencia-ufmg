@@ -17,6 +17,7 @@ import 'package:frequencia_ufmg/observability/operational_log_store.dart';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/auth/auth_user.dart';
@@ -2903,6 +2904,38 @@ void main() {
       await gateway.progress.updates.close();
     },
   );
+
+  testWidgets('profile menu semantics label is exactly Ajustes (P1-1)', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    await tester.pumpWidget(
+      _app(_FakeCourseRepository(courses: [course]), user, now),
+    );
+    await tester.pumpAndSettle();
+    final semanticsHandle = tester.ensureSemantics();
+    final labels = <String>[];
+    void visit(SemanticsNode n) {
+      labels.add(n.getSemanticsData().label);
+      n.visitChildren((child) {
+        visit(child);
+        return true;
+      });
+    }
+
+    visit(tester.getSemantics(find.byKey(const Key('profile-menu'))));
+    // P1-1: a letra do avatar não pode virar parte do rótulo ("Ajustes E").
+    expect(labels, isNot(contains('E')));
+    semanticsHandle.dispose();
+  });
 
   testWidgets(
     'course tiles label the next item by kind, explain saldo and sem chamada',

@@ -1698,11 +1698,15 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       key: const Key('profile-menu'),
       tooltip: 'Ajustes',
       onPressed: _openSettings,
-      icon: CircleAvatar(
-        child: Text(
-          firstName == null || firstName.isEmpty
-              ? widget.user.email.characters.first.toUpperCase()
-              : firstName.characters.first.toUpperCase(),
+      // P1-1: sem ExcludeSemantics a letra do avatar entrava no rótulo de
+      // acessibilidade do botão, que aparecia como "Ajustes E".
+      icon: ExcludeSemantics(
+        child: CircleAvatar(
+          child: Text(
+            firstName == null || firstName.isEmpty
+                ? widget.user.email.characters.first.toUpperCase()
+                : firstName.characters.first.toUpperCase(),
+          ),
         ),
       ),
     );
