@@ -278,6 +278,14 @@ abstract final class AppTheme {
           textStyle: text.labelLarge,
         ),
       ),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          hoverColor: scheme.primaryContainer.withValues(alpha: .12),
+          focusColor: scheme.primaryContainer.withValues(alpha: .24),
+          highlightColor: scheme.primaryContainer.withValues(alpha: .24),
+        ),
+      ),
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: ButtonStyle(
           visualDensity: VisualDensity.comfortable,
@@ -338,6 +346,11 @@ abstract final class AppTheme {
           borderSide: BorderSide(color: scheme.error, width: 2),
           borderRadius: BorderRadius.circular(AppRadii.control),
         ),
+      ),
+      buttonTheme: ButtonThemeData(
+        hoverColor: scheme.primaryContainer.withValues(alpha: .12),
+        focusColor: scheme.primaryContainer.withValues(alpha: .24),
+        highlightColor: scheme.primaryContainer.withValues(alpha: .24),
       ),
       extensions: [
         AppSemanticColors(
