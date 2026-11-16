@@ -331,6 +331,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   AcademicSyncHostState? _syncHost;
   bool _syncBannerShown = false;
   bool _academicSyncWasRunning = false;
+  Timer? _offlineBannerTimer;
   final _overviewUpdates = ValueNotifier<AcademicOverviewSnapshot?>(null);
 
   @override
@@ -431,6 +432,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   void dispose() {
     _checkpointSchedulingAllowed = false;
     _dayWatchTimer?.cancel();
+    _offlineBannerTimer?.cancel();
     _navigation?.unbind(this);
     _automaticAttendance?.removeListener(_onAutomaticConfiguration);
     if (!identical(_automaticAttendance, widget.attendanceExperience)) {
@@ -512,16 +514,28 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         }
       }
       courses.sort(compareCourseNames);
+      final isLocalCopy = snapshot?.isLocalCopy ?? false;
       setState(() {
         _courses = courses;
         _sessionsByCourse = sessionsByCourse;
         _usingOverviewSnapshot = snapshot != null;
-        _usingLocalCopy = snapshot?.isLocalCopy ?? false;
+        _usingLocalCopy = isLocalCopy;
         _datesByCourse = snapshot?.datesByCourse ?? {};
         _unavailableDateCourses =
             snapshot?.unavailableDateCourses ??
             {for (final course in courses) course.id};
       });
+      if (isLocalCopy) {
+        _offlineBannerTimer?.cancel();
+        _offlineBannerTimer = Timer(const Duration(milliseconds: 500), () {
+          if (mounted && _usingLocalCopy) {
+            setState(() {});
+          }
+        });
+      } else {
+        _offlineBannerTimer?.cancel();
+        _offlineBannerTimer = null;
+      }
       await CourseVisualHost.of(
         context,
         listen: false,
@@ -748,6 +762,12 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       _usingLocalCopy = true;
       _datesByCourse = snapshot.datesByCourse;
       _unavailableDateCourses = snapshot.unavailableDateCourses;
+    });
+    _offlineBannerTimer?.cancel();
+    _offlineBannerTimer = Timer(const Duration(milliseconds: 500), () {
+      if (mounted && _usingLocalCopy) {
+        setState(() {});
+      }
     });
     _reconcileCheckpoints(
       AcademicOverviewSnapshot(

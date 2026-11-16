@@ -230,10 +230,18 @@ class FrequenciaUFMGApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ProductNavigation(
-      builder: (navigation) => MaterialApp(
-        navigatorObservers: [navigation.observer],
-        title: 'Frequência UFMG',
-        locale: const Locale('pt', 'BR'),
+      builder: (navigation) => PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          if (Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+          }
+        },
+        child: MaterialApp(
+          navigatorObservers: [navigation.observer],
+          title: 'Frequência UFMG',
+          locale: const Locale('pt', 'BR'),
         supportedLocales: const [Locale('pt', 'BR')],
         localizationsDelegates: GlobalMaterialLocalizations.delegates,
         builder: (context, child) => MediaQuery(
@@ -270,6 +278,7 @@ class FrequenciaUFMGApp extends StatelessWidget {
           overviewReadsEnabled: overviewReadsEnabled,
           androidOfflineQueueEnabled: androidOfflineQueueEnabled,
           checkpointDeliveryUpdates: checkpointDeliveryUpdates,
+        ),
         ),
       ),
     );
