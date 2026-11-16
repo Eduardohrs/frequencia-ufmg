@@ -17,9 +17,9 @@ class CourseIdentity {
     CourseIdentity(color: Color(0xFF187A4B), symbol: 'Σ', label: 'Exatas'),
     CourseIdentity(color: Color(0xFF2667A8), symbol: '∿', label: 'Circuitos'),
     CourseIdentity(color: Color(0xFFA45725), symbol: '{}', label: 'Computação'),
-    CourseIdentity(color: Color(0xFF7952A3), symbol: '◇', label: 'Formação'),
+    CourseIdentity(color: Color(0xFF7952A3), symbol: '◇', label: 'Humanas'),
     CourseIdentity(color: Color(0xFFA13D54), symbol: '○', label: 'Estudos'),
-    CourseIdentity(color: Color(0xFF3A7378), symbol: '△', label: 'Disciplina'),
+    CourseIdentity(color: Color(0xFF3A7378), symbol: '△', label: 'Geral'),
   ];
 
   factory CourseIdentity.fromCode(String code) {

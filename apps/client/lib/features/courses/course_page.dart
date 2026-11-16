@@ -330,6 +330,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   DateTime? _academicAutoNextAt;
   AcademicSyncHostState? _syncHost;
   bool _syncBannerShown = false;
+  bool _syncDetailOpen = false;
   bool _academicSyncWasRunning = false;
   Timer? _offlineBannerTimer;
   final _overviewUpdates = ValueNotifier<AcademicOverviewSnapshot?>(null);
@@ -405,12 +406,21 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       unawaited(_refreshAfterAcademicSync());
     }
     _academicSyncWasRunning = running;
+    _updateSyncBanner();
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  void _updateSyncBanner() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final controller = _academicSync!;
+      final controller = _academicSync;
+      if (controller == null) return;
       final host = _syncHost ??= AcademicSyncHost.maybeOf(context);
       if (host == null) return;
-      if (controller.visible && !_syncBannerShown) {
+      // P0-1: o banner global de sincronização não deve cobrir a página de
+      // disciplina aberta acima da home.
+      final allowed = !_syncDetailOpen;
+      if (controller.visible && !_syncBannerShown && allowed) {
         _syncBannerShown = true;
         host.show(
           controller,
@@ -420,12 +430,11 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
             onReview: () => unawaited(_openUFMGConnection()),
           ),
         );
-      } else if (!controller.visible && _syncBannerShown) {
+      } else if ((!controller.visible || !allowed) && _syncBannerShown) {
         _syncBannerShown = false;
         host.clear(controller);
       }
     });
-    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   @override
@@ -582,9 +591,16 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         ]);
       }
     } catch (_) {
-      if (mounted && !cachedSnapshotShown) {
-        setState(() => _loadFailed = true);
-      }
+      if (!mounted) return;
+      setState(() {
+        if (cachedSnapshotShown) {
+          // P0-8: a carga autoritativa falhou e ficamos apenas com a cópia
+          // local; agora sim o banner de modo offline faz sentido.
+          _usingLocalCopy = true;
+        } else {
+          _loadFailed = true;
+        }
+      });
     } finally {
       if (mounted) setState(() => _loading = false);
       _startAutomaticUFMGSync();
@@ -759,15 +775,11 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       _courses = courses;
       _sessionsByCourse = sessionsByCourse;
       _usingOverviewSnapshot = true;
-      _usingLocalCopy = true;
+      // P0-8: o snapshot em cache é apenas um placeholder enquanto a carga
+      // autoritativa está em andamento; ele não deve ligar o banner de modo
+      // offline (isso fazia o banner piscar ao voltar da disciplina para cá).
       _datesByCourse = snapshot.datesByCourse;
       _unavailableDateCourses = snapshot.unavailableDateCourses;
-    });
-    _offlineBannerTimer?.cancel();
-    _offlineBannerTimer = Timer(const Duration(milliseconds: 500), () {
-      if (mounted && _usingLocalCopy) {
-        setState(() {});
-      }
     });
     _reconcileCheckpoints(
       AcademicOverviewSnapshot(
@@ -1084,49 +1096,60 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   }
 
   Future<void> _openCourseHub(CourseRecord course) async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        settings: const RouteSettings(name: 'course'),
-        builder: (context) => CourseHubPage(
-          overviewUpdates: _overviewUpdates,
-          refreshOverview: widget.overviewReadsEnabled
-              ? () async {
-                  await _load();
-                  if (_loadFailed) throw StateError('overview_refresh_failed');
-                }
-              : null,
-          onEdit: (selected) async {
-            await _openEditor(selected);
-            return _courses.where((item) => item.id == selected.id).firstOrNull;
-          },
-          calendarNavigation: _calendarNavigation,
-          onOpenCourse: _openCourseHub,
-          course: course,
-          allCourses: _courses,
-          datesByCourse: _datesByCourse,
-          unavailableDateCourses: _unavailableDateCourses,
-          courseRepository: widget.repository,
-          meetingRepository: widget.meetingRepository,
-          sessionRepository: widget.sessionRepository,
-          logger: widget.logger,
-          now: widget.now,
-          attendanceEvaluator: widget.attendanceEvaluator,
-          scheduleGateway: widget.scheduleGateway,
-          scheduleReadsEnabled: widget.scheduleReadsEnabled,
-          sessionGateway: widget.sessionGateway,
-          scheduleWritesEnabled: widget.scheduleWritesEnabled,
-          sessionWritesEnabled: widget.sessionWritesEnabled,
-          androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
-          initialSessionsByCourse: _usingOverviewSnapshot
-              ? _sessionsByCourse
-              : null,
-          ufmgSessionGateway: widget.ufmgSessionGateway,
-          academicSync: _academicSync,
-          ufmgSyncSchedule: widget.ufmgSyncSchedule,
-          userId: widget.user.id,
+    _syncDetailOpen = true;
+    _updateSyncBanner();
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          settings: const RouteSettings(name: 'course'),
+          builder: (context) => CourseHubPage(
+            overviewUpdates: _overviewUpdates,
+            refreshOverview: widget.overviewReadsEnabled
+                ? () async {
+                    await _load();
+                    if (_loadFailed) {
+                      throw StateError('overview_refresh_failed');
+                    }
+                  }
+                : null,
+            onEdit: (selected) async {
+              await _openEditor(selected);
+              return _courses
+                  .where((item) => item.id == selected.id)
+                  .firstOrNull;
+            },
+            calendarNavigation: _calendarNavigation,
+            onOpenCourse: _openCourseHub,
+            course: course,
+            allCourses: _courses,
+            datesByCourse: _datesByCourse,
+            unavailableDateCourses: _unavailableDateCourses,
+            courseRepository: widget.repository,
+            meetingRepository: widget.meetingRepository,
+            sessionRepository: widget.sessionRepository,
+            logger: widget.logger,
+            now: widget.now,
+            attendanceEvaluator: widget.attendanceEvaluator,
+            scheduleGateway: widget.scheduleGateway,
+            scheduleReadsEnabled: widget.scheduleReadsEnabled,
+            sessionGateway: widget.sessionGateway,
+            scheduleWritesEnabled: widget.scheduleWritesEnabled,
+            sessionWritesEnabled: widget.sessionWritesEnabled,
+            androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
+            initialSessionsByCourse: _usingOverviewSnapshot
+                ? _sessionsByCourse
+                : null,
+            ufmgSessionGateway: widget.ufmgSessionGateway,
+            academicSync: _academicSync,
+            ufmgSyncSchedule: widget.ufmgSyncSchedule,
+            userId: widget.user.id,
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      _syncDetailOpen = false;
+      if (mounted) _updateSyncBanner();
+    }
     if (mounted) await _load();
   }
 
@@ -1689,11 +1712,15 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       key: const Key('profile-menu'),
       tooltip: 'Ajustes',
       onPressed: _openSettings,
-      icon: CircleAvatar(
-        child: Text(
-          firstName == null || firstName.isEmpty
-              ? widget.user.email.characters.first.toUpperCase()
-              : firstName.characters.first.toUpperCase(),
+      // P1-1: sem ExcludeSemantics a letra do avatar entrava no rótulo de
+      // acessibilidade do botão, que aparecia como "Ajustes E".
+      icon: ExcludeSemantics(
+        child: CircleAvatar(
+          child: Text(
+            firstName == null || firstName.isEmpty
+                ? widget.user.email.characters.first.toUpperCase()
+                : firstName.characters.first.toUpperCase(),
+          ),
         ),
       ),
     );
@@ -2151,10 +2178,32 @@ class _CourseTile extends StatelessWidget {
     );
     return [
       if (upcoming.isNotEmpty)
-        Text('Próxima: ${_nextLabel(upcoming.first.startsAt)}'),
+        Text(
+          '${_nextKindLabel(upcoming.first)}: ${_nextLabel(upcoming.first.startsAt)}',
+        ),
       if (course.tracksAttendance && summary.eligibleLessons > 0)
-        Text('Saldo: ${summary.remainingAbsences} faltas'),
+        Tooltip(
+          message:
+              'Faltas que ainda podem ser usadas antes de atingir o limite de '
+              '25% das aulas (${summary.absenceLimit} de ${summary.eligibleLessons} '
+              'aulas desta disciplina).',
+          child: Text('Saldo: ${summary.remainingAbsences} faltas'),
+        ),
     ];
+  }
+
+  static String _nextKindLabel(AgendaEntry entry) {
+    final date = entry.date;
+    if (date != null) {
+      return switch (date.kind) {
+        'quiz' || 'assessment' => 'Próxima prova',
+        'assignment' => 'Próxima entrega',
+        _ => 'Próximo evento',
+      };
+    }
+    return entry.session?.assessmentTitle != null
+        ? 'Próxima prova'
+        : 'Próxima aula';
   }
 
   String _nextLabel(DateTime instant) {
@@ -2162,7 +2211,10 @@ class _CourseTile extends StatelessWidget {
       instant,
       tz.getLocation('America/Sao_Paulo'),
     );
-    return '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')} ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    return '${local.day.toString().padLeft(2, '0')}/'
+        '${local.month.toString().padLeft(2, '0')}/'
+        '${local.year} '
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -2199,7 +2251,13 @@ class _CourseTile extends StatelessWidget {
                 ],
               ),
               if (sessions != null) ..._contextLabels(),
-              if (!course.tracksAttendance) Text(course.policyLabel),
+              if (!course.tracksAttendance)
+                Tooltip(
+                  message: course.modality == CourseModality.online
+                      ? 'Disciplina online: não há controle de frequência presencial.'
+                      : 'Sem chamada: esta disciplina não registra faltas.',
+                  child: Text(course.policyLabel),
+                ),
             ],
           ),
         ),
@@ -2212,8 +2270,11 @@ class _CourseTile extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   PopupMenuButton<_CourseTileAction>(
-                    key: ValueKey("course-actions-${course.code}"),
-                    tooltip: 'Mais ações de ${course.displayName}',
+                    // P0-3: usa o id (único) em vez do código; códigos podem
+                    // se repetir após sync e quebravam a key do botão.
+                    key: ValueKey("course-actions-${course.id}"),
+                    tooltip:
+                        'Opções de ${course.displayName} (editar ou excluir)',
                     onSelected: (action) {
                       switch (action) {
                         case _CourseTileAction.edit:
