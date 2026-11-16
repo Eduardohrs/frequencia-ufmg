@@ -2812,12 +2812,27 @@ void main() {
       expect(find.byKey(const Key('offline-copy-banner')), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNothing);
 
+      // Wait for the offline banner timer to trigger setState for cached snapshot
+      // The timer is created with 500ms delay in _applyOverviewSnapshot
+      await tester.runAsync(() async {
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+
       refresh.complete(
         AcademicOverviewSnapshot(
           courses: [refreshedCourse],
           sessionsByCourse: const {'course-1': []},
         ),
       );
+      await tester.pumpAndSettle();
+
+      // Wait for the offline banner timer to trigger setState for refreshed snapshot
+      await tester.runAsync(() async {
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 100));
+      });
       await tester.pumpAndSettle();
 
       expect(find.text('POO atualizada'), findsOneWidget);
