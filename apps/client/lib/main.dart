@@ -234,8 +234,8 @@ class FrequenciaUFMGApp extends StatelessWidget {
         canPop: false,
         onPopInvokedWithResult: (didPop, _) {
           if (didPop) return;
-          if (Navigator.of(context).canPop()) {
-            Navigator.of(context).pop();
+          if (navigation.observer.navigator?.canPop() ?? false) {
+            navigation.observer.navigator?.pop();
           }
         },
         child: MaterialApp(
