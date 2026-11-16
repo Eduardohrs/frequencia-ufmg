@@ -427,7 +427,12 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
           AcademicSyncBanner(
             controller: controller,
             detailsContext: context,
-            onReview: () => unawaited(_openUFMGConnection()),
+            // P0-2: "Ver resultado" abre a página de conexão já aprensentando
+            // o resultado real; só cai no login quando há erro (botão
+            // "Abrir conexão", que precisa de reautenticação).
+            onReview: () => unawaited(
+              _openUFMGConnection(reviewResult: controller.error == null),
+            ),
           ),
         );
       } else if ((!controller.visible || !allowed) && _syncBannerShown) {
@@ -1263,7 +1268,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _openUFMGConnection() async {
+  Future<void> _openUFMGConnection({bool reviewResult = false}) async {
     final gateway = widget.ufmgSessionGateway;
     if (gateway == null) return;
     await Navigator.of(context).push<void>(
@@ -1271,6 +1276,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         builder: (_) => UFMGConnectionPage(
           onConnected: () => _ufmgSyncNotice = null,
           academicSync: _academicSync,
+          reviewSyncResultOnLoad: reviewResult,
           gateway: gateway,
           logger: widget.logger,
           userId: widget.user.id,

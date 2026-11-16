@@ -81,6 +81,7 @@ class AcademicSyncBanner extends StatelessWidget {
 
   void _details(BuildContext context) {
     controller.logInteraction('sync_progress_details');
+    var wasRunning = controller.isRunning;
     showModalBottomSheet<void>(
       context: context,
       useRootNavigator: true,
@@ -89,6 +90,18 @@ class AcademicSyncBanner extends StatelessWidget {
       builder: (context) => ListenableBuilder(
         listenable: controller,
         builder: (context, _) {
+          final running = controller.isRunning;
+          if (wasRunning && !running) {
+            // P2-15: a sincronização terminou enquanto o sheet estava aberto;
+            // fecha sozinho em vez de ficar preso em 100%. O resultado
+            // continua no banner, que reabre o sheet com "Ver resultado".
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (context.mounted && Navigator.of(context).canPop()) {
+                Navigator.of(context).pop();
+              }
+            });
+          }
+          wasRunning = running;
           final completed = controller.progress?.completed ?? 0;
           return SafeArea(
             child: SingleChildScrollView(

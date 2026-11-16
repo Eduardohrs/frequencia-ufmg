@@ -352,15 +352,61 @@ void main() {
             .value,
         isNull,
       );
-      gateway.response.complete(syncResult());
+      gateway.response.complete(syncResult(partial: true));
       await tester.pumpAndSettle();
       await future;
+      // P2-15: o sheet fecha sozinho quando a sincronização termina com ele
+      // aberto (antes ficava preso em "3 de 3 etapas concluídas").
+      expect(find.text('0 de 3 etapas concluídas'), findsNothing);
+      expect(find.text('Ver resultado'), findsNothing);
+      expect(controller.visible, isTrue);
+      // O banner continua disponível e reabre o sheet já com o resultado.
+      await tester.tap(find.byKey(const Key('academic-sync-indicator')));
+      await tester.pumpAndSettle();
+      expect(find.text('3 de 3 etapas concluídas'), findsOneWidget);
       await tester.tap(find.text('Ver resultado'));
       await tester.pumpAndSettle();
       expect(reviewed, isTrue);
-      expect(controller.visible, isFalse);
       await tester.pump();
-      expect(find.byKey(const Key('academic-sync-indicator')), findsNothing);
+      expect(find.byKey(const Key('academic-sync-indicator')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      controller.dispose();
+      await gateway.updates.close();
+    },
+  );
+
+  testWidgets(
+    'sheet opened after completion stays open and offers the result',
+    (tester) async {
+      final gateway = ProgressGateway();
+      final controller = AcademicSyncController(
+        gateway: gateway,
+        logger: _Logger(),
+      );
+      var reviewed = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AcademicSyncBanner(
+              controller: controller,
+              onReview: () => reviewed = true,
+            ),
+          ),
+        ),
+      );
+      final future = controller.start();
+      await tester.pump();
+      gateway.response.complete(syncResult(partial: true));
+      await tester.pumpAndSettle();
+      await future;
+      // Sheet aberto depois da conclusão: não deve fechar sozinho.
+      await tester.tap(find.byKey(const Key('academic-sync-indicator')));
+      await tester.pumpAndSettle();
+      expect(find.text('3 de 3 etapas concluídas'), findsOneWidget);
+      expect(find.text('Ver resultado'), findsOneWidget);
+      await tester.tap(find.text('Ver resultado'));
+      await tester.pumpAndSettle();
+      expect(reviewed, isTrue);
       expect(tester.takeException(), isNull);
       controller.dispose();
       await gateway.updates.close();
