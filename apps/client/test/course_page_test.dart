@@ -4891,7 +4891,6 @@ final class _FakeOverviewRepository implements AcademicOverviewRepository {
     return snapshot;
   }
 
-  @override
   Future<AcademicOverviewSnapshot?> loadCachedOverview() async => cached;
 }
 

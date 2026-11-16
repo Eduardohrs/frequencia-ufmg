@@ -553,7 +553,7 @@ void main() {
       // Dialog might not have appeared yet, try another approach
       // The dialog Sair button should be visible
       final dialogSairButtons = find.text('Sair').evaluate();
-      if (dialogSairButtons.length > 0) {
+      if (dialogSairButtons.isNotEmpty) {
         await tester.tap(find.text('Sair'));
         await tester.pumpAndSettle();
       }
