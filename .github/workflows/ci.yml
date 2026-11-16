@@ -148,7 +148,7 @@ jobs:
   client:
     name: Flutter client
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: read
       id-token: write
