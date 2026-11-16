@@ -62,7 +62,8 @@ class AcademicSyncBanner extends StatelessWidget {
                         ),
                         if (!controller.isRunning)
                           IconButton(
-                            tooltip: 'Ocultar sincronização',
+                            key: const Key('dismiss-sync-banner'),
+                            tooltip: 'Dispensar este aviso de sincronização',
                             onPressed: controller.dismiss,
                             icon: const Icon(Icons.close, size: 18),
                           ),
