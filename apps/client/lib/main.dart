@@ -230,55 +230,46 @@ class FrequenciaUFMGApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ProductNavigation(
-      builder: (navigation) => PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, _) {
-          if (didPop) return;
-          if (navigation.observer.navigator?.canPop() ?? false) {
-            navigation.observer.navigator?.pop();
-          }
-        },
-        child: MaterialApp(
-          navigatorObservers: [navigation.observer],
-          title: 'Frequência UFMG',
-          locale: const Locale('pt', 'BR'),
-          supportedLocales: const [Locale('pt', 'BR')],
-          localizationsDelegates: GlobalMaterialLocalizations.delegates,
-          builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
-            child: CourseVisualHost(
-              child: navigation.frame(context, AcademicSyncHost(child: child!)),
-            ),
+      builder: (navigation) => MaterialApp(
+        navigatorObservers: [navigation.observer],
+        title: 'Frequência UFMG',
+        locale: const Locale('pt', 'BR'),
+        supportedLocales: const [Locale('pt', 'BR')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+          child: CourseVisualHost(
+            child: navigation.frame(context, AcademicSyncHost(child: child!)),
           ),
-          theme: AppTheme.light(),
-          darkTheme: AppTheme.dark(),
-          highContrastTheme: AppTheme.light(highContrast: true),
-          highContrastDarkTheme: AppTheme.dark(highContrast: true),
-          themeMode: ThemeMode.system,
-          home: AuthGate(
-            authGateway: authGateway,
-            logger: logger,
-            courseRepositoryFactory: courseRepositoryFactory,
-            fallbackCourseRepositoryFactory: fallbackCourseRepositoryFactory,
-            meetingRepositoryFactory: meetingRepositoryFactory,
-            sessionRepositoryFactory: sessionRepositoryFactory,
-            backendIdentityVerifier: backendIdentityVerifier,
-            identityVerificationCache:
-                SharedPreferencesIdentityVerificationCache(),
-            attendanceEvaluator: attendanceEvaluator,
-            scheduleGateway: scheduleGateway,
-            sessionGateway: sessionGateway,
-            ufmgSessionGateway: ufmgSessionGateway,
-            ufmgSyncSchedule: ufmgSyncSchedule,
-            academicSyncSchedule: academicSyncSchedule,
-            overviewRepository: overviewRepository,
-            scheduleReadsEnabled: scheduleReadsEnabled,
-            scheduleWritesEnabled: scheduleWritesEnabled,
-            sessionWritesEnabled: sessionWritesEnabled,
-            overviewReadsEnabled: overviewReadsEnabled,
-            androidOfflineQueueEnabled: androidOfflineQueueEnabled,
-            checkpointDeliveryUpdates: checkpointDeliveryUpdates,
-          ),
+        ),
+        theme: AppTheme.light(),
+        darkTheme: AppTheme.dark(),
+        highContrastTheme: AppTheme.light(highContrast: true),
+        highContrastDarkTheme: AppTheme.dark(highContrast: true),
+        themeMode: ThemeMode.system,
+        home: AuthGate(
+          authGateway: authGateway,
+          logger: logger,
+          courseRepositoryFactory: courseRepositoryFactory,
+          fallbackCourseRepositoryFactory: fallbackCourseRepositoryFactory,
+          meetingRepositoryFactory: meetingRepositoryFactory,
+          sessionRepositoryFactory: sessionRepositoryFactory,
+          backendIdentityVerifier: backendIdentityVerifier,
+          identityVerificationCache:
+              SharedPreferencesIdentityVerificationCache(),
+          attendanceEvaluator: attendanceEvaluator,
+          scheduleGateway: scheduleGateway,
+          sessionGateway: sessionGateway,
+          ufmgSessionGateway: ufmgSessionGateway,
+          ufmgSyncSchedule: ufmgSyncSchedule,
+          academicSyncSchedule: academicSyncSchedule,
+          overviewRepository: overviewRepository,
+          scheduleReadsEnabled: scheduleReadsEnabled,
+          scheduleWritesEnabled: scheduleWritesEnabled,
+          sessionWritesEnabled: sessionWritesEnabled,
+          overviewReadsEnabled: overviewReadsEnabled,
+          androidOfflineQueueEnabled: androidOfflineQueueEnabled,
+          checkpointDeliveryUpdates: checkpointDeliveryUpdates,
         ),
       ),
     );
