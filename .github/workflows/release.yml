@@ -110,6 +110,7 @@ jobs:
         run: |
           cp build/app/outputs/flutter-apk/app-release.apk \
             "frequencia-ufmg-$APP_VERSION.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "frequencia-ufmg.apk"
           (cd build/web && zip -qr "../../frequencia-ufmg-web-$APP_VERSION.zip" .)
       - name: Publish GitHub release
         env:
@@ -117,6 +118,7 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
             "frequencia-ufmg-$APP_VERSION.apk" \
+            "frequencia-ufmg.apk" \
             "frequencia-ufmg-web-$APP_VERSION.zip" \
             --repo "$GITHUB_REPOSITORY" \
             --generate-notes \
