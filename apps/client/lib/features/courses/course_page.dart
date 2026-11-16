@@ -781,12 +781,6 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       _datesByCourse = snapshot.datesByCourse;
       _unavailableDateCourses = snapshot.unavailableDateCourses;
     });
-    _offlineBannerTimer?.cancel();
-    _offlineBannerTimer = Timer(const Duration(milliseconds: 500), () {
-      if (mounted && _usingLocalCopy) {
-        setState(() {});
-      }
-    });
     _reconcileCheckpoints(
       AcademicOverviewSnapshot(
         courses: courses,
