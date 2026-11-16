@@ -2709,15 +2709,23 @@ void main() {
           repository: _FakeCourseRepository(),
           meetingRepository: _FakeMeetingRepository(),
           sessionRepository: directSessions,
-          overviewRepository: _FakeOverviewRepository(
-            AcademicOverviewSnapshot(
-              courses: [course],
-              sessionsByCourse: {
-                'course-1': [savedSession],
-              },
-              isLocalCopy: true,
-            ),
-          ),
+          overviewRepository:
+              _FakeOverviewRepository(
+                  AcademicOverviewSnapshot(
+                    courses: [course],
+                    sessionsByCourse: {
+                      'course-1': [savedSession],
+                    },
+                    isLocalCopy: true,
+                  ),
+                )
+                ..cached = AcademicOverviewSnapshot(
+                  courses: [course],
+                  sessionsByCourse: {
+                    'course-1': [savedSession],
+                  },
+                  isLocalCopy: true,
+                ),
           overviewReadsEnabled: true,
           user: user,
           logger: _RecordingAppLogger(),
@@ -2726,6 +2734,7 @@ void main() {
         ),
       ),
     );
+    // First pumpAndSettle to wait for the cached overview to be loaded
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('offline-copy-banner')), findsOneWidget);
@@ -2734,6 +2743,17 @@ void main() {
       find.text('Exibindo a última cópia salva neste aparelho.'),
       findsOneWidget,
     );
+
+    // Wait for the offline banner timer to trigger setState
+    // The timer is created with 500ms delay in _applyOverviewSnapshot
+    // We need to use runAsync to properly handle the timer created in async code
+    await tester.runAsync(() async {
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 100));
+    });
+    // The timer callback calls setState, so we need to settle
+    await tester.pumpAndSettle();
+
     await tester.tap(find.byKey(const Key('past-attendance-pending-alert')));
     await tester.pumpAndSettle();
     expect(find.text('Frequência • POO'), findsOneWidget);
@@ -2796,12 +2816,27 @@ void main() {
       expect(find.byKey(const Key('offline-copy-banner')), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsNothing);
 
+      // Wait for the offline banner timer to trigger setState for cached snapshot
+      // The timer is created with 500ms delay in _applyOverviewSnapshot
+      await tester.runAsync(() async {
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+
       refresh.complete(
         AcademicOverviewSnapshot(
           courses: [refreshedCourse],
           sessionsByCourse: const {'course-1': []},
         ),
       );
+      await tester.pumpAndSettle();
+
+      // Wait for the offline banner timer to trigger setState for refreshed snapshot
+      await tester.runAsync(() async {
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 100));
+      });
       await tester.pumpAndSettle();
 
       expect(find.text('POO atualizada'), findsOneWidget);
@@ -5136,6 +5171,7 @@ final class _FakeOverviewRepository implements AcademicOverviewRepository {
   final AcademicOverviewSnapshot snapshot;
   Object? error;
   int loadCalls = 0;
+  AcademicOverviewSnapshot? cached;
 
   @override
   Future<AcademicOverviewSnapshot> loadOverview() async {
@@ -5143,6 +5179,8 @@ final class _FakeOverviewRepository implements AcademicOverviewRepository {
     if (error != null) throw error!;
     return snapshot;
   }
+
+  Future<AcademicOverviewSnapshot?> loadCachedOverview() async => cached;
 }
 
 final class _LocalFirstOverviewRepository
