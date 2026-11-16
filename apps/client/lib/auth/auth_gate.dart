@@ -150,7 +150,8 @@ class _AuthGateState extends State<AuthGate> {
       initialData: widget.authGateway.currentUser,
       builder: (context, snapshot) {
         final user = snapshot.data;
-        if (snapshot.connectionState == ConnectionState.waiting && user == null) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            user == null) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
@@ -182,7 +183,9 @@ class _AuthGateState extends State<AuthGate> {
                 context: context,
                 builder: (context) => AlertDialog(
                   title: const Text('Sair da conta'),
-                  content: const Text('Tem certeza que deseja sair? Você precisará entrar novamente para acessar seus dados.'),
+                  content: const Text(
+                    'Tem certeza que deseja sair? Você precisará entrar novamente para acessar seus dados.',
+                  ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.of(context).pop(false),
