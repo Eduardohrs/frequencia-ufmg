@@ -1700,6 +1700,11 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Ver resultado'));
       await tester.pumpAndSettle();
+      // P0-2: "Ver resultado" abre a página de conexão já apresentando o
+      // resultado real da sincronização, sem exigir login/segundo toque.
+      expect(find.text('Pendências da sincronização'), findsOneWidget);
+      await tester.tap(find.text('Entendi'));
+      await tester.pumpAndSettle();
       expect(find.text('Revisar última sincronização'), findsOneWidget);
       await tester.ensureVisible(find.text('Revisar última sincronização'));
       await tester.tap(find.text('Revisar última sincronização'));
