@@ -318,6 +318,19 @@ describe("operational logs", () => {
     await assertFails(setDoc(doc(dbFor("alice"), path), {...progress, password: "no"}));
     await assertFails(setDoc(doc(dbFor("alice"), "users/alice/syncProgress/other"), progress));
   });
+
+  test("moodle calendar checkpoints are bounded, term-scoped and isolated by user", async () => {
+    const path = "users/alice/moodleCalendarState/2026-2";
+    const state = {stateJson: JSON.stringify({last_fetched_at: 1763424000, months: [[2026, 11]]})};
+    await assertSucceeds(setDoc(doc(dbFor("alice"), path), state));
+    await assertSucceeds(getDoc(doc(dbFor("alice"), path)));
+    await assertFails(getDoc(doc(dbFor("bob"), path)));
+    await assertFails(setDoc(doc(dbFor("bob"), path), state));
+    await assertFails(setDoc(doc(dbFor("alice"), path), {stateJson: "x".repeat(64001)}));
+    await assertFails(setDoc(doc(dbFor("alice"), path), {stateJson: "{}", extra: 1}));
+    await assertFails(setDoc(doc(dbFor("alice"), "users/alice/moodleCalendarState/2026-3"), state));
+    await assertSucceeds(deleteDoc(doc(dbFor("alice"), path)));
+  });
   test("owner can create and read an immutable structured log", async () => {
     const path = logPath("alice");
     const reference = doc(dbFor("alice"), path);

@@ -426,6 +426,16 @@ service cloud.firestore {
         && request.resource.data.updatedAt >= request.resource.data.startedAt;
     }
 
+    match /users/{userId}/moodleCalendarState/{termId} {
+      allow get: if owns(userId) && termId.matches('^20[2-9][0-9]-[12]$');
+      allow list: if owns(userId);
+      allow create, update: if owns(userId) && termId.matches('^20[2-9][0-9]-[12]$')
+        && hasExactFields(request.resource.data, ['stateJson'])
+        && request.resource.data.stateJson is string
+        && request.resource.data.stateJson.size() <= 64000;
+      allow delete: if owns(userId);
+    }
+
     match /users/{userId}/logs/{logId} {
       allow read: if owns(userId);
       allow create: if owns(userId)
