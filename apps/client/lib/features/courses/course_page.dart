@@ -1629,6 +1629,9 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         failureCode: 'course_identity_save_failed',
       );
       final code = ErrorLogDetails.from(error).code;
+      if (code == PythonBackendError.duplicateCourse.name) {
+        return 'Já existe uma disciplina com esse código.';
+      }
       return code == null
           ? 'Não foi possível salvar a disciplina.'
           : 'Não foi possível salvar a disciplina. Código: $code.';
@@ -1651,6 +1654,10 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
       final draftPersisted = await _saveCourseDraft(course, code);
       if (!mounted) return;
       setState(() => _courses.removeWhere((item) => item.id == course.id));
+      if (code == PythonBackendError.duplicateCourse.name) {
+        _message('Já existe uma disciplina com esse código.');
+        return;
+      }
       final diagnostic = code == null ? '' : ' Código: $code.';
       final message = draftPersisted
           ? 'Não foi possível salvar ${course.code}. O rascunho foi guardado para tentar de novo.$diagnostic'
