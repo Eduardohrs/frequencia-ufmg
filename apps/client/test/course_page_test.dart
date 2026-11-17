@@ -3399,6 +3399,92 @@ void main() {
     expect(find.byKey(const Key('course-code')), findsNothing);
   });
 
+  testWidgets('55.33: busca filtra disciplinas por código, nome ou apelido', (
+    tester,
+  ) async {
+    CourseRecord build(String id, String code, String name, String? nick) =>
+        CourseRecord(
+          id: id,
+          code: code,
+          name: name,
+          nickname: nick,
+          workload: 60,
+          term: '2026-2',
+          createdAt: now,
+          updatedAt: now,
+        );
+    final repository = _FakeCourseRepository(
+      courses: [
+        build('c1', 'DCC203', 'Programação Orientada a Objetos', 'POO'),
+        build('c2', 'DCC204', 'Algoritmos e Estruturas de Dados', null),
+        build('c3', 'MAT002', 'Cálculo II', null),
+      ],
+    );
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+
+    // Com 2+ disciplinas o campo de busca aparece; com 1, não.
+    expect(find.byKey(const Key('course-search')), findsOneWidget);
+    expect(find.byKey(const Key('course-card-c1')), findsOneWidget);
+    expect(find.byKey(const Key('course-card-c2')), findsOneWidget);
+    expect(find.byKey(const Key('course-card-c3')), findsOneWidget);
+
+    // Por apelido (sem acento, case-insensitive).
+    await tester.enterText(find.byKey(const Key('course-search')), 'poo');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-card-c1')), findsOneWidget);
+    expect(find.byKey(const Key('course-card-c2')), findsNothing);
+    expect(find.byKey(const Key('course-card-c3')), findsNothing);
+
+    // Por código.
+    await tester.enterText(find.byKey(const Key('course-search')), 'mat');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-card-c1')), findsNothing);
+    expect(find.byKey(const Key('course-card-c3')), findsOneWidget);
+
+    // Por nome com acento no termo de busca.
+    await tester.enterText(find.byKey(const Key('course-search')), 'estrutura');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-card-c2')), findsOneWidget);
+
+    // Sem resultado mostra estado vazio.
+    await tester.enterText(find.byKey(const Key('course-search')), 'zzz');
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Nenhuma disciplina encontrada para a busca.'),
+      findsOneWidget,
+    );
+
+    // Limpa volta a mostrar tudo.
+    await tester.enterText(find.byKey(const Key('course-search')), '');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-card-c1')), findsOneWidget);
+    expect(find.byKey(const Key('course-card-c2')), findsOneWidget);
+    expect(find.byKey(const Key('course-card-c3')), findsOneWidget);
+  });
+
+  testWidgets('55.33: busca não aparece com menos de duas disciplinas', (
+    tester,
+  ) async {
+    final repository = _FakeCourseRepository(
+      courses: [
+        CourseRecord(
+          id: 'only',
+          code: 'DCC203',
+          name: 'POO',
+          workload: 60,
+          term: '2026-2',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      ],
+    );
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-card-only')), findsOneWidget);
+    expect(find.byKey(const Key('course-search')), findsNothing);
+  });
+
   testWidgets('reports save and delete failures without losing data', (
     tester,
   ) async {
@@ -4245,6 +4331,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('add-course')));
+    await tester.pumpAndSettle();
+    // 55.33: no modo criar, apelido fica em "Opções avançadas".
+    await tester.tap(find.text('Opções avançadas'));
     await tester.pumpAndSettle();
 
     expect(

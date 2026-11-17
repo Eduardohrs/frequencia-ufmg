@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
@@ -128,7 +131,10 @@ void main() {
       await open(null);
       await tester.enterText(find.byKey(const Key('course-code')), 'DCC203');
       await tester.enterText(find.byKey(const Key('course-name')), 'POO');
-      await tester.ensureVisible(find.byKey(const Key('course-modality')));
+      // 55.33: no modo criar, os campos avançados ficam fechados em
+      // "Opções avançadas".
+      await tester.tap(find.byKey(const Key('course-advanced-options')));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const Key('course-modality')));
       await tester.tap(find.byKey(const Key('course-modality')));
       await tester.pumpAndSettle();
@@ -184,4 +190,269 @@ void main() {
       expect(saved!.attendancePolicy, CourseAttendancePolicy.required);
     },
   );
+
+  testWidgets(
+    '55.33: criar esconde opções avançadas, expande, e applies debounce/atalhos/spinner/48px',
+    (tester) async {
+      var now = DateTime.utc(2026, 11, 16, 12);
+      DateTime clock() => now;
+      var saveCount = 0;
+      Completer<String?>? gate;
+      Future<String?> onSave(CourseInput input) async {
+        saveCount++;
+        final current = gate;
+        if (current != null) return current.future;
+        return null;
+      }
+
+      Future<void> open() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: TextButton(
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (_) => CourseEditorDialog(
+                      initialTerm: '2026-2',
+                      allowedTerms: const ['2026-2', '2027-1'],
+                      onValidationFailed: () {},
+                      onSave: onSave,
+                      clock: clock,
+                    ),
+                  ),
+                  child: const Text('Open'),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('Open'));
+        await tester.pumpAndSettle();
+      }
+
+      await open();
+
+      // Form simplificado: código e nome visíveis, avançado fechado.
+      expect(find.byKey(const Key('course-code')), findsOneWidget);
+      expect(find.byKey(const Key('course-name')), findsOneWidget);
+      expect(find.text('Opções avançadas'), findsOneWidget);
+      await tester.tap(find.text('Opções avançadas'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('course-nickname')), 'POO');
+
+      // Alvos de toque >= 48dp nos botões de ação.
+      final cancelBox = tester.renderObject<RenderBox>(
+        find.widgetWithText(TextButton, 'Cancelar'),
+      );
+      final saveBox = tester.renderObject<RenderBox>(
+        find.widgetWithText(FilledButton, 'Salvar'),
+      );
+      expect(cancelBox.size.height, greaterThanOrEqualTo(48));
+      expect(saveBox.size.height, greaterThanOrEqualTo(48));
+
+      await tester.enterText(find.byKey(const Key('course-code')), 'DCC203');
+      await tester.enterText(find.byKey(const Key('course-name')), 'POO');
+
+      // Duplo clique rápido: uma única chamada de save (gate pendente).
+      gate = Completer<String?>();
+      await tester.tap(find.byType(FilledButton));
+      await tester.tap(find.byType(FilledButton));
+      await tester.pump();
+      expect(saveCount, 1);
+      // Spinner visível enquanto salva.
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('Salvando...'), findsOneWidget);
+      // ESC durante o save não fecha o diálogo.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(find.byKey(const Key('course-code')), findsOneWidget);
+      gate.complete(null);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('course-code')), findsNothing);
+
+      // Após falha de save, o erro aparece inline e o botão volta a funcionar.
+      saveCount = 0;
+      await open();
+      await tester.enterText(find.byKey(const Key('course-code')), 'DCC204');
+      await tester.enterText(find.byKey(const Key('course-name')), 'AEDS');
+      gate = Completer<String?>();
+      await tester.tap(find.byType(FilledButton));
+      await tester.pump();
+      expect(saveCount, 1);
+      gate.complete('erro de teste');
+      await tester.pumpAndSettle();
+      expect(find.text('erro de teste'), findsOneWidget);
+      final before = saveCount;
+      now = now.add(const Duration(milliseconds: 50));
+      gate = null;
+      await tester.tap(find.byType(FilledButton));
+      await tester.pumpAndSettle();
+      expect(saveCount, before + 1);
+      expect(find.byKey(const Key('course-code')), findsNothing);
+
+      // Enter no campo salva o formulário.
+      saveCount = 0;
+      await open();
+      await tester.enterText(find.byKey(const Key('course-code')), 'DCC205');
+      await tester.enterText(find.byKey(const Key('course-name')), 'Calculo');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(saveCount, 1);
+      expect(find.byKey(const Key('course-code')), findsNothing);
+
+      // ESC fecha o diálogo quando não está salvando.
+      await open();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('course-code')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    '55.33: Enter nos campos de criar dispara o submit via onFieldSubmitted',
+    (tester) async {
+      var saveCount = 0;
+      Future<String?> onSave(CourseInput input) async {
+        saveCount++;
+        return 'erro';
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (_) => CourseEditorDialog(
+                    initialTerm: '2026-2',
+                    allowedTerms: const ['2026-2', '2027-1'],
+                    onValidationFailed: () {},
+                    onSave: onSave,
+                  ),
+                ),
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('course-code')), 'DCC203');
+      await tester.enterText(find.byKey(const Key('course-name')), 'POO');
+      // Enter (ação do teclado) em cada campo chama onFieldSubmitted -> submit.
+      await tester.tap(find.byKey(const Key('course-code')));
+      await tester.testTextInput.receiveAction(TextInputAction.next);
+      await tester.pumpAndSettle();
+      expect(saveCount, 1);
+      await tester.tap(find.byKey(const Key('course-name')));
+      await tester.testTextInput.receiveAction(TextInputAction.next);
+      await tester.pumpAndSettle();
+      expect(saveCount, 2);
+      await tester.tap(find.text('Opções avançadas'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('course-nickname')));
+      await tester.testTextInput.receiveAction(TextInputAction.next);
+      await tester.pumpAndSettle();
+      expect(saveCount, 3);
+      expect(find.text('erro'), findsOneWidget);
+    },
+  );
+
+  testWidgets('55.33: Enter no campo de período (editar) dispara o submit', (
+    tester,
+  ) async {
+    var saveCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => CourseEditorDialog(
+                  course: _course(
+                    CourseModality.inPerson,
+                    CourseAttendancePolicy.required,
+                  ),
+                  initialTerm: '2026-2',
+                  allowedTerms: const ['2026-2', '2027-1'],
+                  onValidationFailed: () {},
+                  onSave: (input) async {
+                    saveCount++;
+                    return null;
+                  },
+                ),
+              ),
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('course-term')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('course-term')));
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(saveCount, 1);
+  });
+
+  testWidgets('55.33: no mobile o diálogo aplica escala mínima de fonte', (
+    tester,
+  ) async {
+    Future<void> open() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => CourseEditorDialog(
+                    initialTerm: '2026-2',
+                    allowedTerms: const ['2026-2', '2027-1'],
+                    onValidationFailed: () {},
+                    onSave: (_) async => null,
+                  ),
+                ),
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+    }
+
+    // Desktop (800x600): nenhuma escala extra aplicada pelo diálogo.
+    await open();
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is MediaQuery && w.data.textScaler.scale(1) > 1.01,
+      ),
+      findsNothing,
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
+    // Mobile (390x844 lógico): o diálogo aplica escala mínima 1.15.
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await open();
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is MediaQuery && w.data.textScaler.scale(1) >= 1.149,
+      ),
+      findsWidgets,
+    );
+  });
 }
