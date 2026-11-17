@@ -2841,6 +2841,40 @@ void main() {
     );
   });
 
+  test('maps course_code_conflict to duplicateCourse', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async =>
+            http.Response(jsonEncode({'error': 'course_code_conflict'}), 409),
+      ),
+    );
+
+    await expectLater(
+      transport.saveCourse(
+        PythonCourse(
+          id: 'course-1',
+          code: 'DCC203',
+          name: 'POO',
+          workload: 60,
+          term: '2026-2',
+          startsOn: null,
+          endsOn: null,
+          createdAt: DateTime.utc(2026, 1, 1),
+          updatedAt: DateTime.utc(2026, 1, 1),
+        ),
+      ),
+      throwsA(
+        isA<PythonBackendException>().having(
+          (error) => error.code,
+          'code',
+          PythonBackendError.duplicateCourse,
+        ),
+      ),
+    );
+  });
+
   test('rejects malformed schedule responses', () async {
     final transport = PythonBackendTransport(
       endpoint: Uri.parse('https://backend.example'),

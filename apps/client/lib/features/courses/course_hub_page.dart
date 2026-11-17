@@ -3,8 +3,8 @@ import '../../data/python_overview_repository.dart';
 import '../../data/academic_agenda.dart';
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../backend/python_backend_transport.dart';
@@ -55,6 +55,7 @@ class CourseHubPage extends StatefulWidget {
     this.scheduleWritesEnabled = false,
     this.sessionWritesEnabled = false,
     this.androidOfflineQueueEnabled = false,
+    this.materialsLoadTimeout = const Duration(seconds: 20),
     super.key,
   });
 
@@ -85,6 +86,7 @@ class CourseHubPage extends StatefulWidget {
   final bool scheduleWritesEnabled;
   final bool sessionWritesEnabled;
   final bool androidOfflineQueueEnabled;
+  final Duration materialsLoadTimeout;
 
   @override
   State<CourseHubPage> createState() => _CourseHubPageState();
@@ -269,7 +271,9 @@ class _CourseHubPageState extends State<CourseHubPage> {
     };
     emitOperationalEvent(widget.logger, 'course_hub_catalog_started', fields);
     try {
-      final catalog = await gateway.listMoodleMaterialCatalog();
+      final catalog = await gateway.listMoodleMaterialCatalog().timeout(
+        widget.materialsLoadTimeout,
+      );
       if (!mounted || generation != _catalogGeneration) {
         emitOperationalEvent(widget.logger, 'course_hub_catalog_succeeded', {
           ...fields,
@@ -537,7 +541,24 @@ class _CourseHubPageState extends State<CourseHubPage> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => Shortcuts(
+    shortcuts: {
+      LogicalKeySet(LogicalKeyboardKey.escape): const _CloseHubIntent(),
+    },
+    child: Actions(
+      actions: {
+        _CloseHubIntent: CallbackAction<_CloseHubIntent>(
+          onInvoke: (_) {
+            unawaited(Navigator.of(context).maybePop());
+            return null;
+          },
+        ),
+      },
+      child: _buildScaffold(context),
+    ),
+  );
+
+  Widget _buildScaffold(BuildContext context) => Scaffold(
     appBar: AppBar(
       toolbarHeight: 64,
       actions: [
@@ -568,21 +589,17 @@ class _CourseHubPageState extends State<CourseHubPage> {
       leadingWidth: 76,
       leading: Padding(
         padding: const EdgeInsets.only(left: 18, top: 8, bottom: 8),
-        child: Tooltip(
-          message: 'Voltar',
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.secondaryContainer,
-              shape: BoxShape.circle,
-            ),
-            child: MediaQuery.withClampedTextScaling(
-              maxScaleFactor: 1,
-              child: CupertinoNavigationBarBackButton(
-                previousPageTitle: '',
-                color: Theme.of(context).colorScheme.onSecondaryContainer,
-                onPressed: () => Navigator.of(context).maybePop(),
-              ),
-            ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.secondaryContainer,
+            shape: BoxShape.circle,
+          ),
+          child: IconButton(
+            key: const Key('course-hub-back'),
+            tooltip: 'Voltar',
+            color: Theme.of(context).colorScheme.onSecondaryContainer,
+            onPressed: () => Navigator.of(context).maybePop(),
+            icon: const Icon(Icons.arrow_back),
           ),
         ),
       ),
@@ -687,7 +704,7 @@ class _CourseHubPageState extends State<CourseHubPage> {
     return Container(
       key: const Key('course-hub-pending-action'),
       padding: const EdgeInsets.all(16),
-      decoration: _panelDecoration(context, radius: 18),
+      decoration: _panelDecoration(context),
       child: compact
           ? Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -784,13 +801,36 @@ class _CourseHubPageState extends State<CourseHubPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              _course.policyLabel,
-              style: Theme.of(context).textTheme.titleMedium,
+            Row(
+              children: [
+                Text(
+                  _course.policyLabel,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(width: 6),
+                Tooltip(
+                  key: const Key('course-hub-no-call-tooltip'),
+                  message:
+                      'Sem chamada: esta disciplina não exige registro de presença.',
+                  child: Icon(
+                    Icons.info_outline,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Frequência: não se aplica. Atividades e materiais continuam disponíveis.',
+            Tooltip(
+              key: const Key('course-hub-no-attendance-tooltip'),
+              message:
+                  'Frequência: não se aplica. Atividades e materiais continuam disponíveis.',
+              child: Text(
+                'Frequência: não se aplica. Atividades e materiais continuam disponíveis.',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(height: 1.3),
+              ),
             ),
           ],
         ),
@@ -939,6 +979,10 @@ class _CourseHubPageState extends State<CourseHubPage> {
   }
 }
 
+class _CloseHubIntent extends Intent {
+  const _CloseHubIntent();
+}
+
 class _Panel extends StatelessWidget {
   const _Panel({required this.child, super.key});
   final Widget child;
@@ -987,7 +1031,7 @@ class _HubSection extends StatelessWidget {
   );
 }
 
-BoxDecoration _panelDecoration(BuildContext context, {double radius = 22}) =>
+BoxDecoration _panelDecoration(BuildContext context, {double radius = 18}) =>
     BoxDecoration(
       color: Theme.of(context).colorScheme.surface.withValues(alpha: .84),
       borderRadius: BorderRadius.circular(radius),

@@ -12,6 +12,7 @@ enum PythonBackendError {
   appCheckInvalid,
   credentialsUnavailable,
   destructiveConflict,
+  duplicateCourse,
   invalidResponse,
   moodleAuthorizationRequired,
   rateLimited,
@@ -3683,6 +3684,9 @@ final class PythonBackendTransport
     }
     if (status == 409 && error == 'app_check_replayed') {
       return const PythonBackendException(PythonBackendError.replayed);
+    }
+    if (status == 409 && error == 'course_code_conflict') {
+      return const PythonBackendException(PythonBackendError.duplicateCourse);
     }
     if (status == 409 &&
         error == 'schedule_destructive_conflict' &&

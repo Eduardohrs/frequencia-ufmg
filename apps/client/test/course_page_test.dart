@@ -227,7 +227,7 @@ void main() {
       expect(ended['operation_id'], started['operation_id']);
       expect(ended['course_id'], 'course-1');
       expect(ended['duration_ms'], isA<int>());
-      await tester.pageBack();
+      await tester.tap(find.byKey(const Key('course-hub-back')));
       await tester.pumpAndSettle();
       expect(find.text('Minha POO'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
@@ -2310,7 +2310,7 @@ void main() {
       find.text('Não foi possível atualizar os materiais.'),
       findsOneWidget,
     );
-    await tester.pageBack();
+    await tester.tap(find.byKey(const Key('course-hub-back')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('course-card-course-1')), findsOneWidget);
   });
@@ -2937,7 +2937,7 @@ void main() {
       await tester.tap(find.byKey(const Key('course-card-course-1')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('academic-sync-indicator')), findsNothing);
-      await tester.pageBack();
+      await tester.tap(find.byKey(const Key('course-hub-back')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('academic-sync-indicator')), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
@@ -3888,7 +3888,7 @@ void main() {
       expect(find.byKey(const Key('course-hub-open-schedule')), findsOneWidget);
       expect(find.byKey(const Key('course-hub-materials')), findsOneWidget);
       expect(tester.takeException(), isNull, reason: 'width $width');
-      await tester.pageBack();
+      await tester.tap(find.byKey(const Key('course-hub-back')));
       await tester.pumpAndSettle();
     }
   });
@@ -4285,6 +4285,170 @@ void main() {
       expect(draft.formData['modality'], 'in_person');
       expect(draft.formData['attendance_policy'], 'required');
       expect(logger.events, contains('course_draft_saved'));
+    },
+  );
+
+  testWidgets(
+    'create reports a friendly message when the backend rejects a duplicate code',
+    (tester) async {
+      final repository = _FakeCourseRepository()
+        ..saveError = const PythonBackendException(
+          PythonBackendError.duplicateCourse,
+        );
+      final gateway = _DraftUFMGGateway();
+      final logger = _RecordingAppLogger();
+      await tester.pumpWidget(
+        _appWithGateway(repository, user, now, gateway, logger),
+      );
+      await tester.pumpAndSettle();
+      await _fillNewCourse(tester);
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Já existe uma disciplina com esse código.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Código:'), findsNothing);
+      expect(find.textContaining('invalidResponse'), findsNothing);
+      expect(gateway.savedDrafts, hasLength(1));
+      expect(gateway.savedDrafts.single.lastError, 'duplicateCourse');
+      expect(logger.events, contains('course_draft_saved'));
+    },
+  );
+
+  testWidgets(
+    'edit reports the friendly duplicate-code message without an error suffix',
+    (tester) async {
+      final repo = _FakeCourseRepository(
+        courses: [
+          CourseRecord(
+            id: 'course-1',
+            code: 'DCC203',
+            name: 'Programação Orientada a Objetos',
+            workload: 60,
+            term: '2026-2',
+            createdAt: now,
+            updatedAt: now,
+          ),
+        ],
+      );
+      await tester.pumpWidget(_app(repo, user, now));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('course-card-course-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('course-hub-edit-name')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('course-code')), 'DCC999');
+      repo.saveError = const PythonBackendException(
+        PythonBackendError.duplicateCourse,
+      );
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Já existe uma disciplina com esse código.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Código:'), findsNothing);
+      expect(find.textContaining('invalidResponse'), findsNothing);
+    },
+  );
+
+  testWidgets('hub renders a single back button', (tester) async {
+    await tester.pumpWidget(
+      _NavigationApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
+        home: _hubPage(_hubCourse(now), now),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-hub-back')), findsOneWidget);
+    expect(find.byTooltip('Voltar'), findsOneWidget);
+  });
+
+  testWidgets('escape closes the course hub', (tester) async {
+    final course = _hubCourse(now);
+    await tester.pumpWidget(
+      _NavigationApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: FilledButton(
+                key: const Key('open-hub'),
+                onPressed: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => _hubPage(course, now),
+                  ),
+                ),
+                child: const Text('Abrir disciplina'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('open-hub')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-hub-section-grid')), findsOneWidget);
+    Focus.of(tester.element(find.byIcon(Icons.arrow_back))).requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-hub-section-grid')), findsNothing);
+    expect(find.byKey(const Key('open-hub')), findsOneWidget);
+  });
+
+  testWidgets('no-attendance course explains the policy with tooltips', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _NavigationApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
+        home: _hubPage(
+          _hubCourse(now, policy: CourseAttendancePolicy.noCall),
+          now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Sem chamada'), findsOneWidget);
+    expect(find.byKey(const Key('course-hub-no-call-tooltip')), findsOneWidget);
+    expect(
+      find.byKey(const Key('course-hub-no-attendance-tooltip')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'materials panel offers a retry when the catalog load times out',
+    (tester) async {
+      final gateway = _UFMGGateway()
+        ..pendingCatalog = Completer<PythonMoodleContentDiscovery>().future;
+      await tester.pumpWidget(
+        _NavigationApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
+          home: _hubPage(
+            _hubCourse(now),
+            now,
+            gateway: gateway,
+            materialsLoadTimeout: const Duration(milliseconds: 50),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      expect(
+        find.text('Não foi possível atualizar os materiais.'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('course-hub-retry-materials')),
+        findsOneWidget,
+      );
     },
   );
 
@@ -5171,6 +5335,37 @@ Widget _app(
     now: () => now,
     idGenerator: () => 'course-1',
   ),
+);
+
+CourseRecord _hubCourse(
+  DateTime now, {
+  CourseAttendancePolicy policy = CourseAttendancePolicy.required,
+}) => CourseRecord(
+  id: 'course-1',
+  code: 'DCC203',
+  name: 'POO',
+  workload: 60,
+  term: '2026-2',
+  attendancePolicy: policy,
+  createdAt: now,
+  updatedAt: now,
+);
+
+Widget _hubPage(
+  CourseRecord course,
+  DateTime now, {
+  BackendUFMGSessionGateway? gateway,
+  Duration materialsLoadTimeout = const Duration(seconds: 20),
+}) => CourseHubPage(
+  course: course,
+  allCourses: [course],
+  courseRepository: _FakeCourseRepository(),
+  meetingRepository: _FakeMeetingRepository(),
+  sessionRepository: _FakeSessionRepository(),
+  ufmgSessionGateway: gateway ?? _UFMGGateway(),
+  logger: _RecordingAppLogger(),
+  now: () => now,
+  materialsLoadTimeout: materialsLoadTimeout,
 );
 
 final class _FakeCourseRepository implements CourseRepository {
