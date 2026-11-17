@@ -316,6 +316,9 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   bool _loadFailed = false;
   String? _deletingId;
   final _savingIds = <String>{};
+  // 55.33: busca de disciplinas na lista (código, nome ou apelido).
+  final _searchController = TextEditingController();
+  String _courseQuery = '';
   int _pastPendingCount = 0;
   _PendingAttendance? _nextPastPending;
   Map<String, List<SessionRecord>> _sessionsByCourse = const {};
@@ -447,6 +450,7 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
     _checkpointSchedulingAllowed = false;
     _dayWatchTimer?.cancel();
     _offlineBannerTimer?.cancel();
+    _searchController.dispose();
     _navigation?.unbind(this);
     _automaticAttendance?.removeListener(_onAutomaticConfiguration);
     if (!identical(_automaticAttendance, widget.attendanceExperience)) {
@@ -1918,28 +1922,77 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
         ),
       );
     }
+    final visible = _visibleCourses();
     return AppStateTransition(
       stateKey: const ValueKey('courses-loaded'),
       child: Column(
         children: [
-          for (var index = 0; index < _courses.length; index++) ...[
-            if (index > 0) const SizedBox(height: 10),
-            _CourseTile(
-              course: _courses[index],
-              sessions: _sessionsByCourse[_courses[index].id],
-              dates: _datesByCourse[_courses[index].id] ?? [],
-              now: widget.now(),
-              deleting: _deletingId == _courses[index].id,
-              saving: _savingIds.contains(_courses[index].id),
-              onOpen: () => _openCourseHub(_courses[index]),
-              onEdit: () => _openEditor(_courses[index]),
-              onDelete: () => _confirmDelete(_courses[index]),
+          if (_courses.length >= 2) ...[
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: TextField(
+                key: const Key('course-search'),
+                controller: _searchController,
+                textInputAction: TextInputAction.search,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search),
+                  hintText: 'Buscar por código, nome ou apelido',
+                  isDense: true,
+                ),
+                onChanged: (value) => setState(() => _courseQuery = value),
+              ),
             ),
           ],
+          if (visible.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Text('Nenhuma disciplina encontrada para a busca.'),
+            )
+          else
+            for (var index = 0; index < visible.length; index++) ...[
+              if (index > 0) const SizedBox(height: 10),
+              _CourseTile(
+                course: visible[index],
+                sessions: _sessionsByCourse[visible[index].id],
+                dates: _datesByCourse[visible[index].id] ?? [],
+                now: widget.now(),
+                deleting: _deletingId == visible[index].id,
+                saving: _savingIds.contains(visible[index].id),
+                onOpen: () => _openCourseHub(visible[index]),
+                onEdit: () => _openEditor(visible[index]),
+                onDelete: () => _confirmDelete(visible[index]),
+              ),
+            ],
         ],
       ),
     );
   }
+
+  List<CourseRecord> _visibleCourses() {
+    final query = _normalizeText(_courseQuery.trim());
+    if (query.isEmpty) return _courses;
+    return _courses
+        .where((course) => _courseMatchesQuery(course, query))
+        .toList();
+  }
+
+  static bool _courseMatchesQuery(CourseRecord course, String query) {
+    final haystack = _normalizeText(
+      '${course.code} ${course.name} ${course.nickname ?? ''} ${course.displayName}',
+    );
+    return query
+        .split(RegExp(r'\s+'))
+        .every((token) => haystack.contains(token));
+  }
+
+  static String _normalizeText(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[àáâãäå]'), 'a')
+      .replaceAll(RegExp(r'[èéêë]'), 'e')
+      .replaceAll(RegExp(r'[ìíîï]'), 'i')
+      .replaceAll(RegExp(r'[òóôõö]'), 'o')
+      .replaceAll(RegExp(r'[ùúûü]'), 'u')
+      .replaceAll('ç', 'c');
 }
 
 class _UpcomingDates extends StatelessWidget {
@@ -2124,6 +2177,7 @@ class _SectionHeader extends StatelessWidget {
         final action = TextButton.icon(
           key: const Key('add-course'),
           onPressed: onAdd,
+          style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
           icon: const Icon(Icons.add_rounded),
           label: Text(
             constraints.maxWidth < 500 ? 'Adicionar' : 'Adicionar disciplina',
@@ -2349,7 +2403,11 @@ class _MessageState extends StatelessWidget {
             Text(description!, textAlign: TextAlign.center),
           ],
           const SizedBox(height: 20),
-          OutlinedButton(onPressed: onAction, child: Text(actionLabel)),
+          OutlinedButton(
+            onPressed: onAction,
+            style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+            child: Text(actionLabel),
+          ),
         ],
       ),
     ),
