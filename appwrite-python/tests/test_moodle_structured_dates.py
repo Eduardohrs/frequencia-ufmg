@@ -2404,3 +2404,84 @@ def test_moodle_acs_rejects_every_other_origin_or_path(url: str, reason: str) ->
     with pytest.raises(InvalidMoodleResponse) as error:
         _require_moodle_acs(url, "/20262")
     assert error.value.reason == reason
+
+
+def _raw_event(event_id: int, name: str, timestart: int, module: str = "assign") -> dict:
+    return {
+        "id": event_id,
+        "name": name,
+        "timestart": timestart,
+        "course": {
+            "id": 3701,
+            "shortname": "DCC203 - POO",
+            "fullname": "Programação Orientada a Objetos",
+        },
+        "modulename": module,
+    }
+
+
+def _calendar_call(events: list[dict]) -> dict:
+    return {"error": False, "data": {"weeks": [{"days": [{"events": events}]}] if events else []}}
+
+
+def _ajax_response(calls: list[dict]) -> _Response:
+    return _Response(
+        json.dumps(calls).encode(),
+        "https://virtual.ufmg.br/20262/lib/ajax/service.php",
+        content_type="application/json",
+    )
+
+
+def test_client_splits_a_five_month_fetch_into_three_bounded_ajax_batches() -> None:
+    ev910 = _raw_event(910, "Trabalho 1", 1792710000)
+    ev911 = _raw_event(911, "Quiz 2", 1793314800, module="quiz")
+    ev912 = _raw_event(912, "Prova 1", 1794000000, module="quiz")
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _ajax_response([_calendar_call([ev910]), _calendar_call([ev911])]),
+            _ajax_response([_calendar_call([ev910]), _calendar_call([ev912])]),
+            _ajax_response([_calendar_call([])]),
+        ]
+    )
+    client = MoodleStructuredDatesClient(opener=opener)
+
+    events = client.fetch(
+        "private-ltpa-token", term="2026-2", months=[(2026, m) for m in range(7, 12)]
+    )
+
+    assert [event["source_id"] for event in events] == ["910", "911", "912"]
+    ajax_requests = opener.requests[2:]
+    assert len(ajax_requests) == 3
+    bodies = [json.loads(request.data) for request, _ in ajax_requests]
+    assert [len(body) for body in bodies] == [2, 2, 1]
+    assert [call["args"]["month"] for call in bodies[0]] == [7, 8]
+    assert [call["args"]["month"] for call in bodies[1]] == [9, 10]
+    assert [call["args"]["month"] for call in bodies[2]] == [11]
+    assert all(
+        call["methodname"] == "core_calendar_get_calendar_monthly_view"
+        for body in bodies
+        for call in body
+    )
+
+
+def test_client_rejects_conflicting_duplicate_events_across_batches() -> None:
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _ajax_response(
+                [_calendar_call([_raw_event(910, "Nome A", 1792710000)]), _calendar_call([])]
+            ),
+            _ajax_response([_calendar_call([_raw_event(910, "Nome B", 1792710000)])]),
+        ]
+    )
+    client = MoodleStructuredDatesClient(opener=opener)
+
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        client.fetch(
+            "private-ltpa-token", term="2026-2", months=[(2026, 10), (2026, 11), (2026, 12)]
+        )
+
+    assert caught.value.reason == "calendar_event_conflict"

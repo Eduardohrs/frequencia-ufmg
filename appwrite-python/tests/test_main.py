@@ -2214,7 +2214,12 @@ def test_moodle_date_import_factory_composes_only_server_side_dependencies(
     monkeypatch.setattr(function, "AcademicDateRepository", lambda value: values["dates"])
 
     class Service:
-        def __init__(self, *dependencies: object, telemetry: object = None) -> None:
+        def __init__(
+            self,
+            *dependencies: object,
+            calendar_state: object = None,
+            telemetry: object = None,
+        ) -> None:
             nonlocal captured
             captured = dependencies
 

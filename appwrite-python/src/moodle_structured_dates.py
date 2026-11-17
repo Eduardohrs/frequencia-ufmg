@@ -22,6 +22,7 @@ from moodle_activities import InvalidActivityPage, parse_activity_page
 from ufmg_session_store import UFMGReauthenticationRequired
 
 MAX_RESPONSE_BYTES = 1_048_576
+CALENDAR_BATCH_MONTHS = 2
 MAX_EVENTS = 500
 MAX_MONTHS = 12
 MAX_COURSES = 50
@@ -140,26 +141,36 @@ class MoodleStructuredDatesClient:
     ) -> list[dict[str, str]]:
         _validate_inputs(token, months)
         root, ajax_path, sesskey = self._connect(token, term)
-        calls = [
-            {
-                "index": index,
-                "methodname": "core_calendar_get_calendar_monthly_view",
-                "args": {
-                    "year": year,
-                    "month": month,
-                    "courseid": 1,
-                    "categoryid": 0,
-                    "includenavigation": False,
-                    "mini": False,
-                    "day": 1,
-                },
-            }
-            for index, (year, month) in enumerate(months)
-        ]
-        return _parse_calendar(
-            self._ajax(root, ajax_path, sesskey, calls),
-            len(calls),
-        )
+        # One ajax call per small batch keeps each response below
+        # MAX_RESPONSE_BYTES instead of failing the whole term at once.
+        events: dict[str, dict[str, str]] = {}
+        for start in range(0, len(months), CALENDAR_BATCH_MONTHS):
+            chunk = months[start : start + CALENDAR_BATCH_MONTHS]
+            calls = [
+                {
+                    "index": index,
+                    "methodname": "core_calendar_get_calendar_monthly_view",
+                    "args": {
+                        "year": year,
+                        "month": month,
+                        "courseid": 1,
+                        "categoryid": 0,
+                        "includenavigation": False,
+                        "mini": False,
+                        "day": 1,
+                    },
+                }
+                for index, (year, month) in enumerate(chunk)
+            ]
+            for event in _parse_calendar(
+                self._ajax(root, ajax_path, sesskey, calls),
+                len(calls),
+            ):
+                previous = events.get(event["source_id"])
+                if previous is not None and previous != event:
+                    raise InvalidMoodleResponse("calendar_event_conflict")
+                events[event["source_id"]] = event
+        return sorted(events.values(), key=lambda item: (item["due_at"], item["source_id"]))
 
     def discover(
         self,
