@@ -972,9 +972,23 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  entry.session.title ?? 'Aula de ${entry.course.displayName}',
-                  style: Theme.of(sheet).textTheme.titleLarge,
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        entry.session.title ??
+                            'Aula de ${entry.course.displayName}',
+                        style: Theme.of(sheet).textTheme.titleLarge,
+                      ),
+                    ),
+                    IconButton(
+                      key: const Key('calendar-entry-close'),
+                      tooltip: 'Fechar',
+                      onPressed: () => Navigator.pop(sheet),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
                 ),
                 Text(entry.course.displayName),
                 Text(
@@ -994,7 +1008,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                     ],
                   )
                 else
-                  Text(_typeLabel(entry.type)),
+                  Text('Tipo: ${_dateKindLabel(entry.session.date?.kind)}'),
                 if (widget.onOpenActivities != null &&
                     entry.session.title != null)
                   TextButton(
@@ -1290,4 +1304,11 @@ String _typeLabel(CalendarEntryType value) => switch (value) {
   CalendarEntryType.lesson => 'Aulas',
   CalendarEntryType.assessment => 'Avaliações',
   CalendarEntryType.deadline => 'Entregas e prazos',
+};
+
+String _dateKindLabel(String? kind) => switch (kind) {
+  'assessment' => 'Prova',
+  'quiz' => 'Questionário',
+  'assignment' => 'Trabalho',
+  _ => 'Evento',
 };
