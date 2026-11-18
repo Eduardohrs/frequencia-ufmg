@@ -633,14 +633,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                       Expanded(
                         child: Tooltip(
                           message:
-                              'Filtros ativos: ${[
-                                if (_courseId != null)
-                                  widget.courses
-                                      .firstWhere((c) => c.id == _courseId)
-                                      .displayName,
-                                if (_type != CalendarEntryType.all)
-                                  _typeLabel(_type),
-                              ].join(', ')}',
+                              'Filtros ativos: ${[if (_courseId != null) widget.courses.firstWhere((c) => c.id == _courseId).displayName, if (_type != CalendarEntryType.all) _typeLabel(_type)].join(', ')}',
                           child: Text(
                             [
                               if (_courseId != null)
