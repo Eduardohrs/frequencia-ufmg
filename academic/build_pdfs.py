@@ -313,7 +313,7 @@ def product():
     section(
         s,
         "Encapsulamento e alteração controlada",
-        "Código, chamadas e registros são expostos por propriedades de leitura. A coleção sai como tupla; Registro e Atividade são imutáveis. <b>Nome</b> tem getter e setter com validação; no fluxo persistente, F07 grava antes de usar o setter. Não há setter para faltas, data, código ou título, pois uma alteração direta contornaria as regras ou a chave no banco. Presenças e atividades passam por operações próprias que validam e persistem antes de publicar a mudança.",
+        "Código, chamadas e registros são expostos por propriedades de leitura. A coleção sai como tupla; Registro e Atividade são imutáveis. Em modo SQLite, cadastro, busca e lista devolvem a mesma fachada persistente: registrar presença ou mudar o nome por qualquer desses caminhos grava antes de alterar a memória. <b>Nome</b> é validado; não há setter para faltas, data, código ou título, pois uma alteração direta contornaria as regras ou a chave no banco. Presenças e atividades passam por operações próprias que validam e persistem antes de publicar a mudança.",
     )
 
     page(s, "06 · Interações", "Sequências do fluxo central")
@@ -607,9 +607,9 @@ def verification():
             ),
             (
                 "C09",
-                "Simula OSError ao gravar ausência no SQLite.",
+                "T07: OSError ao gravar ausência em DB02; T19: falha no menu com DEMO01.",
                 "Registro pendente na memória e no arquivo; A permanece 0.",
-                "OSError; memória e banco reaberto conservaram pendente; menu informou a falha.",
+                "T07: memória e banco reaberto conservaram pendente; T19: menu informou a falha.",
                 "Aprovado",
                 "T07 / T19",
             ),
@@ -685,7 +685,7 @@ def verification():
         [
             (
                 "C16",
-                "Adiciona prova P1 em 04/11 e reabre SQLite temporário.",
+                "Adiciona prova P1 em 03/11, fora das datas de aula, e reabre SQLite temporário.",
                 "Atividade ligada a DEMO01 persiste; grade e resumo iguais.",
                 "Novo controle recuperou atividade; registros e resumo iguais ao antes.",
                 "Aprovado",
@@ -694,8 +694,8 @@ def verification():
             (
                 "C17",
                 "Código inexistente, data inválida, tipo seminário ou título vazio.",
-                "Rejeita cada entrada; agenda continua vazia.",
-                "ValueError em cada subcaso; agenda vazia.",
+                "Rejeita cada entrada; agenda, grade e totais permanecem iguais.",
+                "ValueError em cada subcaso; agenda vazia, registros e resumo iguais.",
                 "Aprovado",
                 "T13",
             ),
@@ -703,7 +703,7 @@ def verification():
                 "C18",
                 "Simula OSError ao salvar prova válida.",
                 "Agenda vazia na memória e banco reaberto; frequência intocada.",
-                "OSError; memória e banco reaberto continuaram vazios.",
+                "OSError; agenda vazia na memória e no banco, registros e resumo iguais.",
                 "Aprovado",
                 "T13",
             ),
@@ -740,9 +740,9 @@ def verification():
         [
             (
                 "C21",
-                "Troca o nome para Nome novo e reabre o banco.",
+                "Muda o nome pelo setter da fachada e pelo controle; reabre o banco.",
                 "Novo nome persiste; código, grade e faltas não mudam.",
-                "Memória e novo controle mostram Nome novo; grade igual.",
+                "Ambos os caminhos persistiram; novo controle mostra Nome novo; grade igual.",
                 "Aprovado",
                 "T17",
             ),
@@ -750,7 +750,7 @@ def verification():
                 "C22",
                 "Tenta nome vazio, só espaços ou valor não textual.",
                 "Rejeita cada entrada; nome Original continua.",
-                "ValueError nos subcasos; nome Original preservado.",
+                "ValueError via controle e setter; nome Original preservado.",
                 "Aprovado",
                 "T18",
             ),
@@ -758,7 +758,7 @@ def verification():
                 "C23",
                 "Simula OSError ao gravar um nome válido.",
                 "Nome Original na memória e no banco reaberto.",
-                "OSError; ambos conservaram Original.",
+                "OSError via controle e setter; memória e SQLite conservaram Original.",
                 "Aprovado",
                 "T18",
             ),
@@ -841,16 +841,16 @@ def verification():
     section(
         s,
         "Defeitos identificados e corrigidos",
-        "Os dois casos abaixo surgiram durante a integração. Após corrigir, repetimos os cenários e os demais testes; nenhum cenário da matriz ficou pendente na última execução.",
+        "Os casos abaixo surgiram durante a integração e a revisão. Após corrigir, repetimos os cenários e os demais testes; nenhum cenário da matriz ficou pendente na última execução.",
     )
     s.append(
         table(
             ["Problema", "Como reproduzir e consequência", "Correção e reexecução"],
             [
                 (
-                    "Retorno sem fachada",
-                    "Em banco novo, cadastrar disciplina e registrar presença no objeto devolvido: antes mudava a memória, mas a reabertura mostrava pendente.",
-                    "O cadastro agora devolve a fachada persistente. T04 e T11 repetem cadastro, registro e leitura.",
+                    "Fachadas incompletas",
+                    "Em SQLite, cadastrar ou listar disciplinas e registrar presença: sem fachada em todos os caminhos, a reabertura pode mostrar pendente. Atribuir nome na fachada podia ficar só na memória local.",
+                    "Cadastro, busca e lista agora usam fachada persistente; o setter de nome grava. T04, T11, T17 e T18 cobrem os caminhos.",
                 ),
                 (
                     "Memória antes do commit",

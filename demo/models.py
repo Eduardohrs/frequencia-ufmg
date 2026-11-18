@@ -249,6 +249,12 @@ class ControleAcademico:
 
     @property
     def disciplinas(self):
+        """Lista disciplinas sem permitir que alterações ignorem o SQLite."""
+        if self._persistente:
+            return tuple(
+                _DisciplinaPersistente(disciplina, self)
+                for disciplina in self._disciplinas.values()
+            )
         return tuple(self._disciplinas.values())
 
     @property
@@ -348,12 +354,22 @@ class ControleAcademico:
 class _DisciplinaPersistente:
     """Fachada que grava uma alteração somente depois da validação de domínio."""
 
+    __slots__ = ("_disciplina", "_controle")
+
     def __init__(self, disciplina, controle):
         self._disciplina = disciplina
         self._controle = controle
 
     def __getattr__(self, nome):
         return getattr(self._disciplina, nome)
+
+    @property
+    def nome(self):
+        return self._disciplina.nome
+
+    @nome.setter
+    def nome(self, valor):
+        self._controle.renomear_disciplina(self._disciplina.codigo, valor)
 
     def registrar_presenca(self, *args, **kwargs):
         return self._disciplina.registrar_presenca(

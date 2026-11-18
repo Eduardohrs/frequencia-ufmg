@@ -222,6 +222,15 @@ def sequence_diagram(steps, labels=None):
     for n, (source, target, label) in enumerate(steps):
         y = top - 27 * (n + 1)
         d.add(Line(xs[source], y, xs[target], y, strokeColor=ACCENT, strokeWidth=1.1))
+        direction = 1 if target > source else -1
+        tip = xs[target]
+        d.add(
+            Polygon(
+                [tip, y, tip - direction * 5, y + 2.8, tip - direction * 5, y - 2.8],
+                fillColor=ACCENT,
+                strokeColor=ACCENT,
+            )
+        )
         d.add(
             String(
                 (xs[source] + xs[target]) / 2,

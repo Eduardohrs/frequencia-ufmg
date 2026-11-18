@@ -21,11 +21,22 @@ class TesteFrequencia(unittest.TestCase):
             controle = ControleAcademico(persistente=True, caminho_banco=caminho)
             disciplina = controle.criar_disciplina("DEMO01", "Nome antigo", 1, 2, DIAS)
             grade_antes = disciplina.registros
+            disciplina.nome = " Nome pelo setter "
+            controle.disciplinas[0].nome = "Nome pela lista"
+            controle.obter_disciplina("DEMO01").nome = "Nome pela busca"
+            self.assertEqual(
+                ControleAcademico(persistente=True, caminho_banco=caminho)
+                .obter_disciplina("DEMO01")
+                .nome,
+                "Nome pela busca",
+            )
             controle.renomear_disciplina("demo01", " Nome novo ")
             self.assertEqual(disciplina.nome, "Nome novo")
             self.assertEqual(disciplina.registros, grade_antes)
             reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
             self.assertEqual(reaberto.obter_disciplina("DEMO01").nome, "Nome novo")
+            with self.assertRaises(AttributeError):
+                disciplina.codigo = "OUTRA"
 
     def test_renomear_invalido_ou_falha_de_banco_preserva_nome(self):
         with tempfile.TemporaryDirectory() as pasta:
@@ -36,6 +47,8 @@ class TesteFrequencia(unittest.TestCase):
                 with self.subTest(invalido=invalido):
                     with self.assertRaises(ValueError):
                         controle.renomear_disciplina("DEMO01", invalido)
+                    with self.assertRaises(ValueError):
+                        disciplina.nome = invalido
                     self.assertEqual(disciplina.nome, "Original")
             puro = Disciplina("D", "Original", 1, 2, DIAS)
             with self.assertRaises(ValueError):
@@ -48,6 +61,13 @@ class TesteFrequencia(unittest.TestCase):
                 self.assertRaises(OSError),
             ):
                 controle.renomear_disciplina("DEMO01", "Novo")
+            with (
+                patch(
+                    "database.atualizar_nome", side_effect=OSError("disco indisponível")
+                ),
+                self.assertRaises(OSError),
+            ):
+                disciplina.nome = "Novo"
             self.assertEqual(disciplina.nome, "Original")
             self.assertEqual(
                 ControleAcademico(persistente=True, caminho_banco=caminho)
@@ -85,10 +105,13 @@ class TesteFrequencia(unittest.TestCase):
             controle = ControleAcademico(persistente=True, caminho_banco=caminho)
             disciplina = controle.criar_disciplina("DEMO01", "Teste", 1, 2, DIAS)
             antes = (disciplina.registros, disciplina.resumo())
-            atividade = controle.adicionar_atividade("demo01", DIAS[1], "prova", "P1")
+            atividade = controle.adicionar_atividade(
+                "demo01", date(2026, 11, 3), "prova", "P1"
+            )
             self.assertEqual(
                 (atividade.codigo_disciplina, atividade.titulo), ("DEMO01", "P1")
             )
+            self.assertEqual(atividade.dia, date(2026, 11, 3))
             self.assertEqual((disciplina.registros, disciplina.resumo()), antes)
             reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
             self.assertEqual(reaberto.atividades, (atividade,))
@@ -98,7 +121,8 @@ class TesteFrequencia(unittest.TestCase):
         with tempfile.TemporaryDirectory() as pasta:
             caminho = Path(pasta) / "teste.db"
             controle = ControleAcademico(persistente=True, caminho_banco=caminho)
-            controle.criar_disciplina("DEMO01", "Teste", 1, 2, DIAS)
+            disciplina = controle.criar_disciplina("DEMO01", "Teste", 1, 2, DIAS)
+            frequencia_antes = (disciplina.registros, disciplina.resumo())
             for codigo, dia, tipo, titulo in [
                 ("OUTRA", DIAS[0], "prova", "P1"),
                 ("DEMO01", "02/11/2026", "prova", "P1"),
@@ -109,6 +133,9 @@ class TesteFrequencia(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         controle.adicionar_atividade(codigo, dia, tipo, titulo)
                     self.assertEqual(controle.atividades, ())
+                    self.assertEqual(
+                        (disciplina.registros, disciplina.resumo()), frequencia_antes
+                    )
             with (
                 patch(
                     "database.salvar_atividade",
@@ -118,6 +145,9 @@ class TesteFrequencia(unittest.TestCase):
             ):
                 controle.adicionar_atividade("DEMO01", DIAS[0], "prova", "P1")
             self.assertEqual(controle.atividades, ())
+            self.assertEqual(
+                (disciplina.registros, disciplina.resumo()), frequencia_antes
+            )
             self.assertEqual(
                 ControleAcademico(persistente=True, caminho_banco=caminho).atividades,
                 (),
@@ -155,7 +185,8 @@ class TesteFrequencia(unittest.TestCase):
             disciplina = primeiro.criar_disciplina(
                 "DB01", "Persistente", 1, 1, [DIAS[0]]
             )
-            disciplina.registrar_presenca(DIAS[0], "presente")
+            primeiro.disciplinas[0].registrar_presenca(DIAS[0], "presente")
+            self.assertEqual(disciplina.registros[0].situacao, "presente")
             segundo = ControleAcademico(persistente=True, caminho_banco=caminho)
             recuperada = segundo.obter_disciplina("DB01")
             self.assertEqual(recuperada.nome, "Persistente")
