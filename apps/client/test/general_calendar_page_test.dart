@@ -656,6 +656,59 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'entry detail has a visible close button and names the deadline kind',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GeneralCalendarPage(
+            courses: courses,
+            repository: _Repository({
+              'poo': [_session('a', DateTime.utc(2026, 9, 16, 11))],
+            }),
+            datesByCourse: {
+              'poo': [
+                PythonMoodleDate(
+                  id: 'd1',
+                  courseId: 'poo',
+                  courseCode: 'DCC203',
+                  title: 'Entrega 1',
+                  dueAt: DateTime.utc(2026, 9, 16, 23, 59),
+                  kind: 'assignment',
+                ),
+                PythonMoodleDate(
+                  id: 'd2',
+                  courseId: 'poo',
+                  courseCode: 'DCC203',
+                  title: 'Prova 1',
+                  dueAt: DateTime.utc(2026, 9, 17, 23, 59),
+                  kind: 'assessment',
+                ),
+              ],
+            },
+            location: location,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await calendarDisplay(tester, 'Lista');
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Prazo\nEntrega 1'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('calendar-entry-close')), findsOneWidget);
+      expect(find.text('Tipo: Trabalho'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('calendar-entry-close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('calendar-entry-close')), findsNothing);
+      await tester.tap(find.textContaining('Avaliação\nProva 1'));
+      await tester.pumpAndSettle();
+      expect(find.text('Tipo: Prova'), findsOneWidget);
+      expect(find.textContaining('Entregas e prazos'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 CourseRecord _course(String id, String code, DateTime now) => CourseRecord(
