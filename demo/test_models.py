@@ -20,7 +20,11 @@ class TesteFrequencia(unittest.TestCase):
             caminho = Path(pasta) / "teste.db"
             controle = ControleAcademico(persistente=True, caminho_banco=caminho)
             disciplina = controle.criar_disciplina("DEMO01", "Nome antigo", 1, 2, DIAS)
+            disciplina.registrar_presenca(DIAS[0], "ausente")
+            controle.adicionar_atividade("DEMO01", date(2026, 11, 3), "prova", "P1")
             grade_antes = disciplina.registros
+            resumo_antes = disciplina.resumo()
+            atividades_antes = controle.atividades
             disciplina.nome = " Nome pelo setter "
             controle.disciplinas[0].nome = "Nome pela lista"
             controle.obter_disciplina("DEMO01").nome = "Nome pela busca"
@@ -33,8 +37,13 @@ class TesteFrequencia(unittest.TestCase):
             controle.renomear_disciplina("demo01", " Nome novo ")
             self.assertEqual(disciplina.nome, "Nome novo")
             self.assertEqual(disciplina.registros, grade_antes)
+            self.assertEqual(disciplina.resumo(), resumo_antes)
+            self.assertEqual(controle.atividades, atividades_antes)
             reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
             self.assertEqual(reaberto.obter_disciplina("DEMO01").nome, "Nome novo")
+            self.assertEqual(reaberto.obter_disciplina("DEMO01").registros, grade_antes)
+            self.assertEqual(reaberto.obter_disciplina("DEMO01").resumo(), resumo_antes)
+            self.assertEqual(reaberto.atividades, atividades_antes)
             with self.assertRaises(AttributeError):
                 disciplina.codigo = "OUTRA"
 
@@ -43,6 +52,15 @@ class TesteFrequencia(unittest.TestCase):
             caminho = Path(pasta) / "teste.db"
             controle = ControleAcademico(persistente=True, caminho_banco=caminho)
             disciplina = controle.criar_disciplina("DEMO01", "Original", 1, 2, DIAS)
+            with self.assertRaisesRegex(ValueError, "não encontrada"):
+                controle.renomear_disciplina("OUTRA", "Novo")
+            self.assertEqual(disciplina.nome, "Original")
+            self.assertEqual(
+                ControleAcademico(persistente=True, caminho_banco=caminho)
+                .obter_disciplina("DEMO01")
+                .nome,
+                "Original",
+            )
             for invalido in ("", "   ", None):
                 with self.subTest(invalido=invalido):
                     with self.assertRaises(ValueError):
@@ -50,6 +68,12 @@ class TesteFrequencia(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         disciplina.nome = invalido
                     self.assertEqual(disciplina.nome, "Original")
+                    self.assertEqual(
+                        ControleAcademico(persistente=True, caminho_banco=caminho)
+                        .obter_disciplina("DEMO01")
+                        .nome,
+                        "Original",
+                    )
             puro = Disciplina("D", "Original", 1, 2, DIAS)
             with self.assertRaises(ValueError):
                 puro.nome = " "
@@ -61,6 +85,12 @@ class TesteFrequencia(unittest.TestCase):
                 self.assertRaises(OSError),
             ):
                 controle.renomear_disciplina("DEMO01", "Novo")
+            self.assertEqual(
+                ControleAcademico(persistente=True, caminho_banco=caminho)
+                .obter_disciplina("DEMO01")
+                .nome,
+                "Original",
+            )
             with (
                 patch(
                     "database.atualizar_nome", side_effect=OSError("disco indisponível")
@@ -163,6 +193,9 @@ class TesteFrequencia(unittest.TestCase):
         antes = (disciplina.registros, disciplina.resumo())
         with self.assertRaises(ValueError):
             disciplina.registrar_presenca(DIAS[0], "desconhecida", corrigir=True)
+        self.assertEqual((disciplina.registros, disciplina.resumo()), antes)
+        with self.assertRaises(ValueError):
+            disciplina.registrar_presenca(date(2026, 12, 1), "presente", corrigir=True)
         self.assertEqual((disciplina.registros, disciplina.resumo()), antes)
 
     def test_consulta_nao_altera_registros(self):

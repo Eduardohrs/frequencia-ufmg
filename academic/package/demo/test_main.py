@@ -174,6 +174,12 @@ class TesteMenu(unittest.TestCase):
         )
         self.assertEqual(saida.count("Operação rejeitada:"), 4)
         self.assertIn("Encerrado", saida)
+        self.assertEqual(
+            ControleAcademico(
+                persistente=True, caminho_banco=self._db_path
+            ).disciplinas,
+            (),
+        )
 
     def test_fim_de_entrada_e_interrupcao_encerram(self):
         for erro in (EOFError(), KeyboardInterrupt()):
