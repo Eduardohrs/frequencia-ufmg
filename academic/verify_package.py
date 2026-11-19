@@ -49,12 +49,12 @@ def main():
             demo = root / "demo"
             product = root / "relatorio" / "Frequencia_UFMG_Produto_Final.pdf"
             verification = root / "relatorio" / "Frequencia_UFMG_Verificacao.pdf"
-            check_pdf(product, 8, [*[f"F0{i}" for i in range(1, 8)], ARCHIVE.name])
-            check_pdf(verification, 7, [f"F0{i}" for i in range(1, 8)])
+            check_pdf(product, 10, [*[f"F0{i}" for i in range(1, 9)], ARCHIVE.name])
+            check_pdf(verification, 9, [f"F0{i}" for i in range(1, 9)])
             evidence = (root / "evidencias" / "unittest.txt").read_text(
                 encoding="utf-8-sig"
             )
-            assert "Ran 24 tests" in evidence and evidence.rstrip().endswith("OK")
+            assert "Ran 27 tests" in evidence and evidence.rstrip().endswith("OK")
             tests = subprocess.run(
                 ["py", "-m", "unittest", "discover", "-v"],
                 cwd=demo,
@@ -74,20 +74,20 @@ def main():
                     "2",
                     "02/11/2026,04/11/2026",
                     "2",
-                    "DEMO01",
+                    "1",
                     "02/11/2026",
                     "ausente",
                     "5",
-                    "DEMO01",
+                    "1",
                     "03/11/2026",
                     "prova",
                     "P1",
                     "7",
-                    "DEMO01",
+                    "1",
                     "Nome corrigido",
                     "6",
                     "3",
-                    "DEMO01",
+                    "1",
                     "0",
                     "",
                 ]
@@ -107,13 +107,13 @@ def main():
                 "Registro salvo",
                 "Atividade salva",
                 "Disciplina renomeada",
-                "03/11/2026 | DEMO01 | prova | P1",
+                "03/11/2026 | Nome corrigido (DEMO01) | prova | P1",
                 "Nome corrigido",
             ]:
                 assert phrase in run.stdout, (phrase, run.stdout)
             again = subprocess.run(
                 ["py", "main.py"],
-                input="3\nDEMO01\n6\n0\n",
+                input="3\n1\n6\n0\n",
                 cwd=demo,
                 env=env,
                 capture_output=True,
@@ -122,7 +122,32 @@ def main():
             )
             assert again.returncode == 0, again.stderr
             assert "Nome corrigido" in again.stdout and "P1" in again.stdout
-            print("ZIP íntegro; PDFs, 24 testes, fluxo vazio e persistência aprovados.")
+            reset = subprocess.run(
+                ["py", "main.py"],
+                input="8\nAPAGAR\n0\n",
+                cwd=demo,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert reset.returncode == 0, reset.stderr
+            assert "Dados apagados" in reset.stdout
+            vazio = subprocess.run(
+                ["py", "main.py"],
+                input="3\n6\n0\n",
+                cwd=demo,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert vazio.returncode == 0, vazio.stderr
+            assert "Nenhuma disciplina cadastrada" in vazio.stdout
+            assert "Agenda vazia" in vazio.stdout
+            print(
+                "ZIP íntegro; PDFs, 27 testes, escolha por nome, persistência e reset aprovados."
+            )
 
 
 if __name__ == "__main__":

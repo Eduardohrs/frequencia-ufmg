@@ -15,6 +15,33 @@ DIAS = [date(2026, 11, d) for d in (2, 4, 9, 11)]
 
 
 class TesteFrequencia(unittest.TestCase):
+    def test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "teste.db"
+            controle = ControleAcademico(persistente=True, caminho_banco=caminho)
+            disciplina = controle.criar_disciplina("D", "Teste", 1, 2, [DIAS[0]])
+            disciplina.registrar_presenca(DIAS[0], "ausente")
+            controle.adicionar_atividade("D", DIAS[1], "prova", "P1")
+            with database.conexao(caminho) as banco:
+                banco.execute("""
+                    CREATE TRIGGER impedir_reset BEFORE DELETE ON registros
+                    BEGIN SELECT RAISE(ABORT, 'falha simulada'); END
+                """)
+            with self.assertRaises(sqlite3.IntegrityError):
+                controle.apagar_tudo()
+            self.assertEqual(len(controle.disciplinas), 1)
+            self.assertEqual(len(controle.atividades), 1)
+            reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
+            self.assertEqual(reaberto.obter_disciplina("D").resumo()["faltas"], 2)
+            self.assertEqual(len(reaberto.atividades), 1)
+            with database.conexao(caminho) as banco:
+                banco.execute("DROP TRIGGER impedir_reset")
+            controle.apagar_tudo()
+            self.assertEqual((controle.disciplinas, controle.atividades), ((), ()))
+            reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
+            self.assertEqual((reaberto.disciplinas, reaberto.atividades), ((), ()))
+            reaberto.criar_disciplina("D", "Novo começo", 1, 2, [DIAS[0]])
+
     def test_renomear_disciplina_valida_e_persiste(self):
         with tempfile.TemporaryDirectory() as pasta:
             caminho = Path(pasta) / "teste.db"

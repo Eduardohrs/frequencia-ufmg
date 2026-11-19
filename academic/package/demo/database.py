@@ -159,3 +159,15 @@ def listar_atividades(caminho: str | Path = DB_PATH) -> list[tuple]:
             "SELECT id, disciplina_codigo, dia, tipo, titulo FROM atividades "
             "ORDER BY dia, id"
         ).fetchall()
+
+
+def apagar_tudo(caminho: str | Path = DB_PATH) -> None:
+    """Apaga os dados da demo em uma transação, preservando as tabelas.
+
+    As tabelas dependentes são limpas primeiro por causa das chaves estrangeiras.
+    Se qualquer comando falhar, o SQLite desfaz os anteriores.
+    """
+    with conexao(caminho) as banco:
+        banco.execute("DELETE FROM atividades")
+        banco.execute("DELETE FROM registros")
+        banco.execute("DELETE FROM disciplinas")

@@ -40,13 +40,13 @@ class TesteMenu(unittest.TestCase):
                     "2",
                     "02/11/2026",
                     "2",
-                    "DEMO01",
+                    "1",
                     "02/11/2026",
                     "ausente",
                     "0",
                 ]
             )
-        self.assertIn("Não foi possível salvar no banco", saida)
+        self.assertIn("Não foi possível concluir no banco", saida)
         controle = ControleAcademico(persistente=True, caminho_banco=self._db_path)
         registro = controle.obter_disciplina("DEMO01").registros[0]
         self.assertEqual(
@@ -64,22 +64,22 @@ class TesteMenu(unittest.TestCase):
                 "2",
                 "02/11/2026",
                 "5",
-                "DEMO01",
+                "1",
                 "05/11/2026",
                 "trabalho",
                 "Relatório",
                 "5",
-                "DEMO01",
+                "1",
                 "03/11/2026",
                 "prova",
                 "Avaliação 1",
                 "5",
-                "DEMO01",
+                "1",
                 "03/11/2026",
                 "trabalho",
                 "Lista 1",
                 "7",
-                "DEMO01",
+                "1",
                 "Nome corrigido",
                 "6",
                 "0",
@@ -90,17 +90,17 @@ class TesteMenu(unittest.TestCase):
         self.assertIn("Disciplina renomeada", saida)
         self.assertIn("Nome corrigido", saida)
         linhas = (
-            "03/11/2026 | DEMO01 | prova | Avaliação 1",
-            "03/11/2026 | DEMO01 | trabalho | Lista 1",
-            "05/11/2026 | DEMO01 | trabalho | Relatório",
+            "03/11/2026 | Nome corrigido (DEMO01) | prova | Avaliação 1",
+            "03/11/2026 | Nome corrigido (DEMO01) | trabalho | Lista 1",
+            "05/11/2026 | Nome corrigido (DEMO01) | trabalho | Relatório",
         )
         self.assertTrue(all(linha in saida for linha in linhas))
         self.assertEqual(
             [saida.index(linha) for linha in linhas],
             sorted(saida.index(linha) for linha in linhas),
         )
-        reaberto = self.rodar(["6", "0"])
-        self.assertIn("Disciplinas: DEMO01 — Nome corrigido", reaberto)
+        reaberto = self.rodar(["6", "3", "1", "0"])
+        self.assertIn("1 Nome corrigido (DEMO01)", reaberto)
         self.assertTrue(all(linha in reaberto for linha in linhas))
         self.assertEqual(
             [reaberto.index(linha) for linha in linhas],
@@ -149,21 +149,21 @@ class TesteMenu(unittest.TestCase):
                 "2",
                 "02/11/2026,04/11/2026",
                 "4",
-                "D",
+                "1",
                 "02/11/2026",
                 "presente",
                 "2",
-                "D",
+                "1",
                 "02/11/2026",
                 "ausente",
                 "2",
-                "D",
+                "1",
                 "04/11/2026",
                 "presente",
                 "3",
-                "D",
+                "1",
                 "4",
-                "D",
+                "1",
                 "02/11/2026",
                 "presente",
                 "0",
@@ -183,8 +183,11 @@ class TesteMenu(unittest.TestCase):
         saida = self.rodar(
             [
                 "9",
+                "2",
                 "3",
-                "NAOEXISTE",
+                "4",
+                "5",
+                "7",
                 "1",
                 "D",
                 "Teste",
@@ -198,7 +201,8 @@ class TesteMenu(unittest.TestCase):
                 "0",
             ]
         )
-        self.assertEqual(saida.count("Operação rejeitada:"), 4)
+        self.assertEqual(saida.count("Operação rejeitada:"), 3)
+        self.assertEqual(saida.count("Nenhuma disciplina cadastrada. Escolha 1"), 5)
         self.assertIn("Encerrado", saida)
         self.assertEqual(
             ControleAcademico(
@@ -206,6 +210,82 @@ class TesteMenu(unittest.TestCase):
             ).disciplinas,
             (),
         )
+
+    def test_escolha_numerada_por_nome_e_volta_sem_alterar(self):
+        saida = self.rodar(
+            [
+                "1",
+                "FIS01",
+                "Fisica",
+                "1",
+                "2",
+                "02/11/2026",
+                "1",
+                "CIR01",
+                "Circuitos",
+                "1",
+                "2",
+                "03/11/2026",
+                "3",
+                "abc",  # número inválido: rejeita sem consultar
+                "3",
+                "0",  # volta sem consultar
+                "3",
+                "2",  # a lista é ordenada pelo nome: Fisica
+                "0",
+            ]
+        )
+        self.assertIn("1 Circuitos (CIR01)", saida)
+        self.assertIn("2 Fisica (FIS01)", saida)
+        self.assertIn("Escolha um número da lista ou 0 para voltar", saida)
+        self.assertIn("Fisica (FIS01; 1 chamada)", saida)
+        self.assertEqual(
+            len(
+                ControleAcademico(
+                    persistente=True, caminho_banco=self._db_path
+                ).disciplinas
+            ),
+            2,
+        )
+
+    def test_reset_cancelado_e_confirmado_pelo_menu(self):
+        saida = self.rodar(
+            [
+                "1",
+                "D",
+                "Teste",
+                "1",
+                "2",
+                "02/11/2026",
+                "2",
+                "1",
+                "02/11/2026",
+                "ausente",
+                "5",
+                "1",
+                "03/11/2026",
+                "prova",
+                "P1",
+                "8",
+                "NÃO",  # qualquer palavra diferente de APAGAR cancela
+                "8",
+                "",  # cancelar preserva tudo
+                "3",
+                "1",
+                "8",
+                "APAGAR",
+                "3",  # sem disciplinas: orienta a criar
+                "6",  # agenda vazia
+                "0",
+            ]
+        )
+        self.assertEqual(saida.count("Cancelado. Nenhum dado foi alterado."), 2)
+        self.assertIn("Faltas: 2 aulas", saida)
+        self.assertIn("Dados apagados. Você pode criar uma nova disciplina.", saida)
+        self.assertIn("Nenhuma disciplina cadastrada. Escolha 1", saida)
+        self.assertIn("Agenda vazia.", saida)
+        reaberto = ControleAcademico(persistente=True, caminho_banco=self._db_path)
+        self.assertEqual((reaberto.disciplinas, reaberto.atividades), ((), ()))
 
     def test_fim_de_entrada_e_interrupcao_encerram(self):
         for erro in (EOFError(), KeyboardInterrupt()):

@@ -13,13 +13,16 @@ Na primeira execução o programa começa vazio. Use **1 Criar disciplina** para
 nome, chamadas, aulas por encontro e datas da grade. Depois use **2 Registrar
 presença** para escolher uma data e uma situação. **3 Consultar** mostra a
 grade e o saldo de faltas; **4 Corrigir registro** substitui um registro existente.
-Ao reabrir, o menu mostra o código e o nome das disciplinas cadastradas; não é
-preciso memorizar o código. Use **Corrigir** apenas quando a aula já tiver uma
+Quando uma ação precisa de disciplina, o programa mostra seus **nomes numerados**
+e você escolhe o número; o código aparece apenas como referência. Digite 0 nessa
+lista para voltar ao menu. Use **Corrigir** apenas quando a aula já tiver uma
 situação registrada; para uma aula pendente, use **Registrar presença**.
 Use **5 Adicionar atividade** para registrar uma prova ou trabalho vinculado a uma
 disciplina; **6 Ver agenda** lista as atividades por data. A agenda não altera faltas.
 Use **7 Renomear disciplina** para corrigir um nome sem alterar código, aulas ou presenças.
-Os dados são salvos no arquivo `frequencia.db` na pasta da demo e continuam disponíveis ao fechar e reabrir o programa. Para começar novamente, remova esse arquivo.
+Use **8 Recomeçar do zero** para apagar disciplinas, registros e atividades desta demo;
+o programa só apaga após você digitar `APAGAR`. Qualquer outra resposta cancela.
+Os dados são salvos no arquivo `frequencia.db` na pasta da demo e continuam disponíveis ao fechar e reabrir o programa.
 
 ## Base fictícia isolada
 

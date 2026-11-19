@@ -166,7 +166,7 @@ def class_diagram():
             )
         )
 
-    box(5, 170, 135, 60, "ControleAcademico", "criar / obter / agenda")
+    box(5, 170, 135, 60, "ControleAcademico", "criar / obter / apagar_tudo")
     box(170, 170, 135, 60, "Disciplina", "registrar / resumo")
     box(335, 170, 130, 60, "Registro", "dia / situação / faltas")
     box(5, 85, 135, 60, "Atividade", "data / tipo / título")

@@ -345,6 +345,17 @@ class ControleAcademico:
         self._disciplinas[disciplina.codigo].nome = nome
         return self.obter_disciplina(disciplina.codigo)
 
+    def apagar_tudo(self):
+        """Remove disciplinas, registros e atividades após confirmar no menu.
+
+        No modo persistente, o banco é limpo antes da memória. Uma falha SQL
+        deixa ambos com os dados anteriores; o arquivo e as tabelas continuam.
+        """
+        if self._persistente:
+            database.apagar_tudo(self._caminho_banco)
+        self._disciplinas.clear()
+        self._atividades.clear()
+
     def _salvar_registro(self, disciplina, registro):
         if self._persistente:
             database.salvar_registro(

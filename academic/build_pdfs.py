@@ -67,7 +67,7 @@ def product():
     section(
         s,
         "O que está pronto",
-        "A aplicação de terminal começa com um banco vazio, cadastra disciplinas e datas, registra e corrige frequência, consulta os cálculos e adiciona atividades. O SQLite conserva tudo entre aberturas. Há um script que cria dados fictícios em arquivo separado e testes automatizados que não dependem de conta, internet ou dados reais.",
+        "A aplicação de terminal começa com um banco vazio, cadastra disciplinas e datas, registra e corrige frequência, consulta os cálculos e adiciona atividades. O estudante escolhe disciplinas pelo nome em uma lista numerada e pode recomeçar do zero pelo menu. O SQLite conserva tudo entre aberturas. Há dados fictícios e testes que não dependem de conta, internet ou dados reais.",
     )
     s.append(
         table(
@@ -100,6 +100,10 @@ def product():
                 (
                     "F07 · Renomear disciplina",
                     "Corrige o nome sem alterar código, grade ou frequência.",
+                ),
+                (
+                    "F08 · Recomeçar do zero",
+                    "Apaga disciplinas, presenças e atividades só após confirmação.",
                 ),
             ],
             [5.3 * cm, 11.7 * cm],
@@ -167,7 +171,7 @@ def product():
     contract(
         s,
         "F02 · Registrar frequência",
-        "Disciplina existente e data da grade ainda pendente. Entradas: código, data, situação presente, ausente, atrasado, saiu mais cedo, cancelada ou sem chamada.",
+        "Disciplina existente e data da grade ainda pendente. O menu mostra nomes numerados; o usuário escolhe um número, data e situação: presente, ausente, atrasado, saiu mais cedo, cancelada ou sem chamada.",
         "Política da disciplina calcula faltas em unidades de 50 min. Confirma a escrita no SQLite, substitui o pendente e recalcula base, faltas, pendências, limite, saldo, excesso e percentual.",
         "Data fora da grade, situação desconhecida ou repetição sem usar Corrigir: rejeita. Registro, banco e totais anteriores permanecem; falha de escrita também preserva a memória.",
     )
@@ -181,37 +185,45 @@ def product():
     contract(
         s,
         "F03 · Corrigir frequência",
-        "Disciplina e data da grade já resolvida. O usuário escolhe Corrigir e informa uma das seis situações, inclusive para substituir cancelada ou sem chamada.",
+        "Disciplina e data da grade já resolvida. O usuário escolhe a disciplina pelo número, depois Corrigir e uma das seis situações, inclusive para substituir cancelada ou sem chamada.",
         "Substitui apenas o registro daquela data; não acumula uma segunda falta. Recalcula os mesmos totais de F02 depois do commit.",
         "Data pendente, situação ou data inválida: rejeita e preserva registro e totais. Para a pendente, use Registrar presença. Não altera outras datas.",
     )
     contract(
         s,
         "F04 · Consultar frequência",
-        "Disciplina cadastrada; entrada é o código, aceito em minúsculas ou maiúsculas.",
-        "O menu lista código e nome das disciplinas para orientar a escolha. A consulta exibe grade, situação e faltas por data, base E, pendências, faltas A, limite L, saldo, excesso e frequência quando definida. Não grava dados.",
-        "Código não cadastrado: mensagem de não encontrada. Código vazio ou não textual: pede um código válido. Nenhum dado é criado ou alterado.",
+        "Disciplina cadastrada; o menu lista seus nomes em ordem alfabética, numerados, com o código apenas como referência. O usuário escolhe o número ou 0 para voltar.",
+        "A consulta exibe nome, grade, situação e faltas por data, base E, pendências, faltas A, limite L, saldo, excesso e frequência quando definida. Não grava dados.",
+        "Número fora da lista ou não numérico: pede uma escolha válida. Voltar ou selecionar sem disciplinas não altera cadastro, registros nem totais.",
     )
     contract(
         s,
         "F05 · Agendar atividade",
-        "Disciplina existente; código, data real DD/MM/AAAA, tipo prova ou trabalho e título não vazio. A data não precisa coincidir com aula.",
+        "Disciplina existente, escolhida pelo nome numerado; data real DD/MM/AAAA, tipo prova ou trabalho e título não vazio. A data não precisa coincidir com aula.",
         "Grava atividade com identificador local e vínculo com disciplina. F06 a mostra mesmo após reabrir; não muda encontros ou faltas.",
         "Código inexistente, data inválida, tipo desconhecido, título vazio ou falha de escrita: agenda e frequência anteriores intactas.",
     )
+    page(s, "03 · Contratos", "Agenda, nome e reinício")
     contract(
         s,
         "F06 · Consultar agenda",
         "Basta abrir o programa; não recebe filtro. Pode estar vazia.",
-        "Lista atividades por data e ordem de inserção; se não houver itens, mostra Agenda vazia. Não grava dados.",
+        "Lista atividades por data e ordem de inserção, com nome da disciplina e código secundário; se não houver itens, mostra Agenda vazia. Não grava dados.",
         "Como não há entrada a validar, não existe rejeição prevista nesta consulta.",
     )
     contract(
         s,
         "F07 · Renomear disciplina",
-        "Disciplina existente. Entradas: código e novo nome com ao menos um caractere não branco.",
+        "Disciplina existente, escolhida pelo nome numerado. Entrada: novo nome com ao menos um caractere não branco.",
         "O setter valida o nome; o controle grava primeiro no SQLite e depois atualiza o objeto. Código, grade, atividades, presenças e totais ficam iguais.",
         "Código inexistente, nome vazio ou erro de escrita: rejeita; nome anterior permanece na memória e no banco.",
+    )
+    contract(
+        s,
+        "F08 · Recomeçar do zero",
+        "Banco iniciado, vazio ou preenchido. O usuário escolhe 8 no menu e digita exatamente APAGAR para confirmar; qualquer outra resposta cancela.",
+        "Uma transação apaga atividades, registros e disciplinas; após o commit, limpa a memória. O menu volta vazio e permite cadastrar de novo o mesmo código.",
+        "Resposta diferente de APAGAR cancela sem alterar nada. Se o SQLite falhar, a transação faz rollback e memória, registros e atividades continuam iguais.",
     )
 
     page(s, "04 · Regras", "Cálculo com unidades e exemplos")
@@ -278,7 +290,7 @@ def product():
             [
                 (
                     "ControleAcademico",
-                    "Coordena cadastro, agenda e recuperação. Guarda coleções privadas.",
+                    "Coordena cadastro, agenda, recuperação e reset. Guarda coleções privadas.",
                     "Contém disciplinas e atividades.",
                 ),
                 (
@@ -391,7 +403,7 @@ def product():
                 (
                     "Dados",
                     "demo/database.py",
-                    "Cria tabelas e executa SQL parametrizado em transações.",
+                    "Cria tabelas e executa gravações e limpeza em transações.",
                 ),
             ],
             [3.1 * cm, 4.3 * cm, 9.6 * cm],
@@ -400,13 +412,62 @@ def product():
     section(
         s,
         "Estrutura persistida",
-        "<b>disciplinas:</b> código como chave, nome, chamadas e aulas por encontro. <b>registros:</b> chave composta código/data ISO, situação e faltas; chave estrangeira aponta para disciplina. <b>atividades:</b> ID gerado pelo banco, código, data ISO, tipo e título. A transação salva disciplina e grade juntas. Um registro ou atividade só chega à memória após o commit. Totais não são gravados: vêm da grade atual, evitando divergências.",
+        "<b>disciplinas:</b> código como chave, nome, chamadas e aulas por encontro. <b>registros:</b> chave composta código/data ISO, situação e faltas; chave estrangeira aponta para disciplina. <b>atividades:</b> ID gerado pelo banco, código, data ISO, tipo e título. A transação salva disciplina e grade juntas; o reset apaga as três tabelas na mesma transação. Um registro ou atividade só chega à memória após o commit. Totais não são gravados: vêm da grade atual, evitando divergências.",
     )
-    page(s, "08 · Execução", "Demonstração, testes e limites")
+
+    page(s, "08 · Interações", "Escolha de disciplina e reinício")
+    section(
+        s,
+        "Escolha pela lista, sem memorizar código",
+        "As ações Registrar, Consultar, Corrigir, Adicionar atividade e Renomear chamam a mesma seleção em main.py. O menu ordena nomes, mostra um número para cada disciplina e deixa o código entre parênteses. Número inválido informa o erro; 0 volta ao menu. Nenhum desses caminhos escreve no banco antes da escolha e da operação válida.",
+    )
+    section(
+        s,
+        "F08 · Apagar dados confirmados",
+        "A opção 8 pede a palavra exata APAGAR. Outra resposta cancela sem chamar o controle. Com a confirmação, ControleAcademico pede ao SQLite que apague atividades, registros e disciplinas na mesma transação. Somente depois do commit limpa as coleções em memória. Se o segundo DELETE falhar, o rollback recupera a atividade apagada no primeiro e a memória não muda.",
+    )
+    s.append(
+        sequence_diagram(
+            [
+                (0, 1, "8 + APAGAR"),
+                (1, 2, "apagar_tudo"),
+                (2, 3, "DELETEs + COMMIT"),
+                (3, 2, "confirmado"),
+                (2, 1, "coleções vazias"),
+                (1, 0, "dados apagados"),
+            ],
+            ["Estudante", "Menu", "Controle", "SQLite"],
+        )
+    )
+    s.append(
+        table(
+            ["Entrada", "Efeito no banco", "Efeito na memória e no menu"],
+            [
+                (
+                    "APAGAR",
+                    "Três tabelas limpas em uma transação.",
+                    "Coleções vazias; novo cadastro permitido.",
+                ),
+                (
+                    "Enter ou outra palavra",
+                    "Nenhum comando DELETE.",
+                    "Tudo permanece; volta ao menu.",
+                ),
+                (
+                    "Falha SQL após o primeiro DELETE",
+                    "Rollback restaura todas as linhas.",
+                    "Tudo permanece; mostra erro sem fingir sucesso.",
+                ),
+            ],
+            [4.1 * cm, 6.3 * cm, 6.6 * cm],
+        )
+    )
+
+    page(s, "09 · Execução", "Demonstração, testes e limites")
     section(
         s,
         "Como reproduzir",
-        "Requer Python 3.11+; só biblioteca padrão. Extraia o ZIP, entre em demo/ e rode <b>python main.py</b>. Crie DEMO01 com duas chamadas, duas aulas por encontro e datas 02, 04, 09 e 11/11/2026. Marque 02/11 ausente, 04/11 presente, consulte e corrija 02/11. Feche e reabra: a correção permanece. Para uma base fictícia pronta em arquivo separado, rode <b>python dados_exemplo.py</b> e aponte FREQUENCIA_DB_PATH para exemplo.db, conforme README.",
+        "Requer Python 3.11+; só biblioteca padrão. Extraia o ZIP, entre em demo/ e rode <b>python main.py</b>. Crie DEMO01 com duas chamadas, duas aulas por encontro e datas 02, 04, 09 e 11/11/2026. Para registrar, consultar, corrigir, agendar ou renomear, escolha a disciplina pelo número exibido. Marque 02/11 ausente, 04/11 presente, consulte e corrija 02/11. Feche e reabra: a correção permanece. A opção 8 reinicia os dados após APAGAR; o README explica a base fictícia separada.",
     )
     s.append(
         table(
@@ -451,7 +512,7 @@ def product():
     section(
         s,
         "Mapa entre funções e código",
-        "F01, F04, F05 e F07 passam por ControleAcademico em models.py; F02 e F03 passam por Disciplina.registrar_presenca e pela política de chamada selecionada; F06 lê ControleAcademico.atividades. O setter de nome fica em Disciplina. Todas as entradas e saídas do usuário ficam em main.py. A gravação e a recuperação usam database.py. O PDF de verificação relaciona cada função aos testes executados.",
+        "F01, F04, F05, F07 e F08 passam por ControleAcademico em models.py; F02 e F03 passam por Disciplina.registrar_presenca e pela política de chamada selecionada; F06 lê ControleAcademico.atividades. O setter de nome fica em Disciplina. Todas as entradas e saídas do usuário ficam em main.py. A gravação, a limpeza e a recuperação usam database.py. O PDF de verificação relaciona cada função aos testes executados.",
     )
     build("Frequencia_UFMG_Produto_Final.pdf", s)
 
@@ -468,7 +529,7 @@ def verification():
     section(
         s,
         "Método",
-        "As tabelas verificam F01–F07 do relatório do produto. Cada linha fixa uma entrada concreta, estado esperado, estado observado e evidência. Os testes são independentes: criam objetos novos ou um SQLite temporário, sem tocar no banco da demonstração. Rode <b>cd demo</b> e <b>python -m unittest discover -v</b>. A transcrição integral da última execução fica em <b>evidencias/unittest.txt</b> no ZIP.",
+        "As tabelas verificam F01–F08 do relatório do produto. Cada linha fixa uma entrada concreta, estado esperado, estado observado e evidência. Os testes são independentes: criam objetos novos ou um SQLite temporário, sem tocar no banco da demonstração. Rode <b>cd demo</b> e <b>python -m unittest discover -v</b>. A transcrição integral da última execução fica em <b>evidencias/unittest.txt</b> no ZIP.",
     )
     s.append(
         table(
@@ -498,7 +559,7 @@ def verification():
     section(
         s,
         "Convenções",
-        "E = aulas elegíveis; A = faltas usadas; L = limite; R = saldo. Pendente é um encontro não resolvido. Aprovado significa que o teste citado passou na última execução e confirmou o estado da linha. A página 7 liga os IDs T01–T19 aos nomes dos testes; a página 8 mostra os resultados da última execução.",
+        "E = aulas elegíveis; A = faltas usadas; L = limite; R = saldo. Pendente é um encontro não resolvido. Aprovado significa que o teste citado passou na última execução e confirmou o estado da linha. A página 9 liga os IDs T01–T22 aos nomes dos testes; a página 10 mostra os resultados da última execução.",
     )
 
     def matrix(title, initial, rows, *, new_page=True):
@@ -786,7 +847,7 @@ def verification():
 
     matrix(
         "F04 · Consultar frequência",
-        "Estado inicial: D com quatro datas; OUTRA não existe. Cada consulta usa o mesmo estado e não grava dados.",
+        "Estado inicial: C13–C15 usam D com quatro datas; OUTRA não existe. C15a–c usam CIR01 e FIS01 no menu. Consultas não gravam dados.",
         [
             (
                 "C13",
@@ -828,8 +889,31 @@ def verification():
                 "Aprovado",
                 "T11",
             ),
+            (
+                "C15a",
+                "Com duas disciplinas, escolhe número 2 na lista por nome.",
+                "Consulta Fisica; cadastro e totais iguais.",
+                "Menu mostrou Fisica; cadastro manteve dois itens.",
+                "Aprovado",
+                "T20",
+            ),
+            (
+                "C15b",
+                "Na lista, informa abc em vez de número.",
+                "Pede número válido; estado igual.",
+                "Menu rejeitou; cadastro manteve dois itens.",
+                "Aprovado",
+                "T20",
+            ),
+            (
+                "C15c",
+                "Na lista, escolhe 0 para voltar ao menu.",
+                "Não consulta nem altera dados.",
+                "Voltou ao menu; cadastro manteve dois itens.",
+                "Aprovado",
+                "T20",
+            ),
         ],
-        new_page=False,
     )
 
     matrix(
@@ -911,7 +995,7 @@ def verification():
                 "C20a",
                 "Insere trabalho de 05/11; depois prova e trabalho de 03/11; consulta.",
                 "Ordena por data; no empate, mantém ordem de inserção.",
-                "Linhas 03/11 prova, 03/11 trabalho, 05/11 trabalho nessa ordem.",
+                "Linhas com nome da disciplina: 03/11 prova, 03/11 trabalho, 05/11 trabalho nessa ordem.",
                 "Aprovado",
                 "T14",
             ),
@@ -992,14 +1076,53 @@ def verification():
     section(
         s,
         "Por que o nome muda sem afetar frequência",
-        "O menu lê código e novo nome. O controle valida ambos antes de escrever; entrada inválida encerra com o nome antigo. O SQLite confirma o UPDATE antes de o setter da Disciplina receber o novo nome. Se a escrita falhar, a memória permanece igual. Código, grade, atividades e faltas não entram na operação. T17 e T18 verificam essa ordem.",
+        "O menu mostra nomes numerados para escolher a disciplina e lê o novo nome. O controle valida ambos antes de escrever; entrada inválida encerra com o nome antigo. O SQLite confirma o UPDATE antes de o setter da Disciplina receber o novo nome. Se a escrita falhar, a memória permanece igual. Código, grade, atividades e faltas não entram na operação. T17 e T18 verificam essa ordem.",
     )
 
-    page(s, "Evidências", "Execução, defeitos e reprodução")
+    matrix(
+        "F08 · Recomeçar do zero",
+        "Estado inicial: D tem uma ausência e a prova P1 em SQLite temporário. C24–C26 percorrem o menu; C27 usa uma falha SQL no segundo DELETE. Cada teste tem banco próprio.",
+        [
+            (
+                "C24",
+                "Escolhe 8 e deixa a confirmação vazia.",
+                "Cancela; disciplina, ausência e P1 continuam.",
+                "Menu informou cancelamento; consulta ainda mostrou duas faltas.",
+                "Aprovado",
+                "T21",
+            ),
+            (
+                "C25",
+                "Escolhe 8 e responde NÃO em vez de APAGAR.",
+                "Cancela; disciplina, ausência e P1 continuam.",
+                "Menu informou cancelamento; consulta ainda mostrou duas faltas.",
+                "Aprovado",
+                "T21",
+            ),
+            (
+                "C26",
+                "Escolhe 8, digita APAGAR e reabre o SQLite.",
+                "Cadastro, registros e agenda vazios; pode reutilizar D.",
+                "Memória e banco reaberto vazios; D foi cadastrado de novo.",
+                "Aprovado",
+                "T21, T22",
+            ),
+            (
+                "C27",
+                "O segundo DELETE falha após apagar atividades.",
+                "Rollback; memória, banco, falta e P1 intactos.",
+                "IntegrityError; reabertura mostrou falta e P1 originais.",
+                "Aprovado",
+                "T22",
+            ),
+        ],
+    )
+
+    page(s, "Evidências", "Testes e defeitos corrigidos")
     section(
         s,
         "Evidências · IDs da matriz e nomes dos testes",
-        "Os IDs T01–T19 apontam para estes métodos de unittest e para evidencias/unittest.txt no ZIP. A situação da matriz descreve a última execução, não apenas uma intenção de teste.",
+        "Os IDs T01–T22 apontam para estes métodos de unittest e para evidencias/unittest.txt no ZIP. A situação da matriz descreve a última execução, não apenas uma intenção de teste.",
     )
     tests = [
         ("T01", "test_criar_e_registrar_do_zero"),
@@ -1021,6 +1144,9 @@ def verification():
         ("T17", "test_renomear_disciplina_valida_e_persiste"),
         ("T18", "test_renomear_invalido_ou_falha_de_banco_preserva_nome"),
         ("T19", "test_falha_de_gravacao_mostra_erro_e_mantem_aula_pendente"),
+        ("T20", "test_escolha_numerada_por_nome_e_volta_sem_alterar"),
+        ("T21", "test_reset_cancelado_e_confirmado_pelo_menu"),
+        ("T22", "test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar"),
     ]
     middle = (len(tests) + 1) // 2
     s.append(
@@ -1042,7 +1168,7 @@ def verification():
     section(
         s,
         "Defeitos identificados e corrigidos",
-        "Os casos abaixo surgiram durante a integração e a revisão. Após corrigir, repetimos os cenários e os demais testes; nenhum cenário da matriz ficou pendente na última execução.",
+        "Após cada correção, repetimos o cenário e os demais testes; nenhum cenário ficou pendente.",
     )
     s.append(
         table(
@@ -1050,17 +1176,22 @@ def verification():
             [
                 (
                     "Fachadas incompletas",
-                    "Em SQLite, cadastrar ou listar disciplinas e registrar presença: sem fachada em todos os caminhos, a reabertura pode mostrar pendente. Atribuir nome na fachada podia ficar só na memória local.",
-                    "Cadastro, busca e lista agora usam fachada persistente; o setter de nome grava. T04, T11, T17 e T18 cobrem os caminhos.",
+                    "Em SQLite, cadastrar/listar e registrar sem fachada persistente: reabertura perdia presença; atribuir nome podia mudar só a memória.",
+                    "Cadastro, busca e lista usam fachada; setter grava antes da memória. T04, T11, T17 e T18 reexecutados.",
                 ),
                 (
                     "Memória antes do commit",
-                    "Injetar OSError na gravação de um registro: o objeto não pode exibir ausência que o banco não tem.",
-                    "Gravar primeiro, substituir depois; T07 e T19 verificam banco, memória e mensagem ao usuário.",
+                    "Injetar OSError na gravação: a memória podia mostrar ausência sem confirmação do banco.",
+                    "Gravar primeiro e trocar depois; T07 e T19 conferem banco, memória e mensagem.",
+                ),
+                (
+                    "Escolha exigia código",
+                    "Abrir Consultar exigia lembrar o código da disciplina cadastrada.",
+                    "Ações mostram nomes numerados; T20 cobre escolha, erro e volta; T11/T14 repetem os fluxos.",
                 ),
             ],
             [5.0 * cm, 10.6 * cm, 10.5 * cm],
-            dense=True,
+            dense="tight",
         )
     )
     page(s, "Última execução", "Evidência integral dos testes")
@@ -1086,14 +1217,6 @@ def verification():
     for i in range(middle):
         other = observed[i + middle] if i + middle < len(observed) else ("", "")
         paired.append((observed[i][0], observed[i][1], other[0], other[1]))
-    s.append(
-        table(
-            ["Método executado", "Obs.", "Método executado", "Obs."],
-            paired,
-            [11.1 * cm, 1.95 * cm, 11.1 * cm, 1.95 * cm],
-            dense=True,
-        )
-    )
     summary = next(
         (line for line in evidence.splitlines() if line.startswith("Ran ")), ""
     )
@@ -1103,6 +1226,14 @@ def verification():
         f"{summary}. O processo terminou com <b>OK</b>. A saída textual completa, "
         "incluindo a classe de cada teste, está em evidencias/unittest.txt no ZIP. "
         "Todos os cenários da matriz ficaram aprovados nesta rodada.",
+    )
+    s.append(
+        table(
+            ["Método executado", "Obs.", "Método executado", "Obs."],
+            paired,
+            [11.1 * cm, 1.95 * cm, 11.1 * cm, 1.95 * cm],
+            dense="tight",
+        )
     )
     build("Frequencia_UFMG_Verificacao.pdf", s, wide=True)
 

@@ -13,3 +13,5 @@ Este ZIP reúne as duas etapas:
 
 Para usar ou testar, comece em `demo/README.md`. Python 3.11 ou superior é suficiente;
 o programa não precisa de conta, internet nem pacotes externos.
+As ações por disciplina mostram nomes numerados. A opção 8 reinicia os dados desta demo
+somente depois da confirmação `APAGAR`.

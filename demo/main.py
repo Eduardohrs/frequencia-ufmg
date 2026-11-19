@@ -30,7 +30,10 @@ def formatar_aulas(valor):
 
 def mostrar(disciplina):
     """Exibe a grade e os totais calculados no estado atual da disciplina."""
-    print(f"{disciplina.codigo} - {disciplina.nome} ({disciplina.chamadas} chamada(s))")
+    chamadas = (
+        f"{disciplina.chamadas} {'chamada' if disciplina.chamadas == 1 else 'chamadas'}"
+    )
+    print(f"{disciplina.nome} ({disciplina.codigo}; {chamadas})")
     for r in disciplina.registros:
         faltas = "-" if r.faltas is None else str(r.faltas)
         print(
@@ -48,13 +51,38 @@ def mostrar(disciplina):
         f"Restantes: {formatar_aulas(resumo['restantes'])}"
     )
     if resumo["excesso"]:
-        print(f"Limite excedido em {resumo['excesso']} aula(s).")
+        print(f"Limite excedido em {formatar_aulas(resumo['excesso'])}.")
     percentual = resumo["frequencia"]
     print(
         "Frequência: pendente"
         if percentual is None
         else f"Frequência: {percentual:.1f}%"
     )
+
+
+def escolher_disciplina(controle):
+    """Mostra nomes numerados e devolve a disciplina escolhida ou None.
+
+    O código continua visível como referência, mas o estudante não precisa
+    decorá-lo nem digitá-lo. Zero volta ao menu sem alterar dados.
+    """
+    disciplinas = sorted(
+        controle.disciplinas,
+        key=lambda disciplina: (disciplina.nome.casefold(), disciplina.codigo),
+    )
+    if not disciplinas:
+        print("Nenhuma disciplina cadastrada. Escolha 1 para criar uma.")
+        return None
+    print("Escolha a disciplina:")
+    for numero, disciplina in enumerate(disciplinas, 1):
+        print(f"{numero} {disciplina.nome} ({disciplina.codigo})")
+    print("0 Voltar ao menu")
+    escolha = input("Número: ").strip()
+    if escolha == "0":
+        return None
+    if not escolha.isdecimal() or not 1 <= int(escolha) <= len(disciplinas):
+        raise ValueError("Escolha um número da lista ou 0 para voltar.")
+    return disciplinas[int(escolha) - 1]
 
 
 def executar():
@@ -77,18 +105,13 @@ def executar():
     )
     while True:
         try:
-            if controle.disciplinas:
-                nomes = ", ".join(
-                    f"{disciplina.codigo} — {disciplina.nome}"
-                    for disciplina in controle.disciplinas
-                )
-                print(f"Disciplinas: {nomes}")
+            if not controle.disciplinas:
+                print("Nenhuma disciplina cadastrada.")
             print(
-                "\n1 Criar disciplina | 2 Registrar presença | 3 Consultar | 4 Corrigir"
+                "\n1 Criar disciplina | 2 Registrar presença | 3 Consultar frequência"
             )
-            print(
-                "5 Adicionar atividade | 6 Ver agenda | 7 Renomear disciplina | 0 Sair"
-            )
+            print("4 Corrigir registro | 5 Adicionar atividade | 6 Ver agenda")
+            print("7 Renomear disciplina | 8 Recomeçar do zero | 0 Sair")
             acao = input("Ação: ").strip()
             if acao == "0":
                 print("Encerrado.")
@@ -111,7 +134,9 @@ def executar():
                 )
                 print("Disciplina criada.")
             elif acao in ("2", "3", "4"):
-                disciplina = controle.obter_disciplina(input("Código da disciplina: "))
+                disciplina = escolher_disciplina(controle)
+                if disciplina is None:
+                    continue
                 if acao != "3":
                     dia = ler_data(input("Data da aula (DD/MM/AAAA): "))
                     print("Situações: " + ", ".join(SITUACOES))
@@ -123,8 +148,11 @@ def executar():
                         f"Registro salvo: {registro.situacao}; faltas: {registro.faltas}."
                     )
             elif acao == "5":
+                disciplina = escolher_disciplina(controle)
+                if disciplina is None:
+                    continue
                 atividade = controle.adicionar_atividade(
-                    input("Código da disciplina: "),
+                    disciplina.codigo,
                     ler_data(input("Data da atividade (DD/MM/AAAA): ")),
                     input("Tipo (prova ou trabalho): ").strip().lower(),
                     input("Título: "),
@@ -137,25 +165,42 @@ def executar():
                 if not controle.atividades:
                     print("Agenda vazia.")
                 for atividade in controle.atividades:
+                    disciplina = controle.obter_disciplina(atividade.codigo_disciplina)
                     print(
-                        f"{atividade.dia:%d/%m/%Y} | {atividade.codigo_disciplina} | "
+                        f"{atividade.dia:%d/%m/%Y} | {disciplina.nome} ({disciplina.codigo}) | "
                         f"{atividade.tipo} | {atividade.titulo}"
                     )
                 continue
             elif acao == "7":
+                disciplina = escolher_disciplina(controle)
+                if disciplina is None:
+                    continue
                 disciplina = controle.renomear_disciplina(
-                    input("Código da disciplina: "), input("Novo nome: ")
+                    disciplina.codigo, input("Novo nome: ")
                 )
                 print("Disciplina renomeada.")
+            elif acao == "8":
+                print(
+                    "Isso apaga TODAS as disciplinas, presenças e atividades desta demo."
+                )
+                confirmacao = input(
+                    "Digite APAGAR para confirmar (ou Enter para voltar): "
+                )
+                if confirmacao != "APAGAR":
+                    print("Cancelado. Nenhum dado foi alterado.")
+                    continue
+                controle.apagar_tudo()
+                print("Dados apagados. Você pode criar uma nova disciplina.")
+                continue
             else:
-                raise ValueError("Escolha uma opção de 0 a 7.")
+                raise ValueError("Escolha uma opção de 0 a 8.")
             mostrar(disciplina)
         except ValueError as erro:
             print(f"Operação rejeitada: {erro}")
         except (sqlite3.Error, OSError) as erro:
             # A operação de domínio só publica o novo estado após o commit.
             # Mostramos o problema sem encerrar o menu nem fingir que salvou.
-            print(f"Não foi possível salvar no banco; nada foi alterado: {erro}")
+            print(f"Não foi possível concluir no banco; nada foi alterado: {erro}")
         except (EOFError, KeyboardInterrupt):
             print("\nEncerrado.")
             return
