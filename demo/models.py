@@ -112,7 +112,10 @@ class Disciplina:
             raise ValueError("Cada encontro deve ter 1, 2 ou 4 aulas de 50 minutos.")
         if aulas == 1 and chamadas == 2:
             raise ValueError("Um encontro de uma aula aceita apenas uma chamada.")
-        dias = tuple(datas)
+        try:
+            dias = tuple(datas)
+        except TypeError:
+            raise ValueError("Informe ao menos uma data válida.") from None
         if not dias or any(type(d) is not date for d in dias):
             raise ValueError("Informe ao menos uma data válida.")
         if len(set(dias)) != len(dias):
@@ -315,6 +318,8 @@ class ControleAcademico:
         A versão persistente devolve uma fachada que salva correções antes
         de atualizar o objeto original; os cálculos continuam em Disciplina.
         """
+        if not isinstance(codigo, str) or not codigo.strip():
+            raise ValueError("Informe o código da disciplina.")
         chave = codigo.strip().upper()
         if chave not in self._disciplinas:
             raise ValueError("Disciplina não encontrada. Cadastre-a primeiro.")

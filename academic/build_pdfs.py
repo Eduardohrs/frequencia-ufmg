@@ -190,7 +190,7 @@ def product():
         "F04 · Consultar frequência",
         "Disciplina cadastrada; entrada é o código, aceito em minúsculas ou maiúsculas.",
         "O menu lista código e nome das disciplinas para orientar a escolha. A consulta exibe grade, situação e faltas por data, base E, pendências, faltas A, limite L, saldo, excesso e frequência quando definida. Não grava dados.",
-        "Código ausente: mensagem de não encontrada; nenhum dado é criado ou alterado.",
+        "Código não cadastrado: mensagem de não encontrada. Código vazio ou não textual: pede um código válido. Nenhum dado é criado ou alterado.",
     )
     contract(
         s,
@@ -616,6 +616,14 @@ def verification():
                 "T16",
             ),
             (
+                "C03j",
+                "Envia grade None diretamente ao domínio.",
+                "Rejeita; cadastro e grade vazios.",
+                "ValueError; controle vazio.",
+                "Aprovado",
+                "T03",
+            ),
+            (
                 "C04",
                 "Cria disciplina e presença em SQLite temporário; fecha e reabre.",
                 "Nome, grade e presença recuperados sem duplicação.",
@@ -778,7 +786,7 @@ def verification():
 
     matrix(
         "F04 · Consultar frequência",
-        "Estado inicial: C13 cria DEMO01; C14 consulta OUTRA, ainda não cadastrada. A consulta não deve gravar nada.",
+        "Estado inicial: D com quatro datas; OUTRA não existe. Cada consulta usa o mesmo estado e não grava dados.",
         [
             (
                 "C13",
@@ -791,8 +799,24 @@ def verification():
             (
                 "C14",
                 "Consulta OUTRA, não cadastrada.",
-                "Mensagem de não encontrada; cadastro, registros e resumo preservados.",
-                "ValueError; todas as coleções e totais permaneceram iguais.",
+                "Informa não encontrada; estado igual.",
+                "ValueError; cadastro e totais iguais.",
+                "Aprovado",
+                "T10",
+            ),
+            (
+                "C14b",
+                "Consulta com código None no domínio.",
+                "Pede código; estado igual.",
+                "ValueError; cadastro e totais iguais.",
+                "Aprovado",
+                "T10",
+            ),
+            (
+                "C14c",
+                "Consulta com código vazio no domínio.",
+                "Pede código; estado igual.",
+                "ValueError; cadastro e totais iguais.",
                 "Aprovado",
                 "T10",
             ),

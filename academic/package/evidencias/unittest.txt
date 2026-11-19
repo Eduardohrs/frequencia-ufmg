@@ -24,6 +24,6 @@ test_renomear_invalido_ou_falha_de_banco_preserva_nome (test_models.TesteFrequen
 test_sqlite_preserva_disciplina_entre_aberturas (test_models.TesteFrequencia.test_sqlite_preserva_disciplina_entre_aberturas) ... ok
 
 ----------------------------------------------------------------------
-Ran 24 tests in 1.320s
+Ran 24 tests in 0.727s
 
 OK

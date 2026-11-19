@@ -206,6 +206,12 @@ class TesteFrequencia(unittest.TestCase):
         self.assertEqual((disciplina.registros, disciplina.resumo()), antes)
         with self.assertRaises(ValueError):
             controle.obter_disciplina("OUTRA")
+        for codigo in (None, 123, "", "  "):
+            with (
+                self.subTest(codigo=codigo),
+                self.assertRaisesRegex(ValueError, "Informe o código"),
+            ):
+                controle.obter_disciplina(codigo)
         self.assertEqual(
             (controle.disciplinas, disciplina.registros, disciplina.resumo()),
             ((disciplina,), *antes),
@@ -289,6 +295,8 @@ class TesteFrequencia(unittest.TestCase):
             ("D", "T", 1, True, DIAS),
             ("D", "T", 2, 1, DIAS),
             ("D", "T", 1, 2, []),
+            ("D", "T", 1, 2, None),
+            ("D", "T", 1, 2, 123),
             ("D", "T", 1, 2, ["02/11/2026"]),
             ("D", "T", 1, 2, [DIAS[0], DIAS[0]]),
         ]:
