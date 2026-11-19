@@ -505,7 +505,7 @@ def verification():
         if new_page:
             page(s, "Matriz de cenários", title, initial)
         else:
-            s.append(Spacer(1, 0.45 * cm))
+            s.append(Spacer(1, 0.15 * cm))
             section(s, title, initial)
         s.append(
             table(
@@ -799,8 +799,8 @@ def verification():
             (
                 "C15",
                 "No menu, cadastra, registra, consulta e corrige desde banco vazio.",
-                "Mostra saldo, excesso e percentual conforme cada etapa.",
-                "Saída incluiu excesso, F pendente, 50% e depois 100%.",
+                "Mostra limite e saldo em aulas, excesso e percentual por etapa.",
+                "Saída identificou aulas, excesso, F pendente, 50% e depois 100%.",
                 "Aprovado",
                 "T11",
             ),
@@ -810,7 +810,7 @@ def verification():
 
     matrix(
         "F05 · Agendar atividade",
-        "Estado inicial: DEMO01 cadastrada, agenda vazia e quatro registros pendentes. A data da atividade pode diferir da data de aula.",
+        "Estado inicial: C16, C17 e C18 usam DEMO01 com quatro registros pendentes; C16b usa o menu com uma data pendente. A agenda começa vazia e a atividade pode cair fora de uma data de aula.",
         [
             (
                 "C16",
@@ -821,10 +821,18 @@ def verification():
                 "T12",
             ),
             (
+                "C16b",
+                "No menu, adiciona trabalho Relatório em 05/11 e reabre.",
+                "Trabalho fica vinculado a DEMO01 e persiste na agenda.",
+                "Menu salvou o trabalho; após reabrir, agenda ainda o lista.",
+                "Aprovado",
+                "T14",
+            ),
+            (
                 "C17a",
                 "Associa prova ao código OUTRA, não cadastrado.",
                 "Rejeita; agenda, grade e resumo iguais.",
-                "ValueError; agenda vazia, registros e resumo iguais.",
+                "ValueError; agenda vazia; resumo igual.",
                 "Aprovado",
                 "T13",
             ),
@@ -832,7 +840,7 @@ def verification():
                 "C17b",
                 "Informa data 02/11 como texto ao domínio.",
                 "Rejeita; agenda, grade e resumo iguais.",
-                "ValueError; agenda vazia, registros e resumo iguais.",
+                "ValueError; agenda vazia; resumo igual.",
                 "Aprovado",
                 "T13",
             ),
@@ -840,7 +848,7 @@ def verification():
                 "C17c",
                 "Escolhe tipo seminário em vez de prova/trabalho.",
                 "Rejeita; agenda, grade e resumo iguais.",
-                "ValueError; agenda vazia, registros e resumo iguais.",
+                "ValueError; agenda vazia; resumo igual.",
                 "Aprovado",
                 "T13",
             ),
@@ -848,7 +856,7 @@ def verification():
                 "C17d",
                 "Informa título só com espaços.",
                 "Rejeita; agenda, grade e resumo iguais.",
-                "ValueError; agenda vazia, registros e resumo iguais.",
+                "ValueError; agenda vazia; resumo igual.",
                 "Aprovado",
                 "T13",
             ),
@@ -865,7 +873,7 @@ def verification():
 
     matrix(
         "F06 · Consultar agenda",
-        "Estado inicial: C19 começa com agenda vazia; C20 cria DEMO01 e uma prova fictícia. O teste de menu usa banco temporário próprio.",
+        "Estado inicial: C19 começa com agenda vazia; C20 cria DEMO01 e três atividades fictícias. O teste de menu usa banco temporário próprio.",
         [
             (
                 "C19",
@@ -876,12 +884,20 @@ def verification():
                 "T14",
             ),
             (
-                "C20",
-                "Cria prova Avaliação 1 em 03/11 e escolhe Ver agenda.",
-                "Lista data, DEMO01, prova e título; frequência não muda.",
-                "Linha com os quatro campos encontrada; T12 confirmou frequência intacta.",
+                "C20a",
+                "Insere trabalho de 05/11; depois prova e trabalho de 03/11; consulta.",
+                "Ordena por data; no empate, mantém ordem de inserção.",
+                "Linhas 03/11 prova, 03/11 trabalho, 05/11 trabalho nessa ordem.",
                 "Aprovado",
-                "T14 / T12",
+                "T14",
+            ),
+            (
+                "C20b",
+                "Fecha, reabre e consulta a mesma agenda.",
+                "As três atividades reaparecem na mesma ordem.",
+                "Menu reaberto listou as três linhas na mesma ordem.",
+                "Aprovado",
+                "T14",
             ),
         ],
         new_page=False,
@@ -975,7 +991,7 @@ def verification():
         ("T11", "test_fluxo_completo_sem_dados_preparados"),
         ("T12", "test_atividade_valida_persiste_sem_alterar_frequencia"),
         ("T13", "test_atividade_invalida_e_falha_de_escrita_preservam_agenda"),
-        ("T14", "test_agenda_pelo_menu_comeca_vazia_e_exibe_atividade"),
+        ("T14", "test_agenda_pelo_menu_vazia_e_atividades_ordenadas"),
         ("T15", "test_falha_no_segundo_insert_desfaz_cadastro_e_grade"),
         ("T16", "test_rejeicoes_e_conversoes_sao_tratadas"),
         ("T17", "test_renomear_disciplina_valida_e_persiste"),

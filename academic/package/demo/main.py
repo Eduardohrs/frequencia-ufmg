@@ -23,17 +23,29 @@ def ler_inteiro(rotulo):
         raise ValueError("Informe um número inteiro.") from None
 
 
+def formatar_aulas(valor):
+    """Mostra a unidade dos totais, inclusive no singular."""
+    return f"{valor} {'aula' if valor == 1 else 'aulas'}"
+
+
 def mostrar(disciplina):
     """Exibe a grade e os totais calculados no estado atual da disciplina."""
     print(f"{disciplina.codigo} - {disciplina.nome} ({disciplina.chamadas} chamada(s))")
     for r in disciplina.registros:
         faltas = "-" if r.faltas is None else str(r.faltas)
-        print(f"{r.dia:%d/%m/%Y} | {r.aulas} aulas | {r.situacao} | faltas: {faltas}")
+        print(
+            f"{r.dia:%d/%m/%Y} | {formatar_aulas(r.aulas)} | "
+            f"{r.situacao} | faltas: {faltas}"
+        )
     resumo = disciplina.resumo()
-    print(f"Base: {resumo['aulas']} aulas | Pendentes: {resumo['pendentes']}")
     print(
-        f"Faltas: {resumo['faltas']} | Limite: {resumo['limite']} | "
-        f"Restantes: {resumo['restantes']}"
+        f"Base: {formatar_aulas(resumo['aulas'])} | "
+        f"Pendentes: {formatar_aulas(resumo['pendentes'])}"
+    )
+    print(
+        f"Faltas: {formatar_aulas(resumo['faltas'])} | "
+        f"Limite: {formatar_aulas(resumo['limite'])} | "
+        f"Restantes: {formatar_aulas(resumo['restantes'])}"
     )
     if resumo["excesso"]:
         print(f"Limite excedido em {resumo['excesso']} aula(s).")
@@ -72,9 +84,10 @@ def executar():
                 )
                 print(f"Disciplinas: {nomes}")
             print(
-                "\n1 Criar disciplina | 2 Registrar presença | 3 Consultar"
-                " | 4 Corrigir registro | 5 Adicionar atividade"
-                " | 6 Ver agenda | 7 Renomear disciplina | 0 Sair"
+                "\n1 Criar disciplina | 2 Registrar presença | 3 Consultar | 4 Corrigir"
+            )
+            print(
+                "5 Adicionar atividade | 6 Ver agenda | 7 Renomear disciplina | 0 Sair"
             )
             acao = input("Ação: ").strip()
             if acao == "0":

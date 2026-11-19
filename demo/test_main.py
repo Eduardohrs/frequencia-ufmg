@@ -53,7 +53,7 @@ class TesteMenu(unittest.TestCase):
             (registro.dia, registro.situacao), (date(2026, 11, 2), "pendente")
         )
 
-    def test_agenda_pelo_menu_comeca_vazia_e_exibe_atividade(self):
+    def test_agenda_pelo_menu_vazia_e_atividades_ordenadas(self):
         saida = self.rodar(
             [
                 "6",
@@ -65,9 +65,19 @@ class TesteMenu(unittest.TestCase):
                 "02/11/2026",
                 "5",
                 "DEMO01",
+                "05/11/2026",
+                "trabalho",
+                "Relatório",
+                "5",
+                "DEMO01",
                 "03/11/2026",
                 "prova",
                 "Avaliação 1",
+                "5",
+                "DEMO01",
+                "03/11/2026",
+                "trabalho",
+                "Lista 1",
                 "7",
                 "DEMO01",
                 "Nome corrigido",
@@ -79,9 +89,23 @@ class TesteMenu(unittest.TestCase):
         self.assertIn("Atividade salva: Avaliação 1", saida)
         self.assertIn("Disciplina renomeada", saida)
         self.assertIn("Nome corrigido", saida)
-        self.assertIn("03/11/2026 | DEMO01 | prova | Avaliação 1", saida)
-        reaberto = self.rodar(["0"])
+        linhas = (
+            "03/11/2026 | DEMO01 | prova | Avaliação 1",
+            "03/11/2026 | DEMO01 | trabalho | Lista 1",
+            "05/11/2026 | DEMO01 | trabalho | Relatório",
+        )
+        self.assertTrue(all(linha in saida for linha in linhas))
+        self.assertEqual(
+            [saida.index(linha) for linha in linhas],
+            sorted(saida.index(linha) for linha in linhas),
+        )
+        reaberto = self.rodar(["6", "0"])
         self.assertIn("Disciplinas: DEMO01 — Nome corrigido", reaberto)
+        self.assertTrue(all(linha in reaberto for linha in linhas))
+        self.assertEqual(
+            [reaberto.index(linha) for linha in linhas],
+            sorted(reaberto.index(linha) for linha in linhas),
+        )
 
     def setUp(self):
         self._db_path = (
@@ -152,6 +176,8 @@ class TesteMenu(unittest.TestCase):
         self.assertIn("Frequência: 50.0%", saida)
         self.assertIn("Frequência: 100.0%", saida)
         self.assertIn("Frequência: pendente", saida)
+        self.assertIn("Base: 4 aulas | Pendentes: 4 aulas", saida)
+        self.assertIn("Faltas: 2 aulas | Limite: 1 aula | Restantes: 0 aulas", saida)
 
     def test_rejeicoes_e_conversoes_sao_tratadas(self):
         saida = self.rodar(
