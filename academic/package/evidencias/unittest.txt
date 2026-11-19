@@ -25,8 +25,12 @@ test_renomear_disciplina_valida_e_persiste (test_models.TesteFrequencia.test_ren
 test_renomear_invalido_ou_falha_de_banco_preserva_nome (test_models.TesteFrequencia.test_renomear_invalido_ou_falha_de_banco_preserva_nome) ... ok
 test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar (test_models.TesteFrequencia.test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar) ... ok
 test_sqlite_preserva_disciplina_entre_aberturas (test_models.TesteFrequencia.test_sqlite_preserva_disciplina_entre_aberturas) ... ok
+test_entradas_invalidas_preservam_estado (test_web.InterfaceWebTest.test_entradas_invalidas_preservam_estado) ... ok
+test_falhas_de_leitura_e_gravacao_sao_visiveis (test_web.InterfaceWebTest.test_falhas_de_leitura_e_gravacao_sao_visiveis) ... ok
+test_fluxo_completo_e_reabertura (test_web.InterfaceWebTest.test_fluxo_completo_e_reabertura) ... ok
+test_ponto_de_entrada_pode_ser_encerrado (test_web.InterfaceWebTest.test_ponto_de_entrada_pode_ser_encerrado) ... ok
 
 ----------------------------------------------------------------------
-Ran 27 tests in 0.884s
+Ran 31 tests in 3.332s
 
 OK

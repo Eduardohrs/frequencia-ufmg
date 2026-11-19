@@ -30,12 +30,17 @@ def main():
         "LEIA-ME.md",
         "demo/README.md",
         "demo/main.py",
+        "demo/web.py",
+        "demo/web/index.html",
+        "demo/web/app.css",
+        "demo/web/app.js",
         "demo/models.py",
         "demo/database.py",
         "demo/dados_exemplo.py",
         "demo/frequencia.db",
         "demo/test_main.py",
         "demo/test_models.py",
+        "demo/test_web.py",
         "evidencias/unittest.txt",
         "relatorio/Frequencia_UFMG_Produto_Final.pdf",
         "relatorio/Frequencia_UFMG_Verificacao.pdf",
@@ -54,7 +59,7 @@ def main():
             evidence = (root / "evidencias" / "unittest.txt").read_text(
                 encoding="utf-8-sig"
             )
-            assert "Ran 27 tests" in evidence and evidence.rstrip().endswith("OK")
+            assert "Ran 31 tests" in evidence and evidence.rstrip().endswith("OK")
             tests = subprocess.run(
                 ["py", "-m", "unittest", "discover", "-v"],
                 cwd=demo,
@@ -146,7 +151,7 @@ def main():
             assert "Nenhuma disciplina cadastrada" in vazio.stdout
             assert "Agenda vazia" in vazio.stdout
             print(
-                "ZIP íntegro; PDFs, 27 testes, escolha por nome, persistência e reset aprovados."
+                "ZIP íntegro; PDFs, 31 testes, interface local, persistência e reset aprovados."
             )
 
 

@@ -5,37 +5,42 @@ Extraia o ZIP e abra o terminal **dentro da pasta `demo/`**. Os comandos abaixo
 são executados a partir dessa pasta, não da raiz do ZIP.
 
 ```text
-python main.py
+python web.py
 python -m unittest discover -v
 ```
 
-Na primeira execução o programa começa vazio. Use **1 Criar disciplina** para informar código,
-nome, chamadas, aulas por encontro e datas da grade. Depois use **2 Registrar
-presença** para escolher uma data e uma situação. **3 Consultar** mostra a
-grade e o saldo de faltas; **4 Corrigir registro** substitui um registro existente.
-Quando uma ação precisa de disciplina, o programa mostra seus **nomes numerados**
-e você escolhe o número; o código aparece apenas como referência. Digite 0 nessa
-lista para voltar ao menu. Use **Corrigir** apenas quando a aula já tiver uma
-situação registrada; para uma aula pendente, use **Registrar presença**.
-Use **5 Adicionar atividade** para registrar uma prova ou trabalho vinculado a uma
-disciplina; **6 Ver agenda** lista as atividades por data. A agenda não altera faltas.
-Use **7 Renomear disciplina** para corrigir um nome sem alterar código, aulas ou presenças.
-Use **8 Recomeçar do zero** para apagar disciplinas, registros e atividades desta demo;
-o programa só apaga após você digitar `APAGAR`. Qualquer outra resposta cancela.
-Os dados são salvos no arquivo `frequencia.db` na pasta da demo e continuam disponíveis ao fechar e reabrir o programa.
+Abra **http://127.0.0.1:8878** no navegador. O servidor aceita conexões apenas
+do próprio computador. Use **Nova disciplina** para informar nome, código,
+chamadas, aulas por encontro e adicionar cada data da grade. A matéria aparece
+imediatamente na lista pelo nome. Abra uma data e escolha a situação de
+frequência; a mesma linha oferece **Corrigir** depois de um registro. O cartão
+mostra faltas usadas, limite, saldo e frequência quando todas as aulas tiverem
+sido resolvidas. **Agenda** guarda provas e trabalhos vinculados à matéria.
+**Renomear** altera só o nome. Em **Ajustes**, **Apagar dados da demo** requer
+digitar `APAGAR`; cancelar preserva tudo.
+
+O navegador só mostra os dados e envia as ações. `web.py` transforma essas ações
+em chamadas às classes de `models.py`, onde ficam validações e cálculos. `database.py`
+salva no arquivo `frequencia.db`, que permanece ao fechar e reabrir. Para encerrar
+o servidor, volte ao terminal e pressione Ctrl+C.
+
+Também é possível usar a mesma demo pelo terminal com `python main.py`. Nesse
+menu, as matérias aparecem por nome e número; o código é só referência. A opção
+8 reinicia os dados após `APAGAR`. Terminal e navegador compartilham o mesmo
+banco local quando executados na mesma pasta.
 
 ## Base fictícia isolada
 
 Para obter dados de exemplo sem modificar `frequencia.db`, execute `python dados_exemplo.py`.
 Isso cria `exemplo.db` com uma disciplina, uma ausência e uma prova fictícia.
-Depois execute o menu apontando para essa base:
+Depois execute a interface apontando para essa base:
 
 ```powershell
-$env:FREQUENCIA_DB_PATH='exemplo.db'; py main.py
+$env:FREQUENCIA_DB_PATH='exemplo.db'; py web.py
 ```
 
-No Prompt de Comando: `set FREQUENCIA_DB_PATH=exemplo.db` e depois `python main.py`.
-Em macOS/Linux: `FREQUENCIA_DB_PATH=exemplo.db python main.py`.
+No Prompt de Comando: `set FREQUENCIA_DB_PATH=exemplo.db` e depois `python web.py`.
+Em macOS/Linux: `FREQUENCIA_DB_PATH=exemplo.db python web.py`.
 
 ## Exemplo a partir do zero
 
@@ -50,7 +55,8 @@ com zero faltas. O limite é 25% da grade, arredondado para baixo. O percentual
 só aparece quando não há pendências. Uma chamada não desconta atraso/saída
 antecipada; duas descontam metade do encontro. Uma aula não admite duas chamadas.
 
-`models.py` contém as regras, `database.py` a persistência SQLite, `main.py` o menu,
+`models.py` contém as regras, `database.py` a persistência SQLite, `web.py` a
+ponte HTTP local, `web/` a interface visual, `main.py` o menu alternativo,
 `dados_exemplo.py` os dados fictícios e `test_*.py` os testes independentes.
 Esta pasta é uma versão independente para avaliação de POO.
 O aplicativo completo está em https://github.com/Eduardohrs/frequencia-ufmg.

@@ -1,6 +1,12 @@
 # Revisão interna da entrega acadêmica PF-02-AGENDA
 
-Este registro descreve a versão do ZIP da PR #269. A avaliação é uma simulação de professora exigente e de pessoas usando o terminal; **não é aprovação nem previsão de nota da professora**. A lente de acessibilidade ficou fora, conforme o recorte solicitado.
+Este registro descreve a versão do ZIP da PR #269. A avaliação é uma simulação de professora exigente e de pessoas usando a interface local e o terminal; **não é aprovação nem previsão de nota da professora**. A lente de acessibilidade ficou fora, conforme o recorte solicitado.
+
+## Interface local acrescentada
+
+O navegador agora é a apresentação principal: lista matérias pelo nome, abre os encontros da matéria, registra e corrige presença, mostra o saldo, reúne provas e trabalhos e oferece o reset em Ajustes. `web.py` é um servidor local da biblioteca padrão que converte pedidos JSON em operações de `ControleAcademico`; regras, faltas e persistência continuam em `models.py` e `database.py`. O terminal permanece como alternativa. O servidor escuta apenas `127.0.0.1`, e a demo não depende do aplicativo real, de login ou de rede externa.
+
+Quatro testes da interface percorrem criação, ausência, correção, atividade, renomeação, reabertura, reset, rejeições, falhas de banco e encerramento. A interface foi aberta em Chrome com largura de computador e celular. A primeira inspeção detectou que a política de estilo bloqueava a barra de frequência; a correção foi aplicada antes da última conferência. O PDF do produto recebeu arquitetura, sequência e roteiro do navegador; a Verificação recebeu os cenários W01–W05 e T23–T26.
 
 ## Falha que invalidou a revisão anterior
 
@@ -23,6 +29,7 @@ O menu ganhou **8 Recomeçar do zero**. Ele só apaga depois de receber exatamen
 | 6 Ver agenda | Mostra nome e código secundário, ordem por data e inserção; informa agenda vazia. | T14 e T21. |
 | 7 Renomear disciplina | Seleciona pelo nome; altera só o nome após escrita confirmada, inclusive após reabrir. | T14, T17 e T18. |
 | 8 Recomeçar do zero | Enter e resposta errada cancelam; `APAGAR` limpa banco e memória; falha no segundo `DELETE` faz rollback. | T21 e T22. |
+| Interface local | A página usa o mesmo domínio, oferece seleção por nome e preserva os dados após atualizar. | T23–T26, conferência visual em Chrome. |
 | 0 Sair, fim de entrada e interrupção | Encerra sem traceback; dados salvos reaparecem na abertura seguinte. | T04, T11, T14 e testes do menu. |
 
 ## Leitura por perspectivas
@@ -34,14 +41,14 @@ O menu ganhou **8 Recomeçar do zero**. Ele só apaga depois de receber exatamen
 | Riley, testador exigente | Número errado, cancelamento, valores inválidos e falha durante o reset deixam dados parciais? | A escolha rejeita ou volta; `APAGAR` é obrigatório; uma falha no segundo `DELETE` preservou falta, atividade e cadastro no SQLite reaberto. |
 | Casey, pessoa distraída | Se eu sair, voltar ou escolher a matéria errada, perco dados? | As matérias aparecem por nome a cada seleção; reabertura preservou registros e agenda; `0` volta sem mudança. |
 | Alex, usuário impaciente | Preciso copiar códigos ou executar comando externo para recomeçar? | Escolhe por número; reset está no menu. O caminho curto cria, registra, consulta e recomeça sem comando de sistema. |
-| Leitora rigorosa de formatação | Há título isolado, tabela cortada, página órfã ou diagrama ilegível? | Os dois PDFs foram renderizados, reordenados após identificar quebras ruins e conferidos novamente: 11 páginas no Produto e 10 na Verificação. |
+| Leitora rigorosa de formatação | Há título isolado, tabela cortada, página órfã ou diagrama ilegível? | Os dois PDFs foram renderizados e conferidos novamente: 12 páginas no Produto e 11 na Verificação, sem página órfã. |
 
 ## Critérios dos enunciados e evidências
 
 - **Produto final:** problema, público, recorte e alterações de escopo nas páginas iniciais; contratos F01–F08; regras com unidades e exemplos; classes, especialização e polimorfismo; sequências do cadastro, registro, atividade e reset; camadas e SQLite; instruções, dados fictícios e limites. O ZIP identificado no relatório contém código, banco vazio, gerador de exemplo, README e testes.
-- **Verificação:** uma matriz por função com estado inicial, regra e entrada, esperado, observado, situação e teste associado; mapa T01–T22; defeitos reproduzidos e corrigidos; resultado integral da última execução no PDF e em `evidencias/unittest.txt`.
+- **Verificação:** uma matriz por função com estado inicial, regra e entrada, esperado, observado, situação e teste associado; cenários da interface e mapa T01–T26; defeitos reproduzidos e corrigidos; resultado integral da última execução no PDF e em `evidencias/unittest.txt`.
 - **Execução independente:** o verificador extrai o ZIP, roda os testes e percorre criação, registro, atividade, renomeação, consulta, reabertura, reset e nova abertura. Os testes usam bancos temporários; não tocam nos dados reais do aplicativo.
-- **Resultado técnico:** 27 testes aprovados, cobertura de linhas de 100% nos quatro módulos da demo, análise estática aprovada e todos os checks da PR devem ser verificados no commit final antes do merge.
+- **Resultado técnico:** 31 testes aprovados, incluindo quatro da interface; cobertura de linhas de 100% nos módulos Python da demo e análise estática aprovadas. Os checks da PR devem ser verificados no commit final antes do merge.
 
 ## Limites declarados
 

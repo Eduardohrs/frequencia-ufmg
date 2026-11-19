@@ -8,10 +8,11 @@ Este ZIP reúne as duas etapas:
 
 - `relatorio/Frequencia_UFMG_Produto_Final.pdf`: escopo, contratos, regras, diagramas e implementação.
 - `relatorio/Frequencia_UFMG_Verificacao.pdf`: matriz de cenários e resultados observados.
-- `demo/`: programa Python independente, testes, banco SQLite vazio e gerador de dados fictícios.
+- `demo/`: interface local em HTML, programa Python independente, testes, banco SQLite vazio e gerador de dados fictícios.
 - `evidencias/unittest.txt`: saída integral da última execução dos testes.
 
-Para usar ou testar, comece em `demo/README.md`. Python 3.11 ou superior é suficiente;
-o programa não precisa de conta, internet nem pacotes externos.
-As ações por disciplina mostram nomes numerados. A opção 8 reinicia os dados desta demo
-somente depois da confirmação `APAGAR`.
+Para usar ou testar, comece em `demo/README.md`. Entre em `demo/`, rode `python web.py`
+e abra http://127.0.0.1:8878. Python 3.11 ou superior é suficiente; o programa
+não precisa de conta, internet nem pacotes externos. Há também um menu opcional
+com `python main.py`. As duas interfaces compartilham as mesmas classes e o mesmo
+SQLite local. O reset exige a confirmação `APAGAR`.

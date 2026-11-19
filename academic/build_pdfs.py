@@ -52,7 +52,7 @@ def product():
                 ("Versão entregue", VERSION),
                 (
                     "Executável",
-                    "<b>Frequencia_UFMG_Entrega_Final.zip</b> — demo/, SQLite, dados fictícios e testes",
+                    "<b>Frequencia_UFMG_Entrega_Final.zip</b> — interface local, Python, SQLite, dados fictícios e testes",
                 ),
             ],
             [4.2 * cm, 12.8 * cm],
@@ -67,7 +67,7 @@ def product():
     section(
         s,
         "O que está pronto",
-        "A aplicação de terminal começa com um banco vazio, cadastra disciplinas e datas, registra e corrige frequência, consulta os cálculos e adiciona atividades. O estudante escolhe disciplinas pelo nome em uma lista numerada e pode recomeçar do zero pelo menu. O SQLite conserva tudo entre aberturas. Há dados fictícios e testes que não dependem de conta, internet ou dados reais.",
+        "A interface local abre no navegador com um banco vazio: cadastra disciplinas e datas, registra e corrige frequência, consulta os cálculos e adiciona atividades. O estudante escolhe pelo nome, sem decorar códigos, e pode recomeçar em Ajustes. Um menu de terminal oferece as mesmas funções como alternativa. O SQLite conserva tudo entre aberturas; não há conta, internet nem dados reais obrigatórios.",
     )
     s.append(
         table(
@@ -171,7 +171,7 @@ def product():
     contract(
         s,
         "F02 · Registrar frequência",
-        "Disciplina existente e data da grade ainda pendente. O menu mostra nomes numerados; o usuário escolhe um número, data e situação: presente, ausente, atrasado, saiu mais cedo, cancelada ou sem chamada.",
+        "Disciplina existente e data da grade ainda pendente. A interface lista matérias pelo nome; no menu alternativo, elas são numeradas. O usuário escolhe data e situação: presente, ausente, atrasado, saiu mais cedo, cancelada ou sem chamada.",
         "Política da disciplina calcula faltas em unidades de 50 min. Confirma a escrita no SQLite, substitui o pendente e recalcula base, faltas, pendências, limite, saldo, excesso e percentual.",
         "Data fora da grade, situação desconhecida ou repetição sem usar Corrigir: rejeita. Registro, banco e totais anteriores permanecem; falha de escrita também preserva a memória.",
     )
@@ -192,7 +192,7 @@ def product():
     contract(
         s,
         "F04 · Consultar frequência",
-        "Disciplina cadastrada; o menu lista seus nomes em ordem alfabética, numerados, com o código apenas como referência. O usuário escolhe o número ou 0 para voltar.",
+        "Disciplina cadastrada; a interface lista seus nomes em ordem alfabética, com o código apenas como referência. No menu alternativo, o usuário escolhe o número ou 0 para voltar.",
         "A consulta exibe nome, grade, situação e faltas por data, base E, pendências, faltas A, limite L, saldo, excesso e frequência quando definida. Não grava dados.",
         "Número fora da lista ou não numérico: pede uma escolha válida. Voltar ou selecionar sem disciplinas não altera cadastro, registros nem totais.",
     )
@@ -221,8 +221,8 @@ def product():
     contract(
         s,
         "F08 · Recomeçar do zero",
-        "Banco iniciado, vazio ou preenchido. O usuário escolhe 8 no menu e digita exatamente APAGAR para confirmar; qualquer outra resposta cancela.",
-        "Uma transação apaga atividades, registros e disciplinas; após o commit, limpa a memória. O menu volta vazio e permite cadastrar de novo o mesmo código.",
+        "Banco iniciado, vazio ou preenchido. O usuário escolhe Apagar dados em Ajustes ou 8 no menu e digita exatamente APAGAR; qualquer outra resposta cancela.",
+        "Uma transação apaga atividades, registros e disciplinas; após o commit, limpa a memória. A interface volta vazia e permite cadastrar de novo o mesmo código.",
         "Resposta diferente de APAGAR cancela sem alterar nada. Se o SQLite falhar, a transação faz rollback e memória, registros e atividades continuam iguais.",
     )
 
@@ -392,8 +392,13 @@ def product():
             [
                 (
                     "Apresentação",
+                    "demo/web/ e web.py",
+                    "HTML/CSS/JS mostram os dados; web.py converte pedidos locais em operações de domínio e devolve resultados.",
+                ),
+                (
+                    "Apresentação alternativa",
                     "demo/main.py",
-                    "Lê teclado, converte entradas e mostra resultado ou erro compreensível.",
+                    "Menu de terminal que usa o mesmo controle e o mesmo banco.",
                 ),
                 (
                     "Negócio",
@@ -463,15 +468,54 @@ def product():
         )
     )
 
-    page(s, "09 · Execução", "Demonstração, testes e limites")
+    page(s, "09 · Interface", "Navegador local, lógica em Python")
     section(
         s,
-        "Como reproduzir",
-        "Requer Python 3.11+; só biblioteca padrão. Extraia o ZIP, entre em demo/ e rode <b>python main.py</b>. Crie DEMO01 com duas chamadas, duas aulas por encontro e datas 02, 04, 09 e 11/11/2026. Para registrar, consultar, corrigir, agendar ou renomear, escolha a disciplina pelo número exibido. Marque 02/11 ausente, 04/11 presente, consulte e corrija 02/11. Feche e reabra: a correção permanece. A opção 8 reinicia os dados após APAGAR; o README explica a base fictícia separada.",
+        "O que o navegador faz",
+        "A página HTML oferece três áreas: Disciplinas, Agenda e Ajustes. Em Disciplinas, a lista mostra nomes e a seleção abre os encontros, a barra de frequência e as atividades daquela matéria. O botão Registrar resolve uma data pendente; depois se torna Corrigir. Agenda lista provas e trabalhos por data. Ajustes permite zerar esta demo após a confirmação APAGAR. A página não calcula faltas, não escreve SQL e não guarda uma segunda cópia dos dados.",
+    )
+    section(
+        s,
+        "Caminho de uma ação",
+        "O navegador envia JSON ao servidor HTTP de web.py, restrito a 127.0.0.1. O servidor converte a data em date e chama ControleAcademico; Disciplina valida e calcula, e database.py persiste em SQLite. A resposta contém o estado reconstruído pelo domínio. Se a validação rejeitar a entrada, a interface mostra o motivo e o banco permanece igual. Atualizar ou reabrir a página consulta o mesmo arquivo. Nenhum serviço externo é necessário.",
+    )
+    s.append(
+        sequence_diagram(
+            [
+                (0, 1, "escolhe data e situação"),
+                (1, 2, "POST /api/registros"),
+                (2, 3, "registrar_presenca"),
+                (3, 4, "validar + salvar"),
+                (4, 3, "commit"),
+                (3, 2, "resumo recalculado"),
+                (2, 1, "JSON atualizado"),
+                (1, 0, "linha e saldo visíveis"),
+            ],
+            ["Estudante", "HTML/JS", "web.py", "Domínio", "SQLite"],
+        )
     )
     s.append(
         table(
-            ["Passo", "Ação no menu", "Resultado esperado"],
+            ["Ação visível", "Funções", "Comportamento verificável"],
+            [
+                ("Criar disciplina", "F01", "Datas entram pendentes; nome aparece na lista."),
+                ("Registrar / Corrigir", "F02–F04", "Linha muda; saldo vem do resumo em Python."),
+                ("Atividades e Agenda", "F05–F06", "Prova/trabalho vinculado aparece por data."),
+                ("Renomear / Apagar", "F07–F08", "Nome muda sem perder registros; reset exige APAGAR."),
+            ],
+            [4.5 * cm, 2.1 * cm, 10.4 * cm],
+        )
+    )
+
+    page(s, "10 · Execução", "Demonstração, testes e limites")
+    section(
+        s,
+        "Como reproduzir",
+        "Requer Python 3.11+; só biblioteca padrão. Extraia o ZIP, entre em demo/, rode <b>python web.py</b> e abra http://127.0.0.1:8878. Crie DEMO01 com duas chamadas, duas aulas por encontro e datas 02, 04, 09 e 11/11/2026. Escolha a matéria pelo nome. Marque 02/11 ausente, 04/11 presente, consulte e corrija 02/11. Atualize a página: a correção permanece. Em Ajustes, APAGAR reinicia os dados. O menu alternativo inicia com <b>python main.py</b>.",
+    )
+    s.append(
+        table(
+            ["Passo", "Ação na página", "Resultado esperado"],
             [
                 (
                     "1",
@@ -512,7 +556,7 @@ def product():
     section(
         s,
         "Mapa entre funções e código",
-        "F01, F04, F05, F07 e F08 passam por ControleAcademico em models.py; F02 e F03 passam por Disciplina.registrar_presenca e pela política de chamada selecionada; F06 lê ControleAcademico.atividades. O setter de nome fica em Disciplina. Todas as entradas e saídas do usuário ficam em main.py. A gravação, a limpeza e a recuperação usam database.py. O PDF de verificação relaciona cada função aos testes executados.",
+        "F01, F04, F05, F07 e F08 passam por ControleAcademico em models.py; F02 e F03 passam por Disciplina.registrar_presenca e pela política de chamada; F06 lê ControleAcademico.atividades. A página em web/ e web.py apenas apresenta e encaminha ações; main.py é a alternativa de terminal. Gravação, limpeza e recuperação usam database.py. O PDF de verificação relaciona funções, cenários e testes.",
     )
     build("Frequencia_UFMG_Produto_Final.pdf", s)
 
@@ -559,7 +603,7 @@ def verification():
     section(
         s,
         "Convenções",
-        "E = aulas elegíveis; A = faltas usadas; L = limite; R = saldo. Pendente é um encontro não resolvido. Aprovado significa que o teste citado passou na última execução e confirmou o estado da linha. A página 9 liga os IDs T01–T22 aos nomes dos testes; a página 10 mostra os resultados da última execução.",
+        "E = aulas elegíveis; A = faltas usadas; L = limite; R = saldo. Pendente é um encontro não resolvido. Aprovado significa que o teste citado passou na última execução e confirmou o estado da linha. A seção Evidências liga T01–T22 aos nomes dos testes; a seção Interface verifica o caminho pelo navegador.",
     )
 
     def matrix(title, initial, rows, *, new_page=True):
@@ -1118,11 +1162,37 @@ def verification():
         ],
     )
 
+    page(s, "Interface", "Verificação do navegador local")
+    section(
+        s,
+        "O mesmo domínio nas duas apresentações",
+        "T23 inicia o servidor local com SQLite temporário, carrega HTML/CSS/JS, cria disciplina, registra ausência, corrige para presença, adiciona prova, renomeia, reabre e apaga com APAGAR. T24 envia data fora da grade, data inválida e confirmação errada; cada pedido é rejeitado e a leitura seguinte preserva o estado. T25 cobre falhas de leitura e gravação. T26 verifica a inicialização e o encerramento do servidor.",
+    )
+    s.append(
+        table(
+            ["ID", "Caminho percorrido", "Esperado e observado", "Evidência"],
+            [
+                ("W01", "Criar DEMO01 com quatro encontros, registrar ausência e corrigir para presença.", "Cadastro disponível; faltas 2 e depois 0; correção substitui o registro.", "T23 · aprovado"),
+                ("W02", "Adicionar P1, renomear e consultar em novo pedido.", "P1 segue vinculada ao novo nome; registro e agenda persistem no SQLite.", "T23 · aprovado"),
+                ("W03", "Digitar APAGAR e consultar novamente.", "Disciplinas e atividades vazias no banco reaberto.", "T23 · aprovado"),
+                ("W04", "Enviar entradas inválidas e uma confirmação diferente de APAGAR.", "Erro específico; registros, totais e atividades inalterados.", "T24 · aprovado"),
+                ("W05", "Simular falha de SQLite na leitura/gravação e encerrar o servidor.", "Erro visível; encerramento controlado.", "T25–T26 · aprovado"),
+            ],
+            [1.5 * cm, 9.0 * cm, 11.3 * cm, 4.5 * cm],
+            dense="tight",
+        )
+    )
+    section(
+        s,
+        "Limite desta evidência",
+        "T23–T25 percorrem pedidos HTTP reais com banco isolado; T26 verifica a entrada do programa. Uma conferência adicional em Chrome verificou tamanhos de computador e celular, criação, registro, correção, atividade, barra inferior e ausência de erros de JavaScript. A aparência não altera os cálculos: o servidor devolve números das classes Python. Serviços externos do aplicativo completo não fazem parte deste recorte.",
+    )
+
     page(s, "Evidências", "Testes e defeitos corrigidos")
     section(
         s,
         "Evidências · IDs da matriz e nomes dos testes",
-        "Os IDs T01–T22 apontam para estes métodos de unittest e para evidencias/unittest.txt no ZIP. A situação da matriz descreve a última execução, não apenas uma intenção de teste.",
+        "T01–T22 apontam para domínio e terminal; T23–T26 verificam a interface local. Todos constam em evidencias/unittest.txt no ZIP. A situação da matriz descreve a última execução, não apenas uma intenção de teste.",
     )
     tests = [
         ("T01", "test_criar_e_registrar_do_zero"),
@@ -1147,6 +1217,10 @@ def verification():
         ("T20", "test_escolha_numerada_por_nome_e_volta_sem_alterar"),
         ("T21", "test_reset_cancelado_e_confirmado_pelo_menu"),
         ("T22", "test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar"),
+        ("T23", "test_fluxo_completo_e_reabertura"),
+        ("T24", "test_entradas_invalidas_preservam_estado"),
+        ("T25", "test_falhas_de_leitura_e_gravacao_sao_visiveis"),
+        ("T26", "test_ponto_de_entrada_pode_ser_encerrado"),
     ]
     middle = (len(tests) + 1) // 2
     s.append(
@@ -1168,7 +1242,7 @@ def verification():
     section(
         s,
         "Defeitos identificados e corrigidos",
-        "Após cada correção, repetimos o cenário e os demais testes; nenhum cenário ficou pendente.",
+        "Após cada correção, repetimos o cenário e os demais testes. T20 também confirma a escolha por nome no menu, eliminando a exigência de memorizar códigos.",
     )
     s.append(
         table(
@@ -1184,11 +1258,6 @@ def verification():
                     "Injetar OSError na gravação: a memória podia mostrar ausência sem confirmação do banco.",
                     "Gravar primeiro e trocar depois; T07 e T19 conferem banco, memória e mensagem.",
                 ),
-                (
-                    "Escolha exigia código",
-                    "Abrir Consultar exigia lembrar o código da disciplina cadastrada.",
-                    "Ações mostram nomes numerados; T20 cobre escolha, erro e volta; T11/T14 repetem os fluxos.",
-                ),
             ],
             [5.0 * cm, 10.6 * cm, 10.5 * cm],
             dense="tight",
@@ -1198,7 +1267,7 @@ def verification():
     section(
         s,
         "Como repetir sem dados reais",
-        "O ZIP inclui demo/test_models.py, demo/test_main.py, demo/README.md e evidencias/unittest.txt. Extraia, entre em demo/ e rode <b>python -m unittest discover -v</b>. Os testes não exigem conta, internet, Moodle ou GPS. Para operar o produto, rode <b>python main.py</b>; para gerar dados fictícios em arquivo separado, rode <b>python dados_exemplo.py</b>.",
+        "O ZIP inclui demo/test_models.py, demo/test_main.py, demo/test_web.py, demo/README.md e evidencias/unittest.txt. Extraia, entre em demo/ e rode <b>python -m unittest discover -v</b>. Os testes não exigem conta, internet, Moodle ou GPS. Para operar, rode <b>python web.py</b> e abra http://127.0.0.1:8878; o menu alternativo é <b>python main.py</b>.",
     )
     evidence_path = Path(__file__).parent / "package" / "evidencias" / "unittest.txt"
     evidence = evidence_path.read_text(encoding="utf-8-sig")
