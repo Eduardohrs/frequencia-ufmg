@@ -71,6 +71,7 @@
           <label>Chamadas por encontro <select name="chamadas"><option value="1">Uma chamada</option><option value="2">Duas chamadas</option></select></label>
           <label>Aulas de 50 min por encontro <select name="aulas"><option value="1">1 aula</option><option value="2" selected>2 aulas</option><option value="4">4 aulas</option></select></label>
         </div>
+        <p id="course-rule-hint" class="form-hint" hidden>Um encontro de uma aula aceita apenas uma chamada.</p>
         <label class="date-label">Datas dos encontros</label>
         <div class="date-entry"><input id="course-date" type="date" aria-label="Data do encontro"><button id="add-date" type="button" class="secondary">Adicionar data</button></div>
         <div id="date-list" class="date-list"></div>
@@ -97,6 +98,17 @@
         <label>Novo nome <input name="nome" required></label>
         <p class="field-error" data-error hidden></p>
         <div class="form-actions"><button type="button" class="quiet-button" data-close>Cancelar</button><button type="submit" class="primary">Salvar nome</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="reschedule-dialog" class="modal small-modal">
+      <form id="reschedule-form" class="form-card">
+        <div class="modal-header"><div><p class="eyebrow">ENCONTRO</p><h2>Corrigir data</h2></div><button type="button" class="icon-button" data-close aria-label="Fechar">×</button></div>
+        <p id="reschedule-context" class="modal-context"></p>
+        <label>Nova data <input name="novo_dia" type="date" required></label>
+        <p class="modal-context">Presença e faltas serão mantidas. A agenda não muda.</p>
+        <p class="field-error" data-error hidden></p>
+        <div class="form-actions"><button type="button" class="quiet-button" data-close>Cancelar</button><button type="submit" class="primary">Salvar data</button></div>
       </form>
     </dialog>
 

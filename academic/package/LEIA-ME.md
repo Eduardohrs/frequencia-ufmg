@@ -16,3 +16,5 @@ e abra http://127.0.0.1:8878. Python 3.11 ou superior é suficiente; o programa
 não precisa de conta, internet nem pacotes externos. Há também um menu opcional
 com `python main.py`. As duas interfaces compartilham as mesmas classes e o mesmo
 SQLite local. O reset exige a confirmação `APAGAR`.
+Na interface visual, **Corrigir data** muda a data de um encontro sem perder a
+presença registrada. A agenda de provas e trabalhos não muda com essa ação.

@@ -20,7 +20,7 @@ from pdf_layout import (
     table,
 )
 from reportlab.lib.units import cm
-from reportlab.platypus import Spacer
+from reportlab.platypus import Spacer, TableStyle
 
 
 def contract(story, title, initial, success, rejection):
@@ -67,7 +67,7 @@ def product():
     section(
         s,
         "O que está pronto",
-        "A interface local abre no navegador com um banco vazio: cadastra disciplinas e datas, registra e corrige frequência, consulta os cálculos e adiciona atividades. O estudante escolhe pelo nome, sem decorar códigos, e pode recomeçar em Ajustes. Um menu de terminal oferece as mesmas funções como alternativa. O SQLite conserva tudo entre aberturas; não há conta, internet nem dados reais obrigatórios.",
+        "A interface local abre no navegador com um banco vazio: cadastra disciplinas e datas, registra e corrige frequência, consulta os cálculos e adiciona atividades. O estudante escolhe pelo nome, sem decorar códigos, corrige uma data errada sem perder presença e pode recomeçar em Ajustes. O menu de terminal oferece o fluxo principal como alternativa; a correção de data é visual. O SQLite conserva tudo entre aberturas; não há conta, internet nem dados reais obrigatórios.",
     )
     s.append(
         table(
@@ -75,7 +75,7 @@ def product():
             [
                 (
                     "F01 · Cadastrar disciplina",
-                    "Cria disciplina e grade de encontros pendentes.",
+                    "Cria disciplina e grade de encontros pendentes; no navegador, permite corrigir a data de um encontro.",
                 ),
                 (
                     "F02 · Registrar frequência",
@@ -195,6 +195,11 @@ def product():
         "Disciplina cadastrada; a interface lista seus nomes em ordem alfabética, com o código apenas como referência. No menu alternativo, o usuário escolhe o número ou 0 para voltar.",
         "A consulta exibe nome, grade, situação e faltas por data, base E, pendências, faltas A, limite L, saldo, excesso e frequência quando definida. Não grava dados.",
         "Número fora da lista ou não numérico: pede uma escolha válida. Voltar ou selecionar sem disciplinas não altera cadastro, registros nem totais.",
+    )
+    section(
+        s,
+        "Correção da data de um encontro já cadastrado (F01)",
+        "No navegador, Corrigir data recebe uma data da grade e outra data válida que ainda não esteja nessa disciplina. A operação muda apenas a chave do encontro em uma transação SQLite: situação, número de aulas e faltas permanecem, assim como os totais. A lista volta ordenada por data. Data antiga inexistente, nova data inválida ou já usada rejeita a mudança; falha de escrita preserva memória e banco. Provas e trabalhos são registros independentes e não mudam de data. O menu de terminal não oferece esta correção.",
     )
     contract(
         s,
@@ -498,10 +503,26 @@ def product():
         table(
             ["Ação visível", "Funções", "Comportamento verificável"],
             [
-                ("Criar disciplina", "F01", "Datas entram pendentes; nome aparece na lista."),
-                ("Registrar / Corrigir", "F02–F04", "Linha muda; saldo vem do resumo em Python."),
-                ("Atividades e Agenda", "F05–F06", "Prova/trabalho vinculado aparece por data."),
-                ("Renomear / Apagar", "F07–F08", "Nome muda sem perder registros; reset exige APAGAR."),
+                (
+                    "Criar / corrigir data",
+                    "F01",
+                    "Datas entram pendentes; correção conserva presença e faltas.",
+                ),
+                (
+                    "Registrar / Corrigir",
+                    "F02–F04",
+                    "Linha muda; saldo vem do resumo em Python.",
+                ),
+                (
+                    "Atividades e Agenda",
+                    "F05–F06",
+                    "Prova/trabalho vinculado aparece por data.",
+                ),
+                (
+                    "Renomear / Apagar",
+                    "F07–F08",
+                    "Nome muda sem perder registros; reset exige APAGAR.",
+                ),
             ],
             [4.5 * cm, 2.1 * cm, 10.4 * cm],
         )
@@ -511,7 +532,7 @@ def product():
     section(
         s,
         "Como reproduzir",
-        "Requer Python 3.11+; só biblioteca padrão. Extraia o ZIP, entre em demo/, rode <b>python web.py</b> e abra http://127.0.0.1:8878. Crie DEMO01 com duas chamadas, duas aulas por encontro e datas 02, 04, 09 e 11/11/2026. Escolha a matéria pelo nome. Marque 02/11 ausente, 04/11 presente, consulte e corrija 02/11. Atualize a página: a correção permanece. Em Ajustes, APAGAR reinicia os dados. O menu alternativo inicia com <b>python main.py</b>.",
+        "Requer Python 3.11+; só biblioteca padrão. Extraia o ZIP, entre em demo/, rode <b>python web.py</b> e abra http://127.0.0.1:8878. Crie DEMO01 com duas chamadas, duas aulas por encontro e datas 02, 04, 09 e 11/11/2026. Escolha a matéria pelo nome. Marque 02/11 ausente, 04/11 presente, consulte e corrija 02/11. Em 02/11, use Corrigir data para 03/11: a presença permanece. Atualize a página para conferir. Em Ajustes, APAGAR reinicia os dados. O menu alternativo inicia com <b>python main.py</b>.",
     )
     s.append(
         table(
@@ -1166,17 +1187,48 @@ def verification():
     section(
         s,
         "O mesmo domínio nas duas apresentações",
-        "T23 inicia o servidor local com SQLite temporário, carrega HTML/CSS/JS, cria disciplina, registra ausência, corrige para presença, adiciona prova, renomeia, reabre e apaga com APAGAR. T24 envia data fora da grade, data inválida e confirmação errada; cada pedido é rejeitado e a leitura seguinte preserva o estado. T25 cobre falhas de leitura e gravação. T26 verifica a inicialização e o encerramento do servidor.",
+        "T23 inicia o servidor local com SQLite temporário, carrega HTML/CSS/JS, cria disciplina, registra ausência, corrige para presença, corrige a data do encontro, adiciona prova, renomeia, reabre e apaga com APAGAR. T24 envia data fora da grade, data inválida e confirmação errada; cada pedido é rejeitado e a leitura seguinte preserva o estado. T25 cobre falhas de leitura e gravação; T26 verifica a inicialização e o encerramento. T27–T28 isolam a correção da data no domínio e no SQLite.",
     )
     s.append(
         table(
             ["ID", "Caminho percorrido", "Esperado e observado", "Evidência"],
             [
-                ("W01", "Criar DEMO01 com quatro encontros, registrar ausência e corrigir para presença.", "Cadastro disponível; faltas 2 e depois 0; correção substitui o registro.", "T23 · aprovado"),
-                ("W02", "Adicionar P1, renomear e consultar em novo pedido.", "P1 segue vinculada ao novo nome; registro e agenda persistem no SQLite.", "T23 · aprovado"),
-                ("W03", "Digitar APAGAR e consultar novamente.", "Disciplinas e atividades vazias no banco reaberto.", "T23 · aprovado"),
-                ("W04", "Enviar entradas inválidas e uma confirmação diferente de APAGAR.", "Erro específico; registros, totais e atividades inalterados.", "T24 · aprovado"),
-                ("W05", "Simular falha de SQLite na leitura/gravação e encerrar o servidor.", "Erro visível; encerramento controlado.", "T25–T26 · aprovado"),
+                (
+                    "W01",
+                    "Criar DEMO01 com quatro encontros, registrar ausência e corrigir para presença.",
+                    "Cadastro disponível; faltas 2 e depois 0; correção substitui o registro.",
+                    "T23 · aprovado",
+                ),
+                (
+                    "W02",
+                    "Adicionar P1, renomear e consultar em novo pedido.",
+                    "P1 segue vinculada ao novo nome; registro e agenda persistem no SQLite.",
+                    "T23 · aprovado",
+                ),
+                (
+                    "W03",
+                    "Digitar APAGAR e consultar novamente.",
+                    "Disciplinas e atividades vazias no banco reaberto.",
+                    "T23 · aprovado",
+                ),
+                (
+                    "W04",
+                    "Enviar entradas inválidas e uma confirmação diferente de APAGAR.",
+                    "Erro específico; registros, totais e atividades inalterados.",
+                    "T24 · aprovado",
+                ),
+                (
+                    "W05",
+                    "Simular falha de SQLite na leitura/gravação e encerrar o servidor.",
+                    "Erro visível; encerramento controlado.",
+                    "T25–T26 · aprovado",
+                ),
+                (
+                    "W06",
+                    "Registrar uma ausência, corrigir só a data, reabrir; tentar data inválida e colisão.",
+                    "Situação e faltas preservadas; rejeições não alteram o estado.",
+                    "T23–T24, T27–T28 · aprovado",
+                ),
             ],
             [1.5 * cm, 9.0 * cm, 11.3 * cm, 4.5 * cm],
             dense="tight",
@@ -1185,14 +1237,14 @@ def verification():
     section(
         s,
         "Limite desta evidência",
-        "T23–T25 percorrem pedidos HTTP reais com banco isolado; T26 verifica a entrada do programa. Uma conferência adicional em Chrome verificou tamanhos de computador e celular, criação, registro, correção, atividade, barra inferior e ausência de erros de JavaScript. A aparência não altera os cálculos: o servidor devolve números das classes Python. Serviços externos do aplicativo completo não fazem parte deste recorte.",
+        "T23–T25 percorrem pedidos HTTP reais com banco isolado; T26 verifica a entrada do programa; T27–T28 cobrem troca de data, colisão e falha de disco. Uma conferência adicional em Chrome verificou larguras de 390 e 320 px, criação sem botão intermediário para a data, registro, correção da presença e da data, agenda, navegação após recarregar e títulos longos. A aparência não altera os cálculos: o servidor devolve números das classes Python. Serviços externos do aplicativo completo não fazem parte deste recorte.",
     )
 
     page(s, "Evidências", "Testes e defeitos corrigidos")
     section(
         s,
         "Evidências · IDs da matriz e nomes dos testes",
-        "T01–T22 apontam para domínio e terminal; T23–T26 verificam a interface local. Todos constam em evidencias/unittest.txt no ZIP. A situação da matriz descreve a última execução, não apenas uma intenção de teste.",
+        "T01–T22 apontam para domínio e terminal; T23–T26 verificam a interface local; T27–T28 aprofundam a correção de data. Todos constam em evidencias/unittest.txt no ZIP. A situação da matriz descreve a última execução, não apenas uma intenção de teste.",
     )
     tests = [
         ("T01", "test_criar_e_registrar_do_zero"),
@@ -1221,6 +1273,8 @@ def verification():
         ("T24", "test_entradas_invalidas_preservam_estado"),
         ("T25", "test_falhas_de_leitura_e_gravacao_sao_visiveis"),
         ("T26", "test_ponto_de_entrada_pode_ser_encerrado"),
+        ("T27", "test_remarcar_encontro_preserva_presenca_e_rejeita_colisao"),
+        ("T28", "test_remarcar_persistente_e_falha_na_gravacao"),
     ]
     middle = (len(tests) + 1) // 2
     s.append(
@@ -1242,26 +1296,7 @@ def verification():
     section(
         s,
         "Defeitos identificados e corrigidos",
-        "Após cada correção, repetimos o cenário e os demais testes. T20 também confirma a escolha por nome no menu, eliminando a exigência de memorizar códigos.",
-    )
-    s.append(
-        table(
-            ["Problema", "Como reproduzir e consequência", "Correção e reexecução"],
-            [
-                (
-                    "Fachadas incompletas",
-                    "Em SQLite, cadastrar/listar e registrar sem fachada persistente: reabertura perdia presença; atribuir nome podia mudar só a memória.",
-                    "Cadastro, busca e lista usam fachada; setter grava antes da memória. T04, T11, T17 e T18 reexecutados.",
-                ),
-                (
-                    "Memória antes do commit",
-                    "Injetar OSError na gravação: a memória podia mostrar ausência sem confirmação do banco.",
-                    "Gravar primeiro e trocar depois; T07 e T19 conferem banco, memória e mensagem.",
-                ),
-            ],
-            [5.0 * cm, 10.6 * cm, 10.5 * cm],
-            dense="tight",
-        )
+        "Uma versão sem fachada persistente perdia presença após reabertura e podia alterar só o nome em memória. Cadastro, busca e lista agora usam a fachada; o setter grava antes de mudar o objeto (T04, T11, T17 e T18). Também havia risco de publicar ausência antes do commit: uma falha de escrita deixaria a tela e o banco divergentes. O registro agora é trocado apenas após a gravação (T07 e T19). T20 confirma a escolha por nome no menu, sem memorizar código. Cada correção foi seguida pela repetição dos cenários relacionados.",
     )
     page(s, "Última execução", "Evidência integral dos testes")
     section(
@@ -1296,14 +1331,21 @@ def verification():
         "incluindo a classe de cada teste, está em evidencias/unittest.txt no ZIP. "
         "Todos os cenários da matriz ficaram aprovados nesta rodada.",
     )
-    s.append(
-        table(
-            ["Método executado", "Obs.", "Método executado", "Obs."],
-            paired,
-            [11.1 * cm, 1.95 * cm, 11.1 * cm, 1.95 * cm],
-            dense="tight",
+    evidence_table = table(
+        ["Método executado", "Obs.", "Método executado", "Obs."],
+        paired,
+        [11.1 * cm, 1.95 * cm, 11.1 * cm, 1.95 * cm],
+        dense="tight",
+    )
+    evidence_table.setStyle(
+        TableStyle(
+            [
+                ("TOPPADDING", (0, 0), (-1, -1), 0.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
+            ]
         )
     )
+    s.append(evidence_table)
     build("Frequencia_UFMG_Verificacao.pdf", s, wide=True)
 
 

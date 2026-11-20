@@ -139,6 +139,23 @@ def salvar_registro(
         )
 
 
+def remarcar_encontro(
+    codigo: str, dia_anterior: date, novo_dia: date, caminho: str | Path = DB_PATH
+) -> None:
+    """Altera a data de um encontro, mantendo situação e faltas na mesma linha.
+
+    A chave (disciplina, data) impede colisões. Se a escrita falhar, a transação
+    é desfeita e o domínio ainda conserva o registro com a data anterior.
+    """
+    with conexao(caminho) as banco:
+        cursor = banco.execute(
+            "UPDATE registros SET dia = ? WHERE disciplina_codigo = ? AND dia = ?",
+            (novo_dia.isoformat(), codigo, dia_anterior.isoformat()),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("Encontro não encontrado no banco de dados.")
+
+
 def salvar_atividade(
     codigo: str, dia: date, tipo: str, titulo: str, caminho: str | Path = DB_PATH
 ) -> int:

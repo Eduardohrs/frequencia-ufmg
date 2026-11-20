@@ -16,6 +16,10 @@ imediatamente na lista pelo nome. Abra uma data e escolha a situação de
 frequência; a mesma linha oferece **Corrigir** depois de um registro. O cartão
 mostra faltas usadas, limite, saldo e frequência quando todas as aulas tiverem
 sido resolvidas. **Agenda** guarda provas e trabalhos vinculados à matéria.
+Use **Corrigir data** no encontro se a data da grade estiver errada: a presença,
+as faltas e os totais ficam preservados, inclusive após reabrir o navegador.
+Essa correção existe na interface visual; o menu de terminal conserva o fluxo
+principal de cadastro e frequência.
 **Renomear** altera só o nome. Em **Ajustes**, **Apagar dados da demo** requer
 digitar `APAGAR`; cancelar preserva tudo.
 

@@ -104,6 +104,12 @@ def executar_acao(controle, rota, dados):
         )
     elif rota == "/api/renomear":
         controle.renomear_disciplina(dados.get("codigo"), dados.get("nome"))
+    elif rota == "/api/remarcar":
+        controle.remarcar_encontro(
+            dados.get("codigo"),
+            ler_data(dados.get("dia_anterior")),
+            ler_data(dados.get("novo_dia")),
+        )
     elif rota == "/api/reset":
         if dados.get("confirmacao") != "APAGAR":
             raise ValueError("Digite APAGAR para confirmar.")
@@ -161,6 +167,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             "/api/registros",
             "/api/atividades",
             "/api/renomear",
+            "/api/remarcar",
             "/api/reset",
         }:
             self.json(404, {"erro": "Ação inexistente."})

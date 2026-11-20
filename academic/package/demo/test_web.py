@@ -93,6 +93,19 @@ class InterfaceWebTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(state["disciplinas"][0]["resumo"]["faltas"], 0)
         status, state = self.post(
+            "/api/remarcar",
+            {
+                "codigo": "DEMO01",
+                "dia_anterior": "2026-11-02",
+                "novo_dia": "2026-11-03",
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(state["disciplinas"][0]["registros"][0]["dia"], "2026-11-03")
+        self.assertEqual(
+            state["disciplinas"][0]["registros"][0]["situacao"], "presente"
+        )
+        status, state = self.post(
             "/api/atividades",
             {"codigo": "DEMO01", "dia": "2026-11-10", "tipo": "prova", "titulo": "P1"},
         )
@@ -111,6 +124,7 @@ class InterfaceWebTest(unittest.TestCase):
         self.assertEqual(
             saved["disciplinas"][0]["registros"][0]["situacao"], "presente"
         )
+        self.assertEqual(saved["disciplinas"][0]["registros"][0]["dia"], "2026-11-03")
         self.assertEqual(saved["atividades"][0]["titulo"], "P1")
 
         status, state = self.post("/api/reset", {"confirmacao": "APAGAR"})
@@ -139,6 +153,20 @@ class InterfaceWebTest(unittest.TestCase):
             (
                 "/api/registros",
                 {"codigo": "D1", "dia": None, "situacao": "ausente"},
+                400,
+            ),
+            (
+                "/api/remarcar",
+                {"codigo": "D1", "dia_anterior": "2026-11-02", "novo_dia": "sem-data"},
+                400,
+            ),
+            (
+                "/api/remarcar",
+                {
+                    "codigo": "D1",
+                    "dia_anterior": "2026-11-03",
+                    "novo_dia": "2026-11-04",
+                },
                 400,
             ),
             (

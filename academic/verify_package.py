@@ -59,7 +59,7 @@ def main():
             evidence = (root / "evidencias" / "unittest.txt").read_text(
                 encoding="utf-8-sig"
             )
-            assert "Ran 31 tests" in evidence and evidence.rstrip().endswith("OK")
+            assert "Ran 33 tests" in evidence and evidence.rstrip().endswith("OK")
             tests = subprocess.run(
                 ["py", "-m", "unittest", "discover", "-v"],
                 cwd=demo,
@@ -151,7 +151,7 @@ def main():
             assert "Nenhuma disciplina cadastrada" in vazio.stdout
             assert "Agenda vazia" in vazio.stdout
             print(
-                "ZIP íntegro; PDFs, 31 testes, interface local, persistência e reset aprovados."
+                "ZIP íntegro; PDFs, 33 testes, interface local, persistência e reset aprovados."
             )
 
 

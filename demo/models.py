@@ -184,6 +184,34 @@ class Disciplina:
         self._registros[dia] = novo
         return novo
 
+    def remarcar_encontro(self, dia_anterior: date, novo_dia: date, *, salvar=None):
+        """Corrige uma data da grade sem mudar a presença já registrada.
+
+        A operação troca só a chave da grade. Valida antes de gravar e publica
+        a mudança em memória apenas depois do commit, evitando perda de faltas
+        quando a nova data é inválida, duplicada ou o disco falha.
+        """
+        if type(dia_anterior) is not date or dia_anterior not in self._registros:
+            raise ValueError("A data anterior não faz parte desta disciplina.")
+        if type(novo_dia) is not date:
+            raise ValueError("Informe uma nova data válida.")
+        if novo_dia != dia_anterior and novo_dia in self._registros:
+            raise ValueError("Já existe um encontro nessa data.")
+        anterior = self._registros[dia_anterior]
+        if novo_dia == dia_anterior:
+            return anterior
+        novo = Registro(novo_dia, anterior.aulas, anterior.situacao, anterior.faltas)
+        if salvar is not None:
+            salvar(dia_anterior, novo_dia)
+        atualizados = {
+            dia: registro
+            for dia, registro in self._registros.items()
+            if dia != dia_anterior
+        }
+        atualizados[novo_dia] = novo
+        self._registros = dict(sorted(atualizados.items()))
+        return novo
+
     def resumo(self):
         """Recalcula totais em aulas de 50 minutos a partir da grade atual.
 
@@ -345,6 +373,10 @@ class ControleAcademico:
         self._disciplinas[disciplina.codigo].nome = nome
         return self.obter_disciplina(disciplina.codigo)
 
+    def remarcar_encontro(self, codigo, dia_anterior, novo_dia):
+        """Corrige uma data por código, usando as mesmas regras em todas as telas."""
+        return self.obter_disciplina(codigo).remarcar_encontro(dia_anterior, novo_dia)
+
     def apagar_tudo(self):
         """Remove disciplinas, registros e atividades após confirmar no menu.
 
@@ -364,6 +396,12 @@ class ControleAcademico:
                 registro.situacao,
                 registro.faltas,
                 self._caminho_banco,
+            )
+
+    def _salvar_data_encontro(self, disciplina, dia_anterior, novo_dia):
+        if self._persistente:
+            database.remarcar_encontro(
+                disciplina.codigo, dia_anterior, novo_dia, self._caminho_banco
             )
 
 
@@ -394,4 +432,13 @@ class _DisciplinaPersistente:
                 self._disciplina, registro
             ),
             **kwargs,
+        )
+
+    def remarcar_encontro(self, dia_anterior, novo_dia):
+        return self._disciplina.remarcar_encontro(
+            dia_anterior,
+            novo_dia,
+            salvar=lambda anterior, novo: self._controle._salvar_data_encontro(
+                self._disciplina, anterior, novo
+            ),
         )

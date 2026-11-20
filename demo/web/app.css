@@ -198,6 +198,14 @@ p {
   align-items: start
 }
 
+.course-layout.no-courses {
+  grid-template-columns: minmax(0,1fr)
+}
+
+.course-layout.no-courses .course-sidebar {
+  display: none
+}
+
 .course-sidebar,.surface,.course-detail>.surface {
   background: #fff;
   border: 1px solid #d9e1e4;
@@ -206,7 +214,8 @@ p {
 }
 
 .course-sidebar {
-  padding: 18px
+  padding: 18px;
+  min-width: 0
 }
 
 .panel-heading {
@@ -254,7 +263,8 @@ p {
 
 .course-choice strong {
   display: block;
-  line-height: 1.2
+  line-height: 1.2;
+  overflow-wrap: anywhere
 }
 
 .course-choice small {
@@ -302,7 +312,8 @@ p {
 .detail-title {
   font-size: 1.5rem;
   letter-spacing: -.04em;
-  margin: 3px 0 8px
+  margin: 3px 0 8px;
+  overflow-wrap: anywhere
 }
 
 .muted {
@@ -444,6 +455,13 @@ p {
   margin-top: 3px
 }
 
+.meeting-date .date-edit {
+  display: block;
+  color: #5c6b72;
+  font-size: .74rem;
+  padding-top: 5px
+}
+
 .meeting-right {
   display: flex;
   align-items: center;
@@ -510,6 +528,11 @@ p {
 .activity-date small {
   font-size: .67rem;
   text-transform: uppercase
+}
+
+.activity-info {
+  min-width: 0;
+  overflow-wrap: anywhere
 }
 
 .activity-info strong {
@@ -703,6 +726,11 @@ p {
   font-size: .84rem
 }
 
+.form-hint {
+  color: #5c6b72;
+  font-size: .8rem
+}
+
 .modal-context {
   color: #5c6b72
 }
@@ -726,23 +754,49 @@ p {
   }
 
   .course-layout {
-    grid-template-columns: 1fr
+    grid-template-columns: minmax(0,1fr)
   }
 
   .course-sidebar {
-    padding: 15px
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none
+  }
+
+  .course-sidebar.single-course {
+    display: none
   }
 
   .course-list {
     display: flex;
     overflow-x: auto;
-    gap: 8px
+    gap: 8px;
+    scrollbar-width: none
   }
 
+  .course-list::-webkit-scrollbar { display: none }
+
+  .course-sidebar .panel-heading { display: none }
+
   .course-choice {
-    min-width: 175px;
-    max-width: 210px
+    flex: 0 0 138px;
+    min-width: 0;
+    max-width: 180px;
+    padding: 10px 12px;
+    border-color: #d9e1e4;
+    background: #fff
   }
+
+  .course-choice strong {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2
+  }
+
+  .course-choice small,.course-choice .course-meta { display: none }
 
   .course-detail .surface {
     padding: 20px
@@ -849,4 +903,9 @@ html {
 
 .meeting {
   scroll-margin-bottom: 95px
+}
+
+@media(max-width:360px) {
+  .summary-grid { grid-template-columns: repeat(2,minmax(0,1fr)) }
+  .summary-grid .stat:last-child { grid-column: 1 / -1 }
 }

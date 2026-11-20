@@ -6,7 +6,7 @@ Este registro descreve a versão do ZIP da PR #269. A avaliação é uma simula�
 
 O navegador agora é a apresentação principal: lista matérias pelo nome, abre os encontros da matéria, registra e corrige presença, mostra o saldo, reúne provas e trabalhos e oferece o reset em Ajustes. `web.py` é um servidor local da biblioteca padrão que converte pedidos JSON em operações de `ControleAcademico`; regras, faltas e persistência continuam em `models.py` e `database.py`. O terminal permanece como alternativa. O servidor escuta apenas `127.0.0.1`, e a demo não depende do aplicativo real, de login ou de rede externa.
 
-Quatro testes da interface percorrem criação, ausência, correção, atividade, renomeação, reabertura, reset, rejeições, falhas de banco e encerramento. A interface foi aberta em Chrome com largura de computador e celular. A primeira inspeção detectou que a política de estilo bloqueava a barra de frequência; a correção foi aplicada antes da última conferência. O PDF do produto recebeu arquitetura, sequência e roteiro do navegador; a Verificação recebeu os cenários W01–W05 e T23–T26.
+Quatro testes da interface percorrem criação, ausência, correção de presença e data, atividade, renomeação, reabertura, reset, rejeições, falhas de banco e encerramento. Dois testes adicionais isolam a correção de data no domínio e no SQLite. A interface foi aberta em Chrome no computador e em larguras móveis de 390 e 320 px. O PDF do produto recebeu arquitetura, sequência e roteiro do navegador; a Verificação inclui W01–W06 e T23–T28.
 
 ## Falha que invalidou a revisão anterior
 
@@ -29,7 +29,7 @@ O menu ganhou **8 Recomeçar do zero**. Ele só apaga depois de receber exatamen
 | 6 Ver agenda | Mostra nome e código secundário, ordem por data e inserção; informa agenda vazia. | T14 e T21. |
 | 7 Renomear disciplina | Seleciona pelo nome; altera só o nome após escrita confirmada, inclusive após reabrir. | T14, T17 e T18. |
 | 8 Recomeçar do zero | Enter e resposta errada cancelam; `APAGAR` limpa banco e memória; falha no segundo `DELETE` faz rollback. | T21 e T22. |
-| Interface local | A página usa o mesmo domínio, oferece seleção por nome e preserva os dados após atualizar. | T23–T26, conferência visual em Chrome. |
+| Interface local | A página usa o mesmo domínio, oferece seleção por nome, correção de data e preserva os dados após atualizar. | T23–T28, conferência visual em Chrome. |
 | 0 Sair, fim de entrada e interrupção | Encerra sem traceback; dados salvos reaparecem na abertura seguinte. | T04, T11, T14 e testes do menu. |
 
 ## Leitura por perspectivas
@@ -37,18 +37,21 @@ O menu ganhou **8 Recomeçar do zero**. Ele só apaga depois de receber exatamen
 | Perspectiva | Pergunta prática | Resultado desta rodada |
 | --- | --- | --- |
 | Professora exigente | O produto final entrega todas as funções declaradas, contratos, camadas, classes, persistência e diagramas fiéis? A Verificação cobre sucesso, rejeição, estado e evidência por função? | F01–F08 constam no produto e na matriz; o novo fluxo e o reset aparecem nos contratos, código, cenários e diagrama. Os enunciados foram relidos e comparados aos PDFs. |
-| Jordan, iniciante | Consigo começar sem saber um código e descobrir como consultar? | A opção 3 mostra nomes e números; sem cadastro, aponta a opção 1. O README explica o percurso. |
-| Riley, testador exigente | Número errado, cancelamento, valores inválidos e falha durante o reset deixam dados parciais? | A escolha rejeita ou volta; `APAGAR` é obrigatório; uma falha no segundo `DELETE` preservou falta, atividade e cadastro no SQLite reaberto. |
-| Casey, pessoa distraída | Se eu sair, voltar ou escolher a matéria errada, perco dados? | As matérias aparecem por nome a cada seleção; reabertura preservou registros e agenda; `0` volta sem mudança. |
-| Alex, usuário impaciente | Preciso copiar códigos ou executar comando externo para recomeçar? | Escolhe por número; reset está no menu. O caminho curto cria, registra, consulta e recomeça sem comando de sistema. |
-| Leitora rigorosa de formatação | Há título isolado, tabela cortada, página órfã ou diagrama ilegível? | Os dois PDFs foram renderizados e conferidos novamente: 12 páginas no Produto e 11 na Verificação, sem página órfã. |
+| Jordan, iniciante | Consigo começar pelo estado vazio e entender a primeira ação? | A agenda vazia oferece Criar disciplina; o cadastro aceita a data digitada sem exigir um segundo botão; uma aula impede a opção impossível de duas chamadas. |
+| Riley, testador exigente | Título enorme, data repetida, colisão de datas, falha no disco ou reset errado alteram dados? | Título de 110 caracteres não ampliou a tela; testes rejeitaram colisões e falha de escrita sem trocar a presença; `APAGAR` continua obrigatório. |
+| Casey, pessoa distraída | Se eu mudar de aba, recarregar ou errar a data de uma aula registrada, perco o contexto? | A aba e a disciplina selecionada persistem; Corrigir data preserva situação e faltas após recarregar. A lista de matérias em 320 px ficou compacta e sem rolagem horizontal da página. |
+| Alex, usuário impaciente | Preciso de cliques extras ou decorar códigos? | A data do formulário entra no cadastro ao enviar; lista e detalhe usam nome como referência principal; a agenda vazia leva diretamente ao cadastro. |
+| Estudante exigente | Uma mensagem sem ação ou um layout cortado me obriga a adivinhar o próximo passo? | A ação vazia da agenda é explícita; título longo e duas matérias em 320 px não cortam controles; presença e mudança de data dão retorno visível. |
+| Leitora rigorosa de formatação | Há título isolado, tabela cortada, página órfã ou diagrama ilegível? | Os dois PDFs foram renderizados novamente: 12 páginas no Produto e 11 na Verificação. A tabela de testes, que havia gerado uma página órfã, foi compactada e conferida. |
+
+Na segunda passada, as seis perspectivas acima não deixaram comentário de correção aberto **nos fluxos examinados**. A automação percorreu a interface em desktop, 390 px e 320 px com banco temporário: estado vazio, cadastro, configuração incompatível, ausência, mudança de data, recarga, título longo, alternância de disciplina, agenda e reset. Os testes de domínio cobrem rejeições e rollback. Essa conclusão não equivale a uma avaliação externa nem cobre serviços do aplicativo completo.
 
 ## Critérios dos enunciados e evidências
 
 - **Produto final:** problema, público, recorte e alterações de escopo nas páginas iniciais; contratos F01–F08; regras com unidades e exemplos; classes, especialização e polimorfismo; sequências do cadastro, registro, atividade e reset; camadas e SQLite; instruções, dados fictícios e limites. O ZIP identificado no relatório contém código, banco vazio, gerador de exemplo, README e testes.
-- **Verificação:** uma matriz por função com estado inicial, regra e entrada, esperado, observado, situação e teste associado; cenários da interface e mapa T01–T26; defeitos reproduzidos e corrigidos; resultado integral da última execução no PDF e em `evidencias/unittest.txt`.
+- **Verificação:** uma matriz por função com estado inicial, regra e entrada, esperado, observado, situação e teste associado; cenários da interface e mapa T01–T28; defeitos reproduzidos e corrigidos; resultado integral da última execução no PDF e em `evidencias/unittest.txt`.
 - **Execução independente:** o verificador extrai o ZIP, roda os testes e percorre criação, registro, atividade, renomeação, consulta, reabertura, reset e nova abertura. Os testes usam bancos temporários; não tocam nos dados reais do aplicativo.
-- **Resultado técnico:** 31 testes aprovados, incluindo quatro da interface; cobertura de linhas de 100% nos módulos Python da demo e análise estática aprovadas. Os checks da PR devem ser verificados no commit final antes do merge.
+- **Resultado técnico:** 33 testes aprovados, incluindo quatro da interface e dois novos da correção de data; cobertura de linhas de 100% nos módulos Python da demo e análise estática aprovadas. No Chrome, o fluxo completo passou em computador, 390 px e 320 px com banco temporário. Os checks da PR devem ser verificados no commit final antes do merge.
 
 ## Limites declarados
 

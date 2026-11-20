@@ -396,3 +396,51 @@ class TesteFrequencia(unittest.TestCase):
         d.registrar_presenca(DIAS[1], "cancelada", corrigir=True)
         d.registrar_presenca(DIAS[2], "cancelada", corrigir=True)
         self.assertIsNone(d.resumo()["frequencia"])
+
+    def test_remarcar_encontro_preserva_presenca_e_rejeita_colisao(self):
+        d = Disciplina("D", "Teste", 2, 2, DIAS)
+        d.registrar_presenca(DIAS[0], "ausente")
+        antes = d.resumo()
+        nova_data = date(2026, 11, 3)
+        movido = d.remarcar_encontro(DIAS[0], nova_data)
+        self.assertEqual(
+            (movido.dia, movido.situacao, movido.faltas), (nova_data, "ausente", 2)
+        )
+        self.assertEqual(d.resumo(), antes)
+        self.assertEqual(d.remarcar_encontro(nova_data, nova_data), movido)
+        for anterior, novo in [
+            (DIAS[0], date(2026, 11, 5)),
+            ("02/11/2026", date(2026, 11, 5)),
+            (nova_data, "03/11/2026"),
+            (nova_data, DIAS[1]),
+        ]:
+            with (
+                self.subTest(anterior=anterior, novo=novo),
+                self.assertRaises(ValueError),
+            ):
+                d.remarcar_encontro(anterior, novo)
+            self.assertEqual(d.resumo(), antes)
+            self.assertEqual(d.registros[0], movido)
+
+    def test_remarcar_persistente_e_falha_na_gravacao(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "teste.db"
+            controle = ControleAcademico(persistente=True, caminho_banco=caminho)
+            d = controle.criar_disciplina("D", "Teste", 1, 2, DIAS[:2])
+            d.registrar_presenca(DIAS[0], "ausente")
+            nova_data = date(2026, 11, 3)
+            controle.remarcar_encontro("D", DIAS[0], nova_data)
+            reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
+            self.assertEqual(reaberto.obter_disciplina("D").registros[0].dia, nova_data)
+            self.assertEqual(reaberto.obter_disciplina("D").resumo()["faltas"], 2)
+            antes = d.registros
+            with (
+                patch("database.remarcar_encontro", side_effect=OSError("disco")),
+                self.assertRaises(OSError),
+            ):
+                d.remarcar_encontro(nova_data, date(2026, 11, 5))
+            self.assertEqual(d.registros, antes)
+            with self.assertRaises(ValueError):
+                database.remarcar_encontro(
+                    "D", date(2026, 11, 7), date(2026, 11, 8), caminho
+                )
