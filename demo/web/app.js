@@ -118,7 +118,7 @@ function courseDetail(course) {
       <p class="muted">${course.chamadas === 1 ? "Uma chamada" : "Duas chamadas"} por encontro · ${lessons} aula${lessons === 1 ? "" : "s"} de 50 min</p></div>
       <button type="button" class="secondary" data-action="renomear">Renomear</button></div>
     <div class="summary-grid"><div class="stat"><strong>${absenceValue}</strong><span>${absenceLabel}</span></div>
-      <div class="stat"><strong>${summary.restantes}</strong><span>faltas restantes</span></div>
+      <div class="stat ${summary.excesso ? "over-limit" : ""}"><strong>${summary.excesso || summary.restantes}</strong><span>${summary.excesso ? "faltas acima do limite" : "faltas restantes"}</span></div>
       <div class="stat"><strong>${percent}</strong><span>${summary.pendentes ? "frequência pendente" : "frequência"}</span></div></div>
     <div class="frequency-heading"><span>Visão da grade</span><strong>${summary.aulas} aulas de 50 min</strong></div>
     <div class="frequency-track" role="img" aria-label="${attended} aulas sem falta, ${summary.pendentes} pendentes, ${summary.faltas} faltas">
