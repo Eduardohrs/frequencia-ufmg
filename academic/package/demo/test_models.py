@@ -38,6 +38,7 @@ class TesteFrequencia(unittest.TestCase):
             controle = ControleAcademico(persistente=True, caminho_banco=caminho)
             disciplina = controle.obter_disciplina("DEMO01")
             self.assertEqual(disciplina.resumo()["faltas"], 2)
+            self.assertEqual(disciplina.registros[0].versao, 1)
             self.assertEqual(disciplina.resumo()["pendentes"], 4)
             self.assertEqual(controle.atividades[0].titulo, "Avaliação fictícia")
             self.assertIsNotNone(controle.atividades[0].identificador)
@@ -335,6 +336,38 @@ class TesteFrequencia(unittest.TestCase):
             self.assertEqual(recuperada.nome, "Persistente")
             self.assertEqual(recuperada.registros[0].situacao, "presente")
 
+    def test_banco_antigo_migra_sem_perder_frequencia(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "antigo.db"
+            with database.conexao(caminho) as banco:
+                banco.execute(
+                    "CREATE TABLE disciplinas (codigo TEXT PRIMARY KEY, nome TEXT, "
+                    "chamadas INTEGER, aulas INTEGER)"
+                )
+                banco.execute(
+                    "CREATE TABLE registros (disciplina_codigo TEXT, dia TEXT, "
+                    "situacao TEXT, faltas INTEGER, PRIMARY KEY (disciplina_codigo, dia))"
+                )
+                banco.execute("INSERT INTO disciplinas VALUES ('ANT01', 'Antes', 1, 2)")
+                banco.execute(
+                    "INSERT INTO registros VALUES ('ANT01', '2026-11-02', 'ausente', 2)"
+                )
+            controle = ControleAcademico(persistente=True, caminho_banco=caminho)
+            disciplina = controle.obter_disciplina("ANT01")
+            self.assertEqual(
+                (disciplina.registros[0].situacao, disciplina.registros[0].versao),
+                ("ausente", 0),
+            )
+            controle.registrar_presenca("ANT01", DIAS[0], "presente", corrigir=True)
+            reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
+            self.assertEqual(
+                (
+                    reaberto.obter_disciplina("ANT01").registros[0].situacao,
+                    reaberto.obter_disciplina("ANT01").registros[0].versao,
+                ),
+                ("presente", 1),
+            )
+
     def test_falha_na_gravacao_preserva_memoria_e_banco(self):
         with tempfile.TemporaryDirectory() as pasta:
             caminho = Path(pasta) / "teste.db"
@@ -385,6 +418,18 @@ class TesteFrequencia(unittest.TestCase):
                 .registros[0]
                 .situacao,
                 "presente",
+            )
+            # Mesmo que A volte ao valor visto por C, a versão mudou duas vezes.
+            primeira.registrar_presenca("DB03", DIAS[0], "ausente", corrigir=True)
+            with self.assertRaisesRegex(ValueError, "mudou em outra janela"):
+                terceira.registrar_presenca("DB03", DIAS[0], "cancelada", corrigir=True)
+            atual = ControleAcademico(persistente=True, caminho_banco=caminho)
+            self.assertEqual(
+                (
+                    atual.obter_disciplina("DB03").registros[0].situacao,
+                    atual.obter_disciplina("DB03").registros[0].versao,
+                ),
+                ("ausente", 3),
             )
 
     def test_criar_e_registrar_do_zero(self):

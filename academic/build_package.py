@@ -32,7 +32,7 @@ def main():
         check=True,
     )
     evidence = result.stdout + result.stderr
-    assert "Ran 26 tests" in evidence and evidence.rstrip().endswith("OK")
+    assert "Ran 28 tests" in evidence and evidence.rstrip().endswith("OK")
     (PACKAGE / "evidencias").mkdir(exist_ok=True)
     (PACKAGE / "evidencias/unittest.txt").write_text(evidence, encoding="utf-8")
 

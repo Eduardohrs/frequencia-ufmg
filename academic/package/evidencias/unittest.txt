@@ -1,6 +1,7 @@
 test_agenda_vazia_e_ordenada_apos_reabrir (test_models.TesteFrequencia.test_agenda_vazia_e_ordenada_apos_reabrir) ... ok
 test_atividade_invalida_e_falha_de_escrita_preservam_agenda (test_models.TesteFrequencia.test_atividade_invalida_e_falha_de_escrita_preservam_agenda) ... ok
 test_atividade_valida_persiste_sem_alterar_frequencia (test_models.TesteFrequencia.test_atividade_valida_persiste_sem_alterar_frequencia) ... ok
+test_banco_antigo_migra_sem_perder_frequencia (test_models.TesteFrequencia.test_banco_antigo_migra_sem_perder_frequencia) ... ok
 test_codigo_duplicado_preserva_cadastro_e_frequencia (test_models.TesteFrequencia.test_codigo_duplicado_preserva_cadastro_e_frequencia) ... ok
 test_consulta_nao_altera_registros (test_models.TesteFrequencia.test_consulta_nao_altera_registros) ... ok
 test_correcao_invalida_preserva_registro_e_resumo (test_models.TesteFrequencia.test_correcao_invalida_preserva_registro_e_resumo) ... ok
@@ -19,6 +20,7 @@ test_renomear_disciplina_valida_e_persiste (test_models.TesteFrequencia.test_ren
 test_renomear_invalido_ou_falha_de_banco_preserva_nome (test_models.TesteFrequencia.test_renomear_invalido_ou_falha_de_banco_preserva_nome) ... ok
 test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar (test_models.TesteFrequencia.test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar) ... ok
 test_sqlite_preserva_disciplina_entre_aberturas (test_models.TesteFrequencia.test_sqlite_preserva_disciplina_entre_aberturas) ... ok
+test_aba_antiga_nao_sobrescreve_correcao_pela_api (test_web.InterfaceWebTest.test_aba_antiga_nao_sobrescreve_correcao_pela_api) ... ok
 test_botoes_exemplo_e_testes_nao_exigem_preparo (test_web.InterfaceWebTest.test_botoes_exemplo_e_testes_nao_exigem_preparo) ... ok
 test_entradas_invalidas_preservam_estado (test_web.InterfaceWebTest.test_entradas_invalidas_preservam_estado) ... ok
 test_falhas_de_leitura_e_gravacao_sao_visiveis (test_web.InterfaceWebTest.test_falhas_de_leitura_e_gravacao_sao_visiveis) ... ok
@@ -26,6 +28,6 @@ test_fluxo_completo_e_reabertura (test_web.InterfaceWebTest.test_fluxo_completo_
 test_ponto_de_entrada_pode_ser_encerrado (test_web.InterfaceWebTest.test_ponto_de_entrada_pode_ser_encerrado) ... ok
 
 ----------------------------------------------------------------------
-Ran 26 tests in 3.836s
+Ran 28 tests in 4.234s
 
 OK

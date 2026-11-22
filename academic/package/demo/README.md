@@ -17,7 +17,7 @@ chamadas, aulas por encontro e adicionar cada data da grade. A matéria aparece
 imediatamente na lista pelo nome. Abra uma data e escolha a situação de
 frequência; a mesma linha oferece **Corrigir** depois de um registro. O cartão
 mostra faltas usadas, limite, saldo e frequência quando todas as aulas tiverem
-sido resolvidas. No celular, use o seletor **Disciplina** para alternar entre
+sido resolvidas. Em uma janela estreita, use o seletor **Disciplina** para alternar entre
 matérias; não é necessário memorizar códigos. **Agenda** guarda provas e
 trabalhos vinculados à matéria e mostra o ano de cada prazo.
 **Renomear** altera só o nome. Em **Ajustes**, **Apagar dados da demo** requer

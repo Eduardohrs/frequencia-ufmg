@@ -231,7 +231,7 @@ def produto():
     section(
         s,
         "Por que Registro é imutável",
-        "A classe usa @dataclass(frozen=True). Uma correção não muda o objeto anterior: Disciplina cria outro Registro e substitui, no dicionário interno, o valor associado à mesma data. Isso evita estado parcialmente modificado e torna explícito o instante da troca. O dicionário é protegido; a propriedade registros devolve uma tupla.",
+        "A classe usa @dataclass(frozen=True). Uma correção não muda o objeto anterior: Disciplina cria outro Registro e substitui, no dicionário interno, o valor associado à mesma data. A versão do registro aumenta a cada troca; o navegador envia a versão que viu e o SQLite rejeita uma gravação baseada em versão antiga, mesmo se a situação voltar ao valor anterior. O dicionário é protegido; a propriedade registros devolve uma tupla.",
     )
 
     page(s, "04 · Contratos", "Agenda")
@@ -450,7 +450,7 @@ def produto():
     section(
         s,
         "Persistência e integridade",
-        "disciplinas usa código normalizado como chave; registros usa código + data; atividades usa ID do SQLite e referência ao código. Cada mudança que envolve várias linhas usa transação. Totais não são gravados: são recalculados da grade, evitando divergência após correções. O arquivo frequencia.db entregue está vazio e pronto para uso; o botão de exemplo o preenche com dados fictícios.",
+        "disciplinas usa código normalizado como chave; registros usa código + data e uma versão crescente; atividades usa ID do SQLite e referência ao código. Bancos criados antes desta versão ganham a coluna de versão sem perder registros. Cada mudança que envolve várias linhas usa transação. Totais não são gravados: são recalculados da grade. O arquivo frequencia.db entregue está vazio; o botão de exemplo o preenche com dados fictícios.",
     )
     section(
         s,
@@ -636,6 +636,14 @@ def verificacao():
                 "ValueError; grade e resumo anteriores preservados.",
                 "Aprovado",
                 "test_correcao_invalida_preserva_registro_e_resumo",
+            ),
+            (
+                "C09c",
+                "Outra janela viu ausente; depois mudou para presente e voltou a ausente.",
+                "Rejeitar correção antiga mesmo com situação igual à inicial.",
+                "Versão antiga rejeitada pela API; ausente preservada no SQLite.",
+                "Aprovado",
+                "test_aba_antiga_nao_sobrescreve_correcao_pela_api",
             ),
             (
                 "C10a",
@@ -866,6 +874,11 @@ def verificacao():
                     "HTTP 503 com mensagem 'disco' · test_falhas_de_leitura_e_gravacao_sao_visiveis; rollback: test_falha_na_gravacao_preserva_memoria_e_banco",
                 ),
                 (
+                    "Banco de versão anterior",
+                    "Adicionar a coluna de versão sem perder frequência.",
+                    "Ausência anterior preservada e correção gravada · test_banco_antigo_migra_sem_perder_frequencia",
+                ),
+                (
                     "Exemplo fictício",
                     "Aceita só banco vazio; transação completa.",
                     "Segunda tentativa 400 · test_exemplo_persiste_ou_faz_rollback_completo",
@@ -964,8 +977,8 @@ def verificacao():
                 ),
                 (
                     "Janela antiga podia sobrescrever um registro recente",
-                    "Atualizar SQLite só quando o estado anterior ainda coincide.",
-                    "test_registro_desatualizado_nao_sobrescreve_outra_janela",
+                    "Enviar a versão vista pela interface e atualizar SQLite só se coincidir.",
+                    "test_aba_antiga_nao_sobrescreve_correcao_pela_api",
                 ),
                 (
                     "Reset com exclusão parcial",

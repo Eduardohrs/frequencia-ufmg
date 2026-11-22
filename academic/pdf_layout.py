@@ -97,10 +97,14 @@ def footer(canvas, doc):
     canvas.saveState()
     width, height = doc.pagesize
     canvas.setStrokeColor(ACCENT)
-    canvas.line(doc.leftMargin, height - 1.55 * cm, width - doc.rightMargin, height - 1.55 * cm)
+    canvas.line(
+        doc.leftMargin, height - 1.55 * cm, width - doc.rightMargin, height - 1.55 * cm
+    )
     canvas.setFillColor(BLUE)
     canvas.setFont("Body", 8)
-    canvas.drawString(doc.leftMargin, 1.12 * cm, f"Frequência UFMG  |  APPOO 2026/2  |  {VERSION}")
+    canvas.drawString(
+        doc.leftMargin, 1.12 * cm, f"Frequência UFMG  |  APPOO 2026/2  |  {VERSION}"
+    )
     canvas.drawRightString(width - doc.rightMargin, 1.12 * cm, f"Página {doc.page}")
     canvas.restoreState()
 
@@ -164,7 +168,7 @@ def class_diagram():
 
     box(5, 170, 135, 60, "ControleAcademico", "criar / obter / apagar_tudo")
     box(170, 170, 135, 60, "Disciplina", "registrar / resumo")
-    box(335, 170, 130, 60, "Registro", "dia / situação / faltas")
+    box(335, 170, 130, 60, "Registro", "dia / situação / faltas / versão")
     box(5, 85, 135, 60, "Atividade", "data / tipo / título")
     box(170, 85, 135, 60, "PoliticaChamada", "calcular_faltas()")
     box(92, 5, 125, 51, "ChamadaUnica", "calcular_faltas()")

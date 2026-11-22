@@ -31,11 +31,11 @@ class InterfaceWebTest(unittest.TestCase):
         with patch(
             "subprocess.run",
             return_value=SimpleNamespace(
-                returncode=0, stdout="", stderr="Ran 26 tests in 1.0s\n\nOK\n"
+                returncode=0, stdout="", stderr="Ran 28 tests in 1.0s\n\nOK\n"
             ),
         ) as executar:
             status, body = self.post("/api/testes", {})
-        self.assertEqual((status, body["ok"], body["quantidade"]), (200, True, 26))
+        self.assertEqual((status, body["ok"], body["quantidade"]), (200, True, 28))
         self.assertEqual(executar.call_args.kwargs["cwd"], Path(__file__).parent)
         with patch(
             "subprocess.run",
@@ -109,6 +109,7 @@ class InterfaceWebTest(unittest.TestCase):
                 "dia": "2026-11-02",
                 "situacao": "ausente",
                 "corrigir": False,
+                "versao": 0,
             },
         )
         self.assertEqual(status, 200)
@@ -120,10 +121,12 @@ class InterfaceWebTest(unittest.TestCase):
                 "dia": "2026-11-02",
                 "situacao": "presente",
                 "corrigir": True,
+                "versao": 1,
             },
         )
         self.assertEqual(status, 200)
         self.assertEqual(state["disciplinas"][0]["resumo"]["faltas"], 0)
+        self.assertEqual(state["disciplinas"][0]["registros"][0]["versao"], 2)
         status, state = self.post(
             "/api/atividades",
             {"codigo": "DEMO01", "dia": "2026-11-10", "tipo": "prova", "titulo": "P1"},
@@ -151,6 +154,55 @@ class InterfaceWebTest(unittest.TestCase):
         self.assertEqual(state, {"disciplinas": [], "atividades": []})
         self.assertEqual(json.loads(self.get("/api/estado")[1]), state)
 
+    def test_aba_antiga_nao_sobrescreve_correcao_pela_api(self):
+        self.post(
+            "/api/disciplinas",
+            {
+                "codigo": "D1",
+                "nome": "Teste",
+                "chamadas": 1,
+                "aulas": 2,
+                "datas": ["2026-11-02"],
+            },
+        )
+        for versao, (situacao, corrigir) in enumerate(
+            (
+                ("ausente", False),
+                ("presente", True),
+                ("ausente", True),
+            )
+        ):
+            status, state = self.post(
+                "/api/registros",
+                {
+                    "codigo": "D1",
+                    "dia": "2026-11-02",
+                    "situacao": situacao,
+                    "corrigir": corrigir,
+                    "versao": versao,
+                },
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                state["disciplinas"][0]["registros"][0]["versao"], versao + 1
+            )
+
+        status, body = self.post(
+            "/api/registros",
+            {
+                "codigo": "D1",
+                "dia": "2026-11-02",
+                "situacao": "cancelada",
+                "corrigir": True,
+                "versao": 1,
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("Atualize a página", body["erro"])
+        _, data = self.get("/api/estado")
+        registro = json.loads(data)["disciplinas"][0]["registros"][0]
+        self.assertEqual((registro["situacao"], registro["versao"]), ("ausente", 3))
+
     def test_entradas_invalidas_preservam_estado(self):
         self.post(
             "/api/disciplinas",
@@ -166,12 +218,27 @@ class InterfaceWebTest(unittest.TestCase):
         for route, payload, status in (
             (
                 "/api/registros",
-                {"codigo": "D1", "dia": "2026-11-03", "situacao": "ausente"},
+                {
+                    "codigo": "D1",
+                    "dia": "2026-11-03",
+                    "situacao": "ausente",
+                    "versao": 0,
+                },
                 400,
             ),
             (
                 "/api/registros",
-                {"codigo": "D1", "dia": None, "situacao": "ausente"},
+                {
+                    "codigo": "D1",
+                    "dia": "2026-11-02",
+                    "situacao": "ausente",
+                    "versao": True,
+                },
+                400,
+            ),
+            (
+                "/api/registros",
+                {"codigo": "D1", "dia": None, "situacao": "ausente", "versao": 0},
                 400,
             ),
             (

@@ -277,6 +277,7 @@ document.addEventListener("click", (event) => {
       submit($("form", box), "/api/registros", {
         codigo: course.codigo, dia: record.dia,
         situacao: $('[name="situacao"]', box).value, corrigir: correcting,
+        versao: record.versao,
       }, correcting ? "Registro corrigido." : "Presença registrada.");
     });
     box.showModal();
@@ -336,7 +337,11 @@ $("#course-form").addEventListener("submit", (event) => {
   const form = event.currentTarget;
   const dates = [...ui.dates];
   const typedDate = $("#course-date").value;
-  if (typedDate && !dates.includes(typedDate)) dates.push(typedDate);
+  if (typedDate && dates.includes(typedDate)) {
+    formError(form, "Essa data já está na lista.");
+    return;
+  }
+  if (typedDate) dates.push(typedDate);
   if (!dates.length) { formError(form, "Escolha ao menos uma data de encontro."); return; }
   const data = Object.fromEntries(new FormData(form));
   const newCode = data.codigo.trim().toUpperCase();

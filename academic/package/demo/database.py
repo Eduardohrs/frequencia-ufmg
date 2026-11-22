@@ -32,8 +32,10 @@ def conexao(caminho: str | Path = DB_PATH):
 
 
 def inicializar_banco(caminho: str | Path = DB_PATH) -> None:
-    """Cria as três tabelas se ainda não existirem; preserva dados existentes."""
+    """Cria tabelas e migra registros antigos sem apagar dados existentes."""
     with conexao(caminho) as banco:
+        # A trava serializa a migração caso duas abas abram uma base antiga juntas.
+        banco.execute("BEGIN IMMEDIATE")
         banco.execute("""
             CREATE TABLE IF NOT EXISTS disciplinas (
                 codigo TEXT PRIMARY KEY,
@@ -48,6 +50,7 @@ def inicializar_banco(caminho: str | Path = DB_PATH) -> None:
                 dia TEXT NOT NULL,
                 situacao TEXT NOT NULL,
                 faltas INTEGER,
+                versao INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (disciplina_codigo, dia),
                 FOREIGN KEY (disciplina_codigo) REFERENCES disciplinas(codigo)
             )
@@ -62,6 +65,11 @@ def inicializar_banco(caminho: str | Path = DB_PATH) -> None:
                 FOREIGN KEY (disciplina_codigo) REFERENCES disciplinas(codigo)
             )
         """)
+        colunas = {linha[1] for linha in banco.execute("PRAGMA table_info(registros)")}
+        if "versao" not in colunas:
+            banco.execute(
+                "ALTER TABLE registros ADD COLUMN versao INTEGER NOT NULL DEFAULT 0"
+            )
 
 
 def salvar_disciplina(
@@ -109,13 +117,14 @@ def salvar_exemplo(disciplina, atividade, caminho: str | Path = DB_PATH) -> int:
         )
         for registro in disciplina.registros:
             banco.execute(
-                "INSERT INTO registros (disciplina_codigo, dia, situacao, faltas) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO registros (disciplina_codigo, dia, situacao, faltas, versao) "
+                "VALUES (?, ?, ?, ?, ?)",
                 (
                     disciplina.codigo,
                     registro.dia.isoformat(),
                     registro.situacao,
                     registro.faltas,
+                    registro.versao,
                 ),
             )
         cursor = banco.execute(
@@ -149,10 +158,11 @@ def atualizar_nome(codigo: str, nome: str, caminho: str | Path = DB_PATH) -> Non
 
 
 def obter_registros(codigo: str, caminho: str | Path = DB_PATH) -> list[tuple]:
-    """Devolve data ISO, situação e faltas, inclusive encontros pendentes."""
+    """Devolve data, situação, faltas e versão, inclusive pendências."""
     with conexao(caminho) as banco:
         return banco.execute(
-            "SELECT dia, situacao, faltas FROM registros WHERE disciplina_codigo = ? ORDER BY dia",
+            "SELECT dia, situacao, faltas, versao FROM registros "
+            "WHERE disciplina_codigo = ? ORDER BY dia",
             (codigo,),
         ).fetchall()
 
@@ -162,29 +172,27 @@ def salvar_registro(
     dia: date,
     situacao: str,
     faltas: int | None,
-    situacao_anterior: str,
-    faltas_anteriores: int | None,
+    versao_anterior: int,
     caminho: str | Path = DB_PATH,
 ) -> None:
-    """Grava somente se o banco ainda contém o registro visto pelo domínio.
+    """Grava somente se a versão vista pelo domínio ainda é a atual.
 
-    Cada data já tem uma linha pendente desde o cadastro. A condição impede que
-    outra janela sobrescreva silenciosamente uma decisão mais recente.
+    Cada data já tem uma linha pendente desde o cadastro. A versão cresce mesmo
+    quando uma correção volta à situação anterior, impedindo sobrescrita antiga.
     """
     with conexao(caminho) as banco:
         cursor = banco.execute(
             """
-            UPDATE registros SET situacao = ?, faltas = ?
+            UPDATE registros SET situacao = ?, faltas = ?, versao = versao + 1
             WHERE disciplina_codigo = ? AND dia = ?
-              AND situacao = ? AND faltas IS ?
+              AND versao = ?
         """,
             (
                 situacao,
                 faltas,
                 codigo,
                 dia.isoformat(),
-                situacao_anterior,
-                faltas_anteriores,
+                versao_anterior,
             ),
         )
         if cursor.rowcount != 1:

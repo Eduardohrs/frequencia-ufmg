@@ -56,13 +56,15 @@ class Registro:
     """Retrato imutável de um encontro da grade e de sua situação.
 
     ``faltas=None`` significa pendente. O valor zero é diferente: indica que
-    a aula foi resolvida sem gerar falta.
+    a aula foi resolvida sem gerar falta. ``versao`` aumenta a cada alteração;
+    o SQLite a usa para recusar gravações feitas a partir de uma tela antiga.
     """
 
     dia: date
     aulas: int
     situacao: str = "pendente"
     faltas: int | None = None
+    versao: int = 0
 
 
 @dataclass(frozen=True)
@@ -177,7 +179,9 @@ class Disciplina:
         """A tupla e seus registros não permitem alterar a coleção interna."""
         return tuple(self._registros.values())
 
-    def registrar_presenca(self, dia: date, situacao: str, *, corrigir=False):
+    def registrar_presenca(
+        self, dia: date, situacao: str, *, corrigir=False, versao_esperada=None
+    ):
         """Resolve uma aula da grade e devolve o novo registro.
 
         ``corrigir=True`` substitui apenas um registro já resolvido; sem
@@ -190,13 +194,17 @@ class Disciplina:
         if situacao not in SITUACOES:
             raise ValueError("Situação de frequência inválida.")
         anterior = self._registros[dia]
+        if versao_esperada is not None and anterior.versao != versao_esperada:
+            raise ValueError(
+                "Este registro mudou. Atualize a página e tente novamente."
+            )
         if corrigir and anterior.situacao == "pendente":
             raise ValueError("Esta data está pendente. Use Registrar presença.")
         if anterior.situacao != "pendente" and not corrigir:
             raise ValueError("Esta data já foi registrada. Use Corrigir registro.")
         # A chamada polimórfica devolve faltas em aulas de 50 minutos.
         faltas = self._politica.calcular_faltas(situacao, anterior.aulas)
-        novo = Registro(dia, anterior.aulas, situacao, faltas)
+        novo = Registro(dia, anterior.aulas, situacao, faltas, anterior.versao + 1)
         # A gravação, quando existe, ocorre antes da troca em memória. Uma falha
         # no disco não deixa a interface mostrando um estado que não foi salvo.
         if self._salvar_registro is not None:
@@ -261,9 +269,9 @@ class ControleAcademico:
             linhas = database.obter_registros(codigo, self._caminho_banco)
             datas = [date.fromisoformat(linha[0]) for linha in linhas]
             registros = {}
-            for dia_iso, situacao, faltas in linhas:
+            for dia_iso, situacao, faltas, versao in linhas:
                 dia = date.fromisoformat(dia_iso)
-                registros[dia] = Registro(dia, aulas, situacao, faltas)
+                registros[dia] = Registro(dia, aulas, situacao, faltas, versao)
             self._disciplinas[codigo] = self._vincular(
                 Disciplina(codigo, nome, chamadas, aulas, datas, registros)
             )
@@ -292,8 +300,7 @@ class ControleAcademico:
                     registro.dia,
                     registro.situacao,
                     registro.faltas,
-                    anterior.situacao,
-                    anterior.faltas,
+                    anterior.versao,
                     self._caminho_banco,
                 )
 
@@ -362,14 +369,16 @@ class ControleAcademico:
             raise ValueError("Disciplina não encontrada. Cadastre-a primeiro.")
         return self._disciplinas[chave]
 
-    def registrar_presenca(self, codigo, dia, situacao, *, corrigir=False):
+    def registrar_presenca(
+        self, codigo, dia, situacao, *, corrigir=False, versao_esperada=None
+    ):
         """Valida pela Disciplina, grava no SQLite e só então troca o registro.
 
         O Registro anterior continua imutável; a data passa a apontar para
         outro Registro. Em falha de validação ou gravação, nada é substituído.
         """
         return self.obter_disciplina(codigo).registrar_presenca(
-            dia, situacao, corrigir=corrigir
+            dia, situacao, corrigir=corrigir, versao_esperada=versao_esperada
         )
 
     def renomear_disciplina(self, codigo, novo_nome):
