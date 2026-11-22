@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from moodle_date_import import MoodleDateImportService, _matches, _term_months
+from moodle_date_import import MoodleDateImportService, _fetch_window, _matches, _term_months
 from ufmg_session_store import UFMGReauthenticationRequired
 
 
@@ -69,6 +69,7 @@ class _Client:
 class _Dates:
     def __init__(self) -> None:
         self.imports: list[tuple[str, list[dict[str, object]]]] = []
+        self.covered: list[object] = []
 
     def import_moodle_dates(
         self,
@@ -79,6 +80,7 @@ class _Dates:
         covered_months=None,
     ) -> dict[str, int]:
         self.imports.append((course_id, events))
+        self.covered.append(covered_months)
         return {"total": len(events), "created": len(events), "updated": 0, "unchanged": 0}
 
 
@@ -368,3 +370,108 @@ def test_complete_calendar_covers_the_semester_even_when_lessons_end_earlier() -
     client = _Client([])
     MoodleDateImportService(_Sessions(), client, Courses(), Dates()).import_dates("user", now=123)
     assert client.months == [(2026, month) for month in range(7, 13)]
+
+
+class _CalendarState:
+    def __init__(self, state: dict | None = None) -> None:
+        self.state = state if state is not None else {}
+        self.loads: list[str] = []
+        self.saved: list[tuple[str, int, list[tuple[int, int]]]] = []
+
+    def load(self, term: str) -> dict[str, Any]:
+        self.loads.append(term)
+        return self.state
+
+    def save(self, term: str, *, fetched_at: int, months: list[tuple[int, int]]) -> None:
+        self.saved.append((term, fetched_at, list(months)))
+
+
+def _ts(year: int, month: int, day: int = 15) -> int:
+    from datetime import UTC, datetime
+
+    return int(datetime(year, month, day, 12, tzinfo=UTC).timestamp())
+
+
+def test_fetch_window_returns_the_full_term_without_a_checkpoint() -> None:
+    assert _fetch_window("2026-2", None) == [(2026, month) for month in range(7, 13)]
+    assert _fetch_window("2026-1", None) == [(2026, month) for month in range(1, 7)]
+
+
+def test_fetch_window_ignores_non_positive_checkpoints() -> None:
+    assert _fetch_window("2026-2", 0) == [(2026, month) for month in range(7, 13)]
+    assert _fetch_window("2026-2", -10) == [(2026, month) for month in range(7, 13)]
+
+
+def test_fetch_window_shrinks_to_recent_months_with_one_month_overlap() -> None:
+    window = _fetch_window("2026-2", _ts(2026, 11, 17))
+    assert window == [(2026, 10), (2026, 11), (2026, 12)]
+
+
+def test_fetch_window_before_the_term_returns_the_full_term() -> None:
+    assert _fetch_window("2026-2", _ts(2026, 1, 10)) == [(2026, month) for month in range(7, 13)]
+
+
+def test_fetch_window_crosses_the_year_boundary() -> None:
+    assert _fetch_window("2026-2", _ts(2027, 1, 10)) == [(2026, 12)]
+    assert _fetch_window("2026-2", _ts(2027, 3, 1)) == []
+
+
+def test_import_uses_the_incremental_window_and_persists_the_checkpoint() -> None:
+    state = _CalendarState({"last_fetched_at": _ts(2026, 11, 17), "months": [[2026, 10]]})
+    client = _Client([_event()])
+    dates = _Dates()
+    service = MoodleDateImportService(
+        _Sessions(), client, _Courses(), dates, calendar_state=state
+    )
+
+    result = service.import_dates("user", now=123)
+
+    expected_window = [(2026, 10), (2026, 11), (2026, 12)]
+    assert client.months == expected_window
+    assert state.loads == ["2026-2"]
+    assert state.saved == [("2026-2", 123, expected_window)]
+    assert dates.covered == [expected_window, expected_window]
+    assert result["matched"] == 1
+
+
+def test_import_without_checkpoint_fetches_the_full_term_and_saves_it() -> None:
+    state = _CalendarState()
+    client = _Client([_event()])
+    dates = _Dates()
+    service = MoodleDateImportService(
+        _Sessions(), client, _Courses(), dates, calendar_state=state
+    )
+
+    service.import_dates("user", now=123)
+
+    full = [(2026, month) for month in range(7, 13)]
+    assert client.months == full
+    assert state.saved == [("2026-2", 123, full)]
+    assert dates.covered == [full, full]
+
+
+def test_import_treats_an_invalid_checkpoint_as_a_full_refetch() -> None:
+    for bad in (0, -5, "1763424000", None):
+        state = _CalendarState({"last_fetched_at": bad, "months": []})
+        client = _Client([])
+        service = MoodleDateImportService(
+            _Sessions(), client, _Courses(), _Dates(), calendar_state=state
+        )
+        service.import_dates("user", now=123)
+        assert client.months == [(2026, month) for month in range(7, 13)]
+
+
+def test_import_skips_the_fetch_when_the_window_is_empty_but_keeps_the_term() -> None:
+    state = _CalendarState({"last_fetched_at": _ts(2027, 3, 1), "months": [[2026, 12]]})
+    client = _Client([_event()])
+    dates = _Dates()
+    service = MoodleDateImportService(
+        _Sessions(), client, _Courses(), dates, calendar_state=state
+    )
+
+    result = service.import_dates("user", now=123)
+
+    assert client.terms == []
+    assert state.saved == []
+    assert dates.covered == [[], []]
+    assert result["total"] == 0

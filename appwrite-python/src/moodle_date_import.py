@@ -3,6 +3,7 @@
 import re
 from collections import defaultdict
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from functools import partial
 from typing import Any, Protocol
 
@@ -38,6 +39,14 @@ class _Dates(Protocol):
     ) -> dict[str, int]: ...
 
 
+class _CalendarState(Protocol):
+    def load(self, term: str) -> dict[str, Any]: ...
+
+    def save(
+        self, term: str, *, fetched_at: int, months: list[tuple[int, int]]
+    ) -> None: ...
+
+
 class MoodleDateImportService:
     def __init__(
         self,
@@ -46,13 +55,21 @@ class MoodleDateImportService:
         courses: _Courses,
         dates: _Dates,
         *,
+        calendar_state: _CalendarState | None = None,
         telemetry: Telemetry | None = None,
     ) -> None:
         self._sessions = sessions
         self._client = client
         self._courses = courses
         self._dates = dates
+        self._calendar_state = calendar_state
         self._telemetry = telemetry
+
+    def _last_fetched_at(self, term: str) -> int | None:
+        if self._calendar_state is None:
+            return None
+        value = self._calendar_state.load(term).get("last_fetched_at")
+        return value if type(value) is int and value > 0 else None
 
     def import_dates(self, user_id: str, *, now: int) -> dict[str, Any]:
         session = self._sessions.load(user_id, now=now)
@@ -62,21 +79,31 @@ class MoodleDateImportService:
         events: list[dict[str, str]] = []
         course_groups = _courses_by_term(courses)
         completed_terms: set[str] = set()
+        covered: dict[str, list[tuple[int, int]]] = {}
         failed_sources: list[dict[str, object]] = []
         for term in sorted(course_groups):
+            window = _fetch_window(term, self._last_fetched_at(term))
+            covered[term] = window
             try:
-                fetched = timed_stage(
-                    "moodle_term_calendar",
-                    partial(
-                        self._client.fetch,
-                        session.token,
-                        term=term,
-                        months=_term_months(term),
-                    ),
-                    telemetry=self._telemetry,
-                    fields={"term": term},
-                )
-                events.extend({**event, "term": term} for event in fetched)
+                if window:
+                    fetched = timed_stage(
+                        "moodle_term_calendar",
+                        partial(
+                            self._client.fetch,
+                            session.token,
+                            term=term,
+                            months=window,
+                        ),
+                        telemetry=self._telemetry,
+                        fields={
+                            "term": term,
+                            "months": [[year, month] for year, month in window],
+                            "full_term": window == _term_months(term),
+                        },
+                    )
+                    events.extend({**event, "term": term} for event in fetched)
+                    if self._calendar_state is not None:
+                        self._calendar_state.save(term, fetched_at=now, months=window)
                 completed_terms.add(term)
             except UFMGReauthenticationRequired:
                 self._sessions.delete(user_id)
@@ -154,7 +181,9 @@ class MoodleDateImportService:
                         course_id,
                         values,
                         complete=course_id not in unsafe_courses,
-                        covered_months=_term_months(course["term"]),
+                        covered_months=covered.get(
+                            course["term"], _term_months(course["term"])
+                        ),
                     ),
                     telemetry=self._telemetry,
                     fields=fields,
@@ -209,3 +238,19 @@ def _term_months(term: str) -> list[tuple[int, int]]:
     # Callers use the semesters already validated by _courses_by_term.
     first = 1 if term.endswith("-1") else 7
     return [(int(term[:4]), month) for month in range(first, first + 6)]
+
+
+_WINDOW_OVERLAP_MONTHS = 1
+
+
+def _fetch_window(term: str, last_fetched_at: int | None) -> list[tuple[int, int]]:
+    """Months still worth querying: from the last fetch (minus overlap) to term end."""
+    all_months = _term_months(term)
+    if last_fetched_at is None or last_fetched_at <= 0:
+        return all_months
+    anchor = datetime.fromtimestamp(last_fetched_at, UTC)
+    floor_year, floor_month = anchor.year, anchor.month - _WINDOW_OVERLAP_MONTHS
+    while floor_month <= 0:
+        floor_month += 12
+        floor_year -= 1
+    return [month for month in all_months if month >= (floor_year, floor_month)]

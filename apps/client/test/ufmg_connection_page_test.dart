@@ -1678,6 +1678,42 @@ void main() {
     }
   });
 
+  testWidgets('rejects usernames with spaces and space-only passwords', (
+    tester,
+  ) async {
+    final gateway = _Gateway(
+      status: const PythonUFMGSessionStatus(
+        connected: false,
+        reauthenticationRequired: false,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UFMGConnectionPage(gateway: gateway, logger: _Logger()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('ufmg-username')), 'stu dent');
+    await tester.enterText(find.byKey(const Key('ufmg-password')), '   ');
+    await tester.tap(find.byKey(const Key('ufmg-connect')));
+    await tester.pumpAndSettle();
+    expect(find.text('O usuário da UFMG não usa espaços.'), findsOneWidget);
+    expect(find.text('Informe sua senha da UFMG.'), findsOneWidget);
+    expect(gateway.credentials, isEmpty);
+    // Username com espaço nas pontas também é recusado.
+    await tester.enterText(find.byKey(const Key('ufmg-username')), ' student ');
+    await tester.enterText(find.byKey(const Key('ufmg-password')), 'secret');
+    await tester.tap(find.byKey(const Key('ufmg-connect')));
+    await tester.pumpAndSettle();
+    expect(find.text('O usuário da UFMG não usa espaços.'), findsOneWidget);
+    expect(gateway.credentials, isEmpty);
+    // Válido conecta e envia o username sem espaços.
+    await tester.enterText(find.byKey(const Key('ufmg-username')), 'student');
+    await tester.tap(find.byKey(const Key('ufmg-connect')));
+    await tester.pumpAndSettle();
+    expect(gateway.credentials, [('student', 'secret')]);
+  });
+
   testWidgets('discovers and explains Moodle content candidates', (
     tester,
   ) async {

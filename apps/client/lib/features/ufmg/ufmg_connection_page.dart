@@ -43,6 +43,7 @@ class UFMGConnectionPage extends StatefulWidget {
     this.onOpenCourses,
     this.onOpenCalendar,
     this.onConnected,
+    this.reviewSyncResultOnLoad = false,
     super.key,
   }) : assert(view != UFMGView.savedFiles || materialCourseId == null);
 
@@ -64,6 +65,10 @@ class UFMGConnectionPage extends StatefulWidget {
   final Future<void> Function()? onOpenCourses;
   final Future<void> Function()? onOpenCalendar;
   final VoidCallback? onConnected;
+
+  /// P0-2: quando aberto a partir de "Ver resultado", apresenta o resultado
+  /// real da sincronização ao carregar, em vez de cair no formulário de login.
+  final bool reviewSyncResultOnLoad;
 
   bool get isMaterialScope => materialCourseId != null;
 
@@ -267,6 +272,10 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     } finally {
       await supplementary;
       if (mounted) setState(() => _loading = false);
+      if (widget.reviewSyncResultOnLoad && mounted) {
+        final result = widget.academicSync?.result ?? _lastSyncResult;
+        if (result != null) unawaited(_reviewAcademicSyncResult(result));
+      }
     }
   }
 
@@ -1410,7 +1419,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         logger: widget.logger,
         operation: AuditedOperation.ufmgSessionConnect,
         action: () => widget.gateway.connectUFMG(
-          username: _username.text,
+          username: _username.text.trim(),
           password: _password.text,
         ),
       );
@@ -2693,6 +2702,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       onDisposeAction: AutofillContextAction.cancel,
       child: Form(
         key: _formKey,
+        autovalidateMode: AutovalidateMode.onUserInteraction,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -2706,9 +2716,14 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                 labelText: 'Usuário MinhaUFMG',
                 prefixIcon: Icon(Icons.person_outline),
               ),
-              validator: (value) => value == null || value.trim().isEmpty
-                  ? 'Informe seu usuário da UFMG.'
-                  : null,
+              validator: (value) {
+                final user = value?.trim() ?? '';
+                if (user.isEmpty) return 'Informe seu usuário da UFMG.';
+                if (user != value || RegExp(r'\s').hasMatch(user)) {
+                  return 'O usuário da UFMG não usa espaços.';
+                }
+                return null;
+              },
             ),
             const SizedBox(height: 16),
             TextFormField(
@@ -2725,7 +2740,7 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                 labelText: 'Senha MinhaUFMG',
                 prefixIcon: Icon(Icons.lock_outline),
               ),
-              validator: (value) => value == null || value.isEmpty
+              validator: (value) => value == null || value.trim().isEmpty
                   ? 'Informe sua senha da UFMG.'
                   : null,
             ),

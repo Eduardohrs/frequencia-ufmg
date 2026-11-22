@@ -5,7 +5,7 @@
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Controle pessoal de frequência acadêmica, faltas e prazos para estudantes da UFMG, com sincronização do Moodle.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

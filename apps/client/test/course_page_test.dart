@@ -17,6 +17,7 @@ import 'package:frequencia_ufmg/observability/operational_log_store.dart';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/auth/auth_user.dart';
@@ -139,7 +140,7 @@ void main() {
           CourseVisualHost(child: _app(repo, user, now, logger: logger)),
         );
         await tester.pumpAndSettle();
-        await _selectCourseAction(tester, 'DCC203', 'Editar');
+        await _selectCourseAction(tester, 'course-1', 'Editar');
         await tester.ensureVisible(find.byKey(const Key('course-nickname')));
         await tester.enterText(
           find.byKey(const Key('course-nickname')),
@@ -226,14 +227,14 @@ void main() {
       expect(ended['operation_id'], started['operation_id']);
       expect(ended['course_id'], 'course-1');
       expect(ended['duration_ms'], isA<int>());
-      await tester.pageBack();
+      await tester.tap(find.byKey(const Key('course-hub-back')));
       await tester.pumpAndSettle();
       expect(find.text('Minha POO'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpWidget(_app(repo, user, now));
       await tester.pumpAndSettle();
       expect(find.text('Minha POO'), findsOneWidget);
-      await _selectCourseAction(tester, 'DCC203', 'Editar');
+      await _selectCourseAction(tester, 'course-1', 'Editar');
       await tester.ensureVisible(find.byKey(const Key('course-nickname')));
       await tester.enterText(find.byKey(const Key('course-nickname')), '');
       await tester.tap(find.text('Salvar'));
@@ -1625,7 +1626,9 @@ void main() {
             await tester.pump();
             expect(taps, completed ? 4 : 2);
           }
-          await tester.tap(find.byTooltip('Ocultar sincronização'));
+          await tester.tap(
+            find.byTooltip('Dispensar este aviso de sincronização'),
+          );
           await tester.pumpAndSettle();
           expect(
             find.byKey(const Key('academic-sync-indicator')),
@@ -1696,6 +1699,11 @@ void main() {
       await tester.tap(find.byKey(const Key('academic-sync-indicator')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Ver resultado'));
+      await tester.pumpAndSettle();
+      // P0-2: "Ver resultado" abre a página de conexão já apresentando o
+      // resultado real da sincronização, sem exigir login/segundo toque.
+      expect(find.text('Pendências da sincronização'), findsOneWidget);
+      await tester.tap(find.text('Entendi'));
       await tester.pumpAndSettle();
       expect(find.text('Revisar última sincronização'), findsOneWidget);
       await tester.ensureVisible(find.text('Revisar última sincronização'));
@@ -1818,7 +1826,7 @@ void main() {
     expect(find.text('2026-2'), findsOneWidget);
     expect(find.byKey(const Key('course-mark-course-1')), findsOneWidget);
 
-    await _selectCourseAction(tester, 'DCC203', 'Editar');
+    await _selectCourseAction(tester, 'course-1', 'Editar');
     await tester.enterText(find.byKey(const Key('course-name')), 'POO');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
@@ -1828,13 +1836,13 @@ void main() {
     expect(repository.courses.single.updatedAt, now);
     expect(find.text('POO'), findsOneWidget);
 
-    await _selectCourseAction(tester, 'DCC203', 'Excluir');
+    await _selectCourseAction(tester, 'course-1', 'Excluir');
     expect(find.text('Excluir disciplina?'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, 'Cancelar'));
     await tester.pumpAndSettle();
     expect(repository.courses, hasLength(1));
 
-    await _selectCourseAction(tester, 'DCC203', 'Excluir');
+    await _selectCourseAction(tester, 'course-1', 'Excluir');
     await tester.tap(find.widgetWithText(FilledButton, 'Excluir'));
     await tester.pumpAndSettle();
 
@@ -1944,7 +1952,7 @@ void main() {
     await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();
 
-    await _selectCourseAction(tester, 'DCC203', 'Editar');
+    await _selectCourseAction(tester, 'course-1', 'Editar');
     expect(find.byKey(const Key('course-term')), findsOneWidget);
     await tester.enterText(find.byKey(const Key('course-term')), '2027-1');
     await tester.tap(find.text('Salvar'));
@@ -1969,7 +1977,7 @@ void main() {
 
     await tester.pumpWidget(_app(repository, user, now));
     await tester.pumpAndSettle();
-    await _selectCourseAction(tester, 'DCC203', 'Editar');
+    await _selectCourseAction(tester, 'course-1', 'Editar');
     await tester.enterText(find.byKey(const Key('course-term')), '2026-1');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
@@ -1999,7 +2007,7 @@ void main() {
 
     await tester.pumpWidget(_app(repository, user, now));
     await tester.pumpAndSettle();
-    await _selectCourseAction(tester, 'DCC203', 'Editar');
+    await _selectCourseAction(tester, 'course-1', 'Editar');
     await tester.enterText(find.byKey(const Key('course-name')), 'POO editada');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
@@ -2026,7 +2034,7 @@ void main() {
 
     await tester.pumpWidget(_app(repository, user, now));
     await tester.pumpAndSettle();
-    await _selectCourseAction(tester, 'DCC203', 'Editar');
+    await _selectCourseAction(tester, 'course-1', 'Editar');
     await tester.enterText(find.byKey(const Key('course-term')), '2027-1');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
@@ -2302,7 +2310,7 @@ void main() {
       find.text('Não foi possível atualizar os materiais.'),
       findsOneWidget,
     );
-    await tester.pageBack();
+    await tester.tap(find.byKey(const Key('course-hub-back')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('course-card-course-1')), findsOneWidget);
   });
@@ -2706,15 +2714,23 @@ void main() {
           repository: _FakeCourseRepository(),
           meetingRepository: _FakeMeetingRepository(),
           sessionRepository: directSessions,
-          overviewRepository: _FakeOverviewRepository(
-            AcademicOverviewSnapshot(
-              courses: [course],
-              sessionsByCourse: {
-                'course-1': [savedSession],
-              },
-              isLocalCopy: true,
-            ),
-          ),
+          overviewRepository:
+              _FakeOverviewRepository(
+                  AcademicOverviewSnapshot(
+                    courses: [course],
+                    sessionsByCourse: {
+                      'course-1': [savedSession],
+                    },
+                    isLocalCopy: true,
+                  ),
+                )
+                ..cached = AcademicOverviewSnapshot(
+                  courses: [course],
+                  sessionsByCourse: {
+                    'course-1': [savedSession],
+                  },
+                  isLocalCopy: true,
+                ),
           overviewReadsEnabled: true,
           user: user,
           logger: _RecordingAppLogger(),
@@ -2723,6 +2739,7 @@ void main() {
         ),
       ),
     );
+    // First pumpAndSettle to wait for the cached overview to be loaded
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('offline-copy-banner')), findsOneWidget);
@@ -2731,6 +2748,17 @@ void main() {
       find.text('Exibindo a última cópia salva neste aparelho.'),
       findsOneWidget,
     );
+
+    // Wait for the offline banner timer to trigger setState
+    // The timer is created with 500ms delay in _applyOverviewSnapshot
+    // We need to use runAsync to properly handle the timer created in async code
+    await tester.runAsync(() async {
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 100));
+    });
+    // The timer callback calls setState, so we need to settle
+    await tester.pumpAndSettle();
+
     await tester.tap(find.byKey(const Key('past-attendance-pending-alert')));
     await tester.pumpAndSettle();
     expect(find.text('Frequência • POO'), findsOneWidget);
@@ -2789,8 +2817,17 @@ void main() {
       await tester.pump();
 
       expect(find.text('POO salva'), findsOneWidget);
-      expect(find.byKey(const Key('offline-copy-banner')), findsOneWidget);
+      // P0-8: o placeholder em cache nao liga o banner de modo offline.
+      expect(find.byKey(const Key('offline-copy-banner')), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsNothing);
+
+      // Wait for the offline banner timer to trigger setState for cached snapshot
+      // The timer is created with 500ms delay in _applyOverviewSnapshot
+      await tester.runAsync(() async {
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
 
       refresh.complete(
         AcademicOverviewSnapshot(
@@ -2800,11 +2837,288 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      // Wait for the offline banner timer to trigger setState for refreshed snapshot
+      await tester.runAsync(() async {
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+
       expect(find.text('POO atualizada'), findsOneWidget);
       expect(find.byKey(const Key('offline-copy-banner')), findsNothing);
       expect(overview.cachedCalls, 1);
       expect(overview.loadCalls, 1);
       expect(logger.events, contains('academic_overview_cache_presented'));
+    },
+  );
+
+  testWidgets(
+    'offline banner appears only after the authoritative load fails on top of the cached placeholder',
+    (tester) async {
+      final cachedCourse = CourseRecord(
+        id: 'course-1',
+        code: 'DCC203',
+        name: 'POO salva',
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final refresh = Completer<AcademicOverviewSnapshot>();
+      final overview = _LocalFirstOverviewRepository(
+        cached: AcademicOverviewSnapshot(
+          courses: [cachedCourse],
+          sessionsByCourse: const {'course-1': []},
+          isLocalCopy: true,
+        ),
+        refreshed: refresh.future,
+      );
+      final courses = _FakeCourseRepository()
+        ..listError = StateError('backend unavailable');
+      await tester.pumpWidget(
+        _NavigationApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
+          home: CoursePage(
+            repository: courses,
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            overviewRepository: overview,
+            overviewReadsEnabled: true,
+            user: user,
+            logger: _RecordingAppLogger(),
+            onSignOut: () async {},
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('POO salva'), findsOneWidget);
+      // P0-8: o placeholder em cache nao deve ligar o banner de modo offline.
+      expect(find.byKey(const Key('offline-copy-banner')), findsNothing);
+      refresh.completeError(StateError('overview unavailable'));
+      await tester.pumpAndSettle();
+      expect(find.text('POO salva'), findsOneWidget);
+      expect(find.byKey(const Key('offline-copy-banner')), findsOneWidget);
+      expect(find.text('Modo offline'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'sync banner stays on home and does not overlay the course page (P0-1)',
+    (tester) async {
+      final gateway = _RecoveredUFMGGateway();
+      gateway.progress.response.complete(syncResult(partial: true));
+      final course = CourseRecord(
+        id: 'course-1',
+        code: 'DCC203',
+        name: 'POO',
+        workload: 60,
+        term: '2026-2',
+        createdAt: now,
+        updatedAt: now,
+      );
+      await tester.pumpWidget(
+        _NavigationApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
+          home: CoursePage(
+            repository: _FakeCourseRepository(courses: [course]),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            user: user,
+            logger: _RecordingAppLogger(),
+            onSignOut: () async {},
+            ufmgSessionGateway: gateway,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('academic-sync-indicator')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('course-card-course-1')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('academic-sync-indicator')), findsNothing);
+      await tester.tap(find.byKey(const Key('course-hub-back')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('academic-sync-indicator')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await gateway.progress.updates.close();
+    },
+  );
+
+  testWidgets('profile menu semantics label is exactly Ajustes (P1-1)', (
+    tester,
+  ) async {
+    final course = CourseRecord(
+      id: 'course-1',
+      code: 'DCC203',
+      name: 'POO',
+      workload: 60,
+      term: '2026-2',
+      createdAt: now,
+      updatedAt: now,
+    );
+    await tester.pumpWidget(
+      _app(_FakeCourseRepository(courses: [course]), user, now),
+    );
+    await tester.pumpAndSettle();
+    final semanticsHandle = tester.ensureSemantics();
+    final labels = <String>[];
+    void visit(SemanticsNode n) {
+      labels.add(n.getSemanticsData().label);
+      n.visitChildren((child) {
+        visit(child);
+        return true;
+      });
+    }
+
+    visit(tester.getSemantics(find.byKey(const Key('profile-menu'))));
+    // P1-1: a letra do avatar não pode virar parte do rótulo ("Ajustes E").
+    expect(labels, isNot(contains('E')));
+    semanticsHandle.dispose();
+  });
+
+  testWidgets(
+    'course tiles label the next item by kind, explain saldo and sem chamada',
+    (tester) async {
+      CourseRecord tileCourse(String id, String code, {String? policy}) =>
+          CourseRecord(
+            id: id,
+            code: code,
+            name: code,
+            workload: 60,
+            term: '2026-2',
+            attendancePolicy: policy == null
+                ? CourseAttendancePolicy.required
+                : CourseAttendancePolicy.noCall,
+            createdAt: now,
+            updatedAt: now,
+          );
+      final aula = tileCourse('aula', 'AAA001');
+      final provaSessao = tileCourse('prova-sessao', 'BBB002');
+      final provaQuiz = tileCourse('prova-quiz', 'CCC003');
+      final entrega = tileCourse('entrega', 'DDD004');
+      final evento = tileCourse('evento', 'EEE005');
+      final saldo = tileCourse('saldo', 'FFF006');
+      final semChamada = tileCourse('sem-chamada', 'GGG007', policy: 'no_call');
+      final online = CourseRecord(
+        id: 'online',
+        code: 'HHH008',
+        name: 'HHH008',
+        workload: 60,
+        term: '2026-2',
+        modality: CourseModality.online,
+        attendancePolicy: CourseAttendancePolicy.noCall,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final courses = [
+        aula,
+        provaSessao,
+        provaQuiz,
+        entrega,
+        evento,
+        saldo,
+        semChamada,
+        online,
+      ];
+      final future = now.add(const Duration(days: 2));
+      final sessionsByCourse = <String, List<SessionRecord>>{
+        'aula': [_session('s-aula', future)],
+        'prova-sessao': [
+          _session('s-prova', future, assessmentTitle: 'Prova 1'),
+        ],
+        'saldo': [
+          _session('s1', now.subtract(const Duration(days: 3))),
+          _session('s2', now.subtract(const Duration(days: 2))),
+        ],
+        'prova-quiz': const [],
+        'entrega': const [],
+        'evento': const [],
+        'sem-chamada': const [],
+        'online': const [],
+      };
+      final datesByCourse = <String, List<PythonMoodleDate>>{
+        'prova-quiz': [
+          PythonMoodleDate(
+            id: 'd-quiz',
+            courseId: 'prova-quiz',
+            courseCode: 'CCC003',
+            title: 'Quiz',
+            dueAt: future,
+            kind: 'quiz',
+          ),
+        ],
+        'entrega': [
+          PythonMoodleDate(
+            id: 'd-entrega',
+            courseId: 'entrega',
+            courseCode: 'DDD004',
+            title: 'Entrega',
+            dueAt: future,
+            kind: 'assignment',
+          ),
+        ],
+        'evento': [
+          PythonMoodleDate(
+            id: 'd-evento',
+            courseId: 'evento',
+            courseCode: 'EEE005',
+            title: 'Evento',
+            dueAt: future,
+            kind: 'event',
+          ),
+        ],
+      };
+      await tester.pumpWidget(
+        _NavigationApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
+          home: CoursePage(
+            repository: _FakeCourseRepository(),
+            meetingRepository: _FakeMeetingRepository(),
+            sessionRepository: _FakeSessionRepository(),
+            overviewRepository: _FakeOverviewRepository(
+              AcademicOverviewSnapshot(
+                courses: courses,
+                sessionsByCourse: sessionsByCourse,
+                datesByCourse: datesByCourse,
+              ),
+            ),
+            overviewReadsEnabled: true,
+            user: user,
+            logger: _RecordingAppLogger(),
+            onSignOut: () async {},
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining(RegExp(r'Próxima aula: \d{2}/\d{2}/2026')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Próxima prova:'), findsNWidgets(2));
+      expect(find.textContaining('Próxima entrega:'), findsOneWidget);
+      expect(find.textContaining('Próximo evento:'), findsOneWidget);
+      expect(find.text('Saldo: 1 faltas'), findsOneWidget);
+      expect(
+        find.byTooltip(
+          'Faltas que ainda podem ser usadas antes de atingir o limite de '
+          '25% das aulas (1 de 4 aulas desta disciplina).',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Sem chamada'), findsOneWidget);
+      expect(
+        find.byTooltip('Sem chamada: esta disciplina não registra faltas.'),
+        findsOneWidget,
+      );
+      expect(find.text('Online'), findsOneWidget);
+      expect(
+        find.byTooltip(
+          'Disciplina online: não há controle de frequência presencial.',
+        ),
+        findsOneWidget,
+      );
     },
   );
 
@@ -3044,7 +3358,7 @@ void main() {
 
     await tester.pumpWidget(_app(repository, user, now, logger: logger));
     await tester.pumpAndSettle();
-    await _selectCourseAction(tester, 'DCC204', 'Editar');
+    await _selectCourseAction(tester, 'course-2', 'Editar');
     await tester.enterText(find.byKey(const Key('course-code')), 'dcc203');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
@@ -3085,6 +3399,92 @@ void main() {
     expect(find.byKey(const Key('course-code')), findsNothing);
   });
 
+  testWidgets('55.33: busca filtra disciplinas por código, nome ou apelido', (
+    tester,
+  ) async {
+    CourseRecord build(String id, String code, String name, String? nick) =>
+        CourseRecord(
+          id: id,
+          code: code,
+          name: name,
+          nickname: nick,
+          workload: 60,
+          term: '2026-2',
+          createdAt: now,
+          updatedAt: now,
+        );
+    final repository = _FakeCourseRepository(
+      courses: [
+        build('c1', 'DCC203', 'Programação Orientada a Objetos', 'POO'),
+        build('c2', 'DCC204', 'Algoritmos e Estruturas de Dados', null),
+        build('c3', 'MAT002', 'Cálculo II', null),
+      ],
+    );
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+
+    // Com 2+ disciplinas o campo de busca aparece; com 1, não.
+    expect(find.byKey(const Key('course-search')), findsOneWidget);
+    expect(find.byKey(const Key('course-card-c1')), findsOneWidget);
+    expect(find.byKey(const Key('course-card-c2')), findsOneWidget);
+    expect(find.byKey(const Key('course-card-c3')), findsOneWidget);
+
+    // Por apelido (sem acento, case-insensitive).
+    await tester.enterText(find.byKey(const Key('course-search')), 'poo');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-card-c1')), findsOneWidget);
+    expect(find.byKey(const Key('course-card-c2')), findsNothing);
+    expect(find.byKey(const Key('course-card-c3')), findsNothing);
+
+    // Por código.
+    await tester.enterText(find.byKey(const Key('course-search')), 'mat');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-card-c1')), findsNothing);
+    expect(find.byKey(const Key('course-card-c3')), findsOneWidget);
+
+    // Por nome com acento no termo de busca.
+    await tester.enterText(find.byKey(const Key('course-search')), 'estrutura');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-card-c2')), findsOneWidget);
+
+    // Sem resultado mostra estado vazio.
+    await tester.enterText(find.byKey(const Key('course-search')), 'zzz');
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Nenhuma disciplina encontrada para a busca.'),
+      findsOneWidget,
+    );
+
+    // Limpa volta a mostrar tudo.
+    await tester.enterText(find.byKey(const Key('course-search')), '');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-card-c1')), findsOneWidget);
+    expect(find.byKey(const Key('course-card-c2')), findsOneWidget);
+    expect(find.byKey(const Key('course-card-c3')), findsOneWidget);
+  });
+
+  testWidgets('55.33: busca não aparece com menos de duas disciplinas', (
+    tester,
+  ) async {
+    final repository = _FakeCourseRepository(
+      courses: [
+        CourseRecord(
+          id: 'only',
+          code: 'DCC203',
+          name: 'POO',
+          workload: 60,
+          term: '2026-2',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      ],
+    );
+    await tester.pumpWidget(_app(repository, user, now));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-card-only')), findsOneWidget);
+    expect(find.byKey(const Key('course-search')), findsNothing);
+  });
+
   testWidgets('reports save and delete failures without losing data', (
     tester,
   ) async {
@@ -3115,14 +3515,14 @@ void main() {
 
     await tester.pumpWidget(_app(repository, user, now));
     await tester.pumpAndSettle();
-    await _selectCourseAction(tester, 'DCC203', 'Editar');
+    await _selectCourseAction(tester, 'poo', 'Editar');
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Código: permission-denied'), findsOneWidget);
 
     await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();
-    await _selectCourseAction(tester, 'DCC203', 'Excluir');
+    await _selectCourseAction(tester, 'poo', 'Excluir');
     await tester.tap(find.widgetWithText(FilledButton, 'Excluir'));
     await tester.pumpAndSettle();
     expect(find.text('Não foi possível excluir a disciplina.'), findsOneWidget);
@@ -3488,7 +3888,7 @@ void main() {
       expect(find.byKey(const Key('course-hub-open-schedule')), findsOneWidget);
       expect(find.byKey(const Key('course-hub-materials')), findsOneWidget);
       expect(tester.takeException(), isNull, reason: 'width $width');
-      await tester.pageBack();
+      await tester.tap(find.byKey(const Key('course-hub-back')));
       await tester.pumpAndSettle();
     }
   });
@@ -3888,6 +4288,170 @@ void main() {
     },
   );
 
+  testWidgets(
+    'create reports a friendly message when the backend rejects a duplicate code',
+    (tester) async {
+      final repository = _FakeCourseRepository()
+        ..saveError = const PythonBackendException(
+          PythonBackendError.duplicateCourse,
+        );
+      final gateway = _DraftUFMGGateway();
+      final logger = _RecordingAppLogger();
+      await tester.pumpWidget(
+        _appWithGateway(repository, user, now, gateway, logger),
+      );
+      await tester.pumpAndSettle();
+      await _fillNewCourse(tester);
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Já existe uma disciplina com esse código.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Código:'), findsNothing);
+      expect(find.textContaining('invalidResponse'), findsNothing);
+      expect(gateway.savedDrafts, hasLength(1));
+      expect(gateway.savedDrafts.single.lastError, 'duplicateCourse');
+      expect(logger.events, contains('course_draft_saved'));
+    },
+  );
+
+  testWidgets(
+    'edit reports the friendly duplicate-code message without an error suffix',
+    (tester) async {
+      final repo = _FakeCourseRepository(
+        courses: [
+          CourseRecord(
+            id: 'course-1',
+            code: 'DCC203',
+            name: 'Programação Orientada a Objetos',
+            workload: 60,
+            term: '2026-2',
+            createdAt: now,
+            updatedAt: now,
+          ),
+        ],
+      );
+      await tester.pumpWidget(_app(repo, user, now));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('course-card-course-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('course-hub-edit-name')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('course-code')), 'DCC999');
+      repo.saveError = const PythonBackendException(
+        PythonBackendError.duplicateCourse,
+      );
+      await tester.tap(find.text('Salvar'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Já existe uma disciplina com esse código.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Código:'), findsNothing);
+      expect(find.textContaining('invalidResponse'), findsNothing);
+    },
+  );
+
+  testWidgets('hub renders a single back button', (tester) async {
+    await tester.pumpWidget(
+      _NavigationApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
+        home: _hubPage(_hubCourse(now), now),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-hub-back')), findsOneWidget);
+    expect(find.byTooltip('Voltar'), findsOneWidget);
+  });
+
+  testWidgets('escape closes the course hub', (tester) async {
+    final course = _hubCourse(now);
+    await tester.pumpWidget(
+      _NavigationApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: FilledButton(
+                key: const Key('open-hub'),
+                onPressed: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => _hubPage(course, now),
+                  ),
+                ),
+                child: const Text('Abrir disciplina'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('open-hub')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-hub-section-grid')), findsOneWidget);
+    Focus.of(tester.element(find.byIcon(Icons.arrow_back))).requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('course-hub-section-grid')), findsNothing);
+    expect(find.byKey(const Key('open-hub')), findsOneWidget);
+  });
+
+  testWidgets('no-attendance course explains the policy with tooltips', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _NavigationApp(
+        builder: (context, child) => AcademicSyncHost(child: child!),
+        home: _hubPage(
+          _hubCourse(now, policy: CourseAttendancePolicy.noCall),
+          now,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Sem chamada'), findsOneWidget);
+    expect(find.byKey(const Key('course-hub-no-call-tooltip')), findsOneWidget);
+    expect(
+      find.byKey(const Key('course-hub-no-attendance-tooltip')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'materials panel offers a retry when the catalog load times out',
+    (tester) async {
+      final gateway = _UFMGGateway()
+        ..pendingCatalog = Completer<PythonMoodleContentDiscovery>().future;
+      await tester.pumpWidget(
+        _NavigationApp(
+          builder: (context, child) => AcademicSyncHost(child: child!),
+          home: _hubPage(
+            _hubCourse(now),
+            now,
+            gateway: gateway,
+            materialsLoadTimeout: const Duration(milliseconds: 50),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      expect(
+        find.text('Não foi possível atualizar os materiais.'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('course-hub-retry-materials')),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('restores the saved draft when reopening the create editor', (
     tester,
   ) async {
@@ -3931,6 +4495,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('add-course')));
+    await tester.pumpAndSettle();
+    // 55.33: no modo criar, apelido fica em "Opções avançadas".
+    await tester.tap(find.text('Opções avançadas'));
     await tester.pumpAndSettle();
 
     expect(
@@ -4730,10 +5297,10 @@ final class _FakeCourseDraftStore implements CourseDraftStore {
 
 Future<void> _selectCourseAction(
   WidgetTester tester,
-  String courseCode,
+  String courseId,
   String action,
 ) async {
-  await tester.tap(find.byKey(ValueKey('course-actions-$courseCode')));
+  await tester.tap(find.byKey(ValueKey('course-actions-$courseId')));
   await tester.pumpAndSettle();
   await tester.tap(find.text(action));
   await tester.pumpAndSettle();
@@ -4768,6 +5335,37 @@ Widget _app(
     now: () => now,
     idGenerator: () => 'course-1',
   ),
+);
+
+CourseRecord _hubCourse(
+  DateTime now, {
+  CourseAttendancePolicy policy = CourseAttendancePolicy.required,
+}) => CourseRecord(
+  id: 'course-1',
+  code: 'DCC203',
+  name: 'POO',
+  workload: 60,
+  term: '2026-2',
+  attendancePolicy: policy,
+  createdAt: now,
+  updatedAt: now,
+);
+
+Widget _hubPage(
+  CourseRecord course,
+  DateTime now, {
+  BackendUFMGSessionGateway? gateway,
+  Duration materialsLoadTimeout = const Duration(seconds: 20),
+}) => CourseHubPage(
+  course: course,
+  allCourses: [course],
+  courseRepository: _FakeCourseRepository(),
+  meetingRepository: _FakeMeetingRepository(),
+  sessionRepository: _FakeSessionRepository(),
+  ufmgSessionGateway: gateway ?? _UFMGGateway(),
+  logger: _RecordingAppLogger(),
+  now: () => now,
+  materialsLoadTimeout: materialsLoadTimeout,
 );
 
 final class _FakeCourseRepository implements CourseRepository {
@@ -4862,6 +5460,7 @@ final class _FakeOverviewRepository implements AcademicOverviewRepository {
   final AcademicOverviewSnapshot snapshot;
   Object? error;
   int loadCalls = 0;
+  AcademicOverviewSnapshot? cached;
 
   @override
   Future<AcademicOverviewSnapshot> loadOverview() async {
@@ -4869,6 +5468,8 @@ final class _FakeOverviewRepository implements AcademicOverviewRepository {
     if (error != null) throw error!;
     return snapshot;
   }
+
+  Future<AcademicOverviewSnapshot?> loadCachedOverview() async => cached;
 }
 
 final class _LocalFirstOverviewRepository

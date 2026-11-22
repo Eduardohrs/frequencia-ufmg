@@ -133,9 +133,10 @@ void main() {
       }
 
       await filter('Entregas e prazos');
-      expect(find.textContaining('Prazo: Entrega'), findsOneWidget);
+      expect(find.textContaining('Prazo\nEntrega'), findsOneWidget);
+      expect(find.textContaining('Prazo: Entrega'), findsNothing);
       expect(find.textContaining('Avaliação: Prova presencial'), findsNothing);
-      await tester.tap(find.textContaining('Prazo: Entrega'));
+      await tester.tap(find.textContaining('Prazo\nEntrega'));
       await tester.pumpAndSettle();
       expect(find.text('Entrega'), findsOneWidget);
       await tester.tap(find.text('Abrir disciplina'));
@@ -146,9 +147,9 @@ void main() {
         find.textContaining('Avaliação: Prova presencial'),
         findsOneWidget,
       );
-      expect(find.textContaining('Avaliação: Prova remota'), findsOneWidget);
+      expect(find.textContaining('Avaliação\nProva remota'), findsOneWidget);
       await filter('Aulas');
-      expect(find.textContaining('Avaliação:'), findsNothing);
+      expect(find.textContaining('Avaliação'), findsNothing);
       await filter('Todos');
       await calendarDisplay(tester, 'Agenda');
       await tester.pumpAndSettle();

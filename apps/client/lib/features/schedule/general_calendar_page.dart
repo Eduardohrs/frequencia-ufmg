@@ -600,14 +600,17 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
             icon: const Icon(Icons.tune),
           )
         else
-          TextButton.icon(
-            key: const Key('calendar-filters'),
-            onPressed: _filters,
-            icon: const Icon(Icons.tune),
-            label: Text(
-              (_courseId != null || _type != CalendarEntryType.all)
-                  ? 'Filtros • ${(_courseId != null ? 1 : 0) + (_type != CalendarEntryType.all ? 1 : 0)}'
-                  : 'Filtros',
+          Tooltip(
+            message: 'Filtros e visualização',
+            child: TextButton.icon(
+              key: const Key('calendar-filters'),
+              onPressed: _filters,
+              icon: const Icon(Icons.tune),
+              label: Text(
+                (_courseId != null || _type != CalendarEntryType.all)
+                    ? 'Filtros • ${(_courseId != null ? 1 : 0) + (_type != CalendarEntryType.all ? 1 : 0)}'
+                    : 'Filtros',
+              ),
             ),
           ),
         const SizedBox(width: 8),
@@ -628,18 +631,22 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                   Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          [
-                            if (_courseId != null)
-                              widget.courses
-                                  .firstWhere((c) => c.id == _courseId)
-                                  .displayName,
-                            if (_type != CalendarEntryType.all)
-                              _typeLabel(_type),
-                          ].join(' • '),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall,
+                        child: Tooltip(
+                          message:
+                              'Filtros ativos: ${[if (_courseId != null) widget.courses.firstWhere((c) => c.id == _courseId).displayName, if (_type != CalendarEntryType.all) _typeLabel(_type)].join(', ')}',
+                          child: Text(
+                            [
+                              if (_courseId != null)
+                                widget.courses
+                                    .firstWhere((c) => c.id == _courseId)
+                                    .displayName,
+                              if (_type != CalendarEntryType.all)
+                                _typeLabel(_type),
+                            ].join(' • '),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
                         ),
                       ),
                       if (widget.onOpenActivities != null && _courseId != null)
@@ -965,9 +972,23 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  entry.session.title ?? 'Aula de ${entry.course.displayName}',
-                  style: Theme.of(sheet).textTheme.titleLarge,
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        entry.session.title ??
+                            'Aula de ${entry.course.displayName}',
+                        style: Theme.of(sheet).textTheme.titleLarge,
+                      ),
+                    ),
+                    IconButton(
+                      key: const Key('calendar-entry-close'),
+                      tooltip: 'Fechar',
+                      onPressed: () => Navigator.pop(sheet),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
                 ),
                 Text(entry.course.displayName),
                 Text(
@@ -987,7 +1008,7 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
                     ],
                   )
                 else
-                  Text(_typeLabel(entry.type)),
+                  Text('Tipo: ${_dateKindLabel(entry.session.date?.kind)}'),
                 if (widget.onOpenActivities != null &&
                     entry.session.title != null)
                   TextButton(
@@ -1170,11 +1191,13 @@ class _GeneralCalendarPageState extends State<GeneralCalendarPage> {
         ),
         subtitle: Text(
           [
-            '${_time(local)}${entry.session.session == null ? '' : ' – ${_time(tz.TZDateTime.from(entry.session.session!.endsAt, widget.location))}'} • ${(entry.session.session == null ? 'Prazo' : _status(entry.session.session!.calendarStatus))}',
+            '${_time(local)}${entry.session.session == null ? '' : ' – ${_time(tz.TZDateTime.from(entry.session.session!.endsAt, widget.location))}'} • ${entry.session.session == null ? (entry.type == CalendarEntryType.assessment ? 'Avaliação' : 'Prazo') : _status(entry.session.session!.calendarStatus)}',
             if (entry.session.session != null && !entry.course.tracksAttendance)
               'Sem chamada',
             if (entry.session.title case final title?)
-              '${entry.type == CalendarEntryType.deadline ? 'Prazo' : 'Avaliação'}: ${compactAcademicTitle(title)}',
+              entry.session.session == null
+                  ? compactAcademicTitle(title)
+                  : 'Avaliação: ${compactAcademicTitle(title)}',
           ].join('\n'),
         ),
         trailing: entry.session.title == null
@@ -1281,4 +1304,11 @@ String _typeLabel(CalendarEntryType value) => switch (value) {
   CalendarEntryType.lesson => 'Aulas',
   CalendarEntryType.assessment => 'Avaliações',
   CalendarEntryType.deadline => 'Entregas e prazos',
+};
+
+String _dateKindLabel(String? kind) => switch (kind) {
+  'assessment' => 'Prova',
+  'quiz' => 'Questionário',
+  'assignment' => 'Trabalho',
+  _ => 'Evento',
 };

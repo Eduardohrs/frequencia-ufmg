@@ -65,6 +65,7 @@ from firestore_rest import (  # noqa: E402
     FirestoreRestClient,
     FirestoreUnavailable,
 )
+from moodle_calendar_state import MoodleCalendarState  # noqa: E402
 from moodle_content_discovery import MoodleContentDiscoveryService  # noqa: E402
 from moodle_date_import import MoodleDateImportService  # noqa: E402
 from moodle_diario_plan import MoodleDiarioPlanService  # noqa: E402
@@ -2418,6 +2419,7 @@ def _moodle_date_import_service(
         MoodleStructuredDatesClient(),
         _course_repository(headers, user_id),
         AcademicDateRepository(_firestore(headers, user_id)),
+        calendar_state=MoodleCalendarState(_firestore(headers, user_id), telemetry=telemetry),
         telemetry=telemetry,
     )
 
@@ -2461,6 +2463,7 @@ def _moodle_sync_service(
             client,
             courses,
             AcademicDateRepository(_firestore(headers, user_id)),
+            calendar_state=MoodleCalendarState(_firestore(headers, user_id), telemetry=telemetry),
             telemetry=telemetry,
         ),
         MoodleContentDiscoveryService(
@@ -2515,11 +2518,25 @@ def _unified_academic_sync_service(
             ScheduleRepository(firestore),
             _pendency_repository(headers),
         ),
-        MoodleDateImportService(sessions, client, courses, dates, telemetry=telemetry),
+        MoodleDateImportService(
+            sessions,
+            client,
+            courses,
+            dates,
+            calendar_state=MoodleCalendarState(firestore, telemetry=telemetry),
+            telemetry=telemetry,
+        ),
         telemetry=telemetry,
     )
     moodle = MoodleSyncService(
-        MoodleDateImportService(sessions, client, courses, dates, telemetry=telemetry),
+        MoodleDateImportService(
+            sessions,
+            client,
+            courses,
+            dates,
+            calendar_state=MoodleCalendarState(firestore, telemetry=telemetry),
+            telemetry=telemetry,
+        ),
         MoodleContentDiscoveryService(
             sessions,
             client,

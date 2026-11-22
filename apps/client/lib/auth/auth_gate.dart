@@ -150,10 +150,15 @@ class _AuthGateState extends State<AuthGate> {
       initialData: widget.authGateway.currentUser,
       builder: (context, snapshot) {
         final user = snapshot.data;
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            user == null) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
         if (user != null) {
           _verifyBackendFor(user.id);
           return CoursePage(
-            key: ValueKey(user.id),
             repository: _repositoryFor(user.id),
             fallbackCourseRepository: _fallbackCourseRepository,
             meetingRepository: _meetingRepository!,
@@ -174,9 +179,30 @@ class _AuthGateState extends State<AuthGate> {
             androidOfflineQueueEnabled: widget.androidOfflineQueueEnabled,
             checkpointDeliveryUpdates: widget.checkpointDeliveryUpdates,
             onSignOut: () async {
-              await _run(AuditedOperation.logout, widget.authGateway.signOut);
-              if (context.mounted && widget.authGateway.currentUser == null) {
-                CourseVisualHost.of(context, listen: false)?.clear();
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Sair da conta'),
+                  content: const Text(
+                    'Tem certeza que deseja sair? Você precisará entrar novamente para acessar seus dados.',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text('Cancelar'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text('Sair'),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed == true && context.mounted) {
+                await _run(AuditedOperation.logout, widget.authGateway.signOut);
+                if (context.mounted && widget.authGateway.currentUser == null) {
+                  CourseVisualHost.of(context, listen: false)?.clear();
+                }
               }
             },
           );

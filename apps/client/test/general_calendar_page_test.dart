@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/data/academic_records.dart';
 import 'package:frequencia_ufmg/data/academic_repositories.dart';
 import 'package:frequencia_ufmg/data/calendar_status.dart';
+import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/domain/attendance.dart';
 import 'package:frequencia_ufmg/features/schedule/general_calendar_page.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
@@ -594,6 +595,120 @@ void main() {
       await tester.pumpAndSettle();
     }
   });
+
+  testWidgets(
+    'filter button and active filters expose tooltips; entry labels are not duplicated',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GeneralCalendarPage(
+            courses: courses,
+            repository: _Repository({
+              'poo': [_session('a', DateTime.utc(2026, 9, 16, 11))],
+            }),
+            datesByCourse: {
+              'poo': [
+                PythonMoodleDate(
+                  id: 'd1',
+                  courseId: 'poo',
+                  courseCode: 'DCC203',
+                  title: 'Entrega 1',
+                  dueAt: DateTime.utc(2026, 9, 16, 23, 59),
+                  kind: 'assignment',
+                ),
+                PythonMoodleDate(
+                  id: 'd2',
+                  courseId: 'poo',
+                  courseCode: 'DCC203',
+                  title: 'Prova remota',
+                  dueAt: DateTime.utc(2026, 9, 17, 23, 59),
+                  kind: 'assessment',
+                ),
+              ],
+            },
+            location: location,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Filtros e visualização'), findsOneWidget);
+      await openCalendarFilters(tester);
+      await tester.tap(find.byKey(const Key('calendar-type-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Aulas').last);
+      await tester.pumpAndSettle();
+      await applyCalendarFilters(tester);
+      expect(find.text('Filtros • 1'), findsOneWidget);
+      expect(find.byTooltip('Filtros ativos: Aulas'), findsOneWidget);
+      await tester.tap(find.byTooltip('Limpar filtros ativos'));
+      await tester.pumpAndSettle();
+      expect(find.text('Filtros'), findsOneWidget);
+      await calendarDisplay(tester, 'Lista');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Prazo\nEntrega 1'), findsOneWidget);
+      expect(find.textContaining('Prazo: Entrega 1'), findsNothing);
+      expect(find.textContaining('Avaliação\nProva remota'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'entry detail has a visible close button and names the deadline kind',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GeneralCalendarPage(
+            courses: courses,
+            repository: _Repository({
+              'poo': [_session('a', DateTime.utc(2026, 9, 16, 11))],
+            }),
+            datesByCourse: {
+              'poo': [
+                PythonMoodleDate(
+                  id: 'd1',
+                  courseId: 'poo',
+                  courseCode: 'DCC203',
+                  title: 'Entrega 1',
+                  dueAt: DateTime.utc(2026, 9, 16, 23, 59),
+                  kind: 'assignment',
+                ),
+                PythonMoodleDate(
+                  id: 'd2',
+                  courseId: 'poo',
+                  courseCode: 'DCC203',
+                  title: 'Prova 1',
+                  dueAt: DateTime.utc(2026, 9, 17, 23, 59),
+                  kind: 'assessment',
+                ),
+              ],
+            },
+            location: location,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await calendarDisplay(tester, 'Lista');
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Prazo\nEntrega 1'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('calendar-entry-close')), findsOneWidget);
+      expect(find.text('Tipo: Trabalho'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('calendar-entry-close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('calendar-entry-close')), findsNothing);
+      await tester.tap(find.textContaining('Avaliação\nProva 1'));
+      await tester.pumpAndSettle();
+      expect(find.text('Tipo: Prova'), findsOneWidget);
+      expect(find.textContaining('Entregas e prazos'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 CourseRecord _course(String id, String code, DateTime now) => CourseRecord(
