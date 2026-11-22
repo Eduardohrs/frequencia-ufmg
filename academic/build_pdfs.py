@@ -532,7 +532,7 @@ def product():
     section(
         s,
         "Como reproduzir",
-        "Requer Python 3.11+; só biblioteca padrão. Extraia o ZIP, entre em demo/, rode <b>python web.py</b> e abra http://127.0.0.1:8878. Crie DEMO01 com duas chamadas, duas aulas por encontro e datas 02, 04, 09 e 11/11/2026. Escolha a matéria pelo nome. Marque 02/11 ausente, 04/11 presente, consulte e corrija 02/11. Em 02/11, use Corrigir data para 03/11: a presença permanece. Atualize a página para conferir. Em Ajustes, APAGAR reinicia os dados. O menu alternativo inicia com <b>python main.py</b>.",
+        "Requer Python 3.11+ e só a biblioteca padrão. Extraia o ZIP, entre em demo/ e rode <b>python web.py</b>; o navegador abre automaticamente no terminal interativo. Se necessário, acesse http://127.0.0.1:8878. O botão Usar dados de exemplo cria uma matéria fictícia com dois registros e uma prova em banco vazio; Ajustes permite executar os testes e reiniciar com APAGAR. Para avaliar o cadastro manual, crie DEMO01 com duas chamadas, duas aulas por encontro e datas 02, 04, 09 e 11/11/2026. Marque 02/11 ausente e 04/11 presente, corrija 02/11 e sua data, depois atualize a página. O menu alternativo inicia com <b>python main.py</b>.",
     )
     s.append(
         table(
@@ -572,7 +572,7 @@ def product():
     section(
         s,
         "Teste e limitações",
-        "Em demo/, execute <b>python -m unittest discover -v</b>. Cada teste constrói objetos próprios ou SQLite temporário; o banco de demonstração não é alterado. A grade tem um encontro por data, duração fixa e nenhuma inclusão posterior de datas. Não há edição de atividades nem conexão oficial. Este pacote é independente do aplicativo ampliado e não precisa de conta ou internet.",
+        "Em Ajustes, o botão Executar testes mostra o resultado na página; no terminal, o mesmo conjunto roda com <b>python -m unittest discover -v</b>. Cada teste constrói objetos próprios ou SQLite temporário; o banco da demonstração não muda. A grade tem um encontro por data, duração fixa e nenhuma inclusão posterior de datas. Não há edição de atividades nem conexão oficial. Este pacote é independente do aplicativo ampliado e não precisa de conta ou internet.",
     )
     section(
         s,
@@ -1187,7 +1187,7 @@ def verification():
     section(
         s,
         "O mesmo domínio nas duas apresentações",
-        "T23 inicia o servidor local com SQLite temporário, carrega HTML/CSS/JS, cria disciplina, registra ausência, corrige para presença, corrige a data do encontro, adiciona prova, renomeia, reabre e apaga com APAGAR. T24 envia data fora da grade, data inválida e confirmação errada; cada pedido é rejeitado e a leitura seguinte preserva o estado. T25 cobre falhas de leitura e gravação; T26 verifica a inicialização e o encerramento. T27–T28 isolam a correção da data no domínio e no SQLite.",
+        "T23 inicia o servidor local com SQLite temporário, carrega HTML/CSS/JS, cria disciplina, registra ausência, corrige para presença, corrige a data, adiciona prova, renomeia, reabre e apaga com APAGAR. T24 rejeita entradas inválidas sem mudar o estado. T25 cobre falhas de leitura e gravação; T26 verifica a inicialização e a abertura do navegador. T27–T28 isolam a correção da data. T29 valida a amostra e o rollback; T30 valida os botões de exemplo e testes sem tocar no banco real.",
     )
     s.append(
         table(
@@ -1229,6 +1229,12 @@ def verification():
                     "Situação e faltas preservadas; rejeições não alteram o estado.",
                     "T23–T24, T27–T28 · aprovado",
                 ),
+                (
+                    "W07",
+                    "Na base vazia, carregar exemplo e executar testes pela página; tentar repetir o exemplo.",
+                    "Uma matéria, dois registros e prova; testes em base temporária; segunda carga rejeitada sem duplicar.",
+                    "T29–T30 e Chrome · aprovado",
+                ),
             ],
             [1.5 * cm, 9.0 * cm, 11.3 * cm, 4.5 * cm],
             dense="tight",
@@ -1237,14 +1243,14 @@ def verification():
     section(
         s,
         "Limite desta evidência",
-        "T23–T25 percorrem pedidos HTTP reais com banco isolado; T26 verifica a entrada do programa; T27–T28 cobrem troca de data, colisão e falha de disco. Uma conferência adicional em Chrome verificou larguras de 390 e 320 px, criação, seis situações de frequência, correção, agenda com anos diferentes, três disciplinas no celular, troca entre abas, reset e recuperação de falhas inicial e posterior de leitura. A aparência não altera os cálculos: o servidor devolve números das classes Python. Serviços externos do aplicativo completo não fazem parte deste recorte.",
+        "T23–T25 e T30 percorrem HTTP com bancos isolados; T26 verifica o início; T27–T29 cobrem data, amostra e falha de disco. Em Chrome, foram percorridos 390 e 320 px, criação, seis situações, correção, agenda em anos diferentes, três disciplinas no celular, troca entre abas, exemplo, testes, reset e recuperação de falhas. A página não calcula faltas: recebe os totais das classes Python. Serviços externos do aplicativo completo não fazem parte deste recorte.",
     )
 
     page(s, "Evidências", "Testes e defeitos corrigidos")
     section(
         s,
         "Evidências · IDs da matriz e nomes dos testes",
-        "T01–T22 apontam para domínio e terminal; T23–T26 verificam a interface local; T27–T28 aprofundam a correção de data. Todos constam em evidencias/unittest.txt no ZIP. A situação da matriz descreve a última execução, não apenas uma intenção de teste.",
+        "T01–T22 apontam para domínio e terminal; T23–T26 verificam a interface local; T27–T28 aprofundam a correção de data; T29–T30 cobrem a amostra e os botões. Todos constam em evidencias/unittest.txt no ZIP. A situação da matriz descreve a última execução, não apenas uma intenção de teste.",
     )
     tests = [
         ("T01", "test_criar_e_registrar_do_zero"),
@@ -1275,6 +1281,8 @@ def verification():
         ("T26", "test_ponto_de_entrada_pode_ser_encerrado"),
         ("T27", "test_remarcar_encontro_preserva_presenca_e_rejeita_colisao"),
         ("T28", "test_remarcar_persistente_e_falha_na_gravacao"),
+        ("T29", "test_exemplo_persiste_ou_faz_rollback_completo"),
+        ("T30", "test_botoes_exemplo_e_testes_nao_exigem_preparo"),
     ]
     middle = (len(tests) + 1) // 2
     s.append(
@@ -1293,16 +1301,51 @@ def verification():
             dense="tight",
         )
     )
+    page(s, "Defeitos", "Falhas reproduzidas e corrigidas")
     section(
         s,
-        "Defeitos identificados e corrigidos",
-        "Uma versão sem fachada persistente perdia presença após reabertura e podia alterar só o nome em memória. Cadastro, busca e lista agora usam a fachada; o setter grava antes de mudar o objeto (T04, T11, T17 e T18). Também havia risco de publicar ausência antes do commit: uma falha de escrita deixaria a tela e o banco divergentes. O registro agora é trocado apenas após a gravação (T07 e T19). T20 confirma a escolha por nome no menu, sem memorizar código. Cada correção foi seguida pela repetição dos cenários relacionados.",
+        "Reprodução, consequência e nova execução",
+        "Cada linha indica como o defeito foi observado antes da correção e qual teste foi repetido depois. Os dados de teste são fictícios e usam bancos temporários.",
+    )
+    s.append(
+        table(
+            ["Reprodução na versão anterior", "Consequência", "Correção e reexecução"],
+            [
+                (
+                    "Cadastrar D, registrar ausência, fechar e reabrir; repetir após renomear pela lista.",
+                    "A presença podia sumir ou o nome mudar só na memória.",
+                    "Fachada persistente salva antes de publicar. T04, T11, T17–T18: reabertura preservou ambos.",
+                ),
+                (
+                    "Cadastrar uma data; simular OSError na escrita; tentar registrar ausência.",
+                    "A memória podia mostrar falta que o banco não tinha gravado.",
+                    "Registro só troca após commit. T07 e T19: memória e banco mantiveram pendente.",
+                ),
+                (
+                    "Cadastrar duas matérias; abrir Consultar e tentar escolher pelo nome.",
+                    "O menu exigia decorar e digitar o código da disciplina.",
+                    "Seleção numerada por nome. T20: escolheu a segunda matéria sem digitar código.",
+                ),
+                (
+                    "Bloquear a leitura do SQLite na abertura e tentar recuperar depois.",
+                    "A tela podia parecer vazia após o aviso transitório.",
+                    "Erro persistente e Tentar novamente. T25 e Chrome: voltou a mostrar os dados originais.",
+                ),
+            ],
+            [9.0 * cm, 7.7 * cm, 10.0 * cm],
+            dense="tight",
+        )
+    )
+    section(
+        s,
+        "Situação após a reexecução",
+        "T04, T07, T11, T17–T20 e T25 passaram na última execução; as outras funções também foram repetidas pelo conjunto completo. Os resultados integrais aparecem na página seguinte e em evidencias/unittest.txt. Não há defeito conhecido pendente neste recorte acadêmico. Moodle, SIGA e GPS pertencem à aplicação ampliada e não participam dos cálculos ou da persistência desta demo.",
     )
     page(s, "Última execução", "Evidência integral dos testes")
     section(
         s,
         "Como repetir sem dados reais",
-        "O ZIP inclui demo/test_models.py, demo/test_main.py, demo/test_web.py, demo/README.md e evidencias/unittest.txt. Extraia, entre em demo/ e rode <b>python -m unittest discover -v</b>. Os testes não exigem conta, internet, Moodle ou GPS. Para operar, rode <b>python web.py</b> e abra http://127.0.0.1:8878; o menu alternativo é <b>python main.py</b>.",
+        "O ZIP inclui demo/test_models.py, demo/test_main.py, demo/test_web.py, demo/README.md e evidencias/unittest.txt. Extraia, entre em demo/ e rode <b>python web.py</b>; o navegador abre e Ajustes oferece Executar testes. O mesmo conjunto roda no terminal com <b>python -m unittest discover -v</b>. Os testes usam dados temporários e dispensam conta, internet, Moodle e GPS. O menu alternativo é <b>python main.py</b>.",
     )
     evidence_path = Path(__file__).parent / "package" / "evidencias" / "unittest.txt"
     evidence = evidence_path.read_text(encoding="utf-8-sig")

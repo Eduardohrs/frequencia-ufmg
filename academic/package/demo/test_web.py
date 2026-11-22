@@ -4,10 +4,12 @@ import io
 import json
 import runpy
 import sqlite3
+import subprocess
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -16,6 +18,36 @@ from web import criar_servidor, executar_acao
 
 
 class InterfaceWebTest(unittest.TestCase):
+    def test_botoes_exemplo_e_testes_nao_exigem_preparo(self):
+        status, state = self.post("/api/exemplo", {})
+        self.assertEqual(status, 200)
+        self.assertEqual(state["disciplinas"][0]["codigo"], "DEMO01")
+        self.assertEqual(state["disciplinas"][0]["resumo"]["faltas"], 2)
+        self.assertEqual(len(state["atividades"]), 1)
+        self.assertEqual(self.post("/api/exemplo", {})[0], 400)
+        self.assertEqual(self.post("/api/reset", {"confirmacao": "APAGAR"})[0], 200)
+        self.assertEqual(self.post("/api/exemplo", {})[0], 200)
+
+        with patch(
+            "subprocess.run",
+            return_value=SimpleNamespace(
+                returncode=0, stdout="", stderr="Ran 34 tests in 1.0s\n\nOK\n"
+            ),
+        ) as executar:
+            status, body = self.post("/api/testes", {})
+        self.assertEqual((status, body["ok"], body["quantidade"]), (200, True, 34))
+        self.assertEqual(executar.call_args.kwargs["cwd"], Path(__file__).parent)
+        with patch(
+            "subprocess.run",
+            return_value=SimpleNamespace(returncode=1, stdout="", stderr="FAILED"),
+        ):
+            status, body = self.post("/api/testes", {})
+        self.assertEqual((status, body["ok"], body["quantidade"]), (200, False, None))
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("test", 60)):
+            status, body = self.post("/api/testes", {})
+        self.assertEqual(status, 503)
+        self.assertIn("um minuto", body["erro"])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.server = criar_servidor(Path(self.temporary.name) / "web.db", 0)
@@ -235,10 +267,13 @@ class InterfaceWebTest(unittest.TestCase):
         with (
             patch("http.server.ThreadingHTTPServer", return_value=ServidorFalso()),
             patch("sys.stdout", new_callable=io.StringIO) as output,
+            patch("webbrowser.open") as browser,
         ):
+            output.isatty = lambda: True
             runpy.run_path(str(Path(__file__).with_name("web.py")), run_name="__main__")
         self.assertIn("http://127.0.0.1:8878", output.getvalue())
         self.assertIn("Encerrado", output.getvalue())
+        browser.assert_called_once_with("http://127.0.0.1:8878")
 
 
 if __name__ == "__main__":

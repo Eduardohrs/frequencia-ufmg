@@ -15,6 +15,53 @@ DIAS = [date(2026, 11, d) for d in (2, 4, 9, 11)]
 
 
 class TesteFrequencia(unittest.TestCase):
+    def test_exemplo_em_memoria_usa_as_regras_normais(self):
+        controle = ControleAcademico()
+        disciplina = controle.preencher_exemplo()
+        self.assertIs(disciplina, controle.obter_disciplina("demo01"))
+        self.assertEqual(
+            [r.situacao for r in disciplina.registros[:2]], ["presente", "ausente"]
+        )
+        self.assertEqual(disciplina.resumo()["faltas"], 2)
+        self.assertEqual(controle.atividades[0].titulo, "Avaliação fictícia")
+        with self.assertRaisesRegex(ValueError, "demo vazia"):
+            controle.preencher_exemplo()
+
+    def test_exemplo_persiste_ou_faz_rollback_completo(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "exemplo.db"
+            controle = ControleAcademico(persistente=True, caminho_banco=caminho)
+            with database.conexao(caminho) as banco:
+                banco.execute("""
+                    CREATE TRIGGER impedir_exemplo BEFORE INSERT ON atividades
+                    BEGIN SELECT RAISE(ABORT, 'falha simulada'); END
+                """)
+            with self.assertRaises(sqlite3.IntegrityError):
+                controle.preencher_exemplo()
+            self.assertEqual((controle.disciplinas, controle.atividades), ((), ()))
+            self.assertEqual(
+                ControleAcademico(persistente=True, caminho_banco=caminho).disciplinas,
+                (),
+            )
+            with database.conexao(caminho) as banco:
+                banco.execute("DROP TRIGGER impedir_exemplo")
+            controle.preencher_exemplo()
+            disciplina = controle.obter_disciplina("DEMO01")
+            self.assertEqual(disciplina.resumo()["faltas"], 2)
+            self.assertEqual(disciplina.resumo()["pendentes"], 4)
+            self.assertEqual(controle.atividades[0].titulo, "Avaliação fictícia")
+            self.assertIsNotNone(controle.atividades[0].identificador)
+            reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
+            self.assertEqual(
+                reaberto.obter_disciplina("DEMO01").resumo(), disciplina.resumo()
+            )
+            self.assertEqual(reaberto.atividades, controle.atividades)
+            with self.assertRaisesRegex(ValueError, "demo vazia"):
+                controle.preencher_exemplo()
+            controle.apagar_tudo()
+            controle.preencher_exemplo()
+            self.assertEqual(len(controle.disciplinas), 1)
+
     def test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar(self):
         with tempfile.TemporaryDirectory() as pasta:
             caminho = Path(pasta) / "teste.db"

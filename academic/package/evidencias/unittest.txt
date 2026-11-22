@@ -1,6 +1,5 @@
 test_agenda_pelo_menu_vazia_e_atividades_ordenadas (test_main.TesteMenu.test_agenda_pelo_menu_vazia_e_atividades_ordenadas) ... ok
 test_banco_inacessivel_mostra_erro_sem_abrir_menu (test_main.TesteMenu.test_banco_inacessivel_mostra_erro_sem_abrir_menu) ... ok
-test_dados_exemplo_criam_arquivo_isolado_e_nao_duplicam (test_main.TesteMenu.test_dados_exemplo_criam_arquivo_isolado_e_nao_duplicam) ... ok
 test_escolha_numerada_por_nome_e_volta_sem_alterar (test_main.TesteMenu.test_escolha_numerada_por_nome_e_volta_sem_alterar) ... ok
 test_falha_de_gravacao_mostra_erro_e_mantem_aula_pendente (test_main.TesteMenu.test_falha_de_gravacao_mostra_erro_e_mantem_aula_pendente) ... ok
 test_fim_de_entrada_e_interrupcao_encerram (test_main.TesteMenu.test_fim_de_entrada_e_interrupcao_encerram) ... ok
@@ -16,6 +15,8 @@ test_correcao_invalida_preserva_registro_e_resumo (test_models.TesteFrequencia.t
 test_correcao_substitui_e_recalcula (test_models.TesteFrequencia.test_correcao_substitui_e_recalcula) ... ok
 test_criar_e_registrar_do_zero (test_models.TesteFrequencia.test_criar_e_registrar_do_zero) ... ok
 test_entrada_invalida_nao_cria_disciplina (test_models.TesteFrequencia.test_entrada_invalida_nao_cria_disciplina) ... ok
+test_exemplo_em_memoria_usa_as_regras_normais (test_models.TesteFrequencia.test_exemplo_em_memoria_usa_as_regras_normais) ... ok
+test_exemplo_persiste_ou_faz_rollback_completo (test_models.TesteFrequencia.test_exemplo_persiste_ou_faz_rollback_completo) ... ok
 test_falha_na_gravacao_preserva_memoria_e_banco (test_models.TesteFrequencia.test_falha_na_gravacao_preserva_memoria_e_banco) ... ok
 test_falha_no_segundo_insert_desfaz_cadastro_e_grade (test_models.TesteFrequencia.test_falha_no_segundo_insert_desfaz_cadastro_e_grade) ... ok
 test_mesma_operacao_tem_resultado_conforme_chamada (test_models.TesteFrequencia.test_mesma_operacao_tem_resultado_conforme_chamada) ... ok
@@ -27,12 +28,13 @@ test_renomear_disciplina_valida_e_persiste (test_models.TesteFrequencia.test_ren
 test_renomear_invalido_ou_falha_de_banco_preserva_nome (test_models.TesteFrequencia.test_renomear_invalido_ou_falha_de_banco_preserva_nome) ... ok
 test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar (test_models.TesteFrequencia.test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar) ... ok
 test_sqlite_preserva_disciplina_entre_aberturas (test_models.TesteFrequencia.test_sqlite_preserva_disciplina_entre_aberturas) ... ok
+test_botoes_exemplo_e_testes_nao_exigem_preparo (test_web.InterfaceWebTest.test_botoes_exemplo_e_testes_nao_exigem_preparo) ... ok
 test_entradas_invalidas_preservam_estado (test_web.InterfaceWebTest.test_entradas_invalidas_preservam_estado) ... ok
 test_falhas_de_leitura_e_gravacao_sao_visiveis (test_web.InterfaceWebTest.test_falhas_de_leitura_e_gravacao_sao_visiveis) ... ok
 test_fluxo_completo_e_reabertura (test_web.InterfaceWebTest.test_fluxo_completo_e_reabertura) ... ok
 test_ponto_de_entrada_pode_ser_encerrado (test_web.InterfaceWebTest.test_ponto_de_entrada_pode_ser_encerrado) ... ok
 
 ----------------------------------------------------------------------
-Ran 33 tests in 3.742s
+Ran 35 tests in 4.839s
 
 OK

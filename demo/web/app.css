@@ -588,6 +588,13 @@ p {
   margin-top: 5px
 }
 
+.settings-surface + .settings-surface { margin-top: 14px }
+
+.test-result { margin-top: 14px }
+.test-result details { margin-top: 8px }
+.test-result summary { cursor: pointer; color: #0c5236 }
+.test-result pre { max-width: 100%; overflow: auto; white-space: pre-wrap; font-size: .76rem }
+
 .empty {
   padding: 42px 22px;
   text-align: center;
@@ -604,6 +611,9 @@ p {
 .empty .primary {
   margin-top: 18px
 }
+
+.empty-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap }
+.empty-actions .secondary { margin-top: 18px }
 
 .empty-icon {
   width: 42px;
@@ -623,6 +633,7 @@ p {
 
 .toast {
   position: fixed;
+  pointer-events: none;
   bottom: 22px;
   left: 50%;
   transform: translateX(-50%);

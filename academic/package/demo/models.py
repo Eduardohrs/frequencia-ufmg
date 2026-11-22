@@ -37,6 +37,7 @@ class ChamadaUnica(PoliticaChamada):
     """Uma chamada registra o encontro inteiro; atraso não fraciona faltas."""
 
     def calcular_faltas(self, situacao, aulas):
+        """Ausência perde o encontro inteiro; demais situações não geram falta."""
         return aulas if situacao == "ausente" else 0
 
 
@@ -44,6 +45,7 @@ class ChamadaDupla(PoliticaChamada):
     """Duas chamadas representam início e fim; atraso/saída perde metade."""
 
     def calcular_faltas(self, situacao, aulas):
+        """Ausência perde tudo; atraso ou saída perde metade das aulas."""
         if situacao == "ausente":
             return aulas
         return aulas // 2 if situacao in ("atrasado", "saiu mais cedo") else 0
@@ -90,8 +92,10 @@ class Atividade:
 class Disciplina:
     """Agregado de domínio que protege a grade e seus registros.
 
-    Toda validação ocorre antes da troca do registro. Por isso uma data ou
-    situação inválida não altera o estado nem os totais calculados.
+    Aqui ficam as invariantes de uma matéria: datas únicas, duração válida e
+    política de chamada compatível. A interface não escreve em ``_registros``;
+    pede à classe para registrar ou corrigir. Toda validação ocorre antes da
+    troca, então uma entrada inválida não muda os totais.
     """
 
     def __init__(self, codigo, nome, chamadas, aulas, datas, registros=None):
@@ -120,9 +124,12 @@ class Disciplina:
             raise ValueError("Informe ao menos uma data válida.")
         if len(set(dias)) != len(dias):
             raise ValueError("A grade não pode repetir uma data.")
+        # A chave normalizada impede que "ele065" e "ELE065" virem duas matérias.
         self._codigo = codigo.strip().upper()
         self.nome = nome
         self._chamadas = chamadas
+        # A escolha ocorre uma vez; depois registrar_presenca usa o mesmo
+        # contrato, sem repetir um if para cada situação e tipo de chamada.
         self._politica = ChamadaUnica() if chamadas == 1 else ChamadaDupla()
         self._registros = {d: Registro(d, aulas) for d in sorted(dias)}
         if registros:
@@ -130,10 +137,12 @@ class Disciplina:
 
     @property
     def codigo(self):
+        """Chave estável e normalizada da disciplina; não admite setter."""
         return self._codigo
 
     @property
     def nome(self):
+        """Nome visível da disciplina, que pode ser corrigido pelo setter."""
         return self._nome
 
     @nome.setter
@@ -149,6 +158,7 @@ class Disciplina:
 
     @property
     def chamadas(self):
+        """Quantidade de chamadas definida no cadastro."""
         return self._chamadas
 
     @property
@@ -175,6 +185,7 @@ class Disciplina:
             raise ValueError("Esta data está pendente. Use Registrar presença.")
         if anterior.situacao != "pendente" and not corrigir:
             raise ValueError("Esta data já foi registrada. Use Corrigir registro.")
+        # A chamada polimórfica devolve faltas em aulas de 50 minutos.
         faltas = self._politica.calcular_faltas(situacao, anterior.aulas)
         novo = Registro(dia, anterior.aulas, situacao, faltas)
         # A gravação, quando existe, ocorre antes da troca em memória. Uma falha
@@ -219,10 +230,12 @@ class Disciplina:
         continuam na base, mas não viram presença nem falta presumida; por
         isso a frequência percentual só aparece quando todas são resolvidas.
         """
+        # Cancelada não integra a base; sem chamada integra, com zero faltas.
         ativos = [r for r in self.registros if r.situacao != "cancelada"]
         total = sum(r.aulas for r in ativos)
         pendentes = sum(r.aulas for r in ativos if r.faltas is None)
         faltas = sum(r.faltas or 0 for r in ativos)
+        # // faz o piso de 25%: 7 aulas permitem 1 falta, não 1,75 nem 2.
         limite = total // 4
         return {
             "aulas": total,
@@ -241,8 +254,10 @@ class ControleAcademico:
     """Coordena disciplinas e pode carregar/salvar dados em SQLite.
 
     Com ``persistente=False`` o controle serve aos testes puros de domínio.
-    O programa de terminal usa ``persistente=True``; ambos percorrem as mesmas
-    regras de ``Disciplina``.
+    O programa de terminal e o navegador usam ``persistente=True``; ambos
+    percorrem as mesmas regras de ``Disciplina``. A fachada persistente é
+    necessária porque devolver a disciplina pura permitiria corrigir sua
+    memória sem salvar o SQLite.
     """
 
     def __init__(self, *, persistente=False, caminho_banco=None):
@@ -255,7 +270,11 @@ class ControleAcademico:
             self._carregar()
 
     def _carregar(self):
-        """Reconstrói objetos do domínio a partir das linhas persistidas."""
+        """Reconstrói objetos do domínio; o banco guarda dados, não regras.
+
+        A mesma classe Disciplina recalcula os totais depois de reabrir, sem
+        persistir um segundo resumo que poderia divergir dos registros.
+        """
         for codigo, nome, chamadas, aulas in database.listar_disciplinas(
             self._caminho_banco
         ):
@@ -340,6 +359,40 @@ class ControleAcademico:
         self._disciplinas[nova.codigo] = nova
         return _DisciplinaPersistente(nova, self) if self._persistente else nova
 
+    def preencher_exemplo(self):
+        """Prepara uma amostra completa sem depender de arquivo ou conta.
+
+        Ela só entra numa base vazia. Primeiro as regras comuns validam todos
+        os objetos em memória; depois uma transação grava tudo. Publicar os
+        objetos só após o commit evita uma demo pela metade se o disco falhar.
+        """
+        if self._disciplinas or self._atividades:
+            raise ValueError("Os dados de exemplo exigem uma demo vazia.")
+        preparado = ControleAcademico()
+        dias = [date(2026, 11, dia) for dia in (2, 4, 9, 11)]
+        disciplina = preparado.criar_disciplina(
+            "DEMO01", "Disciplina fictícia", 2, 2, dias
+        )
+        disciplina.registrar_presenca(dias[0], "presente")
+        disciplina.registrar_presenca(dias[1], "ausente")
+        atividade = preparado.adicionar_atividade(
+            "DEMO01", date(2026, 11, 10), "prova", "Avaliação fictícia"
+        )
+        if self._persistente:
+            identificador = database.salvar_exemplo(
+                disciplina, atividade, self._caminho_banco
+            )
+            atividade = Atividade(
+                atividade.codigo_disciplina,
+                atividade.dia,
+                atividade.tipo,
+                atividade.titulo,
+                identificador,
+            )
+        self._disciplinas[disciplina.codigo] = disciplina
+        self._atividades.append(atividade)
+        return disciplina
+
     def obter_disciplina(self, codigo):
         """Busca por código sem diferenciar caixa nem espaços nas bordas.
 
@@ -389,6 +442,7 @@ class ControleAcademico:
         self._atividades.clear()
 
     def _salvar_registro(self, disciplina, registro):
+        """Persiste o registro já validado antes de ele entrar na grade em memória."""
         if self._persistente:
             database.salvar_registro(
                 disciplina.codigo,
@@ -399,6 +453,7 @@ class ControleAcademico:
             )
 
     def _salvar_data_encontro(self, disciplina, dia_anterior, novo_dia):
+        """Persiste a nova chave da grade antes de publicá-la em memória."""
         if self._persistente:
             database.remarcar_encontro(
                 disciplina.codigo, dia_anterior, novo_dia, self._caminho_banco
@@ -406,7 +461,12 @@ class ControleAcademico:
 
 
 class _DisciplinaPersistente:
-    """Fachada que grava uma alteração somente depois da validação de domínio."""
+    """Fachada que intercepta mutações e salva antes de publicá-las.
+
+    Não herda de Disciplina: representa a mesma matéria com persistência,
+    enquanto ChamadaUnica/ChamadaDupla são as especializações da regra de
+    faltas. __getattr__ delega as consultas; as mutações têm métodos próprios.
+    """
 
     __slots__ = ("_disciplina", "_controle")
 
@@ -415,6 +475,7 @@ class _DisciplinaPersistente:
         self._controle = controle
 
     def __getattr__(self, nome):
+        """Repassa leituras ao objeto de domínio sem expor sua coleção interna."""
         return getattr(self._disciplina, nome)
 
     @property
@@ -426,6 +487,7 @@ class _DisciplinaPersistente:
         self._controle.renomear_disciplina(self._disciplina.codigo, valor)
 
     def registrar_presenca(self, *args, **kwargs):
+        """Usa a regra da disciplina e injeta a escrita antes da troca."""
         return self._disciplina.registrar_presenca(
             *args,
             salvar=lambda registro: self._controle._salvar_registro(
@@ -435,6 +497,7 @@ class _DisciplinaPersistente:
         )
 
     def remarcar_encontro(self, dia_anterior, novo_dia):
+        """Mantém a regra da disciplina e salva a data antes da troca."""
         return self._disciplina.remarcar_encontro(
             dia_anterior,
             novo_dia,

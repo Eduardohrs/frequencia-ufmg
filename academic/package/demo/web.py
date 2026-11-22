@@ -7,7 +7,11 @@ em models.py e database.py. O servidor escuta só o próprio computador.
 
 import json
 import os
+import re
 import sqlite3
+import subprocess
+import sys
+import webbrowser
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -114,12 +118,14 @@ def executar_acao(controle, rota, dados):
         if dados.get("confirmacao") != "APAGAR":
             raise ValueError("Digite APAGAR para confirmar.")
         controle.apagar_tudo()
+    elif rota == "/api/exemplo":
+        controle.preencher_exemplo()
     else:
         raise LookupError("Ação inexistente.")
 
 
 class DemoHandler(BaseHTTPRequestHandler):
-    """Serve três arquivos locais e seis ações JSON sem dependência externa."""
+    """Serve a interface e encaminha ações ao domínio, apenas neste computador."""
 
     caminho_banco = None
 
@@ -169,6 +175,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             "/api/renomear",
             "/api/remarcar",
             "/api/reset",
+            "/api/exemplo",
+            "/api/testes",
         }:
             self.json(404, {"erro": "Ação inexistente."})
             return
@@ -182,6 +190,28 @@ class DemoHandler(BaseHTTPRequestHandler):
             dados = json.loads(self.rfile.read(tamanho))
             if not isinstance(dados, dict):
                 raise TypeError("Informe um objeto de dados válido.")
+            if rota == "/api/testes":
+                # Cada teste usa objetos ou bancos temporários: o banco aberto
+                # na demonstração continua intacto.
+                resultado = subprocess.run(
+                    [sys.executable, "-m", "unittest", "discover", "-v"],
+                    cwd=Path(__file__).parent,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+                saida = resultado.stdout + resultado.stderr
+                quantidade = re.search(r"Ran (\d+) tests?", saida)
+                self.json(
+                    200,
+                    {
+                        "ok": resultado.returncode == 0,
+                        "quantidade": int(quantidade.group(1)) if quantidade else None,
+                        "detalhes": saida,
+                    },
+                )
+                return
             controle = self.controle()
             executar_acao(controle, rota, dados)
             self.json(200, estado(controle))
@@ -190,6 +220,8 @@ class DemoHandler(BaseHTTPRequestHandler):
         except (sqlite3.Error, OSError) as erro:
             self.log_error("Falha de persistência em %s: %s", rota, erro)
             self.json(503, {"erro": f"Não foi possível salvar os dados: {erro}"})
+        except subprocess.TimeoutExpired:
+            self.json(503, {"erro": "Os testes excederam um minuto. Tente novamente."})
 
 
 def criar_servidor(caminho_banco=None, porta=8878):
@@ -206,6 +238,8 @@ if __name__ == "__main__":
     with criar_servidor() as servidor:
         print("Frequência UFMG: http://127.0.0.1:8878")
         print("Use Ctrl+C para encerrar. Os dados ficam no SQLite local.")
+        if sys.stdout.isatty():
+            webbrowser.open("http://127.0.0.1:8878")
         try:
             servidor.serve_forever()
         except KeyboardInterrupt:

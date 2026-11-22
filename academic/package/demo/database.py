@@ -91,6 +91,46 @@ def salvar_disciplina(
             )
 
 
+def salvar_exemplo(disciplina, atividade, caminho: str | Path = DB_PATH) -> int:
+    """Grava toda a amostra validada numa transação, ou não grava nada.
+
+    O domínio prepara os objetos primeiro. Esta camada apenas persiste seus
+    valores; o identificador devolvido pertence à atividade recém-criada.
+    """
+    with conexao(caminho) as banco:
+        banco.execute(
+            "INSERT INTO disciplinas (codigo, nome, chamadas, aulas) VALUES (?, ?, ?, ?)",
+            (
+                disciplina.codigo,
+                disciplina.nome,
+                disciplina.chamadas,
+                disciplina.registros[0].aulas,
+            ),
+        )
+        for registro in disciplina.registros:
+            banco.execute(
+                "INSERT INTO registros (disciplina_codigo, dia, situacao, faltas) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    disciplina.codigo,
+                    registro.dia.isoformat(),
+                    registro.situacao,
+                    registro.faltas,
+                ),
+            )
+        cursor = banco.execute(
+            "INSERT INTO atividades (disciplina_codigo, dia, tipo, titulo) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                atividade.codigo_disciplina,
+                atividade.dia.isoformat(),
+                atividade.tipo,
+                atividade.titulo,
+            ),
+        )
+        return cursor.lastrowid
+
+
 def listar_disciplinas(caminho: str | Path = DB_PATH) -> list[tuple]:
     """Devolve código, nome, chamadas e aulas das disciplinas cadastradas."""
     with conexao(caminho) as banco:

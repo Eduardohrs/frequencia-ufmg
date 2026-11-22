@@ -11,7 +11,6 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-from dados_exemplo import criar_exemplo
 from main import executar
 from models import ControleAcademico
 
@@ -115,23 +114,6 @@ class TesteMenu(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("FREQUENCIA_DB_PATH", None)
-
-    def test_dados_exemplo_criam_arquivo_isolado_e_nao_duplicam(self):
-        caminho = self._db_path.with_name("exemplo.db")
-        with redirect_stdout(io.StringIO()):
-            self.assertEqual(criar_exemplo(caminho), caminho)
-            self.assertEqual(criar_exemplo(caminho), caminho)
-        controle = ControleAcademico(persistente=True, caminho_banco=caminho)
-        self.assertEqual(len(controle.disciplinas), 1)
-        self.assertEqual(len(controle.atividades), 1)
-        with (
-            patch.dict(os.environ, {"FREQUENCIA_EXEMPLO_DB_PATH": str(caminho)}),
-            redirect_stdout(io.StringIO()),
-        ):
-            runpy.run_path(
-                str(Path(__file__).with_name("dados_exemplo.py")),
-                run_name="__main__",
-            )
 
     def rodar(self, entradas):
         saida = io.StringIO()

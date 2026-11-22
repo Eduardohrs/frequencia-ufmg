@@ -120,7 +120,8 @@ function render() {
   $("#course-detail").innerHTML = selected ? courseDetail(selected) : `
     <div class="surface empty"><span class="empty-icon">+</span><strong>Comece com uma disciplina</strong>
     <p>Adicione a grade para acompanhar presenças e faltas.</p>
-    <button type="button" class="primary" data-action="criar">Criar disciplina</button></div>`;
+    <div class="empty-actions"><button type="button" class="primary" data-action="criar">Criar disciplina</button>
+    <button type="button" class="secondary" data-action="exemplo">Usar dados de exemplo</button></div></div>`;
   renderAgenda();
   const select = $("#activity-course");
   select.innerHTML = courses.map((course) => `<option value="${escapeHtml(course.codigo)}">${escapeHtml(course.nome)}</option>`).join("");
@@ -213,6 +214,29 @@ function formError(form, message) {
   element.hidden = false;
 }
 
+async function runTests(button) {
+  const result = $("#test-result");
+  const summary = $("#test-summary");
+  result.hidden = false;
+  summary.textContent = "Executando testes…";
+  $("#test-details").textContent = "";
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/testes", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
+    const body = await response.json();
+    if (!response.ok) throw Error(body.erro || "Não foi possível executar os testes.");
+    summary.textContent = body.ok
+      ? `${body.quantidade} testes aprovados.` : "Alguns testes falharam. Veja os detalhes.";
+    $("#test-details").textContent = body.detalhes;
+  } catch (error) {
+    summary.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function submit(form, route, payload, success) {
   const button = $('button[type="submit"]', form);
   button.disabled = true;
@@ -270,6 +294,14 @@ document.addEventListener("click", (event) => {
   }
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (action === "retry-load") { load(); return; }
+  if (action === "exemplo") {
+    const button = event.target.closest("[data-action]");
+    button.disabled = true;
+    send("/api/exemplo", {}).then(() => notice("Dados de exemplo adicionados."))
+      .catch((error) => { button.disabled = false; notice(error.message, true); });
+    return;
+  }
+  if (action === "testes") { runTests(event.target.closest("[data-action]")); return; }
   if (action) openDialog({ criar: "course-dialog", atividade: "activity-dialog", renomear: "rename-dialog", reset: "reset-dialog" }[action]);
 });
 
