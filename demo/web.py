@@ -119,7 +119,7 @@ def executar_acao(controle, rota, dados):
 
 
 class DemoHandler(BaseHTTPRequestHandler):
-    """Serve três arquivos locais e cinco ações JSON sem dependência externa."""
+    """Serve três arquivos locais e seis ações JSON sem dependência externa."""
 
     caminho_banco = None
 

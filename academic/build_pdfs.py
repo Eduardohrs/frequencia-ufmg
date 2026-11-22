@@ -194,7 +194,7 @@ def product():
         "F04 · Consultar frequência",
         "Disciplina cadastrada; a interface lista seus nomes em ordem alfabética, com o código apenas como referência. No menu alternativo, o usuário escolhe o número ou 0 para voltar.",
         "A consulta exibe nome, grade, situação e faltas por data, base E, pendências, faltas A, limite L, saldo, excesso e frequência quando definida. Não grava dados.",
-        "Número fora da lista ou não numérico: pede uma escolha válida. Voltar ou selecionar sem disciplinas não altera cadastro, registros nem totais.",
+        "Número fora da lista ou não numérico: pede uma escolha válida. Falha de leitura no navegador mostra erro persistente e Tentar novamente, sem apresentar um cadastro vazio fictício. Voltar não altera registros nem totais.",
     )
     section(
         s,
@@ -1219,9 +1219,9 @@ def verification():
                 ),
                 (
                     "W05",
-                    "Simular falha de SQLite na leitura/gravação e encerrar o servidor.",
-                    "Erro visível; encerramento controlado.",
-                    "T25–T26 · aprovado",
+                    "Simular falha de SQLite na leitura/gravação, restaurar acesso e encerrar.",
+                    "Erro persistente, Tentar novamente recupera a página; encerramento controlado.",
+                    "T25–T26 e Chrome · aprovado",
                 ),
                 (
                     "W06",
@@ -1237,7 +1237,7 @@ def verification():
     section(
         s,
         "Limite desta evidência",
-        "T23–T25 percorrem pedidos HTTP reais com banco isolado; T26 verifica a entrada do programa; T27–T28 cobrem troca de data, colisão e falha de disco. Uma conferência adicional em Chrome verificou larguras de 390 e 320 px, criação sem botão intermediário para a data, registro, correção da presença e da data, agenda, navegação após recarregar e títulos longos. A aparência não altera os cálculos: o servidor devolve números das classes Python. Serviços externos do aplicativo completo não fazem parte deste recorte.",
+        "T23–T25 percorrem pedidos HTTP reais com banco isolado; T26 verifica a entrada do programa; T27–T28 cobrem troca de data, colisão e falha de disco. Uma conferência adicional em Chrome verificou larguras de 390 e 320 px, criação sem botão intermediário para a data, registro, correções, agenda, navegação após recarregar, títulos longos e recuperação de falha inicial de leitura. A aparência não altera os cálculos: o servidor devolve números das classes Python. Serviços externos do aplicativo completo não fazem parte deste recorte.",
     )
 
     page(s, "Evidências", "Testes e defeitos corrigidos")

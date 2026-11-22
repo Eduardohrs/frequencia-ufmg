@@ -36,9 +36,12 @@ function notice(message, error = false) {
 }
 
 async function load() {
+  const retry = $('#load-error [data-action="retry-load"]');
+  retry.disabled = true;
   try {
     const response = await fetch("/api/estado", { cache: "no-store" });
-    const body = await response.json();
+    let body;
+    try { body = await response.json(); } catch { throw Error("Resposta inválida do servidor local."); }
     if (!response.ok) throw Error(body.erro || "Não foi possível carregar os dados.");
     ui.state = body;
     if (!body.disciplinas.some((course) => course.codigo === ui.selected)) {
@@ -46,9 +49,17 @@ async function load() {
     }
     if (ui.selected) sessionStorage.setItem("demo.selectedCourse", ui.selected);
     else sessionStorage.removeItem("demo.selectedCourse");
+    $("#load-error").hidden = true;
+    $(".shell").classList.remove("load-failed");
     render();
   } catch (error) {
-    notice(error.message, true);
+    $("#load-error-message").textContent = error instanceof TypeError
+      ? "O servidor local não respondeu. Verifique o terminal e tente novamente."
+      : error.message.replace(/^Não foi possível carregar os dados:\s*/, "");
+    $("#load-error").hidden = false;
+    $(".shell").classList.add("load-failed");
+  } finally {
+    retry.disabled = false;
   }
 }
 
@@ -239,6 +250,7 @@ document.addEventListener("click", (event) => {
     return;
   }
   const action = event.target.closest("[data-action]")?.dataset.action;
+  if (action === "retry-load") { load(); return; }
   if (action) openDialog({ criar: "course-dialog", atividade: "activity-dialog", renomear: "rename-dialog", reset: "reset-dialog" }[action]);
 });
 

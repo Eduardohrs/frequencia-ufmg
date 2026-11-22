@@ -22,6 +22,8 @@ Essa correção existe na interface visual; o menu de terminal conserva o fluxo
 principal de cadastro e frequência.
 **Renomear** altera só o nome. Em **Ajustes**, **Apagar dados da demo** requer
 digitar `APAGAR`; cancelar preserva tudo.
+Se o banco local estiver temporariamente indisponível ao abrir a página, a tela
+mostra o erro e **Tentar novamente**; ela não finge que o cadastro está vazio.
 
 O navegador só mostra os dados e envia as ações. `web.py` transforma essas ações
 em chamadas às classes de `models.py`, onde ficam validações e cálculos. `database.py`

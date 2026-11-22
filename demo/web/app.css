@@ -198,6 +198,19 @@ p {
   align-items: start
 }
 
+.load-error {
+  padding: 24px;
+  max-width: 580px;
+  margin: 24px auto;
+  text-align: center
+}
+
+.load-error[hidden],.shell.load-failed .view { display: none }
+
+.load-error strong { display: block; font-size: 1.1rem }
+
+.load-error p { color: #5c6b72; margin: 10px 0 18px }
+
 .course-layout.no-courses {
   grid-template-columns: minmax(0,1fr)
 }
