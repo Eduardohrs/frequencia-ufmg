@@ -340,11 +340,6 @@ p {
   color: #176c49
 }
 
-.detail-actions {
-  display: flex;
-  gap: 8px
-}
-
 .icon-button {
   border: 0;
   background: transparent;
@@ -475,13 +470,6 @@ p {
   font-weight: 400;
   color: #5c6b72;
   margin-top: 3px
-}
-
-.meeting-date .date-edit {
-  display: block;
-  color: #5c6b72;
-  font-size: .74rem;
-  padding-top: 5px
 }
 
 .meeting-right {

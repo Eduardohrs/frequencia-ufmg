@@ -221,7 +221,7 @@ class Disciplina:
         isso a frequência percentual só aparece quando todas são resolvidas.
         """
         # Cancelada não integra a base; sem chamada integra, com zero faltas.
-        ativos = [r for r in self.registros if r.situacao != "cancelada"]
+        ativos = [r for r in self._registros.values() if r.situacao != "cancelada"]
         total = sum(r.aulas for r in ativos)
         pendentes = sum(r.aulas for r in ativos if r.faltas is None)
         faltas = sum(r.faltas or 0 for r in ativos)

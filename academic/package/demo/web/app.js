@@ -36,6 +36,16 @@ function notice(message, error = false) {
   ui.toastTimer = setTimeout(() => { toast.hidden = true; }, 4500);
 }
 
+function applyState(body) {
+  ui.state = body;
+  if (!body.disciplinas.some((course) => course.codigo === ui.selected)) {
+    ui.selected = body.disciplinas[0]?.codigo || null;
+  }
+  if (ui.selected) sessionStorage.setItem("demo.selectedCourse", ui.selected);
+  else sessionStorage.removeItem("demo.selectedCourse");
+  render();
+}
+
 async function load() {
   const retry = $('#load-error [data-action="retry-load"]');
   retry.disabled = true;
@@ -44,16 +54,10 @@ async function load() {
     let body;
     try { body = await response.json(); } catch { throw Error("Resposta inválida do servidor local."); }
     if (!response.ok) throw Error(body.erro || "Não foi possível carregar os dados.");
-    ui.state = body;
-    if (!body.disciplinas.some((course) => course.codigo === ui.selected)) {
-      ui.selected = body.disciplinas[0]?.codigo || null;
-    }
-    if (ui.selected) sessionStorage.setItem("demo.selectedCourse", ui.selected);
-    else sessionStorage.removeItem("demo.selectedCourse");
     ui.hasLoaded = true;
     $("#load-error").hidden = true;
     $(".shell").classList.remove("load-failed");
-    render();
+    applyState(body);
   } catch (error) {
     const message = error instanceof TypeError
       ? "O servidor local não respondeu. Verifique o terminal e tente novamente."
@@ -77,11 +81,7 @@ async function send(route, payload) {
   let body;
   try { body = await response.json(); } catch { throw Error("Resposta inválida do servidor local."); }
   if (!response.ok) throw Error(body.erro || "Não foi possível salvar.");
-  ui.state = body;
-  if (!body.disciplinas.some((course) => course.codigo === ui.selected)) {
-    ui.selected = body.disciplinas[0]?.codigo || null;
-  }
-  render();
+  applyState(body);
 }
 
 const validViews = new Set(["disciplinas", "agenda", "ajustes"]);
@@ -371,7 +371,7 @@ $("#reset-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   submit(form, "/api/reset", Object.fromEntries(new FormData(form)), "Dados da demo apagados.").then((saved) => {
-    if (saved) { sessionStorage.removeItem("demo.selectedCourse"); switchView("disciplinas"); }
+    if (saved) switchView("disciplinas");
   });
 });
 window.addEventListener("hashchange", () => switchView(location.hash.slice(1), false));
