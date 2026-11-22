@@ -1,1397 +1,798 @@
-"""Conteúdo dos relatórios; rode ``py academic/build_pdfs.py`` na raiz.
+"""Gera os dois relatórios da mesma versão executável da demo acadêmica."""
 
-Cada bloco principal começa em página própria. A matriz da verificação usa A4
-horizontal para preservar as seis colunas exigidas pelo enunciado.
-"""
-
-# Os parágrafos do relatório ficam em frases inteiras para revisão editorial.
 # ruff: noqa: E501
 
 from pathlib import Path
 
-from pdf_layout import (
-    VERSION,
-    P,
-    build,
-    class_diagram,
-    page,
-    section,
-    sequence_diagram,
-    table,
-)
+from pdf_layout import VERSION, P, build, class_diagram, page, section, sequence_diagram, table
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import Spacer, TableStyle
+from reportlab.platypus import Preformatted, Spacer
 
 
-def contract(story, title, initial, success, rejection):
-    section(story, title)
+def contrato(story, titulo, entrada, sucesso, rejeicao):
+    section(story, titulo)
     story.append(
         table(
             [
                 "Condição inicial e entrada",
-                "Sucesso e estado final",
-                "Rejeição e estado preservado",
+                "Sucesso: resultado e alteração",
+                "Rejeição: motivo e estado",
             ],
-            [(initial, success, rejection)],
-            [5.5 * cm, 5.7 * cm, 5.8 * cm],
+            [(entrada, sucesso, rejeicao)],
+            [5.6 * cm, 5.7 * cm, 5.7 * cm],
         )
     )
-    story.append(Spacer(1, 0.19 * cm))
+    story.append(Spacer(1, 0.18 * cm))
 
 
-def product():
+def cenarios(story, titulo, preparo, linhas):
+    section(story, titulo, preparo)
+    story.append(
+        table(
+            ["ID", "Regra e entrada", "Esperado", "Observado", "Situação", "Evidência unittest"],
+            linhas,
+            [1.6 * cm, 4 * cm, 5.8 * cm, 5.8 * cm, 1.9 * cm, 6.4 * cm],
+            dense="tight",
+        )
+    )
+    story.append(Spacer(1, 0.15 * cm))
+
+
+def produto():
     s = []
     page(s, "Quarta etapa · Produto final", "Frequência UFMG")
-    s.append(P("Relatório do produto acadêmico", "SubtitleX"))
+    s.append(P("Produto acadêmico executável · interface local e regras em Python", "SubtitleX"))
     s.append(
         table(
-            ["Identificação", "Informação"],
+            ["Identificação", "Dados"],
             [
                 ("Integrante", "Eduardo Henrique Rodrigues Silva"),
-                ("Disciplina e período", "APPOO · 2026/2"),
-                ("Versão entregue", VERSION),
-                (
-                    "Executável",
-                    "<b>Frequencia_UFMG_Entrega_Final.zip</b> — interface local, Python, SQLite, dados fictícios e testes",
-                ),
+                ("Disciplina", "APPOO · 2026/2 · Prof.ª Luiza Bernardes Real"),
+                ("Versão", VERSION),
+                ("Pacote", "Frequencia_UFMG_Entrega_Final.zip"),
             ],
             [4.2 * cm, 12.8 * cm],
         )
     )
-    s.append(Spacer(1, 0.25 * cm))
     section(
         s,
         "Problema e público",
-        "O estudante da UFMG precisa saber quantas faltas ainda pode ter antes da consolidação oficial. O produto registra cada encontro, calcula o saldo em aulas de 50 minutos e permite corrigir um lançamento. Uma agenda pequena de provas e trabalhos ajuda a planejar a presença em semanas importantes. O resultado é pessoal; não substitui o diário da universidade.",
+        "O estudante precisa acompanhar suas faltas antes da consolidação oficial. A aplicação registra o que ocorreu em cada encontro, calcula o saldo permitido e permite corrigir um lançamento. Provas e trabalhos ficam numa agenda curta ligada às disciplinas para ajudar no planejamento pessoal. O resultado não é um comprovante institucional de presença.",
     )
     section(
         s,
-        "O que está pronto",
-        "A interface local abre no navegador com um banco vazio: cadastra disciplinas e datas, registra e corrige frequência, consulta os cálculos e adiciona atividades. O estudante escolhe pelo nome, sem decorar códigos, corrige uma data errada sem perder presença e pode recomeçar em Ajustes. O menu de terminal oferece o fluxo principal como alternativa; a correção de data é visual. O SQLite conserva tudo entre aberturas; não há conta, internet nem dados reais obrigatórios.",
+        "Funcionalidades entregues",
+        "O programa começa com banco vazio e funciona sem conta, internet, Moodle, SIGA ou GPS. O estudante pode usar um botão para inserir dados inteiramente fictícios. A página local é a única interface: as regras e os cálculos permanecem nas classes Python.",
     )
     s.append(
         table(
-            ["ID e função", "Resultado que o estudante obtém"],
+            ["ID", "Ação", "Resultado visível"],
             [
+                ("F01", "Cadastrar disciplina", "Grade inicial de encontros pendentes."),
+                ("F02", "Registrar frequência", "Situação e faltas de uma data pendente."),
                 (
-                    "F01 · Cadastrar disciplina",
-                    "Cria disciplina e grade de encontros pendentes; no navegador, permite corrigir a data de um encontro.",
+                    "F03",
+                    "Corrigir frequência",
+                    "Novo registro da mesma data e totais recalculados.",
                 ),
                 (
-                    "F02 · Registrar frequência",
-                    "Resolve uma data com situação e faltas.",
+                    "F04",
+                    "Consultar frequência",
+                    "Grade, limite, faltas, saldo e percentual quando definido.",
                 ),
+                ("F05", "Adicionar atividade", "Prova ou trabalho associado à disciplina."),
                 (
-                    "F03 · Corrigir frequência",
-                    "Substitui um registro e recalcula os totais.",
+                    "F06",
+                    "Consultar agenda",
+                    "Atividades em ordem cronológica, inclusive após reabrir.",
                 ),
-                (
-                    "F04 · Consultar frequência",
-                    "Mostra grade, faltas, limite, saldo e percentual definido.",
-                ),
-                (
-                    "F05 · Agendar atividade",
-                    "Guarda prova ou trabalho vinculado à disciplina.",
-                ),
-                (
-                    "F06 · Consultar agenda",
-                    "Lista as atividades por data, inclusive depois de reiniciar.",
-                ),
-                (
-                    "F07 · Renomear disciplina",
-                    "Corrige o nome sem alterar código, grade ou frequência.",
-                ),
-                (
-                    "F08 · Recomeçar do zero",
-                    "Apaga disciplinas, presenças e atividades só após confirmação.",
-                ),
+                ("F07", "Renomear disciplina", "Nome corrigido, sem alterar código ou histórico."),
+                ("F08", "Apagar dados da demo", "Reinício confirmado pelo próprio aplicativo."),
             ],
-            [5.3 * cm, 11.7 * cm],
+            [1.35 * cm, 5.25 * cm, 10.4 * cm],
+            dense=True,
         )
     )
 
-    page(s, "01 · Escopo", "Continuidade do projeto e recorte")
+    page(s, "01 · Escopo", "Continuidade e recorte")
     section(
         s,
-        "Das entregas anteriores ao produto",
-        "A proposta inicial combinou controle de frequência, dados acadêmicos e estimativa de presença por localização. O protótipo funcional mostrou cadastro e registro manuais. A versão final acadêmica conserva esse núcleo e integra persistência SQLite, consulta e correção completas e uma agenda local de avaliações. O percurso é executável desde o banco vazio: criar, registrar, corrigir, consultar, fechar e recuperar.",
+        "Das etapas anteriores ao produto",
+        "A proposta inicial prevê um aplicativo ampliado com importação de dados acadêmicos e estimativas de localização. O protótipo funcional demonstrou cadastro e presença manual. O produto acadêmico completa esse núcleo com consulta, correção, SQLite persistente e uma agenda local de provas e trabalhos. A agenda é mantida porque relaciona atividades ao planejamento de frequência e já integra o escopo documentado; não há extração automática de atividades.",
     )
     section(
         s,
-        "Ajuste de escopo explícito",
-        "Autenticação, importação da UFMG e localização não integram este executável. Exigem serviços, credenciais e permissões externas; falhar neles não pode impedir o controle pessoal. Essas capacidades pertencem ao aplicativo ampliado e não são descritas como prontas na entrega acadêmica. Esta redução torna verificáveis as regras centrais sem depender de infraestrutura da universidade.",
+        "Ajustes de escopo nesta versão",
+        "Remarcação de encontros e menu de terminal eram conveniências da demo, não condições do núcleo. Foram retirados para manter uma só interface e reduzir caminhos de manutenção. A grade é informada no cadastro; se uma data foi cadastrada errada, o caminho desta versão é reiniciar a demo e cadastrar a disciplina novamente. Esse limite é declarado, e o reset fica disponível em Ajustes. O aplicativo real tem escopo maior, mas não é usado como evidência das funções desta versão.",
+    )
+    section(
+        s,
+        "O que depende de validação externa",
+        "Acesso ao SIGA e ao Moodle depende de sistemas universitários; localização em segundo plano depende das permissões e da economia de energia do aparelho. Nenhuma dessas condições impede cadastrar, registrar, corrigir ou consultar a frequência nesta entrega. A presença manual é uma informação para controle pessoal, sujeita a correção pelo estudante.",
     )
     s.append(
         table(
-            ["Necessidade", "Nesta entrega", "Consequência e alternativa"],
+            ["Parte", "Implementada aqui", "Fora desta versão acadêmica"],
             [
                 (
-                    "Frequência pessoal",
-                    "Cadastro, registro, correção e consulta manuais.",
-                    "Funciona sem internet; conferir o diário oficial separadamente.",
+                    "Frequência",
+                    "Grade manual, seis situações, cálculo e correção.",
+                    "Importação de chamadas e comprovação oficial.",
                 ),
                 (
-                    "Planejar avaliações",
-                    "Prova e trabalho locais, ligados à disciplina.",
-                    "A agenda não altera as faltas; preenchimento manual.",
-                ),
-                (
-                    "Dados oficiais/GPS",
-                    "Não presentes no executável acadêmico.",
-                    "Sem integração, o estudante ainda cadastra e corrige; GPS seria estimativa, nunca prova institucional.",
-                ),
-            ],
-            [3.8 * cm, 6.1 * cm, 7.1 * cm],
-        )
-    )
-    section(
-        s,
-        "Premissas visíveis ao usuário",
-        "Cada data informada representa um encontro. A duração, em aulas de 50 minutos, é igual para todos os encontros da disciplina. A configuração de uma ou duas chamadas também é fixa por disciplina. A base vem dessas datas, não de carga oficial importada; o estudante deve comparar a grade com o plano de ensino. Uma prova pode ocorrer em data diferente das aulas cadastradas.",
-    )
-    section(
-        s,
-        "Regra de localização da proposta ampliada",
-        "Na modelagem original, localização no campus é apenas uma estimativa. Uma chamada aceitaria um dos dois checkpoints positivo; duas chamadas distinguiriam dois positivos, somente o primeiro, somente o segundo ou nenhum. Falha de permissão ou GPS deixaria a aula pendente, nunca automaticamente ausente. O executável acadêmico não captura checkpoints: o próprio estudante informa a situação e pode corrigi-la.",
-    )
-    section(
-        s,
-        "Por que a agenda está no produto",
-        "Ver uma prova ou trabalho na mesma disciplina contextualiza o saldo de faltas e ajuda a planejar presença. A função tem somente título, tipo e data. Ela não calcula notas, não dispara lembretes e não modifica presenças; apoia o objetivo central sem virar um gerenciador geral de tarefas.",
-    )
-
-    page(s, "02 · Contratos", "Cadastro e registro de frequência")
-    contract(
-        s,
-        "F01 · Cadastrar disciplina",
-        "Banco iniciado; código ainda ausente. Entradas: código e nome não vazios; 1 ou 2 chamadas; 1, 2 ou 4 aulas de <b>50 min</b> por encontro; ao menos uma data real DD/MM/AAAA, sem repetição.",
-        "Normaliza código para maiúsculas; cria disciplina e datas pendentes em uma transação. Retorna a disciplina com resumo inicial. A memória só recebe o cadastro após o commit.",
-        "Código duplicado, vazio, data inválida/repetida, número fora do conjunto ou duas chamadas em uma aula: informa motivo. Não cria disciplina nem parte da grade; falha de SQLite também não publica cadastro parcial.",
-    )
-    contract(
-        s,
-        "F02 · Registrar frequência",
-        "Disciplina existente e data da grade ainda pendente. A interface lista matérias pelo nome; no menu alternativo, elas são numeradas. O usuário escolhe data e situação: presente, ausente, atrasado, saiu mais cedo, cancelada ou sem chamada.",
-        "Política da disciplina calcula faltas em unidades de 50 min. Confirma a escrita no SQLite, substitui o pendente e recalcula base, faltas, pendências, limite, saldo, excesso e percentual.",
-        "Data fora da grade, situação desconhecida ou repetição sem usar Corrigir: rejeita. Registro, banco e totais anteriores permanecem; falha de escrita também preserva a memória.",
-    )
-    section(
-        s,
-        "Sentido de cada situação",
-        "<b>Presente:</b> zero faltas. <b>Ausente:</b> todas as aulas do encontro são faltas. <b>Atrasado</b> e <b>saiu mais cedo:</b> com duas chamadas perdem metade das aulas; com uma chamada não perdem. <b>Sem chamada:</b> encontro conta na base com zero faltas. <b>Cancelada:</b> encontro sai da base. <b>Pendente:</b> estado inicial, sem presença ou falta presumida.",
-    )
-
-    page(s, "03 · Contratos", "Correção, consultas e agenda")
-    contract(
-        s,
-        "F03 · Corrigir frequência",
-        "Disciplina e data da grade já resolvida. O usuário escolhe a disciplina pelo número, depois Corrigir e uma das seis situações, inclusive para substituir cancelada ou sem chamada.",
-        "Substitui apenas o registro daquela data; não acumula uma segunda falta. Recalcula os mesmos totais de F02 depois do commit.",
-        "Data pendente, situação ou data inválida: rejeita e preserva registro e totais. Para a pendente, use Registrar presença. Não altera outras datas.",
-    )
-    contract(
-        s,
-        "F04 · Consultar frequência",
-        "Disciplina cadastrada; no computador, a interface lista nomes em ordem alfabética; no celular, usa um seletor com todos os nomes. O código é referência secundária. No menu alternativo, o usuário escolhe o número ou 0 para voltar.",
-        "A consulta exibe nome, grade, situação e faltas por data, base E, pendências, faltas A, limite L, saldo, excesso e frequência quando definida. Não grava dados.",
-        "Número fora da lista ou não numérico: pede uma escolha válida. Falha inicial de leitura no navegador mostra erro persistente e Tentar novamente; falha posterior conserva a última leitura com aviso de desatualização. Voltar não altera registros nem totais.",
-    )
-    section(
-        s,
-        "Correção da data de um encontro já cadastrado (F01)",
-        "No navegador, Corrigir data recebe uma data da grade e outra data válida que ainda não esteja nessa disciplina. A operação muda apenas a chave do encontro em uma transação SQLite: situação, número de aulas e faltas permanecem, assim como os totais. A lista volta ordenada por data. Data antiga inexistente, nova data inválida ou já usada rejeita a mudança; falha de escrita preserva memória e banco. Provas e trabalhos são registros independentes e não mudam de data. O menu de terminal não oferece esta correção.",
-    )
-    contract(
-        s,
-        "F05 · Agendar atividade",
-        "Disciplina existente, escolhida pelo nome numerado; data real DD/MM/AAAA, tipo prova ou trabalho e título não vazio. A data não precisa coincidir com aula.",
-        "Grava atividade com identificador local e vínculo com disciplina. F06 a mostra mesmo após reabrir; não muda encontros ou faltas.",
-        "Código inexistente, data inválida, tipo desconhecido, título vazio ou falha de escrita: agenda e frequência anteriores intactas.",
-    )
-    page(s, "03 · Contratos", "Agenda, nome e reinício")
-    contract(
-        s,
-        "F06 · Consultar agenda",
-        "Basta abrir o programa; não recebe filtro. Pode estar vazia.",
-        "Lista atividades por data e ordem de inserção, mostrando dia, mês, ano e nome da disciplina; se não houver itens, mostra Agenda vazia. Não grava dados.",
-        "Como não há entrada a validar, não existe rejeição prevista nesta consulta.",
-    )
-    contract(
-        s,
-        "F07 · Renomear disciplina",
-        "Disciplina existente, escolhida pelo nome numerado. Entrada: novo nome com ao menos um caractere não branco.",
-        "O setter valida o nome; o controle grava primeiro no SQLite e depois atualiza o objeto. Código, grade, atividades, presenças e totais ficam iguais.",
-        "Código inexistente, nome vazio ou erro de escrita: rejeita; nome anterior permanece na memória e no banco.",
-    )
-    contract(
-        s,
-        "F08 · Recomeçar do zero",
-        "Banco iniciado, vazio ou preenchido. O usuário escolhe Apagar dados em Ajustes ou 8 no menu e digita exatamente APAGAR; qualquer outra resposta cancela.",
-        "Uma transação apaga atividades, registros e disciplinas; após o commit, limpa a memória. A interface volta vazia e permite cadastrar de novo o mesmo código.",
-        "Resposta diferente de APAGAR cancela sem alterar nada. Se o SQLite falhar, a transação faz rollback e memória, registros e atividades continuam iguais.",
-    )
-
-    page(s, "04 · Regras", "Cálculo com unidades e exemplos")
-    section(
-        s,
-        "Definições que o código aplica",
-        "Uma aula equivale a <b>50 minutos</b>. E é a soma das aulas dos encontros cadastrados, exceto os cancelados. L = piso(0,25 × E), no código E // 4. A é a soma das faltas de registros resolvidos. Saldo R = máximo(0, L − A) e excesso X = máximo(0, A − L). F = 100 × (E − A) / E só aparece se E &gt; 0 e não há aulas pendentes. Antes disso, o programa informa frequência pendente; pendência não vira presença nem ausência.",
-    )
-    s.append(
-        table(
-            ["Caso", "Conta feita", "O que se vê"],
-            [
-                (
-                    "4 encontros de 2 aulas",
-                    "E=8; L=2. Uma ausência de 2 aulas: A=2.",
-                    "R=0; F segue pendente se outras datas ainda não foram resolvidas.",
-                ),
-                (
-                    "1 encontro cancelado",
-                    "E cai de 8 para 6; L=piso(1,5)=1. Se A=2, X=1.",
-                    "O limite cai; cancelamento não adiciona falta.",
-                ),
-                (
-                    "4 aulas com atraso",
-                    "1 chamada: 0 faltas. 2 chamadas: 4 // 2 = 2.",
-                    "A mesma operação usa políticas concretas diferentes.",
-                ),
-                (
-                    "Sem chamada",
-                    "O encontro permanece em E e contribui 0 para A.",
-                    "Não é confundido com cancelamento ou pendência.",
-                ),
-                (
-                    "Base hipotética E=61",
-                    "L=piso(15,25)=15; A=16 produz X=1.",
-                    "Mostra o arredondamento; a demo calcula E pela grade.",
-                ),
-                (
-                    "Base hipotética E=60",
-                    "L=15; com A=8, R=7 e F final=86,67%.",
-                    "F depende de todas as aulas estarem resolvidas.",
-                ),
-            ],
-            [4.0 * cm, 7.0 * cm, 6.0 * cm],
-        )
-    )
-    section(
-        s,
-        "Reposições e carga horária",
-        "Uma reposição conhecida no cadastro pode entrar como data adicional e aumenta E. Não existe comando de adicionar datas depois. Também não há campo de carga horária oficial para converter: o usuário informa diretamente o número de aulas de 50 min por encontro. Essa limitação precisa estar clara porque evita tratar um valor acadêmico não conferido como autoritativo.",
-    )
-
-    page(s, "05 · Modelo", "Classes e suas relações")
-    s.append(
-        P(
-            "Figura 1 · Diagrama vetorial. Ligações superiores: associação; triângulo inferior: especialização.",
-            "SmallX",
-        )
-    )
-    s.append(class_diagram())
-    s.append(
-        table(
-            ["Elemento", "Responsabilidade e estado", "Relação"],
-            [
-                (
-                    "ControleAcademico",
-                    "Coordena cadastro, agenda, recuperação e reset. Guarda coleções privadas.",
-                    "Contém disciplinas e atividades.",
-                ),
-                (
-                    "Disciplina",
-                    "Valida grade e registro; mantém política e calcula resumo.",
-                    "Contém registros; usa política.",
-                ),
-                (
-                    "Registro",
-                    "Valor imutável: data, aulas, situação e faltas. None indica pendência.",
-                    "Um por data da grade.",
-                ),
-                (
-                    "Atividade",
-                    "Valor imutável: disciplina, data, tipo, título e ID local.",
-                    "Vinculada à disciplina.",
-                ),
-                (
-                    "PoliticaChamada",
-                    "Classe abstrata com calcular_faltas(situação, aulas).",
-                    "Contrato comum.",
-                ),
-                (
-                    "ChamadaUnica e ChamadaDupla",
-                    "Especializações que implementam regras diferentes para atraso/saída.",
-                    "Herança e polimorfismo.",
-                ),
-            ],
-            [4.1 * cm, 8.8 * cm, 4.1 * cm],
-        )
-    )
-    section(
-        s,
-        "Encapsulamento e alteração controlada",
-        "Código, chamadas e registros são expostos por propriedades de leitura. A coleção sai como tupla; Registro e Atividade são imutáveis. Em modo SQLite, cadastro, busca e lista devolvem a mesma fachada persistente: registrar presença ou mudar o nome por qualquer desses caminhos grava antes de alterar a memória. <b>Nome</b> é validado; não há setter para faltas, data, código ou título, pois uma alteração direta contornaria as regras ou a chave no banco. Presenças e atividades passam por operações próprias que validam e persistem antes de publicar a mudança.",
-    )
-
-    page(s, "06 · Interações", "Sequências do fluxo central")
-    section(
-        s,
-        "F01 · Cadastro desde um banco vazio",
-        "O menu converte as datas. ControleAcademico constrói Disciplina, que valida todos os campos antes da gravação. O banco insere disciplina e registros pendentes na mesma transação. O controle só inclui o objeto na memória após o commit. Por isso uma falha não deixa uma grade pela metade.",
-    )
-    s.append(
-        sequence_diagram(
-            [
-                (0, 1, "dados da disciplina"),
-                (1, 2, "criar_disciplina"),
-                (2, 3, "validar + montar grade"),
-                (2, 4, "INSERT + COMMIT"),
-                (2, 1, "disciplina criada"),
-                (1, 0, "resumo inicial"),
-            ]
-        )
-    )
-    section(
-        s,
-        "F02/F03 · Registrar ou corrigir",
-        "O controle localiza a disciplina; ela valida data e situação. F02 exige pendência; F03 usa corrigir=True para substituir um valor resolvido. A política calcula faltas; o novo Registro é salvo antes de trocar o valor em memória. O resumo é derivado dos registros vigentes. Se o SQLite falhar, grade e resumo ficam iguais.",
-    )
-    s.append(
-        sequence_diagram(
-            [
-                (0, 1, "data + situação"),
-                (1, 2, "obter_disciplina"),
-                (2, 1, "fachada persistente"),
-                (1, 3, "registrar_presenca"),
-                (3, 4, "calcular_faltas"),
-                (3, 5, "UPSERT + COMMIT"),
-                (3, 1, "novo registro"),
-                (1, 0, "resumo"),
-            ],
-            ["Estudante", "Menu", "Controle", "Disciplina", "Política", "SQLite"],
-        )
-    )
-
-    page(s, "07 · Implementação", "Camadas, banco e reprodução")
-    section(
-        s,
-        "F05 · Salvar atividade sem mexer na frequência",
-        "O menu converte a data; o controle verifica a disciplina e constrói uma Atividade válida. A escrita no SQLite termina antes de adicionar o objeto à agenda em memória. F06 ordena o que foi salvo. Um erro em qualquer validação ou na escrita não altera a agenda nem a grade de frequência.",
-    )
-    s.append(
-        sequence_diagram(
-            [
-                (0, 1, "data + tipo + título"),
-                (1, 2, "adicionar_atividade"),
-                (2, 3, "validar objeto"),
-                (2, 4, "INSERT + COMMIT"),
-                (2, 1, "atividade salva"),
-                (1, 0, "confirmação"),
-            ],
-            ["Estudante", "Menu", "Controle", "Atividade", "SQLite"],
-        )
-    )
-    s.append(
-        table(
-            ["Camada", "Arquivo", "Papel"],
-            [
-                (
-                    "Apresentação",
-                    "demo/web/ e web.py",
-                    "HTML/CSS/JS mostram os dados; web.py converte pedidos locais em operações de domínio e devolve resultados.",
-                ),
-                (
-                    "Apresentação alternativa",
-                    "demo/main.py",
-                    "Menu de terminal que usa o mesmo controle e o mesmo banco.",
-                ),
-                (
-                    "Negócio",
-                    "demo/models.py",
-                    "Valida regras, mantém objetos e calcula faltas pela política de chamada.",
+                    "Agenda",
+                    "Provas e trabalhos informados pelo estudante.",
+                    "Sincronização automática com Moodle/SIGA.",
                 ),
                 (
                     "Dados",
-                    "demo/database.py",
-                    "Cria tabelas e executa gravações e limpeza em transações.",
+                    "SQLite local, exemplo fictício e reset confirmado.",
+                    "Contas, servidor e dados acadêmicos reais.",
                 ),
             ],
-            [3.1 * cm, 4.3 * cm, 9.6 * cm],
+            [3.1 * cm, 6.9 * cm, 7 * cm],
         )
-    )
-    section(
-        s,
-        "Estrutura persistida",
-        "<b>disciplinas:</b> código como chave, nome, chamadas e aulas por encontro. <b>registros:</b> chave composta código/data ISO, situação e faltas; chave estrangeira aponta para disciplina. <b>atividades:</b> ID gerado pelo banco, código, data ISO, tipo e título. A transação salva disciplina e grade juntas; o reset apaga as três tabelas na mesma transação. Um registro ou atividade só chega à memória após o commit. Totais não são gravados: vêm da grade atual, evitando divergências.",
     )
 
-    page(s, "08 · Interações", "Escolha de disciplina e reinício")
-    section(
+    page(s, "02 · Contratos", "Cadastro e registro")
+    contrato(
         s,
-        "Escolha pela lista, sem memorizar código",
-        "As ações Registrar, Consultar, Corrigir, Adicionar atividade e Renomear chamam a mesma seleção em main.py. O menu ordena nomes, mostra um número para cada disciplina e deixa o código entre parênteses. Número inválido informa o erro; 0 volta ao menu. Nenhum desses caminhos escreve no banco antes da escolha e da operação válida.",
+        "F01 · Cadastrar disciplina",
+        "Banco vazio ou com outras disciplinas. Informar código e nome não vazios, uma ou duas chamadas, duração inteira de 1, 2 ou 4 aulas de 50 minutos por encontro e ao menos uma data válida sem repetição. Uma aula não aceita duas chamadas.",
+        "Normaliza o código em maiúsculas; cria uma disciplina e um Registro pendente por data na mesma transação SQLite. Mostra a matéria pelo nome; código é referência secundária.",
+        "Código já existente, data inválida/repetida, duração fora do conjunto ou combinação incompatível mostram erro específico. Nem disciplina nem grade parcial entram no banco ou na memória.",
+    )
+    contrato(
+        s,
+        "F02 · Registrar frequência",
+        "Disciplina existente e data da grade com situação pendente. Escolher presente, ausente, atrasado, saiu mais cedo, cancelada ou sem chamada.",
+        "Cria um novo Registro para a data. A política de uma ou duas chamadas calcula faltas em aulas de 50 minutos. Depois do commit, a interface mostra situação e totais recalculados.",
+        "Disciplina/data inexistente, situação inválida ou data já resolvida sem modo de correção: rejeita e conserva registro, faltas e banco. Erro de escrita também conserva o estado anterior.",
     )
     section(
         s,
-        "F08 · Apagar dados confirmados",
-        "A opção 8 pede a palavra exata APAGAR. Outra resposta cancela sem chamar o controle. Com a confirmação, ControleAcademico pede ao SQLite que apague atividades, registros e disciplinas na mesma transação. Somente depois do commit limpa as coleções em memória. Se o segundo DELETE falhar, o rollback recupera a atividade apagada no primeiro e a memória não muda.",
+        "Unidade da duração",
+        "Aulas e faltas são contadas em blocos de 50 minutos. Um encontro com duas aulas corresponde a 100 minutos. Carga horária em horas não é digitada nesta demo: a grade é formada diretamente por datas e aulas por encontro, evitando conversão ambígua de horas acadêmicas.",
     )
-    s.append(
-        sequence_diagram(
-            [
-                (0, 1, "8 + APAGAR"),
-                (1, 2, "apagar_tudo"),
-                (2, 3, "DELETEs + COMMIT"),
-                (3, 2, "confirmado"),
-                (2, 1, "coleções vazias"),
-                (1, 0, "dados apagados"),
-            ],
-            ["Estudante", "Menu", "Controle", "SQLite"],
-        )
+
+    page(s, "03 · Contratos", "Correção e consulta")
+    contrato(
+        s,
+        "F03 · Corrigir frequência",
+        "Uma data da grade já tem situação resolvida. Escolher nova situação entre as seis opções e acionar Corrigir. A data e a quantidade de aulas não mudam.",
+        "Um novo Registro imutável substitui o valor daquela data; não acrescenta outra linha nem soma faltas duas vezes. O SQLite confirma a troca antes da atualização em memória. Todos os totais são recalculados a partir da grade.",
+        "Correção de data ainda pendente, situação inválida, data fora da grade ou falha SQLite: resposta clara e registro anterior intacto. A correção não altera atividades nem nome da matéria.",
+    )
+    contrato(
+        s,
+        "F04 · Consultar frequência",
+        "Disciplina cadastrada. A página lista nomes; no celular há seletor por nome. Não é preciso memorizar o código. Pode consultar mesmo com encontros pendentes.",
+        "Mostra datas, situações e faltas, aulas elegíveis, pendências, limite inteiro, faltas usadas e saldo. O percentual só aparece quando não resta pendência elegível. Ler ou atualizar a página não grava dados.",
+        "Código inexistente na camada Python é rejeitado. A interface conserva a seleção válida e pode tentar novamente se o banco não estiver disponível; nenhuma consulta altera registros.",
+    )
+    section(
+        s,
+        "Por que Registro é imutável",
+        "A classe usa @dataclass(frozen=True). Uma correção não muda o objeto anterior: Disciplina cria outro Registro e substitui, no dicionário interno, o valor associado à mesma data. Isso evita estado parcialmente modificado e torna explícito o instante da troca. O dicionário é protegido; a propriedade registros devolve uma tupla.",
+    )
+
+    page(s, "04 · Contratos", "Agenda")
+    contrato(
+        s,
+        "F05 · Adicionar atividade",
+        "Disciplina cadastrada. Informar uma data válida, tipo prova ou trabalho e título não vazio. A data pode ser diferente das datas de aula; uma prova não é automaticamente uma chamada.",
+        "Salva uma Atividade ligada ao código da disciplina. O SQLite gera identificador; agenda em memória só recebe o objeto depois do commit. Grade, faltas e percentual ficam iguais.",
+        "Disciplina inexistente, data/tipo/título inválidos ou falha de escrita: erro específico e agenda intacta. Nenhuma aula é criada e nenhum registro de frequência é alterado.",
+    )
+    contrato(
+        s,
+        "F06 · Consultar agenda",
+        "Banco vazio ou com atividades de várias disciplinas. Abrir Agenda ou ver o cartão de uma disciplina.",
+        "Mostra título, tipo, data com ano e nome da disciplina. Ordena por data e, no empate, pela ordem de inserção. Depois de fechar e reabrir, lê os mesmos itens do SQLite.",
+        "Agenda vazia mostra um estado vazio compreensível. Falha de leitura é informada; consultar não grava nem elimina atividade.",
+    )
+    section(
+        s,
+        "Contribuição da agenda para o objetivo",
+        "Uma avaliação próxima pode influenciar a decisão do estudante de acompanhar uma aula e conferir sua frequência. Nesta entrega, a agenda é curta e manual; ela não altera o cálculo de faltas nem tenta substituir um calendário acadêmico completo.",
+    )
+
+    page(s, "05 · Contratos", "Nome e reinício")
+    contrato(
+        s,
+        "F07 · Renomear disciplina",
+        "Disciplina existente; informar novo nome não vazio. O código permanece a chave estável do cadastro e das atividades.",
+        "Valida e salva o nome no SQLite; só depois o setter atualiza o nome do objeto. Os cartões e as atividades passam a exibir o novo nome, preservando datas, situações e totais.",
+        "Nome vazio, disciplina inexistente ou falha SQL: resposta específica e nome anterior preservado no banco e na memória. Código, registros e agenda permanecem iguais.",
+    )
+    contrato(
+        s,
+        "F08 · Apagar dados da demo",
+        "Abrir Ajustes e digitar exatamente APAGAR. A ação alcança apenas o banco local da demo, não o aplicativo real.",
+        "Uma transação remove atividades, registros e disciplinas; após o commit as coleções em memória ficam vazias. O mesmo código pode ser cadastrado novamente.",
+        "Cancelar ou digitar outra palavra não apaga nada. Se qualquer DELETE falhar, o SQLite desfaz a transação e as coleções mantêm os valores anteriores.",
+    )
+    section(
+        s,
+        "Dados de exemplo",
+        "O botão Usar dados de exemplo chama uma função separada em exemplo.py. Ela constrói os objetos com as mesmas regras do cadastro, prepara duas presenças e uma prova fictícia e grava tudo numa transação. Só aceita banco vazio; repetir o pedido não duplica registros. O botão é conveniência de demonstração, não método da classe Disciplina.",
+    )
+
+    page(s, "06 · Regras", "Cálculo de frequência")
+    section(
+        s,
+        "Definições explícitas",
+        "Base E = soma das aulas dos encontros não cancelados. P = aulas de encontros pendentes dentro de E. A = faltas já resolvidas, em aulas de 50 minutos. Limite L = piso(E × 0,25), isto é, divisão inteira E // 4. Restantes R = máximo(0, L − A). Excesso = máximo(0, A − L). Quando P = 0 e E > 0, frequência = 100 × (E − A) / E. Caso contrário, o percentual fica indefinido; pendência não é presumida presente nem ausente.",
     )
     s.append(
         table(
-            ["Entrada", "Efeito no banco", "Efeito na memória e no menu"],
+            ["Situação", "Uma chamada", "Duas chamadas"],
             [
-                (
-                    "APAGAR",
-                    "Três tabelas limpas em uma transação.",
-                    "Coleções vazias; novo cadastro permitido.",
-                ),
-                (
-                    "Enter ou outra palavra",
-                    "Nenhum comando DELETE.",
-                    "Tudo permanece; volta ao menu.",
-                ),
-                (
-                    "Falha SQL após o primeiro DELETE",
-                    "Rollback restaura todas as linhas.",
-                    "Tudo permanece; mostra erro sem fingir sucesso.",
-                ),
+                ("Presente", "0 falta", "0 falta"),
+                ("Ausente", "Todas as aulas do encontro", "Todas as aulas do encontro"),
+                ("Atrasado / saiu mais cedo", "0 falta", "Metade das aulas do encontro"),
+                ("Sem chamada", "0 falta; permanece na base", "0 falta; permanece na base"),
+                ("Cancelada", "Sai da base", "Sai da base"),
             ],
-            [4.1 * cm, 6.3 * cm, 6.6 * cm],
+            [5.6 * cm, 5.7 * cm, 5.7 * cm],
         )
     )
-
-    page(s, "09 · Interface", "Navegador local, lógica em Python")
     section(
         s,
-        "O que o navegador faz",
-        "A página HTML oferece três áreas: Disciplinas, Agenda e Ajustes. Em Disciplinas, a lista mostra nomes e a seleção abre os encontros, a barra de frequência e as atividades daquela matéria. O botão Registrar resolve uma data pendente; depois se torna Corrigir. Agenda lista provas e trabalhos por data. Ajustes permite zerar esta demo após a confirmação APAGAR. A página não calcula faltas, não escreve SQL e não guarda uma segunda cópia dos dados.",
+        "Exemplo conferível",
+        "Quatro encontros de duas aulas geram E = 8 e L = 2. Depois de uma presença e uma ausência: A = 2, P = 4, R = 0 e percentual ainda indefinido. Ao resolver os dois pendentes como presentes: P = 0 e frequência = 100 × (8 − 2) / 8 = 75%. Corrigir a ausência para presente gera A = 0, R = 2 e frequência = 100%. Cancelar um encontro reduz E em 2 e recalcula L; reposição não é criada automaticamente nesta demo.",
     )
     section(
         s,
-        "Caminho de uma ação",
-        "O navegador envia JSON ao servidor HTTP de web.py, restrito a 127.0.0.1. O servidor converte a data em date e chama ControleAcademico; Disciplina valida e calcula, e database.py persiste em SQLite. A resposta contém o estado reconstruído pelo domínio. Se a validação rejeitar a entrada, a interface mostra o motivo e o banco permanece igual. Atualizar ou reabrir a página consulta o mesmo arquivo. Nenhum serviço externo é necessário.",
+        "Regra de um ping ou dois",
+        "Localização e pings não integram este executável acadêmico. Os nomes ChamadaUnica e ChamadaDupla designam apenas regras para converter o registro manual de atraso/saída em faltas; não são prova de presença física nem representam uma captura automática de GPS.",
+    )
+
+    page(s, "07 · Modelo", "Classes e responsabilidades")
+    s.append(class_diagram())
+    section(
+        s,
+        "Leitura do diagrama",
+        "ControleAcademico coordena cadastro, busca, gravação, agenda e reset. Disciplina guarda código, nome, política e um dicionário data → Registro. Registro é o retrato imutável de um encontro; Atividade é o retrato imutável de uma prova ou trabalho. PoliticaChamada é abstrata e define calcular_faltas; ChamadaUnica e ChamadaDupla especializam o cálculo. Não existe uma classe de disciplina persistente: o controle liga funções de gravação aos objetos carregados, que chamam database.py antes de publicar cada mudança.",
+    )
+    section(
+        s,
+        "Conceitos de POO demonstrados",
+        "Encapsulamento: a grade fica em _registros e o getter devolve tupla; o nome tem setter que valida. Herança por especialização: as duas políticas implementam a classe abstrata PoliticaChamada. Polimorfismo: Disciplina chama calcular_faltas sem saber qual implementação foi escolhida. Registro imutável não impede corrigir a frequência: o agregado substitui o valor do dia por outro objeto.",
+    )
+
+    page(s, "08 · Interações", "Sequências essenciais")
+    section(
+        s,
+        "Cadastro F01",
+        "A página transforma datas digitadas em datas ISO e envia o pedido. ControleAcademico constrói Disciplina, que valida a grade inteira. database.py insere disciplina e encontros pendentes na mesma transação. Só após o commit o controle inclui a matéria em memória. Qualquer erro preserva o banco e a lista anteriores.",
     )
     s.append(
         sequence_diagram(
             [
-                (0, 1, "escolhe data e situação"),
-                (1, 2, "POST /api/registros"),
-                (2, 3, "registrar_presenca"),
-                (3, 4, "validar + salvar"),
+                (0, 1, "cadastrar"),
+                (1, 2, "criar_disciplina"),
+                (2, 3, "validar grade"),
+                (2, 4, "transação INSERT"),
+                (4, 2, "commit"),
+                (2, 1, "disciplina criada"),
+            ],
+            ["Estudante", "Página", "Controle", "Disciplina", "SQLite"],
+        )
+    )
+    section(
+        s,
+        "Presença e correção F02–F03",
+        "A página informa código, data e situação. O controle encontra Disciplina, que valida se a data existe e se o modo é registro inicial ou correção. A política calcula faltas. O SQLite grava o novo valor; somente depois Disciplina substitui o Registro daquela data. Um erro interrompe antes da substituição.",
+    )
+    s.append(
+        sequence_diagram(
+            [
+                (0, 1, "registrar / corrigir"),
+                (1, 2, "registrar_presenca"),
+                (2, 3, "validar e calcular"),
+                (3, 4, "salvar Registro"),
                 (4, 3, "commit"),
-                (3, 2, "resumo recalculado"),
-                (2, 1, "JSON atualizado"),
-                (1, 0, "linha e saldo visíveis"),
+                (3, 2, "novo Registro"),
+                (2, 1, "totais recalculados"),
             ],
-            ["Estudante", "HTML/JS", "web.py", "Domínio", "SQLite"],
-        )
-    )
-    s.append(
-        table(
-            ["Ação visível", "Funções", "Comportamento verificável"],
-            [
-                (
-                    "Criar / corrigir data",
-                    "F01",
-                    "Datas entram pendentes; correção conserva presença e faltas.",
-                ),
-                (
-                    "Registrar / Corrigir",
-                    "F02–F04",
-                    "Linha muda; saldo vem do resumo em Python.",
-                ),
-                (
-                    "Atividades e Agenda",
-                    "F05–F06",
-                    "Prova/trabalho vinculado aparece por data.",
-                ),
-                (
-                    "Renomear / Apagar",
-                    "F07–F08",
-                    "Nome muda sem perder registros; reset exige APAGAR.",
-                ),
-            ],
-            [4.5 * cm, 2.1 * cm, 10.4 * cm],
+            ["Estudante", "Página", "Controle", "Disciplina", "SQLite"],
         )
     )
 
-    page(s, "10 · Execução", "Demonstração, testes e limites")
+    page(s, "09 · Implementação", "Camadas, dados e reprodução")
     section(
         s,
-        "Como reproduzir",
-        "Requer Python 3.11+ e só a biblioteca padrão. Extraia o ZIP, entre em demo/ e rode <b>python web.py</b>; o navegador abre automaticamente no terminal interativo. Se necessário, acesse http://127.0.0.1:8878. O botão Usar dados de exemplo cria uma matéria fictícia com dois registros e uma prova em banco vazio; Ajustes permite executar os testes e reiniciar com APAGAR. Para avaliar o cadastro manual, crie DEMO01 com duas chamadas, duas aulas por encontro e datas 02, 04, 09 e 11/11/2026. Marque 02/11 ausente e 04/11 presente, corrija 02/11 e sua data, depois atualize a página. O menu alternativo inicia com <b>python main.py</b>.",
-    )
-    s.append(
-        table(
-            ["Passo", "Ação na página", "Resultado esperado"],
-            [
-                (
-                    "1",
-                    "Criar DEMO01 e quatro datas, duas aulas cada.",
-                    "E=8; quatro datas pendentes; L=2.",
-                ),
-                (
-                    "2",
-                    "Registrar ausência em 02/11 e presença em 04/11.",
-                    "A=2; R=0; ainda há quatro aulas pendentes.",
-                ),
-                ("3", "Consultar DEMO01.", "Mostra as duas situações e F pendente."),
-                ("4", "Corrigir 02/11 para presente.", "A=0; R=2; não duplica a data."),
-                (
-                    "5",
-                    "Adicionar prova P1 em 10/11 e ver agenda.",
-                    "P1 aparece; faltas continuam iguais.",
-                ),
-                (
-                    "6",
-                    "Renomear para Disciplina de exemplo.",
-                    "Só o nome muda; código, grade e faltas seguem iguais.",
-                ),
-                (
-                    "7",
-                    "Sair e iniciar novamente.",
-                    "Nome, correção e prova recuperados do SQLite.",
-                ),
-            ],
-            [1.6 * cm, 7.0 * cm, 8.4 * cm],
-        )
+        "Separação de responsabilidades",
+        "Apresentação: web/index.html, app.css e app.js recebem ações e mostram o estado; web.py converte JSON/datas e serve a página em 127.0.0.1. Negócio: models.py valida e calcula com classes de domínio; exemplo.py cria apenas a amostra fictícia. Dados: database.py cria tabelas, grava e recupera SQLite. A interface não calcula faltas e a camada de dados não escolhe política de chamada.",
     )
     section(
         s,
-        "Teste e limitações",
-        "Em Ajustes, o botão Executar testes mostra o resultado na página; no terminal, o mesmo conjunto roda com <b>python -m unittest discover -v</b>. Cada teste constrói objetos próprios ou SQLite temporário; o banco da demonstração não muda. A grade tem um encontro por data, duração fixa e nenhuma inclusão posterior de datas. Não há edição de atividades nem conexão oficial. Este pacote é independente do aplicativo ampliado e não precisa de conta ou internet.",
+        "Persistência e integridade",
+        "disciplinas usa código normalizado como chave; registros usa código + data; atividades usa ID do SQLite e referência ao código. Cada mudança que envolve várias linhas usa transação. Totais não são gravados: são recalculados da grade, evitando divergência após correções. O arquivo frequencia.db entregue está vazio e pronto para uso; o botão de exemplo o preenche com dados fictícios.",
     )
     section(
         s,
-        "Mapa entre funções e código",
-        "F01, F04, F05, F07 e F08 passam por ControleAcademico em models.py; F02 e F03 passam por Disciplina.registrar_presenca e pela política de chamada; F06 lê ControleAcademico.atividades. A página em web/ e web.py apenas apresenta e encaminha ações; main.py é a alternativa de terminal. Gravação, limpeza e recuperação usam database.py. O PDF de verificação relaciona funções, cenários e testes.",
+        "Como executar",
+        "Requer Python 3.11 ou superior, sem dependências externas. Extraia Frequencia_UFMG_Entrega_Final.zip, entre na pasta demo e execute <b>python web.py</b>. Abra http://127.0.0.1:8878 se o navegador não abrir automaticamente. Clique Usar dados de exemplo ou cadastre manualmente uma disciplina. Em Ajustes, Executar testes roda unittest em bancos temporários; alternativamente, dentro de demo execute <b>python -m unittest discover -v</b>. Para sair, pressione Ctrl+C no terminal.",
+    )
+    section(
+        s,
+        "Limitações conhecidas e pacote",
+        "Não há remarcação, edição/exclusão individual de atividades, importação universitária, autenticação ou comprovação de presença. Essas ações não são apresentadas como prontas. O ZIP inclui código, banco vazio, testes, README, evidência da última execução e os dois PDFs. A versão testada no relatório de verificação é a mesma indicada na capa.",
     )
     build("Frequencia_UFMG_Produto_Final.pdf", s)
 
 
-def verification():
+def verificacao():
     s = []
     page(s, "Quinta etapa · Verificação", "Frequência UFMG · Verificação")
+    s.append(P("Contratos, cenários e resultado observado da mesma versão do produto", "SubtitleX"))
     s.append(
-        P(
-            "Eduardo Henrique Rodrigues Silva  |  APPOO 2026/2  |  " + VERSION,
-            "SubtitleX",
+        table(
+            ["Identificação", "Dados"],
+            [
+                ("Integrante", "Eduardo Henrique Rodrigues Silva"),
+                ("Versão testada", VERSION),
+                ("Pacote", "Frequencia_UFMG_Entrega_Final.zip"),
+                ("Execução", "python -m unittest discover -v, dentro de demo/"),
+            ],
+            [4.2 * cm, 12.8 * cm],
         )
     )
     section(
         s,
         "Método",
-        "As tabelas verificam F01–F08 do relatório do produto. Cada linha fixa uma entrada concreta, estado esperado, estado observado e evidência. Os testes são independentes: criam objetos novos ou um SQLite temporário, sem tocar no banco da demonstração. Rode <b>cd demo</b> e <b>python -m unittest discover -v</b>. A transcrição integral da última execução fica em <b>evidencias/unittest.txt</b> no ZIP.",
-    )
-    s.append(
-        table(
-            ["Critério", "Como foi verificado"],
-            [
-                (
-                    "Rastreabilidade",
-                    "O mesmo identificador de versão aparece nos dois PDFs, no README e no ZIP.",
-                ),
-                (
-                    "Rejeições",
-                    "Testes comparam cadastro, grade, agenda ou resumo antes e depois.",
-                ),
-                (
-                    "Persistência",
-                    "Um novo ControleAcademico reabre o mesmo banco temporário.",
-                ),
-                (
-                    "Falha de escrita",
-                    "Mock produz OSError antes de publicar em memória; o banco é reaberto.",
-                ),
-                ("Menu", "Entradas simuladas percorrem o sistema desde o banco vazio."),
-            ],
-            [5 * cm, 21.1 * cm],
-        )
+        "Cada teste constrói seus próprios objetos ou usa um arquivo SQLite temporário. Os dados da demo e do aplicativo real não entram nos testes. Para cada função F01–F08, as tabelas seguintes registram condição inicial, entrada, resultado previsto, resultado observado, situação e nome do teste. A evidência integral da última execução está em evidencias/unittest.txt no ZIP. A interface web possui testes HTTP com banco isolado; o botão Executar testes chama o mesmo conjunto.",
     )
     section(
         s,
-        "Convenções",
-        "E = aulas elegíveis; A = faltas usadas; L = limite; R = saldo. Pendente é um encontro não resolvido. Aprovado significa que o teste citado passou na última execução e confirmou o estado da linha. A seção Evidências liga T01–T22 aos nomes dos testes; a seção Interface verifica o caminho pelo navegador.",
+        "Interpretação dos resultados",
+        "Aprovado significa que a execução obteve o resultado esperado e conferiu o estado final; falhou significa divergência; não executado significa ausência de evidência. Um erro esperado em cenário de rejeição conta como aprovado quando o estado anterior permanece intacto. Os IDs C01–C24 identificam os cenários deste PDF, não a ordem em que unittest os executa.",
+    )
+    section(
+        s,
+        "Cobertura",
+        "F01–F04: cadastro e frequência. F05–F06: agenda. F07–F08: nome e reinício. Cada grupo inclui sucesso e rejeição ou limite relevante.",
     )
 
-    def matrix(title, initial, rows, *, new_page=True):
-        if new_page:
-            page(s, "Matriz de cenários", title, initial)
-        else:
-            s.append(Spacer(1, 0.15 * cm))
-            section(s, title, initial)
-        s.append(
-            table(
-                [
-                    "ID",
-                    "Regra e entrada",
-                    "Resultado e estado esperados",
-                    "Resultado e estado observados",
-                    "Situação",
-                    "Evidência",
-                ],
-                rows,
-                [1.4 * cm, 6.1 * cm, 6.1 * cm, 6.1 * cm, 2 * cm, 4.4 * cm],
-                dense="tight",
-            )
-        )
-
-    matrix(
+    page(s, "Matriz · F01–F02", "Cadastro e registro")
+    cenarios(
+        s,
         "F01 · Cadastrar disciplina",
-        "Estado inicial: controle vazio e, quando usado, SQLite temporário vazio. Datas fictícias 02, 04, 09 e 11/11/2026; cada cenário recria esse estado, salvo preparação indicada na linha.",
+        "Estado inicial de cada cenário: controle vazio e banco temporário vazio; datas de novembro de 2026. C04 simula falha durante a transação.",
         [
             (
                 "C01",
-                "DEMO01, duas chamadas, duas aulas de 50 min e quatro datas válidas.",
-                "Cria uma disciplina; quatro pendências; E=8, A=0, L=2.",
-                "Código normalizado para DEMO01; quatro pendências; E=8, A=0, L=2.",
+                "DEMO01, duas chamadas, duas aulas, quatro datas únicas.",
+                "Uma disciplina e quatro registros pendentes; E=8.",
+                "Objeto e linhas criados; E=8 e P=8.",
                 "Aprovado",
-                "T01",
+                "test_criar_e_registrar_do_zero",
             ),
             (
                 "C02",
-                "Após C01, tenta cadastrar demo01 de novo com outro nome.",
-                "Rejeita duplicado; nome, grade, presenças e totais intactos.",
-                "ValueError; disciplina, registros e resumo iguais ao anterior.",
+                "Repetir código demo01 com caixa diferente.",
+                "Rejeitar; cadastro e frequência iniciais iguais.",
+                "ValueError; um único cadastro preservado.",
                 "Aprovado",
-                "T02",
+                "test_codigo_duplicado_preserva_cadastro_e_frequencia",
             ),
             (
-                "C03a",
-                "Código vazio; demais dados válidos.",
-                "Rejeita; cadastro e grade vazios.",
-                "ValueError; controle vazio.",
+                "C03",
+                "Data repetida, duração fora de 1/2/4 ou duas chamadas em uma aula.",
+                "Rejeitar; nenhuma disciplina/grade nova.",
+                "ValueError em cada entrada; estado vazio.",
                 "Aprovado",
-                "T03",
-            ),
-            (
-                "C03b",
-                "Nome vazio; demais dados válidos.",
-                "Rejeita; cadastro e grade vazios.",
-                "ValueError; controle vazio.",
-                "Aprovado",
-                "T03",
-            ),
-            (
-                "C03c",
-                "Três chamadas; demais dados válidos.",
-                "Rejeita; cadastro e grade vazios.",
-                "ValueError; controle vazio.",
-                "Aprovado",
-                "T03",
-            ),
-            (
-                "C03d",
-                "Três aulas por encontro; demais dados válidos.",
-                "Rejeita; cadastro e grade vazios.",
-                "ValueError; controle vazio.",
-                "Aprovado",
-                "T03",
-            ),
-            (
-                "C03e",
-                "Duas chamadas em encontro de uma aula.",
-                "Rejeita; cadastro e grade vazios.",
-                "ValueError; controle vazio.",
-                "Aprovado",
-                "T03",
-            ),
-            (
-                "C03f",
-                "Grade sem nenhuma data.",
-                "Rejeita; cadastro e grade vazios.",
-                "ValueError; controle vazio.",
-                "Aprovado",
-                "T03",
-            ),
-            (
-                "C03g",
-                "Repete 02/11 na grade.",
-                "Rejeita; cadastro e grade vazios.",
-                "ValueError; controle vazio.",
-                "Aprovado",
-                "T03",
-            ),
-            (
-                "C03h",
-                "Envia data em texto diretamente ao domínio.",
-                "Rejeita; cadastro e grade vazios.",
-                "ValueError; controle vazio.",
-                "Aprovado",
-                "T03",
-            ),
-            (
-                "C03i",
-                "No menu, tenta informar 31/02/2026.",
-                "Informa data inválida; cadastro vazio.",
-                "Menu informou rejeição e não criou disciplina.",
-                "Aprovado",
-                "T16",
-            ),
-            (
-                "C03j",
-                "Envia grade None diretamente ao domínio.",
-                "Rejeita; cadastro e grade vazios.",
-                "ValueError; controle vazio.",
-                "Aprovado",
-                "T03",
+                "test_entrada_invalida_nao_cria_disciplina",
             ),
             (
                 "C04",
-                "Cria disciplina e presença em SQLite temporário; fecha e reabre.",
-                "Nome, grade e presença recuperados sem duplicação.",
-                "Novo controle recuperou nome e registro presente na data.",
+                "Falha SQL no segundo INSERT da grade.",
+                "Rollback de disciplina e registros.",
+                "Tabelas e memória sem cadastro parcial.",
                 "Aprovado",
-                "T04",
-            ),
-            (
-                "C04A",
-                "Gatilho SQL falha no segundo INSERT da grade, após inserir disciplina.",
-                "Rollback de cadastro e datas; controle e SQLite vazios.",
-                "IntegrityError; memória e banco reaberto sem disciplina.",
-                "Aprovado",
-                "T15",
+                "test_falha_no_segundo_insert_desfaz_cadastro_e_grade",
             ),
         ],
     )
-
-    matrix(
+    cenarios(
+        s,
         "F02 · Registrar frequência",
-        "Estado inicial: C05 usa DEMO01 com quatro datas pendentes, duas aulas e duas chamadas; C06–C07 usam D com a mesma grade. C08 recria D com uma data de quatro aulas; C09 usa bancos temporários próprios.",
+        "Estado inicial: DEMO01 com quatro datas pendentes, duas aulas por encontro; banco próprio quando há persistência.",
         [
             (
                 "C05",
-                "Marca 02/11 presente e 04/11 ausente.",
-                "Faltas 0 e 2; A=2, E=8, L=2, R=0; quatro aulas pendentes.",
-                "Registros 0 e 2; resumo confirmou A=2, E=8, L=2, R=0, pendências=4.",
+                "Registrar ausência em 02/11.",
+                "Registro ausente, A=2, P=6, L=2.",
+                "A=2; grade mantém seis aulas pendentes.",
                 "Aprovado",
-                "T01",
+                "test_criar_e_registrar_do_zero",
             ),
             (
-                "C06a",
-                "Registra 01/12, fora da grade de D.",
-                "Rejeita; grade e resumo iguais.",
-                "ValueError; registros e resumo iguais.",
+                "C06",
+                "Situação desconhecida ou data fora da grade.",
+                "Rejeitar; registros e totais iguais.",
+                "ValueError; objetos anteriores preservados.",
                 "Aprovado",
-                "T05",
-            ),
-            (
-                "C06b",
-                "Envia 02/11 como texto diretamente ao domínio.",
-                "Rejeita; grade e resumo iguais.",
-                "ValueError; registros e resumo iguais.",
-                "Aprovado",
-                "T05",
-            ),
-            (
-                "C06c",
-                "Em 02/11, informa situação errada.",
-                "Rejeita; grade e resumo iguais.",
-                "ValueError; registros e resumo iguais.",
-                "Aprovado",
-                "T05",
+                "test_registro_invalido_nao_muda_grade_nem_totais",
             ),
             (
                 "C07",
-                "Após registrar ausência, tenta registrar presença na mesma data sem Corrigir.",
-                "Rejeita; ausência original e resumo permanecem.",
-                "ValueError; registro original e resumo iguais ao antes.",
+                "Falha de gravação antes de resolver 02/11.",
+                "Pendente em memória e SQLite.",
+                "OSError; ambos continuam pendentes.",
                 "Aprovado",
-                "T05",
-            ),
-            (
-                "C08a",
-                "D, quatro aulas, uma chamada; atrasado.",
-                "Resolve com 0 faltas.",
-                "Registro mostrou 0 faltas.",
-                "Aprovado",
-                "T06",
-            ),
-            (
-                "C08b",
-                "D, quatro aulas, uma chamada; saiu mais cedo.",
-                "Resolve com 0 faltas.",
-                "Registro mostrou 0 faltas.",
-                "Aprovado",
-                "T06",
-            ),
-            (
-                "C08c",
-                "D, quatro aulas, duas chamadas; atrasado.",
-                "Resolve com 2 faltas.",
-                "Registro mostrou 2 faltas.",
-                "Aprovado",
-                "T06",
-            ),
-            (
-                "C08d",
-                "D, quatro aulas, duas chamadas; saiu mais cedo.",
-                "Resolve com 2 faltas.",
-                "Registro mostrou 2 faltas.",
-                "Aprovado",
-                "T06",
-            ),
-            (
-                "C09a",
-                "DB02: OSError ao salvar ausência no SQLite.",
-                "Registro pendente na memória e no banco; A=0.",
-                "OSError; reabertura preservou pendente; resumo igual.",
-                "Aprovado",
-                "T07",
-            ),
-            (
-                "C09b",
-                "DEMO01: falha de escrita durante o registro pelo menu.",
-                "Informa erro; registro pendente no banco.",
-                "Menu informou falha e reabertura mostrou pendente.",
-                "Aprovado",
-                "T19",
+                "test_falha_na_gravacao_preserva_memoria_e_banco",
             ),
         ],
     )
 
-    matrix(
+    page(s, "Matriz · F03–F04", "Correção e consulta")
+    cenarios(
+        s,
         "F03 · Corrigir frequência",
-        "Estado inicial: C10–C11 usam D com quatro encontros de duas aulas e duas ausências nas primeiras datas; C12 cria D pendente e prepara uma ausência somente onde indicado.",
+        "Cada teste começa com disciplina nova; C08 tem duas ausências, C09 uma ausência e C10 resolve as demais datas como indicado.",
         [
+            (
+                "C08",
+                "Após duas ausências, corrigir 02/11 para presente.",
+                "Trocar Registro; A de 4 para 2, sem linha extra.",
+                "Registro novo; faltas recalculadas para duas.",
+                "Aprovado",
+                "test_correcao_substitui_e_recalcula",
+            ),
+            (
+                "C09",
+                "Corrigir frequência de encontro pendente ou situação inválida.",
+                "Rejeitar; Registro e resumo anteriores iguais.",
+                "ValueError; estado comparado e preservado.",
+                "Aprovado",
+                "test_correcao_invalida_preserva_registro_e_resumo",
+            ),
             (
                 "C10",
-                "Corrige 02/11 de ausente para presente.",
-                "Só esse registro muda; A cai de 4 para 2; excesso cai de 2 para 0.",
-                "A caiu para 2; primeiro registro foi substituído sem duplicação.",
+                "Corrigir para sem chamada ou cancelada.",
+                "Sem chamada: zero falta na base; cancelada: sai da base.",
+                "Base, limite e percentual recalculados.",
                 "Aprovado",
-                "T08",
+                "test_correcao_substitui_e_recalcula",
             ),
+        ],
+    )
+    cenarios(
+        s,
+        "F04 · Consultar frequência",
+        "Estado inicial: disciplina com quatro encontros de duas aulas; consultas não devem gravar.",
+        [
             (
                 "C11",
-                "Corrige segunda ausência; marca 09/11 sem chamada e 11/11 cancelada.",
-                "E=6, A=0, L=1, R=1, pendências=0, F=100%.",
-                "Resumo confirmou E=6, A=0, L=1, R=1 e F=100%.",
+                "Consultar com pelo menos uma data pendente.",
+                "Mostrar E, A, P, L, R; percentual indefinido.",
+                "Resumo tem P>0 e frequência None.",
                 "Aprovado",
-                "T08",
+                "test_consulta_nao_altera_registros",
             ),
             (
-                "C12a",
-                "D pendente: tenta Corrigir 02/11 para presente.",
-                "Rejeita; grade e resumo pendentes iguais.",
-                "ValueError; registros e resumo iguais.",
+                "C12",
+                "Resolver todas: uma ausência, três presenças.",
+                "E=8, A=2, L=2, frequência 75%.",
+                "Totais recalculados a partir dos registros.",
                 "Aprovado",
-                "T09",
+                "test_percentual_apos_todas_as_datas_resolvidas",
             ),
             (
-                "C12b",
-                "Registra ausência em 02/11; tenta corrigir para situação desconhecida.",
-                "Rejeita; ausência, grade e resumo iguais.",
-                "ValueError; registros e resumo iguais.",
+                "C13",
+                "Consultar código inexistente.",
+                "Erro; nenhuma alteração na grade.",
+                "ValueError e grade anterior igual.",
                 "Aprovado",
-                "T09",
-            ),
-            (
-                "C12c",
-                "Com ausência em 02/11, tenta Corrigir 01/12 fora da grade.",
-                "Rejeita; ausência, grade e resumo iguais.",
-                "ValueError; registros e resumo iguais.",
-                "Aprovado",
-                "T09",
+                "test_consulta_nao_altera_registros",
             ),
         ],
     )
 
-    matrix(
-        "F04 · Consultar frequência",
-        "Estado inicial: C13–C15 usam D com quatro datas; OUTRA não existe. C15a–c usam CIR01 e FIS01 no menu. Consultas não gravam dados.",
+    page(s, "Matriz · F05–F06", "Agenda")
+    cenarios(
+        s,
+        "F05 · Adicionar atividade",
+        "Estado inicial: DEMO01 cadastrada e agenda vazia; grade com quatro registros pendentes.",
         [
             (
-                "C13",
-                "Consulta código existente em minúsculas.",
-                "Mesma disciplina, grade e resumo; nenhum registro muda.",
-                "Resumo, registros e cadastro iguais ao anterior.",
-                "Aprovado",
-                "T10",
-            ),
-            (
                 "C14",
-                "Consulta OUTRA, não cadastrada.",
-                "Informa não encontrada; estado igual.",
-                "ValueError; cadastro e totais iguais.",
+                "Prova P1 em 03/11, fora da grade.",
+                "Atividade vinculada; frequência inalterada.",
+                "ID persistido; grade e resumo iguais.",
                 "Aprovado",
-                "T10",
-            ),
-            (
-                "C14b",
-                "Consulta com código None no domínio.",
-                "Pede código; estado igual.",
-                "ValueError; cadastro e totais iguais.",
-                "Aprovado",
-                "T10",
-            ),
-            (
-                "C14c",
-                "Consulta com código vazio no domínio.",
-                "Pede código; estado igual.",
-                "ValueError; cadastro e totais iguais.",
-                "Aprovado",
-                "T10",
+                "test_atividade_valida_persiste_sem_alterar_frequencia",
             ),
             (
                 "C15",
-                "No menu, cadastra, registra, consulta e corrige desde banco vazio.",
-                "Mostra limite e saldo em aulas, excesso e percentual por etapa.",
-                "Saída identificou aulas, excesso, F pendente, 50% e depois 100%.",
+                "Tipo inválido, título vazio ou data inválida.",
+                "Rejeitar; agenda vazia e grade igual.",
+                "ValueError; estado anterior preservado.",
                 "Aprovado",
-                "T11",
+                "test_atividade_invalida_e_falha_de_escrita_preservam_agenda",
             ),
             (
-                "C15a",
-                "Com duas disciplinas, escolhe número 2 na lista por nome.",
-                "Consulta Fisica; cadastro e totais iguais.",
-                "Menu mostrou Fisica; cadastro manteve dois itens.",
+                "C16",
+                "Falha SQL ao inserir P1.",
+                "Nada acrescentado à agenda.",
+                "OSError; agenda vazia no banco reaberto.",
                 "Aprovado",
-                "T20",
-            ),
-            (
-                "C15b",
-                "Na lista, informa abc em vez de número.",
-                "Pede número válido; estado igual.",
-                "Menu rejeitou; cadastro manteve dois itens.",
-                "Aprovado",
-                "T20",
-            ),
-            (
-                "C15c",
-                "Na lista, escolhe 0 para voltar ao menu.",
-                "Não consulta nem altera dados.",
-                "Voltou ao menu; cadastro manteve dois itens.",
-                "Aprovado",
-                "T20",
+                "test_atividade_invalida_e_falha_de_escrita_preservam_agenda",
             ),
         ],
     )
-
-    matrix(
-        "F05 · Agendar atividade",
-        "Estado inicial: C16, C17 e C18 usam DEMO01 com quatro registros pendentes; C16b usa o menu com uma data pendente. A agenda começa vazia e a atividade pode cair fora de uma data de aula.",
+    cenarios(
+        s,
+        "F06 · Consultar agenda",
+        "Estado inicial: disciplinas com atividades fictícias; cada teste prepara seu banco.",
         [
             (
-                "C16",
-                "Adiciona prova P1 em 03/11, fora das datas de aula, e reabre SQLite temporário.",
-                "Atividade ligada a DEMO01 persiste; grade e resumo iguais.",
-                "Novo controle recuperou atividade; registros e resumo iguais ao antes.",
+                "C17",
+                "Abrir agenda vazia.",
+                "Lista vazia; nenhum dado criado.",
+                "Lista vazia retornada sem gravação.",
                 "Aprovado",
-                "T12",
-            ),
-            (
-                "C16b",
-                "No menu, adiciona trabalho Relatório em 05/11 e reabre.",
-                "Trabalho fica vinculado a DEMO01 e persiste na agenda.",
-                "Menu salvou o trabalho; após reabrir, agenda ainda o lista.",
-                "Aprovado",
-                "T14",
-            ),
-            (
-                "C17a",
-                "Associa prova ao código OUTRA, não cadastrado.",
-                "Rejeita; agenda, grade e resumo iguais.",
-                "ValueError; agenda vazia; resumo igual.",
-                "Aprovado",
-                "T13",
-            ),
-            (
-                "C17b",
-                "Informa data 02/11 como texto ao domínio.",
-                "Rejeita; agenda, grade e resumo iguais.",
-                "ValueError; agenda vazia; resumo igual.",
-                "Aprovado",
-                "T13",
-            ),
-            (
-                "C17c",
-                "Escolhe tipo seminário em vez de prova/trabalho.",
-                "Rejeita; agenda, grade e resumo iguais.",
-                "ValueError; agenda vazia; resumo igual.",
-                "Aprovado",
-                "T13",
-            ),
-            (
-                "C17d",
-                "Informa título só com espaços.",
-                "Rejeita; agenda, grade e resumo iguais.",
-                "ValueError; agenda vazia; resumo igual.",
-                "Aprovado",
-                "T13",
+                "test_agenda_vazia_e_ordenada_apos_reabrir",
             ),
             (
                 "C18",
-                "Simula OSError ao salvar prova válida.",
-                "Agenda vazia na memória e banco reaberto; frequência intocada.",
-                "OSError; agenda vazia na memória e no banco, registros e resumo iguais.",
+                "Criar prova P1 e reabrir o controle.",
+                "Mesmo título, data, tipo e vínculo.",
+                "Atividade recuperada do SQLite.",
                 "Aprovado",
-                "T13",
+                "test_agenda_vazia_e_ordenada_apos_reabrir",
             ),
-        ],
-    )
-
-    matrix(
-        "F06 · Consultar agenda",
-        "Estado inicial: C19 começa com agenda vazia; C20 cria DEMO01 e três atividades fictícias. O teste de menu usa banco temporário próprio.",
-        [
             (
                 "C19",
-                "Escolhe Ver agenda sem criar atividade.",
-                "Informa Agenda vazia; não cria item.",
-                "Saída do menu contém Agenda vazia; cadastro prosseguiu.",
+                "Atividades em datas diferentes.",
+                "Ordem por data e ID no empate.",
+                "Consulta ordenada sem mudar frequência.",
                 "Aprovado",
-                "T14",
-            ),
-            (
-                "C20a",
-                "Insere trabalho de 05/11; depois prova e trabalho de 03/11; consulta.",
-                "Ordena por data; no empate, mantém ordem de inserção.",
-                "Linhas com nome da disciplina: 03/11 prova, 03/11 trabalho, 05/11 trabalho nessa ordem.",
-                "Aprovado",
-                "T14",
-            ),
-            (
-                "C20b",
-                "Fecha, reabre e consulta a mesma agenda.",
-                "As três atividades reaparecem na mesma ordem.",
-                "Menu reaberto listou as três linhas na mesma ordem.",
-                "Aprovado",
-                "T14",
+                "test_agenda_vazia_e_ordenada_apos_reabrir",
             ),
         ],
-        new_page=False,
     )
 
-    matrix(
+    page(s, "Matriz · F07–F08", "Nome e reset")
+    cenarios(
+        s,
         "F07 · Renomear disciplina",
-        "Estado inicial: DEMO01 com quatro encontros. C21 prepara uma ausência e uma prova antes de renomear; C22–C23 começam com nome Original. Cada teste usa SQLite temporário próprio.",
+        "Estado inicial: DEMO01, uma ausência e prova P1 em banco temporário.",
         [
+            (
+                "C20",
+                "Renomear para Circuitos 2.",
+                "Novo nome após reabrir; código, grade e P1 preservados.",
+                "Nome novo no SQLite; dados associados iguais.",
+                "Aprovado",
+                "test_renomear_disciplina_valida_e_persiste",
+            ),
             (
                 "C21",
-                "Após ausência e prova, muda o nome pela fachada e pelo controle; reabre.",
-                "Novo nome persiste; código, grade, faltas e prova não mudam.",
-                "Nome novo após reabrir; registros, resumo e atividade iguais aos anteriores.",
+                "Nome vazio ou falha no UPDATE.",
+                "Rejeitar; nome antigo em memória e SQLite.",
+                "ValueError/OSError; nome antigo preservado.",
                 "Aprovado",
-                "T17",
-            ),
-            (
-                "C22a",
-                "Tenta renomear código OUTRA, não cadastrado.",
-                "Rejeita; DEMO01 fica Original na memória e no banco.",
-                "ValueError; reabertura mostrou Original.",
-                "Aprovado",
-                "T18",
-            ),
-            (
-                "C22b",
-                "Informa novo nome vazio.",
-                "Rejeita; Original na memória e no banco.",
-                "ValueError no controle e setter; reabertura mostrou Original.",
-                "Aprovado",
-                "T18",
-            ),
-            (
-                "C22c",
-                "Informa novo nome só com espaços.",
-                "Rejeita; Original na memória e no banco.",
-                "ValueError no controle e setter; reabertura mostrou Original.",
-                "Aprovado",
-                "T18",
-            ),
-            (
-                "C22d",
-                "Informa novo nome None.",
-                "Rejeita; Original na memória e no banco.",
-                "ValueError no controle e setter; reabertura mostrou Original.",
-                "Aprovado",
-                "T18",
-            ),
-            (
-                "C23a",
-                "OSError ao renomear pelo controle.",
-                "Original na memória e no banco reaberto.",
-                "OSError; memória e SQLite conservaram Original.",
-                "Aprovado",
-                "T18",
-            ),
-            (
-                "C23b",
-                "OSError ao renomear pelo setter da fachada.",
-                "Original na memória e no banco reaberto.",
-                "OSError; memória e SQLite conservaram Original.",
-                "Aprovado",
-                "T18",
+                "test_renomear_invalido_ou_falha_de_banco_preserva_nome",
             ),
         ],
     )
-    section(
+    cenarios(
         s,
-        "Por que o nome muda sem afetar frequência",
-        "O menu mostra nomes numerados para escolher a disciplina e lê o novo nome. O controle valida ambos antes de escrever; entrada inválida encerra com o nome antigo. O SQLite confirma o UPDATE antes de o setter da Disciplina receber o novo nome. Se a escrita falhar, a memória permanece igual. Código, grade, atividades e faltas não entram na operação. T17 e T18 verificam essa ordem.",
-    )
-
-    matrix(
-        "F08 · Recomeçar do zero",
-        "Estado inicial: D tem uma ausência e a prova P1 em SQLite temporário. C24–C26 percorrem o menu; C27 usa uma falha SQL no segundo DELETE. Cada teste tem banco próprio.",
+        "F08 · Apagar dados da demo",
+        "Estado inicial: uma disciplina com presença e atividade; banco temporário.",
         [
             (
+                "C22",
+                "Confirmar APAGAR em Ajustes.",
+                "As três tabelas vazias; pode recriar código.",
+                "Banco e memória vazios; novo cadastro aceito.",
+                "Aprovado",
+                "test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar",
+            ),
+            (
+                "C23",
+                "Digitar apagar em minúsculas.",
+                "Rejeitar; todos os dados anteriores iguais.",
+                "HTTP 400; estado antes/depois igual.",
+                "Aprovado",
+                "test_entradas_invalidas_preservam_estado",
+            ),
+            (
                 "C24",
-                "Escolhe 8 e deixa a confirmação vazia.",
-                "Cancela; disciplina, ausência e P1 continuam.",
-                "Menu informou cancelamento; consulta ainda mostrou duas faltas.",
+                "Falha SQL durante o reset.",
+                "Rollback integral; nada apagado.",
+                "Disciplina, registro e atividade recuperados.",
                 "Aprovado",
-                "T21",
-            ),
-            (
-                "C25",
-                "Escolhe 8 e responde NÃO em vez de APAGAR.",
-                "Cancela; disciplina, ausência e P1 continuam.",
-                "Menu informou cancelamento; consulta ainda mostrou duas faltas.",
-                "Aprovado",
-                "T21",
-            ),
-            (
-                "C26",
-                "Escolhe 8, digita APAGAR e reabre o SQLite.",
-                "Cadastro, registros e agenda vazios; pode reutilizar D.",
-                "Memória e banco reaberto vazios; D foi cadastrado de novo.",
-                "Aprovado",
-                "T21, T22",
-            ),
-            (
-                "C27",
-                "O segundo DELETE falha após apagar atividades.",
-                "Rollback; memória, banco, falta e P1 intactos.",
-                "IntegrityError; reabertura mostrou falta e P1 originais.",
-                "Aprovado",
-                "T22",
+                "test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar",
             ),
         ],
     )
 
-    page(s, "Interface", "Verificação do navegador local")
+    page(s, "Integração", "Caminho HTTP e estado persistente")
     section(
         s,
-        "O mesmo domínio nas duas apresentações",
-        "T23 inicia o servidor local com SQLite temporário, carrega HTML/CSS/JS, cria disciplina, registra ausência, corrige para presença, corrige a data, adiciona prova, renomeia, reabre e apaga com APAGAR. T24 rejeita entradas inválidas sem mudar o estado. T25 cobre falhas de leitura e gravação; T26 verifica a inicialização e a abertura do navegador. T27–T28 isolam a correção da data. T29 valida a amostra e o rollback; T30 valida os botões de exemplo e testes sem tocar no banco real.",
+        "Fluxo completo pela API local",
+        "O teste HTTP começa com banco temporário vazio, cria disciplina, registra ausência, corrige para presença, adiciona prova, renomeia, consulta de novo e apaga com APAGAR. O resultado observado após cada POST é comparado com a resposta esperada; uma nova requisição GET reconstrói os objetos do SQLite. Este teste chama a API diretamente e não executa o JavaScript da página.",
     )
     s.append(
         table(
-            ["ID", "Caminho percorrido", "Esperado e observado", "Evidência"],
+            ["Condição", "Esperado", "Observado / evidência"],
             [
                 (
-                    "W01",
-                    "Criar DEMO01 com quatro encontros, registrar ausência e corrigir para presença.",
-                    "Cadastro disponível; faltas 2 e depois 0; correção substitui o registro.",
-                    "T23 · aprovado",
+                    "Cadastro e correção",
+                    "Uma linha por data; totais após correção.",
+                    "Resposta HTTP e GET reaberto iguais · test_fluxo_completo_e_reabertura",
                 ),
                 (
-                    "W02",
-                    "Adicionar P1, renomear e consultar em novo pedido.",
-                    "P1 segue vinculada ao novo nome; registro e agenda persistem no SQLite.",
-                    "T23 · aprovado",
+                    "Entrada inválida",
+                    "Resposta compreensível e estado anterior igual.",
+                    "HTTP 400 e comparação do JSON · test_entradas_invalidas_preservam_estado",
                 ),
                 (
-                    "W03",
-                    "Digitar APAGAR e consultar novamente.",
-                    "Disciplinas e atividades vazias no banco reaberto.",
-                    "T23 · aprovado",
+                    "Falha de leitura/gravação",
+                    "HTTP 503 e mensagem que identifica a falha.",
+                    "HTTP 503 com mensagem 'disco' · test_falhas_de_leitura_e_gravacao_sao_visiveis; rollback: test_falha_na_gravacao_preserva_memoria_e_banco",
                 ),
                 (
-                    "W04",
-                    "Enviar entradas inválidas e uma confirmação diferente de APAGAR.",
-                    "Erro específico; registros, totais e atividades inalterados.",
-                    "T24 · aprovado",
+                    "Exemplo fictício",
+                    "Aceita só banco vazio; transação completa.",
+                    "Segunda tentativa 400 · test_exemplo_persiste_ou_faz_rollback_completo",
                 ),
                 (
-                    "W05",
-                    "Simular falha de SQLite na leitura/gravação, restaurar acesso e encerrar.",
-                    "Erro inicial persiste; erro posterior conserva última leitura; Tentar novamente recupera a página.",
-                    "T25–T26 e Chrome · aprovado",
-                ),
-                (
-                    "W06",
-                    "Registrar uma ausência, corrigir só a data, reabrir; tentar data inválida e colisão.",
-                    "Situação e faltas preservadas; rejeições não alteram o estado.",
-                    "T23–T24, T27–T28 · aprovado",
-                ),
-                (
-                    "W07",
-                    "Na base vazia, carregar exemplo e executar testes pela página; tentar repetir o exemplo.",
-                    "Uma matéria, dois registros e prova; testes em base temporária; segunda carga rejeitada sem duplicar.",
-                    "T29–T30 e Chrome · aprovado",
+                    "Testes pelo botão",
+                    "API devolve quantidade e OK da execução recebida.",
+                    "Execução simulada na API · test_botoes_exemplo_e_testes_nao_exigem_preparo; execução real: página de evidência deste PDF",
                 ),
             ],
-            [1.5 * cm, 9.0 * cm, 11.3 * cm, 4.5 * cm],
-            dense="tight",
+            [4.1 * cm, 5.7 * cm, 15.3 * cm],
         )
     )
     section(
         s,
-        "Limite desta evidência",
-        "T23–T25 e T30 percorrem HTTP com bancos isolados; T26 verifica o início; T27–T29 cobrem data, amostra e falha de disco. Em Chrome, foram percorridos 390 e 320 px, criação, seis situações, correção, agenda em anos diferentes, três disciplinas no celular, troca entre abas, exemplo, testes, reset e recuperação de falhas. A página não calcula faltas: recebe os totais das classes Python. Serviços externos do aplicativo completo não fazem parte deste recorte.",
+        "Limites calculados",
+        "Os cenários de unidade e porcentagem verificam quatro encontros de duas aulas, piso de 25%, cancelamento fora da base e pendência sem frequência presumida. Atraso e saída usam políticas diferentes sem duplicar o algoritmo no controle. Uma falha de SQLite é testada com injeção temporária de erro; o banco da demonstração não é alterado.",
     )
 
-    page(s, "Evidências", "Testes e defeitos corrigidos")
+    page(s, "Evidências", "Rastreabilidade dos testes")
     section(
         s,
-        "Evidências · IDs da matriz e nomes dos testes",
-        "T01–T22 apontam para domínio e terminal; T23–T26 verificam a interface local; T27–T28 aprofundam a correção de data; T29–T30 cobrem a amostra e os botões. Todos constam em evidencias/unittest.txt no ZIP. A situação da matriz descreve a última execução, não apenas uma intenção de teste.",
-    )
-    tests = [
-        ("T01", "test_criar_e_registrar_do_zero"),
-        ("T02", "test_codigo_duplicado_preserva_cadastro_e_frequencia"),
-        ("T03", "test_entrada_invalida_nao_cria_disciplina"),
-        ("T04", "test_sqlite_preserva_disciplina_entre_aberturas"),
-        ("T05", "test_registro_invalido_nao_muda_grade_nem_totais"),
-        ("T06", "test_mesma_operacao_tem_resultado_conforme_chamada"),
-        ("T07", "test_falha_na_gravacao_preserva_memoria_e_banco"),
-        ("T08", "test_correcao_substitui_e_recalcula"),
-        ("T09", "test_correcao_invalida_preserva_registro_e_resumo"),
-        ("T10", "test_consulta_nao_altera_registros"),
-        ("T11", "test_fluxo_completo_sem_dados_preparados"),
-        ("T12", "test_atividade_valida_persiste_sem_alterar_frequencia"),
-        ("T13", "test_atividade_invalida_e_falha_de_escrita_preservam_agenda"),
-        ("T14", "test_agenda_pelo_menu_vazia_e_atividades_ordenadas"),
-        ("T15", "test_falha_no_segundo_insert_desfaz_cadastro_e_grade"),
-        ("T16", "test_rejeicoes_e_conversoes_sao_tratadas"),
-        ("T17", "test_renomear_disciplina_valida_e_persiste"),
-        ("T18", "test_renomear_invalido_ou_falha_de_banco_preserva_nome"),
-        ("T19", "test_falha_de_gravacao_mostra_erro_e_mantem_aula_pendente"),
-        ("T20", "test_escolha_numerada_por_nome_e_volta_sem_alterar"),
-        ("T21", "test_reset_cancelado_e_confirmado_pelo_menu"),
-        ("T22", "test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar"),
-        ("T23", "test_fluxo_completo_e_reabertura"),
-        ("T24", "test_entradas_invalidas_preservam_estado"),
-        ("T25", "test_falhas_de_leitura_e_gravacao_sao_visiveis"),
-        ("T26", "test_ponto_de_entrada_pode_ser_encerrado"),
-        ("T27", "test_remarcar_encontro_preserva_presenca_e_rejeita_colisao"),
-        ("T28", "test_remarcar_persistente_e_falha_na_gravacao"),
-        ("T29", "test_exemplo_persiste_ou_faz_rollback_completo"),
-        ("T30", "test_botoes_exemplo_e_testes_nao_exigem_preparo"),
-    ]
-    middle = (len(tests) + 1) // 2
-    s.append(
-        table(
-            ["ID", "Método unittest", "ID", "Método unittest"],
-            [
-                (
-                    tests[i][0],
-                    tests[i][1],
-                    tests[i + middle][0] if i + middle < len(tests) else "",
-                    tests[i + middle][1] if i + middle < len(tests) else "",
-                )
-                for i in range(middle)
-            ],
-            [1.2 * cm, 11.85 * cm, 1.2 * cm, 11.85 * cm],
-            dense="tight",
-        )
-    )
-    page(s, "Defeitos", "Falhas reproduzidas e corrigidas")
-    section(
-        s,
-        "Reprodução, consequência e nova execução",
-        "Cada linha indica como o defeito foi observado antes da correção e qual teste foi repetido depois. Os dados de teste são fictícios e usam bancos temporários.",
+        "Onde estão as provas",
+        "O ZIP contém demo/test_models.py e demo/test_web.py. Cada linha de unittest inclui o nome do teste, seguido de ok. O arquivo evidencias/unittest.txt guarda a saída integral da última execução. A tabela resume os pontos de decisão mais sensíveis; as matrizes anteriores citam o teste de cada cenário pelo nome completo, sem depender da ordem de execução.",
     )
     s.append(
         table(
-            ["Reprodução na versão anterior", "Consequência", "Correção e reexecução"],
+            ["Contrato", "Teste principal", "Estado conferido"],
             [
                 (
-                    "Cadastrar D, registrar ausência, fechar e reabrir; repetir após renomear pela lista.",
-                    "A presença podia sumir ou o nome mudar só na memória.",
-                    "Fachada persistente salva antes de publicar. T04, T11, T17–T18: reabertura preservou ambos.",
+                    "F01",
+                    "test_entrada_invalida_nao_cria_disciplina",
+                    "Cadastro e grade vazios após rejeição",
                 ),
                 (
-                    "Cadastrar uma data; simular OSError na escrita; tentar registrar ausência.",
-                    "A memória podia mostrar falta que o banco não tinha gravado.",
-                    "Registro só troca após commit. T07 e T19: memória e banco mantiveram pendente.",
+                    "F02",
+                    "test_falha_na_gravacao_preserva_memoria_e_banco",
+                    "Registro pendente nos dois lados",
                 ),
                 (
-                    "Cadastrar duas matérias; abrir Consultar e tentar escolher pelo nome.",
-                    "O menu exigia decorar e digitar o código da disciplina.",
-                    "Seleção numerada por nome. T20: escolheu a segunda matéria sem digitar código.",
+                    "F03",
+                    "test_correcao_substitui_e_recalcula",
+                    "A e L recalculados, sem duplicação",
+                ),
+                ("F04", "test_consulta_nao_altera_registros", "Consultas sem mutação"),
+                (
+                    "F05",
+                    "test_atividade_invalida_e_falha_de_escrita_preservam_agenda",
+                    "Agenda e frequência intactas",
                 ),
                 (
-                    "Bloquear a leitura do SQLite na abertura e tentar recuperar depois.",
-                    "A tela podia parecer vazia após o aviso transitório.",
-                    "Erro persistente e Tentar novamente. T25 e Chrome: voltou a mostrar os dados originais.",
+                    "F06",
+                    "test_atividade_valida_persiste_sem_alterar_frequencia",
+                    "Agenda recuperada após reabertura",
+                ),
+                (
+                    "F07",
+                    "test_renomear_invalido_ou_falha_de_banco_preserva_nome",
+                    "Nome anterior preservado",
+                ),
+                (
+                    "F08",
+                    "test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar",
+                    "Transação e rollback",
                 ),
             ],
-            [9.0 * cm, 7.7 * cm, 10.0 * cm],
-            dense="tight",
+            [3 * cm, 11 * cm, 10 * cm],
+            dense=True,
         )
     )
     section(
         s,
-        "Situação após a reexecução",
-        "T04, T07, T11, T17–T20 e T25 passaram na última execução; as outras funções também foram repetidas pelo conjunto completo. Os resultados integrais aparecem na página seguinte e em evidencias/unittest.txt. Não há defeito conhecido pendente neste recorte acadêmico. Moodle, SIGA e GPS pertencem à aplicação ampliada e não participam dos cálculos ou da persistência desta demo.",
+        "Independência",
+        "Os testes de domínio puro criam classes novas; os de persistência usam TemporaryDirectory; os de HTTP iniciam servidor local em porta temporária. Nenhum cenário precisa de conta, rede, localização ou ordem especial. A verificação do pacote extrai o ZIP e repete unittest sobre os arquivos realmente enviados.",
     )
-    page(s, "Última execução", "Evidência integral dos testes")
+
+    page(s, "Defeitos e regressão", "O que foi corrigido")
     section(
         s,
-        "Como repetir sem dados reais",
-        "O ZIP inclui demo/test_models.py, demo/test_main.py, demo/test_web.py, demo/README.md e evidencias/unittest.txt. Extraia, entre em demo/ e rode <b>python web.py</b>; o navegador abre e Ajustes oferece Executar testes. O mesmo conjunto roda no terminal com <b>python -m unittest discover -v</b>. Os testes usam dados temporários e dispensam conta, internet, Moodle e GPS. O menu alternativo é <b>python main.py</b>.",
+        "Registro de ajustes verificáveis",
+        "Na revisão do produto, a remarcação de data e o menu alternativo foram retirados para reduzir o escopo e manter um caminho único de uso. A criação do exemplo foi movida para exemplo.py, separada da classe de domínio. A fachada _DisciplinaPersistente foi eliminada; o controle liga a gravação a cada disciplina para que lista, busca e cadastro tenham o mesmo comportamento persistente. Esses itens eram caminhos adicionais que confundiam o recorte acadêmico e sua explicação oral.",
     )
-    evidence_path = Path(__file__).parent / "package" / "evidencias" / "unittest.txt"
-    evidence = evidence_path.read_text(encoding="utf-8-sig")
-    lines = [line for line in evidence.splitlines() if line.startswith("test_")]
-    if not lines or "OK" not in evidence:
-        raise RuntimeError("A evidência de unittest precisa existir e terminar em OK.")
-    observed = []
-    for line in lines:
-        name = line.split(" (")[0]
-        status = line.rsplit("...", 1)[-1].strip()
-        if status != "ok":
-            raise RuntimeError("Há teste sem resultado aprovado: " + line)
-        observed.append((name, status))
-    paired = []
-    middle = (len(observed) + 1) // 2
-    for i in range(middle):
-        other = observed[i + middle] if i + middle < len(observed) else ("", "")
-        paired.append((observed[i][0], observed[i][1], other[0], other[1]))
-    summary = next(
-        (line for line in evidence.splitlines() if line.startswith("Ran ")), ""
-    )
-    section(
-        s,
-        "Resultado final",
-        f"{summary}. O processo terminou com <b>OK</b>. A saída textual completa, "
-        "incluindo a classe de cada teste, está em evidencias/unittest.txt no ZIP. "
-        "Todos os cenários da matriz ficaram aprovados nesta rodada.",
-    )
-    evidence_table = table(
-        ["Método executado", "Obs.", "Método executado", "Obs."],
-        paired,
-        [11.1 * cm, 1.95 * cm, 11.1 * cm, 1.95 * cm],
-        dense="tight",
-    )
-    evidence_table.setStyle(
-        TableStyle(
+    s.append(
+        table(
+            ["Risco observado", "Mudança", "Regressão executada"],
             [
-                ("TOPPADDING", (0, 0), (-1, -1), 0.5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
-            ]
+                (
+                    "Exemplo podia deixar dados parciais numa falha",
+                    "Validação antes da gravação e uma única transação SQLite.",
+                    "test_exemplo_persiste_ou_faz_rollback_completo",
+                ),
+                (
+                    "Correção podia divergir do banco se a escrita falhasse",
+                    "Salvar antes de substituir o Registro do dia.",
+                    "test_falha_na_gravacao_preserva_memoria_e_banco",
+                ),
+                (
+                    "Reset com exclusão parcial",
+                    "DELETEs na mesma transação; memória limpa após commit.",
+                    "test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar",
+                ),
+            ],
+            [4.5 * cm, 6 * cm, 6.5 * cm],
         )
     )
-    s.append(evidence_table)
+    section(
+        s,
+        "Resultado e pendências",
+        "A última execução de unittest foi aprovada; o número exato de testes e a saída completa constam em evidencias/unittest.txt. Não há falha conhecida nos contratos F01–F08 desta versão. Importação universitária, localização automática e remarcação de grade estão fora do recorte e não foram marcadas como verificadas neste relatório.",
+    )
+
+    page(s, "Reprodução", "Como conferir esta versão")
+    section(
+        s,
+        "Preparação em poucos passos",
+        "1. Extraia Frequencia_UFMG_Entrega_Final.zip. 2. Entre na pasta demo/. 3. Execute python web.py. 4. Abra http://127.0.0.1:8878 se necessário. 5. Clique Usar dados de exemplo e consulte a disciplina e a agenda. 6. Em Ajustes, clique Executar testes; o resultado aparece na página. O mesmo conjunto pode ser executado com python -m unittest discover -v, dentro de demo/. Não existe outro front nem script de configuração prévia.",
+    )
+    section(
+        s,
+        "Conferência manual a partir do zero",
+        "Em Ajustes, apague os dados da demo com APAGAR. Cadastre DEMO01, duas chamadas e dois blocos de 50 minutos por encontro nas datas 02, 04, 09 e 11/11/2026. Marque 02/11 como ausente: faltas usadas 2, limite 2 e frequência ainda indefinida. Corrija 02/11 para presente: faltas usadas 0. Cadastre uma prova em 10/11/2026 e reabra a página: prova e frequência devem permanecer. Uma data fora da grade deve ser rejeitada sem mudar esses dados.",
+    )
+    section(
+        s,
+        "Como conferir a última execução",
+        "Abra evidencias/unittest.txt no ZIP. O final do arquivo informa o total de testes e OK; as linhas anteriores listam cada nome usado nas matrizes. O verificador do pacote também extrai os arquivos e executa o conjunto sobre uma base temporária. O arquivo demo/frequencia.db fornecido é uma base inicial vazia, sem dados reais; o botão de exemplo monta dados fictícios quando solicitado.",
+    )
+    section(
+        s,
+        "Estado final",
+        "Produto e verificação exibem o identificador de versão "
+        + VERSION
+        + ". Os resultados observados nas tabelas correspondem ao código e aos testes incluídos no mesmo ZIP. Se a universidade ou o navegador estiverem indisponíveis, o executável local continua demonstrável porque não consulta serviços externos.",
+    )
+
+    page(s, "Última execução", "Saída integral de unittest")
+    section(
+        s,
+        "Evidência no próprio relatório",
+        "Esta é a saída da execução realizada ao montar o ZIP desta versão. As linhas identificam os mesmos testes citados nas tabelas, e o final registra a quantidade e o resultado. A cópia em texto está em evidencias/unittest.txt para repetição e busca.",
+    )
+    evidencia = (Path(__file__).parent / "package/evidencias/unittest.txt").read_text(
+        encoding="utf-8"
+    )
+    s.append(
+        Preformatted(
+            evidencia.strip(),
+            ParagraphStyle("SaidaUnittest", fontName="Courier", fontSize=7.8, leading=10.7),
+        )
+    )
     build("Frequencia_UFMG_Verificacao.pdf", s, wide=True)
 
 
 if __name__ == "__main__":
-    product()
-    verification()
+    produto()
+    verificacao()
+    print("Relatórios gerados:", VERSION, Path(__file__).parent)

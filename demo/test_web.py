@@ -31,11 +31,11 @@ class InterfaceWebTest(unittest.TestCase):
         with patch(
             "subprocess.run",
             return_value=SimpleNamespace(
-                returncode=0, stdout="", stderr="Ran 34 tests in 1.0s\n\nOK\n"
+                returncode=0, stdout="", stderr="Ran 25 tests in 1.0s\n\nOK\n"
             ),
         ) as executar:
             status, body = self.post("/api/testes", {})
-        self.assertEqual((status, body["ok"], body["quantidade"]), (200, True, 34))
+        self.assertEqual((status, body["ok"], body["quantidade"]), (200, True, 25))
         self.assertEqual(executar.call_args.kwargs["cwd"], Path(__file__).parent)
         with patch(
             "subprocess.run",
@@ -125,27 +125,12 @@ class InterfaceWebTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(state["disciplinas"][0]["resumo"]["faltas"], 0)
         status, state = self.post(
-            "/api/remarcar",
-            {
-                "codigo": "DEMO01",
-                "dia_anterior": "2026-11-02",
-                "novo_dia": "2026-11-03",
-            },
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(state["disciplinas"][0]["registros"][0]["dia"], "2026-11-03")
-        self.assertEqual(
-            state["disciplinas"][0]["registros"][0]["situacao"], "presente"
-        )
-        status, state = self.post(
             "/api/atividades",
             {"codigo": "DEMO01", "dia": "2026-11-10", "tipo": "prova", "titulo": "P1"},
         )
         self.assertEqual(status, 200)
         self.assertEqual(state["atividades"][0]["nome_disciplina"], "Circuitos")
-        status, state = self.post(
-            "/api/renomear", {"codigo": "DEMO01", "nome": "Circuitos 2"}
-        )
+        status, state = self.post("/api/renomear", {"codigo": "DEMO01", "nome": "Circuitos 2"})
         self.assertEqual(status, 200)
         self.assertEqual(state["atividades"][0]["nome_disciplina"], "Circuitos 2")
 
@@ -153,10 +138,8 @@ class InterfaceWebTest(unittest.TestCase):
         _, saved = self.get("/api/estado")
         saved = json.loads(saved)
         self.assertEqual(saved["disciplinas"][0]["nome"], "Circuitos 2")
-        self.assertEqual(
-            saved["disciplinas"][0]["registros"][0]["situacao"], "presente"
-        )
-        self.assertEqual(saved["disciplinas"][0]["registros"][0]["dia"], "2026-11-03")
+        self.assertEqual(saved["disciplinas"][0]["registros"][0]["situacao"], "presente")
+        self.assertEqual(saved["disciplinas"][0]["registros"][0]["dia"], "2026-11-02")
         self.assertEqual(saved["atividades"][0]["titulo"], "P1")
 
         status, state = self.post("/api/reset", {"confirmacao": "APAGAR"})
@@ -185,20 +168,6 @@ class InterfaceWebTest(unittest.TestCase):
             (
                 "/api/registros",
                 {"codigo": "D1", "dia": None, "situacao": "ausente"},
-                400,
-            ),
-            (
-                "/api/remarcar",
-                {"codigo": "D1", "dia_anterior": "2026-11-02", "novo_dia": "sem-data"},
-                400,
-            ),
-            (
-                "/api/remarcar",
-                {
-                    "codigo": "D1",
-                    "dia_anterior": "2026-11-03",
-                    "novo_dia": "2026-11-04",
-                },
                 400,
             ),
             (
@@ -242,9 +211,7 @@ class InterfaceWebTest(unittest.TestCase):
 
     def test_falhas_de_leitura_e_gravacao_sao_visiveis(self):
         handler = self.server.RequestHandlerClass
-        with patch.object(
-            handler, "controle", side_effect=sqlite3.OperationalError("disco")
-        ):
+        with patch.object(handler, "controle", side_effect=sqlite3.OperationalError("disco")):
             status, body = self.get("/api/estado")
         self.assertEqual(status, 503)
         self.assertIn("disco", json.loads(body)["erro"])

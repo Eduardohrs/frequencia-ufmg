@@ -1,6 +1,5 @@
-"""Confere o pacote final como uma pessoa que acabou de baixar o ZIP."""
+"""Extrai o ZIP final e testa exatamente os arquivos que serão enviados."""
 
-import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -10,148 +9,68 @@ import fitz
 
 BASE = Path(__file__).parent
 ARCHIVE = BASE / "Frequencia_UFMG_Entrega_Final.zip"
-VERSION = "PF-02-AGENDA"
+VERSION = "PF-03-WEB"
 
 
-def check_pdf(path, min_pages, functions):
+def conferir_pdf(path, paginas_minimas, identificadores):
     with fitz.open(path) as pdf:
-        assert len(pdf) >= min_pages, (path.name, len(pdf))
-        text = "\n".join(page.get_text() for page in pdf)
-        assert VERSION in text, path.name
-        for label in functions:
-            assert label in text, (path.name, label)
-        for page_number, page in enumerate(pdf, 1):
-            assert len(page.get_text().strip()) > 300, (path.name, page_number)
-            assert f"Página {page_number}" in page.get_text(), (path.name, page_number)
+        assert len(pdf) >= paginas_minimas, (path.name, len(pdf))
+        texto = "\n".join(pagina.get_text() for pagina in pdf)
+        for trecho in [VERSION, *identificadores]:
+            assert trecho in texto, (path.name, trecho)
+        for numero, pagina in enumerate(pdf, 1):
+            assert len(pagina.get_text().strip()) > 300, (path.name, numero)
+            assert f"Página {numero}" in pagina.get_text()
 
 
 def main():
-    names = {
+    obrigatorios = {
         "LEIA-ME.md",
         "demo/README.md",
-        "demo/main.py",
         "demo/web.py",
+        "demo/models.py",
+        "demo/database.py",
+        "demo/exemplo.py",
+        "demo/frequencia.db",
+        "demo/test_models.py",
+        "demo/test_web.py",
         "demo/web/index.html",
         "demo/web/app.css",
         "demo/web/app.js",
-        "demo/models.py",
-        "demo/database.py",
-        "demo/frequencia.db",
-        "demo/test_main.py",
-        "demo/test_models.py",
-        "demo/test_web.py",
         "evidencias/unittest.txt",
         "relatorio/Frequencia_UFMG_Produto_Final.pdf",
         "relatorio/Frequencia_UFMG_Verificacao.pdf",
     }
-    with ZipFile(ARCHIVE) as package:
-        missing = names - set(package.namelist())
-        assert not missing, f"Arquivos ausentes no ZIP: {sorted(missing)}"
-        with tempfile.TemporaryDirectory() as folder:
-            package.extractall(folder)
-            root = Path(folder)
-            demo = root / "demo"
-            product = root / "relatorio" / "Frequencia_UFMG_Produto_Final.pdf"
-            verification = root / "relatorio" / "Frequencia_UFMG_Verificacao.pdf"
-            check_pdf(product, 10, [*[f"F0{i}" for i in range(1, 9)], ARCHIVE.name])
-            check_pdf(verification, 9, [f"F0{i}" for i in range(1, 9)])
-            evidence = (root / "evidencias" / "unittest.txt").read_text(
-                encoding="utf-8-sig"
+    with ZipFile(ARCHIVE) as arquivo:
+        nomes = set(arquivo.namelist())
+        assert obrigatorios <= nomes, f"Ausentes: {sorted(obrigatorios - nomes)}"
+        assert "demo/main.py" not in nomes and "demo/test_main.py" not in nomes
+        with tempfile.TemporaryDirectory() as pasta:
+            arquivo.extractall(pasta)
+            raiz = Path(pasta)
+            conferir_pdf(
+                raiz / "relatorio/Frequencia_UFMG_Produto_Final.pdf",
+                10,
+                [f"F0{i}" for i in range(1, 9)],
             )
-            assert "Ran 35 tests" in evidence and evidence.rstrip().endswith("OK")
-            tests = subprocess.run(
+            conferir_pdf(
+                raiz / "relatorio/Frequencia_UFMG_Verificacao.pdf",
+                9,
+                [*[f"F0{i}" for i in range(1, 9)], "Ran 25 tests", "OK"],
+            )
+            evidencia = (raiz / "evidencias/unittest.txt").read_text(encoding="utf-8")
+            assert "Ran 25 tests" in evidencia and evidencia.rstrip().endswith("OK")
+            execucao = subprocess.run(
                 ["py", "-m", "unittest", "discover", "-v"],
-                cwd=demo,
+                cwd=raiz / "demo",
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=90,
+                check=False,
             )
-            assert tests.returncode == 0, tests.stdout + tests.stderr
-            env = os.environ.copy()
-            env["FREQUENCIA_DB_PATH"] = str(root / "smoke.db")
-            actions = "\n".join(
-                [
-                    "1",
-                    "DEMO01",
-                    "Disciplina teste",
-                    "2",
-                    "2",
-                    "02/11/2026,04/11/2026",
-                    "2",
-                    "1",
-                    "02/11/2026",
-                    "ausente",
-                    "5",
-                    "1",
-                    "03/11/2026",
-                    "prova",
-                    "P1",
-                    "7",
-                    "1",
-                    "Nome corrigido",
-                    "6",
-                    "3",
-                    "1",
-                    "0",
-                    "",
-                ]
-            )
-            run = subprocess.run(
-                ["py", "main.py"],
-                input=actions,
-                cwd=demo,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            assert run.returncode == 0, run.stderr
-            for phrase in [
-                "Disciplina criada",
-                "Registro salvo",
-                "Atividade salva",
-                "Disciplina renomeada",
-                "03/11/2026 | Nome corrigido (DEMO01) | prova | P1",
-                "Nome corrigido",
-            ]:
-                assert phrase in run.stdout, (phrase, run.stdout)
-            again = subprocess.run(
-                ["py", "main.py"],
-                input="3\n1\n6\n0\n",
-                cwd=demo,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            assert again.returncode == 0, again.stderr
-            assert "Nome corrigido" in again.stdout and "P1" in again.stdout
-            reset = subprocess.run(
-                ["py", "main.py"],
-                input="8\nAPAGAR\n0\n",
-                cwd=demo,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            assert reset.returncode == 0, reset.stderr
-            assert "Dados apagados" in reset.stdout
-            vazio = subprocess.run(
-                ["py", "main.py"],
-                input="3\n6\n0\n",
-                cwd=demo,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            assert vazio.returncode == 0, vazio.stderr
-            assert "Nenhuma disciplina cadastrada" in vazio.stdout
-            assert "Agenda vazia" in vazio.stdout
-            print(
-                "ZIP íntegro; PDFs, 35 testes, interface local, persistência e reset aprovados."
-            )
+            assert execucao.returncode == 0, execucao.stdout + execucao.stderr
+            assert "Ran 25 tests" in execucao.stdout + execucao.stderr
+    print(f"ZIP, PDFs e 25 testes aprovados: {VERSION}")
 
 
 if __name__ == "__main__":

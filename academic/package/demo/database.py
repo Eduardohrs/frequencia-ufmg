@@ -119,8 +119,7 @@ def salvar_exemplo(disciplina, atividade, caminho: str | Path = DB_PATH) -> int:
                 ),
             )
         cursor = banco.execute(
-            "INSERT INTO atividades (disciplina_codigo, dia, tipo, titulo) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO atividades (disciplina_codigo, dia, tipo, titulo) VALUES (?, ?, ?, ?)",
             (
                 atividade.codigo_disciplina,
                 atividade.dia.isoformat(),
@@ -142,9 +141,7 @@ def listar_disciplinas(caminho: str | Path = DB_PATH) -> list[tuple]:
 def atualizar_nome(codigo: str, nome: str, caminho: str | Path = DB_PATH) -> None:
     """Troca só o nome de uma disciplina já validada pela camada de negócio."""
     with conexao(caminho) as banco:
-        cursor = banco.execute(
-            "UPDATE disciplinas SET nome = ? WHERE codigo = ?", (nome, codigo)
-        )
+        cursor = banco.execute("UPDATE disciplinas SET nome = ? WHERE codigo = ?", (nome, codigo))
         if cursor.rowcount != 1:
             raise ValueError("Disciplina não encontrada no banco de dados.")
 
@@ -153,8 +150,7 @@ def obter_registros(codigo: str, caminho: str | Path = DB_PATH) -> list[tuple]:
     """Devolve data ISO, situação e faltas, inclusive encontros pendentes."""
     with conexao(caminho) as banco:
         return banco.execute(
-            "SELECT dia, situacao, faltas FROM registros "
-            "WHERE disciplina_codigo = ? ORDER BY dia",
+            "SELECT dia, situacao, faltas FROM registros WHERE disciplina_codigo = ? ORDER BY dia",
             (codigo,),
         ).fetchall()
 
@@ -179,31 +175,13 @@ def salvar_registro(
         )
 
 
-def remarcar_encontro(
-    codigo: str, dia_anterior: date, novo_dia: date, caminho: str | Path = DB_PATH
-) -> None:
-    """Altera a data de um encontro, mantendo situação e faltas na mesma linha.
-
-    A chave (disciplina, data) impede colisões. Se a escrita falhar, a transação
-    é desfeita e o domínio ainda conserva o registro com a data anterior.
-    """
-    with conexao(caminho) as banco:
-        cursor = banco.execute(
-            "UPDATE registros SET dia = ? WHERE disciplina_codigo = ? AND dia = ?",
-            (novo_dia.isoformat(), codigo, dia_anterior.isoformat()),
-        )
-        if cursor.rowcount != 1:
-            raise ValueError("Encontro não encontrado no banco de dados.")
-
-
 def salvar_atividade(
     codigo: str, dia: date, tipo: str, titulo: str, caminho: str | Path = DB_PATH
 ) -> int:
     """Grava uma prova ou trabalho e retorna o ID criado pelo SQLite."""
     with conexao(caminho) as banco:
         cursor = banco.execute(
-            "INSERT INTO atividades (disciplina_codigo, dia, tipo, titulo) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO atividades (disciplina_codigo, dia, tipo, titulo) VALUES (?, ?, ?, ?)",
             (codigo, dia.isoformat(), tipo, titulo),
         )
         return cursor.lastrowid
@@ -213,8 +191,7 @@ def listar_atividades(caminho: str | Path = DB_PATH) -> list[tuple]:
     """Devolve agenda por prazo e, no empate, pela ordem de inserção."""
     with conexao(caminho) as banco:
         return banco.execute(
-            "SELECT id, disciplina_codigo, dia, tipo, titulo FROM atividades "
-            "ORDER BY dia, id"
+            "SELECT id, disciplina_codigo, dia, tipo, titulo FROM atividades ORDER BY dia, id"
         ).fetchall()
 
 

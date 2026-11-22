@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from exemplo import criar_exemplo
 from models import ControleAcademico
 
 ASSETS = {
@@ -94,7 +95,8 @@ def executar_acao(controle, rota, dados):
         corrigir = dados.get("corrigir", False)
         if type(corrigir) is not bool:
             raise ValueError("A correção deve ser indicada como verdadeiro ou falso.")
-        controle.obter_disciplina(dados.get("codigo")).registrar_presenca(
+        controle.registrar_presenca(
+            dados.get("codigo"),
             ler_data(dados.get("dia")),
             dados.get("situacao"),
             corrigir=corrigir,
@@ -108,18 +110,10 @@ def executar_acao(controle, rota, dados):
         )
     elif rota == "/api/renomear":
         controle.renomear_disciplina(dados.get("codigo"), dados.get("nome"))
-    elif rota == "/api/remarcar":
-        controle.remarcar_encontro(
-            dados.get("codigo"),
-            ler_data(dados.get("dia_anterior")),
-            ler_data(dados.get("novo_dia")),
-        )
     elif rota == "/api/reset":
         if dados.get("confirmacao") != "APAGAR":
             raise ValueError("Digite APAGAR para confirmar.")
         controle.apagar_tudo()
-    elif rota == "/api/exemplo":
-        controle.preencher_exemplo()
     else:
         raise LookupError("Ação inexistente.")
 
@@ -147,7 +141,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         self.responder(codigo, json.dumps(dados, ensure_ascii=False).encode("utf-8"))
 
     def controle(self):
-        # Reabrir o SQLite por pedido também enxerga alterações feitas no terminal.
+        # Reabrir o SQLite por pedido mantém o estado visível atualizado.
         return ControleAcademico(persistente=True, caminho_banco=self.caminho_banco)
 
     def do_GET(self):
@@ -160,9 +154,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             return
         if rota in ASSETS:
             nome, tipo = ASSETS[rota]
-            self.responder(
-                200, (Path(__file__).with_name("web") / nome).read_bytes(), tipo
-            )
+            self.responder(200, (Path(__file__).with_name("web") / nome).read_bytes(), tipo)
             return
         self.json(404, {"erro": "Página não encontrada."})
 
@@ -173,7 +165,6 @@ class DemoHandler(BaseHTTPRequestHandler):
             "/api/registros",
             "/api/atividades",
             "/api/renomear",
-            "/api/remarcar",
             "/api/reset",
             "/api/exemplo",
             "/api/testes",
@@ -212,9 +203,13 @@ class DemoHandler(BaseHTTPRequestHandler):
                     },
                 )
                 return
-            controle = self.controle()
-            executar_acao(controle, rota, dados)
-            self.json(200, estado(controle))
+            if rota == "/api/exemplo":
+                criar_exemplo(self.caminho_banco)
+                self.json(200, estado(self.controle()))
+            else:
+                controle = self.controle()
+                executar_acao(controle, rota, dados)
+                self.json(200, estado(controle))
         except (TypeError, ValueError) as erro:
             self.json(400, {"erro": str(erro)})
         except (sqlite3.Error, OSError) as erro:

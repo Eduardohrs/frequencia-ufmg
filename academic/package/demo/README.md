@@ -1,4 +1,4 @@
-# Frequência UFMG — produto acadêmico PF-02-AGENDA
+# Frequência UFMG — produto acadêmico PF-03-WEB
 
 Python 3.11 ou superior. Usa somente a biblioteca padrão, incluindo SQLite. Não exige contas ou internet.
 Extraia o ZIP, abra o terminal **dentro da pasta `demo/`** e execute um comando:
@@ -20,11 +20,6 @@ mostra faltas usadas, limite, saldo e frequência quando todas as aulas tiverem
 sido resolvidas. No celular, use o seletor **Disciplina** para alternar entre
 matérias; não é necessário memorizar códigos. **Agenda** guarda provas e
 trabalhos vinculados à matéria e mostra o ano de cada prazo.
-Use **Corrigir data** no encontro se a data da grade estiver errada: a presença,
-as faltas e os totais ficam preservados, inclusive após reabrir o navegador.
-Essa correção existe na interface visual; o menu de terminal conserva o fluxo
-principal de cadastro e frequência.
-
 **Renomear** altera só o nome. Em **Ajustes**, **Apagar dados da demo** requer
 digitar `APAGAR`; cancelar preserva tudo. O botão **Executar testes** roda os
 testes em bancos temporários e mostra o resultado nessa mesma tela. A mesma
@@ -43,11 +38,6 @@ em chamadas às classes de `models.py`, onde ficam validações e cálculos. `da
 salva no arquivo `frequencia.db`, que permanece ao fechar e reabrir. Para encerrar
 o servidor, volte ao terminal e pressione Ctrl+C.
 
-Também é possível usar a mesma demo pelo terminal com `python main.py`. Nesse
-menu, as matérias aparecem por nome e número; o código é só referência. A opção
-8 reinicia os dados após `APAGAR`. Terminal e navegador compartilham o mesmo
-banco local quando executados na mesma pasta.
-
 ## Exemplo a partir do zero
 
 - Crie `DEMO01`, nome `Disciplina de teste`, duas chamadas e duas aulas por encontro.
@@ -61,9 +51,10 @@ com zero faltas. O limite é 25% da grade, arredondado para baixo. O percentual
 só aparece quando não há pendências. Uma chamada não desconta atraso/saída
 antecipada; duas descontam metade do encontro. Uma aula não admite duas chamadas.
 
-`models.py` contém as regras, `database.py` a persistência SQLite, `web.py` a
-ponte HTTP local, `web/` a interface visual, `main.py` o menu alternativo,
-`test_*.py` os testes independentes. O botão de exemplo usa as mesmas classes
-Python do cadastro manual e grava a amostra numa transação SQLite.
+`models.py` contém as regras e o controle acadêmico; `database.py` persiste
+no SQLite; `web.py` liga a interface visual em `web/` às classes; `exemplo.py`
+monta dados fictícios fora das classes; `test_*.py` contém os testes independentes.
+O botão de exemplo usa as mesmas classes do cadastro manual e grava a amostra
+numa transação SQLite. Só existe uma interface de uso: a página local.
 Esta pasta é uma versão independente para avaliação de POO.
 O aplicativo completo está em https://github.com/Eduardohrs/frequencia-ufmg.

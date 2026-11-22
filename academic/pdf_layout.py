@@ -19,7 +19,7 @@ from reportlab.platypus import (
 )
 
 BASE = Path(__file__).parent
-VERSION = "PF-02-AGENDA"
+VERSION = "PF-03-WEB"
 INK = colors.HexColor("#243447")
 BLUE = colors.HexColor("#284D6C")
 ACCENT = colors.HexColor("#276F7B")
@@ -97,14 +97,10 @@ def footer(canvas, doc):
     canvas.saveState()
     width, height = doc.pagesize
     canvas.setStrokeColor(ACCENT)
-    canvas.line(
-        doc.leftMargin, height - 1.55 * cm, width - doc.rightMargin, height - 1.55 * cm
-    )
+    canvas.line(doc.leftMargin, height - 1.55 * cm, width - doc.rightMargin, height - 1.55 * cm)
     canvas.setFillColor(BLUE)
     canvas.setFont("Body", 8)
-    canvas.drawString(
-        doc.leftMargin, 1.12 * cm, f"Frequência UFMG  |  APPOO 2026/2  |  {VERSION}"
-    )
+    canvas.drawString(doc.leftMargin, 1.12 * cm, f"Frequência UFMG  |  APPOO 2026/2  |  {VERSION}")
     canvas.drawRightString(width - doc.rightMargin, 1.12 * cm, f"Página {doc.page}")
     canvas.restoreState()
 

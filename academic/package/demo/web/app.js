@@ -151,7 +151,7 @@ function courseDetail(course) {
   </div>
   <div class="surface"><div class="section-heading"><h2>Encontros</h2><span class="badge">${course.registros.length}</span></div>
     <div class="meeting-list">${course.registros.map((item) => `<div class="meeting">
-      <div class="meeting-date">${dateLabel(item.dia)}<small>${item.aulas} aula${item.aulas === 1 ? "" : "s"} de 50 min</small><button type="button" class="text-button date-edit" data-reschedule="${escapeHtml(item.dia)}">Corrigir data</button></div>
+      <div class="meeting-date">${dateLabel(item.dia)}<small>${item.aulas} aula${item.aulas === 1 ? "" : "s"} de 50 min</small></div>
       <div class="meeting-right"><span class="meeting-state ${item.faltas ? "absent" : item.situacao === "presente" ? "present" : ""}">${statusLabel[item.situacao] || escapeHtml(item.situacao)}${item.faltas ? ` · ${item.faltas} falta${item.faltas === 1 ? "" : "s"}` : ""}</span>
         <button type="button" class="text-button" data-register="${escapeHtml(item.dia)}">${item.situacao === "pendente" ? "Registrar" : "Corrigir"}</button></div></div>`).join("")}</div>
   </div>
@@ -191,13 +191,6 @@ function openDialog(id) {
     $("#rename-context").textContent = course.nome;
     $('#rename-form [name="nome"]').value = course.nome;
     $('#rename-form button[type="submit"]').disabled = true;
-  }
-  if (id === "reschedule-dialog") {
-    const course = ui.state.disciplinas.find((item) => item.codigo === ui.selected);
-    if (!course || !ui.reschedule) return;
-    $("#reschedule-context").textContent = `${course.nome} · ${dateLabel(ui.reschedule)}`;
-    $('#reschedule-form [name="novo_dia"]').value = ui.reschedule;
-    $('#reschedule-form button[type="submit"]').disabled = true;
   }
   dialog.showModal();
   $("input:not([type=hidden]),select", dialog)?.focus();
@@ -261,8 +254,6 @@ document.addEventListener("click", (event) => {
   const removeDate = event.target.closest("[data-remove-date]");
   if (removeDate) { ui.dates = ui.dates.filter((date) => date !== removeDate.dataset.removeDate); renderDates(); return; }
   if (event.target.closest("[data-close]")) { event.target.closest("dialog").close(); return; }
-  const reschedule = event.target.closest("[data-reschedule]");
-  if (reschedule) { ui.reschedule = reschedule.dataset.reschedule; openDialog("reschedule-dialog"); return; }
   const register = event.target.closest("[data-register]");
   if (register) {
     const course = ui.state.disciplinas.find((item) => item.codigo === ui.selected);
@@ -319,10 +310,6 @@ $('#rename-form [name="nome"]').addEventListener("input", (event) => {
   $('#rename-form [data-error]').hidden = true;
 });
 
-$('#reschedule-form [name="novo_dia"]').addEventListener("input", (event) => {
-  $('#reschedule-form button[type="submit"]').disabled = event.target.value === ui.reschedule;
-  $('#reschedule-form [data-error]').hidden = true;
-});
 
 function syncCourseRules() {
   const form = $("#course-form");
@@ -375,15 +362,6 @@ $("#rename-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   submit(form, "/api/renomear", { codigo: ui.selected, nome: new FormData(form).get("nome") }, "Nome atualizado.");
-});
-$("#reschedule-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  submit(form, "/api/remarcar", {
-    codigo: ui.selected,
-    dia_anterior: ui.reschedule,
-    novo_dia: new FormData(form).get("novo_dia"),
-  }, "Data corrigida.");
 });
 $("#reset-form").addEventListener("submit", (event) => {
   event.preventDefault();
