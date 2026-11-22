@@ -7,6 +7,17 @@ teste de leitura sem contexto prévio e conferência técnica do PDF renderizado
 
 ## Correções feitas nesta rodada
 
+- O relatório distingue o aplicativo Android/web em desenvolvimento e uso da
+  demo acadêmica independente. Explica por que a apresentação avalia o núcleo
+  de POO em Python, enquanto autenticação, importação e localização exigem
+  infraestrutura maior e não são fingidas como verificadas neste ZIP.
+- O diagrama de classes explicita a referência de atividade à disciplina, a
+  política escolhida e as multiplicidades; os diagramas de sequência agora
+  cobrem cadastro, frequência, agenda e reinício, com rejeição e rollback
+  descritos junto aos fluxos.
+- A matriz de verificação separa entradas inválidas em subcasos e usa números
+  observados compatíveis com os próprios testes. A última página resume a
+  execução em fonte legível; o log integral segue no arquivo de evidência.
 - O produto descreve apenas as oito funções presentes na interface web.
 - Remarcação de encontro e menu de terminal saíram do código, dos testes, do
   README, das matrizes e das instruções de reprodução.

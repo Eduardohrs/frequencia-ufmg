@@ -173,6 +173,7 @@ def class_diagram():
         (140, 200, 170, 200),
         (305, 200, 335, 200),
         (72, 170, 72, 145),
+        (140, 145, 170, 170),
         (238, 170, 238, 145),
         (238, 75, 155, 56),
         (238, 75, 320, 56),
@@ -190,7 +191,7 @@ def class_diagram():
         (149, 208, "0..*"),
         (313, 208, "1..*"),
         (79, 151, "0..*"),
-        (244, 152, "usa"),
+        (244, 152, "1 política"),
     ]:
         d.add(String(x, y, label, fontName="Body", fontSize=7, fillColor=INK))
     return d
@@ -198,7 +199,7 @@ def class_diagram():
 
 def sequence_diagram(steps, labels=None):
     """Uma linha por mensagem; alturas fixas deixam todos os textos legíveis."""
-    d = Drawing(470, 37 + 27 * len(steps))
+    d = Drawing(470, 37 + 18 * len(steps))
     labels = labels or ["Estudante", "Menu", "Controle", "Disciplina", "SQLite"]
     xs = [25 + i * 420 / (len(labels) - 1) for i in range(len(labels))]
     top = d.height - 17
@@ -216,7 +217,7 @@ def sequence_diagram(steps, labels=None):
         )
         d.add(Line(x, top - 9, x, 8, strokeColor=RULE, strokeWidth=0.8))
     for n, (source, target, label) in enumerate(steps):
-        y = top - 27 * (n + 1)
+        y = top - 18 * (n + 1)
         d.add(Line(xs[source], y, xs[target], y, strokeColor=ACCENT, strokeWidth=1.1))
         direction = 1 if target > source else -1
         tip = xs[target]
