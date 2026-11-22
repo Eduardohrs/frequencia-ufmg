@@ -376,17 +376,17 @@ def produto():
     section(
         s,
         "Presença e correção F02–F03",
-        "O controle encontra a disciplina. Ela valida data, situação e modo de correção; a política calcula faltas. Disciplina chama a gravação vinculada pelo controle. O Registro anterior só é substituído após o commit; o resumo é calculado do novo estado.",
+        "A página envia data, situação, modo de correção e a versão do Registro que mostrou ao estudante. O controle encontra a disciplina; ela valida os dados e a política calcula faltas. A gravação só atualiza o SQLite se essa versão ainda for a atual e aumenta a versão. Após o commit, Disciplina substitui o Registro e o resumo é recalculado. Se a versão mudou, a API devolve 400 e o registro recente permanece.",
     )
     s.append(
         sequence_diagram(
             [
                 (0, 1, "situação"),
-                (1, 2, "POST"),
-                (2, 3, "registrar"),
+                (1, 2, "POST + versão"),
+                (2, 3, "registrar(v)"),
                 (3, 4, "localizar"),
-                (4, 5, "salvar"),
-                (5, 4, "commit"),
+                (4, 5, "UPDATE se v atual"),
+                (5, 4, "commit, v+1"),
                 (4, 3, "novo Registro"),
                 (3, 2, "resumo"),
                 (2, 1, "200"),
@@ -438,7 +438,7 @@ def produto():
     section(
         s,
         "Ramos alternativos, sem mudança parcial",
-        "Entrada inválida em F01, F02/F03 ou F05 interrompe antes da gravação e web.py devolve erro 400. Se uma operação SQL falha, a transação é desfeita; o controle não publica objeto novo nem apaga memória e web.py informa erro 503. Em F08, confirmação diferente de APAGAR termina antes dos DELETEs. As tabelas C03–C07, C09–C10, C15–C16 e C23–C24 da verificação mostram os estados preservados.",
+        "Entrada inválida em F01, F02/F03 ou F05 interrompe antes da gravação e web.py devolve erro 400. Em F02/F03, uma versão antiga também devolve 400: o UPDATE condicional não altera linha alguma, a transação é desfeita e o Registro recente permanece. Se uma operação SQL falha, a transação é desfeita; o controle não publica objeto novo nem apaga memória e web.py informa erro 503. Em F08, confirmação diferente de APAGAR termina antes dos DELETEs. As tabelas C03–C07, C09–C10, C15–C16 e C23–C24 da verificação mostram os estados preservados.",
     )
 
     page(s, "10 · Implementação", "Camadas, dados e reprodução")
