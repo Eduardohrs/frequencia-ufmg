@@ -24,8 +24,8 @@ teste de leitura sem contexto prévio e conferência técnica do PDF renderizado
 - A criação da amostra saiu de `ControleAcademico` e foi para `exemplo.py`.
 - A fachada de disciplina persistente foi retirada; o controle liga funções
   de gravação às disciplinas para que cada referência salve antes de mudar.
-- O PDF explica que um `Registro` é imutável e que uma correção substitui o
-  objeto da data, com commit anterior à troca em memória.
+- O PDF explica que uma correção atualiza a situação da mesma aula após o
+  commit, sem guardar histórico nem acrescentar outra linha no banco.
 - A verificação usa seis colunas por cenário, com estado inicial, resultado
   esperado, observado, situação e teste identificável no ZIP.
 

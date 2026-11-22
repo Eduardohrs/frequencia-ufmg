@@ -103,7 +103,7 @@ def produto():
                 (
                     "F03",
                     "Corrigir frequência",
-                    "Novo registro da mesma data e totais recalculados.",
+                    "Situação atualizada na mesma data e totais recalculados.",
                 ),
                 (
                     "F04",
@@ -204,7 +204,7 @@ def produto():
         s,
         "F02 · Registrar frequência",
         "Disciplina existente e data da grade com situação pendente. Escolher presente, ausente, atrasado, saiu mais cedo, cancelada ou sem chamada.",
-        "Cria um novo Registro para a data. A política de uma ou duas chamadas calcula faltas em aulas de 50 minutos. Depois do commit, a interface mostra situação e totais recalculados.",
+        "Atualiza a situação do Registro daquela data. A política de uma ou duas chamadas calcula faltas em aulas de 50 minutos. Depois do commit, a interface mostra situação e totais recalculados.",
         "Disciplina/data inexistente, situação inválida, data já resolvida sem modo de correção ou registro alterado em outra janela: rejeita e conserva registro, faltas e banco. Para o último caso, a página deve ser atualizada antes de nova tentativa. Erro de escrita também conserva o estado anterior.",
     )
     section(
@@ -218,7 +218,7 @@ def produto():
         s,
         "F03 · Corrigir frequência",
         "Uma data da grade já tem situação resolvida. Escolher nova situação entre as seis opções e acionar Corrigir. A data e a quantidade de aulas não mudam.",
-        "Um novo Registro imutável substitui o valor daquela data; não acrescenta outra linha nem soma faltas duas vezes. O SQLite confirma a troca antes da atualização em memória. Todos os totais são recalculados a partir da grade.",
+        "Atualiza a situação e as faltas da mesma aula; não acrescenta outra linha nem soma faltas duas vezes. O SQLite confirma a gravação antes da atualização em memória. Todos os totais são recalculados a partir da grade.",
         "Correção de data ainda pendente, situação inválida, data fora da grade, registro alterado em outra janela ou falha SQLite: resposta clara e registro anterior intacto. A correção não altera atividades nem nome da matéria.",
     )
     contrato(
@@ -230,8 +230,8 @@ def produto():
     )
     section(
         s,
-        "Por que Registro é imutável",
-        "A classe usa @dataclass(frozen=True). Uma correção não muda o objeto anterior: Disciplina cria outro Registro e substitui, no dicionário interno, o valor associado à mesma data. A versão do registro aumenta a cada troca; o navegador envia a versão que viu e o SQLite rejeita uma gravação baseada em versão antiga, mesmo se a situação voltar ao valor anterior. O dicionário é protegido; a propriedade registros devolve uma tupla.",
+        "Como uma correção preserva os dados",
+        "Disciplina guarda um Registro por data. Ao corrigir, primeiro valida a entrada e grava no SQLite; só após o commit altera a situação, as faltas e a versão do mesmo objeto. Uma falha deixa os valores anteriores intactos. A propriedade registros devolve cópias, para que quem consulta não possa mudar a grade por fora. A versão aumenta a cada correção e impede uma aba antiga de sobrescrever dados recentes.",
     )
 
     page(s, "04 · Contratos", "Agenda")
@@ -349,7 +349,7 @@ def produto():
     section(
         s,
         "Conceitos de POO demonstrados",
-        "Encapsulamento: a grade fica em _registros e o getter devolve tupla; o nome tem setter que valida. Herança por especialização: as duas políticas implementam a classe abstrata PoliticaChamada. Polimorfismo: Disciplina chama calcular_faltas sem saber qual implementação foi escolhida. Registro imutável não impede corrigir a frequência: o agregado substitui o valor do dia por outro objeto.",
+        "Encapsulamento: a grade fica em _registros e o getter devolve cópias em uma tupla; o nome tem setter que valida. A situação da aula só muda pela operação registrar_presenca, após validação e gravação. Herança por especialização: as duas políticas implementam a classe abstrata PoliticaChamada. Polimorfismo: Disciplina chama calcular_faltas sem saber qual implementação foi escolhida.",
     )
 
     page(s, "08 · Interações", "Sequências do núcleo")
@@ -376,7 +376,7 @@ def produto():
     section(
         s,
         "Presença e correção F02–F03",
-        "A página envia data, situação, modo de correção e a versão do Registro que mostrou ao estudante. O controle encontra a disciplina; ela valida os dados e a política calcula faltas. A gravação só atualiza o SQLite se essa versão ainda for a atual e aumenta a versão. Após o commit, Disciplina substitui o Registro e o resumo é recalculado. Se a versão mudou, a API devolve 400 e o registro recente permanece.",
+        "A página envia data, situação, modo de correção e a versão da aula mostrada ao estudante. O controle encontra a disciplina; ela valida os dados e a política calcula faltas. A gravação só atualiza o SQLite se essa versão ainda for a atual e aumenta a versão. Após o commit, Disciplina atualiza o mesmo Registro e recalcula o resumo. Se a versão mudou, a API devolve 400 e a situação recente permanece.",
     )
     s.append(
         sequence_diagram(
@@ -387,7 +387,7 @@ def produto():
                 (3, 4, "localizar"),
                 (4, 5, "UPDATE se v atual"),
                 (5, 4, "commit, v+1"),
-                (4, 3, "novo Registro"),
+                (4, 3, "aula atualizada"),
                 (3, 2, "resumo"),
                 (2, 1, "200"),
             ],
@@ -616,10 +616,10 @@ def verificacao():
             (
                 "C08",
                 "Após duas ausências, corrigir 02/11 para presente.",
-                "Trocar Registro; A de 4 para 2, sem linha extra.",
-                "A=2 após correção; a mesma data recebe outro Registro.",
+                "Atualizar situação; A de 4 para 2, sem linha extra.",
+                "A=2 após correção; a mesma aula foi atualizada.",
                 "Aprovado",
-                "test_correcao_substitui_e_recalcula",
+                "test_correcao_atualiza_e_recalcula",
             ),
             (
                 "C09a",
@@ -651,7 +651,7 @@ def verificacao():
                 "Sem chamada fica na base; cancelada sai dela.",
                 "E=6, P=0, A=0, L=1, R=1, F=100%.",
                 "Aprovado",
-                "test_correcao_substitui_e_recalcula",
+                "test_correcao_atualiza_e_recalcula",
             ),
             (
                 "C10b",
@@ -659,7 +659,7 @@ def verificacao():
                 "Base E=0; percentual indefinido.",
                 "F=None após todas as datas canceladas.",
                 "Aprovado",
-                "test_correcao_substitui_e_recalcula",
+                "test_correcao_atualiza_e_recalcula",
             ),
         ],
     )
@@ -920,7 +920,7 @@ def verificacao():
                 ),
                 (
                     "F03",
-                    "test_correcao_substitui_e_recalcula",
+                    "test_correcao_atualiza_e_recalcula",
                     "A e L recalculados, sem duplicação",
                 ),
                 ("F04", "test_consulta_nao_altera_registros", "Consultas sem mutação"),
@@ -972,7 +972,7 @@ def verificacao():
                 ),
                 (
                     "Correção podia divergir do banco se a escrita falhasse",
-                    "Salvar antes de substituir o Registro do dia.",
+                    "Salvar antes de atualizar a situação do Registro do dia.",
                     "test_falha_na_gravacao_preserva_memoria_e_banco",
                 ),
                 (

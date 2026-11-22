@@ -9,27 +9,28 @@ arquivos manualmente.
 
 ## Código que vale dominar
 
-- `demo/models.py`: `Registro` é um retrato imutável de um encontro. A linha
+- `demo/models.py`: `Registro` guarda a situação atual de um encontro. A linha
   `self._registros[dia_encontro] = Registro(...)` associa uma data ao seu
-  registro. Corrigir uma presença cria outro `Registro` e troca apenas o valor
-  daquela data. `Disciplina.resumo()` recalcula os totais.
+  registro. Corrigir uma presença altera a situação daquele encontro depois de
+  salvar no banco. `Disciplina.resumo()` recalcula os totais.
 - `PoliticaChamada` é abstrata. `ChamadaUnica` e `ChamadaDupla` especializam
   `calcular_faltas()`. `Disciplina` chama a mesma operação nas duas políticas,
   demonstrando polimorfismo.
 - `ControleAcademico` coordena a operação e liga funções de gravação à
   `Disciplina`. O setter `Disciplina.nome` valida e grava antes de alterar o
-  nome; a presença exige operação própria e também grava antes da troca.
+  nome; a presença exige operação própria e também grava antes da atualização.
 - `demo/database.py` contém as transações SQLite. `demo/web.py` recebe dados da
   página e chama o controle. `demo/exemplo.py` monta uma amostra fictícia fora
   das classes; ela não é uma regra de frequência.
 
 ## Perguntas prováveis
 
-**Por que o registro é imutável se dá para corrigir?** O objeto não muda. A
-disciplina guarda uma nova versão para a mesma data, após validar e salvar.
+**Uma correção guarda o valor antigo?** Não. A mesma aula recebe a nova situação;
+o banco mantém uma linha por data. Só o número da versão aumenta para impedir
+que uma aba antiga sobrescreva uma correção mais recente.
 
 **Como evita perda de dados quando o banco falha?** O SQLite conclui a transação
-antes de atualizar a memória. Em erro, a substituição não acontece.
+antes de atualizar a memória. Em erro, a situação anterior permanece.
 
 **Por que existe uma classe abstrata?** As duas formas de chamada têm o mesmo
 contrato de cálculo e regras distintas para atraso e saída antecipada.

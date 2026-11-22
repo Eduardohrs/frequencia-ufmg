@@ -4,8 +4,8 @@ test_atividade_valida_persiste_sem_alterar_frequencia (test_models.TesteFrequenc
 test_banco_antigo_migra_sem_perder_frequencia (test_models.TesteFrequencia.test_banco_antigo_migra_sem_perder_frequencia) ... ok
 test_codigo_duplicado_preserva_cadastro_e_frequencia (test_models.TesteFrequencia.test_codigo_duplicado_preserva_cadastro_e_frequencia) ... ok
 test_consulta_nao_altera_registros (test_models.TesteFrequencia.test_consulta_nao_altera_registros) ... ok
+test_correcao_atualiza_e_recalcula (test_models.TesteFrequencia.test_correcao_atualiza_e_recalcula) ... ok
 test_correcao_invalida_preserva_registro_e_resumo (test_models.TesteFrequencia.test_correcao_invalida_preserva_registro_e_resumo) ... ok
-test_correcao_substitui_e_recalcula (test_models.TesteFrequencia.test_correcao_substitui_e_recalcula) ... ok
 test_criar_e_registrar_do_zero (test_models.TesteFrequencia.test_criar_e_registrar_do_zero) ... ok
 test_entrada_invalida_nao_cria_disciplina (test_models.TesteFrequencia.test_entrada_invalida_nao_cria_disciplina) ... ok
 test_exemplo_persiste_ou_faz_rollback_completo (test_models.TesteFrequencia.test_exemplo_persiste_ou_faz_rollback_completo) ... ok
@@ -28,6 +28,6 @@ test_fluxo_completo_e_reabertura (test_web.InterfaceWebTest.test_fluxo_completo_
 test_ponto_de_entrada_pode_ser_encerrado (test_web.InterfaceWebTest.test_ponto_de_entrada_pode_ser_encerrado) ... ok
 
 ----------------------------------------------------------------------
-Ran 28 tests in 4.243s
+Ran 28 tests in 5.813s
 
 OK

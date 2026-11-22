@@ -5,7 +5,7 @@ ControleAcademico coordena as operações. SQL e teclado ficam em outros módulo
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 
@@ -51,13 +51,14 @@ class ChamadaDupla(PoliticaChamada):
         return aulas // 2 if situacao in ("atrasado", "saiu mais cedo") else 0
 
 
-@dataclass(frozen=True)
+@dataclass
 class Registro:
-    """Retrato imutável de um encontro da grade e de sua situação.
+    """Situação atual de um encontro da grade.
 
     ``faltas=None`` significa pendente. O valor zero é diferente: indica que
     a aula foi resolvida sem gerar falta. ``versao`` aumenta a cada alteração;
     o SQLite a usa para recusar gravações feitas a partir de uma tela antiga.
+    A disciplina só altera estes dados depois de confirmar a gravação.
     """
 
     dia: date
@@ -97,7 +98,7 @@ class Disciplina:
     Aqui ficam as invariantes de uma matéria: datas únicas, duração válida e
     política de chamada compatível. A interface não escreve em ``_registros``;
     pede à classe para registrar ou corrigir. Toda validação ocorre antes da
-    troca, então uma entrada inválida não muda os totais.
+    alteração, então uma entrada inválida não muda os totais.
     """
 
     def __init__(self, codigo, nome, chamadas, aulas, datas, registros=None):
@@ -137,13 +138,12 @@ class Disciplina:
         # A escolha ocorre uma vez; depois registrar_presenca usa o mesmo
         # contrato, sem repetir um if para cada situação e tipo de chamada.
         self._politica = ChamadaUnica() if chamadas == 1 else ChamadaDupla()
-        # Cada data aponta para um Registro imutável. Corrigir presença troca
-        # apenas o valor dessa data; não altera o Registro anterior.
+        # Cada data aponta para um Registro com a situação atual do encontro.
         self._registros = {}
         for dia_encontro in sorted(dias):
             self._registros[dia_encontro] = Registro(dia=dia_encontro, aulas=aulas)
         if registros:
-            self._registros.update(registros)
+            self._registros.update({dia: replace(r) for dia, r in registros.items()})
 
     @property
     def codigo(self):
@@ -176,41 +176,42 @@ class Disciplina:
 
     @property
     def registros(self):
-        """A tupla e seus registros não permitem alterar a coleção interna."""
-        return tuple(self._registros.values())
+        """Devolve cópias: quem consulta não altera a grade sem validação."""
+        return tuple(replace(r) for r in self._registros.values())
 
     def registrar_presenca(
         self, dia: date, situacao: str, *, corrigir=False, versao_esperada=None
     ):
-        """Resolve uma aula da grade e devolve o novo registro.
+        """Resolve uma aula da grade e devolve a situação atual.
 
-        ``corrigir=True`` substitui apenas um registro já resolvido; sem
-        isso, uma segunda gravação é rejeitada. A gravação configurada pelo
-        controle deve terminar antes da troca em memória.
+        ``corrigir=True`` altera apenas um registro já resolvido; sem isso,
+        uma segunda gravação é rejeitada. A gravação configurada pelo
+        controle deve terminar antes da atualização em memória.
         Assim, erro de validação ou do banco preserva o estado anterior.
         """
         if type(dia) is not date or dia not in self._registros:
             raise ValueError("A data não faz parte da grade desta disciplina.")
         if situacao not in SITUACOES:
             raise ValueError("Situação de frequência inválida.")
-        anterior = self._registros[dia]
-        if versao_esperada is not None and anterior.versao != versao_esperada:
+        registro = self._registros[dia]
+        if versao_esperada is not None and registro.versao != versao_esperada:
             raise ValueError(
                 "Este registro mudou. Atualize a página e tente novamente."
             )
-        if corrigir and anterior.situacao == "pendente":
+        if corrigir and registro.situacao == "pendente":
             raise ValueError("Esta data está pendente. Use Registrar presença.")
-        if anterior.situacao != "pendente" and not corrigir:
+        if registro.situacao != "pendente" and not corrigir:
             raise ValueError("Esta data já foi registrada. Use Corrigir registro.")
         # A chamada polimórfica devolve faltas em aulas de 50 minutos.
-        faltas = self._politica.calcular_faltas(situacao, anterior.aulas)
-        novo = Registro(dia, anterior.aulas, situacao, faltas, anterior.versao + 1)
-        # A gravação, quando existe, ocorre antes da troca em memória. Uma falha
+        faltas = self._politica.calcular_faltas(situacao, registro.aulas)
+        # A gravação, quando existe, ocorre antes da atualização em memória. Uma falha
         # no disco não deixa a interface mostrando um estado que não foi salvo.
         if self._salvar_registro is not None:
-            self._salvar_registro(novo, anterior)
-        self._registros[dia] = novo
-        return novo
+            self._salvar_registro(dia, situacao, faltas, registro.versao)
+        registro.situacao = situacao
+        registro.faltas = faltas
+        registro.versao += 1
+        return replace(registro)
 
     def resumo(self):
         """Recalcula totais em aulas de 50 minutos a partir da grade atual.
@@ -294,13 +295,13 @@ class ControleAcademico:
             def salvar_nome(nome):
                 database.atualizar_nome(disciplina.codigo, nome, self._caminho_banco)
 
-            def salvar_registro(registro, anterior):
+            def salvar_registro(dia, situacao, faltas, versao_anterior):
                 database.salvar_registro(
                     disciplina.codigo,
-                    registro.dia,
-                    registro.situacao,
-                    registro.faltas,
-                    anterior.versao,
+                    dia,
+                    situacao,
+                    faltas,
+                    versao_anterior,
                     self._caminho_banco,
                 )
 
@@ -372,10 +373,9 @@ class ControleAcademico:
     def registrar_presenca(
         self, codigo, dia, situacao, *, corrigir=False, versao_esperada=None
     ):
-        """Valida pela Disciplina, grava no SQLite e só então troca o registro.
+        """Valida pela Disciplina, grava no SQLite e só então atualiza a aula.
 
-        O Registro anterior continua imutável; a data passa a apontar para
-        outro Registro. Em falha de validação ou gravação, nada é substituído.
+        Em falha de validação ou gravação, a situação anterior permanece.
         """
         return self.obter_disciplina(codigo).registrar_presenca(
             dia, situacao, corrigir=corrigir, versao_esperada=versao_esperada

@@ -3,7 +3,6 @@
 import sqlite3
 import tempfile
 import unittest
-from dataclasses import FrozenInstanceError
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -517,8 +516,9 @@ class TesteFrequencia(unittest.TestCase):
         with self.assertRaises(ValueError):
             d.registrar_presenca(DIAS[0], "presente")
         self.assertEqual((d.registros, d.resumo()), antes)
-        with self.assertRaises(FrozenInstanceError):
-            d.registros[0].faltas = 99
+        copia = d.registros[0]
+        copia.faltas = 99
+        self.assertEqual(d.registros[0].faltas, 2)
 
     def test_mesma_operacao_tem_resultado_conforme_chamada(self):
         for chamadas, esperado in [(1, 0), (2, 2)]:
@@ -532,7 +532,7 @@ class TesteFrequencia(unittest.TestCase):
                 d = Disciplina("D", "Teste", chamadas, 2, [DIAS[0]])
                 self.assertIsNotNone(d.registrar_presenca(DIAS[0], situacao))
 
-    def test_correcao_substitui_e_recalcula(self):
+    def test_correcao_atualiza_e_recalcula(self):
         d = Disciplina("D", "Teste", 2, 2, DIAS)
         d.registrar_presenca(DIAS[0], "ausente")
         d.registrar_presenca(DIAS[1], "ausente")
