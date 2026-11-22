@@ -1,11 +1,10 @@
 // A interface apenas envia ações e apresenta resultados. As regras e cálculos
-// de frequência pertencem às classes Python, compartilhadas com o terminal.
+// de frequência pertencem às classes Python usadas pela interface local.
 const ui = {
   state: { disciplinas: [], atividades: [] },
   selected: sessionStorage.getItem("demo.selectedCourse"),
   view: "disciplinas",
   dates: [],
-  reschedule: null,
   refreshAfterDialog: false,
   hasLoaded: false,
   toastTimer: null,

@@ -282,8 +282,18 @@ class TesteFrequencia(unittest.TestCase):
         controle = ControleAcademico()
         disciplina = controle.criar_disciplina("D", "Teste", 1, 2, DIAS)
         antes = (disciplina.registros, disciplina.resumo())
-        self.assertEqual(antes[1]["pendentes"], 8)
-        self.assertIsNone(antes[1]["frequencia"])
+        self.assertEqual(
+            antes[1],
+            dict(
+                aulas=8,
+                pendentes=8,
+                faltas=0,
+                limite=2,
+                restantes=2,
+                excesso=0,
+                frequencia=None,
+            ),
+        )
         self.assertEqual(controle.obter_disciplina("d").resumo(), antes[1])
         self.assertEqual((disciplina.registros, disciplina.resumo()), antes)
         with self.assertRaises(ValueError):
@@ -345,11 +355,55 @@ class TesteFrequencia(unittest.TestCase):
                 reaberto.obter_disciplina("DB02").registros[0].situacao, "pendente"
             )
 
+    def test_registro_desatualizado_nao_sobrescreve_outra_janela(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "teste.db"
+            primeira = ControleAcademico(persistente=True, caminho_banco=caminho)
+            primeira.criar_disciplina("DB03", "Teste", 1, 2, [DIAS[0]])
+            segunda = ControleAcademico(persistente=True, caminho_banco=caminho)
+            primeira.registrar_presenca("DB03", DIAS[0], "ausente")
+            antiga = segunda.obter_disciplina("DB03")
+            antes = (antiga.registros, antiga.resumo())
+            with self.assertRaisesRegex(ValueError, "mudou em outra janela"):
+                antiga.registrar_presenca(DIAS[0], "presente")
+            self.assertEqual((antiga.registros, antiga.resumo()), antes)
+            self.assertEqual(
+                ControleAcademico(persistente=True, caminho_banco=caminho)
+                .obter_disciplina("DB03")
+                .registros[0]
+                .situacao,
+                "ausente",
+            )
+            # Até uma correção feita sobre a versão antiga exige recarregar.
+            terceira = ControleAcademico(persistente=True, caminho_banco=caminho)
+            primeira.registrar_presenca("DB03", DIAS[0], "presente", corrigir=True)
+            with self.assertRaisesRegex(ValueError, "mudou em outra janela"):
+                terceira.registrar_presenca("DB03", DIAS[0], "ausente", corrigir=True)
+            self.assertEqual(
+                ControleAcademico(persistente=True, caminho_banco=caminho)
+                .obter_disciplina("DB03")
+                .registros[0]
+                .situacao,
+                "presente",
+            )
+
     def test_criar_e_registrar_do_zero(self):
         controle = ControleAcademico()
         self.assertEqual(controle.disciplinas, ())
         d = controle.criar_disciplina(" demo01 ", "Teste", 2, 2, DIAS)
         self.assertEqual((d.codigo, d.nome, d.chamadas), ("DEMO01", "Teste", 2))
+        self.assertEqual(
+            d.resumo(),
+            dict(
+                aulas=8,
+                pendentes=8,
+                faltas=0,
+                limite=2,
+                restantes=2,
+                excesso=0,
+                frequencia=None,
+            ),
+        )
         self.assertIs(controle.obter_disciplina("demo01"), d)
         self.assertEqual(d.registrar_presenca(DIAS[0], "presente").faltas, 0)
         self.assertEqual(d.registrar_presenca(DIAS[1], "ausente").faltas, 2)
@@ -464,4 +518,15 @@ class TesteFrequencia(unittest.TestCase):
         d.registrar_presenca(DIAS[0], "cancelada", corrigir=True)
         d.registrar_presenca(DIAS[1], "cancelada", corrigir=True)
         d.registrar_presenca(DIAS[2], "cancelada", corrigir=True)
-        self.assertIsNone(d.resumo()["frequencia"])
+        self.assertEqual(
+            d.resumo(),
+            dict(
+                aulas=0,
+                pendentes=0,
+                faltas=0,
+                limite=0,
+                restantes=0,
+                excesso=0,
+                frequencia=None,
+            ),
+        )

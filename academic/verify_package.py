@@ -56,10 +56,10 @@ def main():
             conferir_pdf(
                 raiz / "relatorio/Frequencia_UFMG_Verificacao.pdf",
                 9,
-                [*[f"F0{i}" for i in range(1, 9)], "Ran 25 tests", "OK"],
+                [*[f"F0{i}" for i in range(1, 9)], "Ran 26 tests", "OK"],
             )
             evidencia = (raiz / "evidencias/unittest.txt").read_text(encoding="utf-8")
-            assert "Ran 25 tests" in evidencia and evidencia.rstrip().endswith("OK")
+            assert "Ran 26 tests" in evidencia and evidencia.rstrip().endswith("OK")
             execucao = subprocess.run(
                 ["py", "-m", "unittest", "discover", "-v"],
                 cwd=raiz / "demo",
@@ -69,8 +69,8 @@ def main():
                 check=False,
             )
             assert execucao.returncode == 0, execucao.stdout + execucao.stderr
-            assert "Ran 25 tests" in execucao.stdout + execucao.stderr
-    print(f"ZIP, PDFs e 25 testes aprovados: {VERSION}")
+            assert "Ran 26 tests" in execucao.stdout + execucao.stderr
+    print(f"ZIP, PDFs e 26 testes aprovados: {VERSION}")
 
 
 if __name__ == "__main__":

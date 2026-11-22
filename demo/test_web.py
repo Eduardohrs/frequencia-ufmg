@@ -31,11 +31,11 @@ class InterfaceWebTest(unittest.TestCase):
         with patch(
             "subprocess.run",
             return_value=SimpleNamespace(
-                returncode=0, stdout="", stderr="Ran 25 tests in 1.0s\n\nOK\n"
+                returncode=0, stdout="", stderr="Ran 26 tests in 1.0s\n\nOK\n"
             ),
         ) as executar:
             status, body = self.post("/api/testes", {})
-        self.assertEqual((status, body["ok"], body["quantidade"]), (200, True, 25))
+        self.assertEqual((status, body["ok"], body["quantidade"]), (200, True, 26))
         self.assertEqual(executar.call_args.kwargs["cwd"], Path(__file__).parent)
         with patch(
             "subprocess.run",
@@ -214,6 +214,21 @@ class InterfaceWebTest(unittest.TestCase):
             executar_acao(None, "/api/nao-existe", {})
 
     def test_falhas_de_leitura_e_gravacao_sao_visiveis(self):
+        self.post(
+            "/api/disciplinas",
+            {
+                "codigo": "D1",
+                "nome": "Teste",
+                "chamadas": 1,
+                "aulas": 2,
+                "datas": ["2026-11-02"],
+            },
+        )
+        self.post(
+            "/api/atividades",
+            {"codigo": "D1", "dia": "2026-11-03", "tipo": "prova", "titulo": "P1"},
+        )
+        estado_antes = self.get("/api/estado")[1]
         handler = self.server.RequestHandlerClass
         with patch.object(
             handler, "controle", side_effect=sqlite3.OperationalError("disco")
@@ -221,10 +236,12 @@ class InterfaceWebTest(unittest.TestCase):
             status, body = self.get("/api/estado")
         self.assertEqual(status, 503)
         self.assertIn("disco", json.loads(body)["erro"])
+        self.assertEqual(self.get("/api/estado")[1], estado_antes)
         with patch.object(handler, "controle", side_effect=OSError("disco")):
             status, body = self.post("/api/reset", {"confirmacao": "APAGAR"})
         self.assertEqual(status, 503)
         self.assertIn("disco", body["erro"])
+        self.assertEqual(self.get("/api/estado")[1], estado_antes)
 
     def test_ponto_de_entrada_pode_ser_encerrado(self):
         class ServidorFalso:

@@ -13,6 +13,7 @@ test_falha_no_segundo_insert_desfaz_cadastro_e_grade (test_models.TesteFrequenci
 test_mesma_operacao_tem_resultado_conforme_chamada (test_models.TesteFrequencia.test_mesma_operacao_tem_resultado_conforme_chamada) ... ok
 test_nome_inexistente_no_banco_e_rejeitado (test_models.TesteFrequencia.test_nome_inexistente_no_banco_e_rejeitado) ... ok
 test_percentual_apos_todas_as_datas_resolvidas (test_models.TesteFrequencia.test_percentual_apos_todas_as_datas_resolvidas) ... ok
+test_registro_desatualizado_nao_sobrescreve_outra_janela (test_models.TesteFrequencia.test_registro_desatualizado_nao_sobrescreve_outra_janela) ... ok
 test_registro_invalido_nao_muda_grade_nem_totais (test_models.TesteFrequencia.test_registro_invalido_nao_muda_grade_nem_totais) ... ok
 test_renomear_disciplina_valida_e_persiste (test_models.TesteFrequencia.test_renomear_disciplina_valida_e_persiste) ... ok
 test_renomear_invalido_ou_falha_de_banco_preserva_nome (test_models.TesteFrequencia.test_renomear_invalido_ou_falha_de_banco_preserva_nome) ... ok
@@ -25,6 +26,6 @@ test_fluxo_completo_e_reabertura (test_web.InterfaceWebTest.test_fluxo_completo_
 test_ponto_de_entrada_pode_ser_encerrado (test_web.InterfaceWebTest.test_ponto_de_entrada_pode_ser_encerrado) ... ok
 
 ----------------------------------------------------------------------
-Ran 25 tests in 3.712s
+Ran 26 tests in 3.836s
 
 OK

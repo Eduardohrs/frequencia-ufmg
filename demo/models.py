@@ -200,7 +200,7 @@ class Disciplina:
         # A gravação, quando existe, ocorre antes da troca em memória. Uma falha
         # no disco não deixa a interface mostrando um estado que não foi salvo.
         if self._salvar_registro is not None:
-            self._salvar_registro(novo)
+            self._salvar_registro(novo, anterior)
         self._registros[dia] = novo
         return novo
 
@@ -286,12 +286,14 @@ class ControleAcademico:
             def salvar_nome(nome):
                 database.atualizar_nome(disciplina.codigo, nome, self._caminho_banco)
 
-            def salvar_registro(registro):
+            def salvar_registro(registro, anterior):
                 database.salvar_registro(
                     disciplina.codigo,
                     registro.dia,
                     registro.situacao,
                     registro.faltas,
+                    anterior.situacao,
+                    anterior.faltas,
                     self._caminho_banco,
                 )
 

@@ -32,13 +32,16 @@ def main():
         check=True,
     )
     evidence = result.stdout + result.stderr
-    assert "Ran 25 tests" in evidence and evidence.rstrip().endswith("OK")
+    assert "Ran 26 tests" in evidence and evidence.rstrip().endswith("OK")
     (PACKAGE / "evidencias").mkdir(exist_ok=True)
     (PACKAGE / "evidencias/unittest.txt").write_text(evidence, encoding="utf-8")
 
     subprocess.run(["py", "academic/build_pdfs.py"], cwd=ROOT, check=True)
     (PACKAGE / "relatorio").mkdir(exist_ok=True)
-    for name in ("Frequencia_UFMG_Produto_Final.pdf", "Frequencia_UFMG_Verificacao.pdf"):
+    for name in (
+        "Frequencia_UFMG_Produto_Final.pdf",
+        "Frequencia_UFMG_Verificacao.pdf",
+    ):
         shutil.copy2(ACADEMIC / name, PACKAGE / "relatorio" / name)
     archive = ACADEMIC / "Frequencia_UFMG_Entrega_Final.zip"
     with ZipFile(archive, "w", ZIP_DEFLATED) as output:

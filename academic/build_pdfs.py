@@ -4,7 +4,16 @@
 
 from pathlib import Path
 
-from pdf_layout import VERSION, P, build, class_diagram, page, section, sequence_diagram, table
+from pdf_layout import (
+    VERSION,
+    P,
+    build,
+    class_diagram,
+    page,
+    section,
+    sequence_diagram,
+    table,
+)
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import Preformatted, Spacer
@@ -30,7 +39,14 @@ def cenarios(story, titulo, preparo, linhas):
     section(story, titulo, preparo)
     story.append(
         table(
-            ["ID", "Regra e entrada", "Esperado", "Observado", "Situação", "Evidência unittest"],
+            [
+                "ID",
+                "Regra e entrada",
+                "Esperado",
+                "Observado",
+                "Situação",
+                "Evidência unittest",
+            ],
             linhas,
             [1.6 * cm, 4 * cm, 5.8 * cm, 5.8 * cm, 1.9 * cm, 6.4 * cm],
             dense="tight",
@@ -42,7 +58,12 @@ def cenarios(story, titulo, preparo, linhas):
 def produto():
     s = []
     page(s, "Quarta etapa · Produto final", "Frequência UFMG")
-    s.append(P("Produto acadêmico executável · interface local e regras em Python", "SubtitleX"))
+    s.append(
+        P(
+            "Produto acadêmico executável · interface local e regras em Python",
+            "SubtitleX",
+        )
+    )
     s.append(
         table(
             ["Identificação", "Dados"],
@@ -69,8 +90,16 @@ def produto():
         table(
             ["ID", "Ação", "Resultado visível"],
             [
-                ("F01", "Cadastrar disciplina", "Grade inicial de encontros pendentes."),
-                ("F02", "Registrar frequência", "Situação e faltas de uma data pendente."),
+                (
+                    "F01",
+                    "Cadastrar disciplina",
+                    "Grade inicial de encontros pendentes.",
+                ),
+                (
+                    "F02",
+                    "Registrar frequência",
+                    "Situação e faltas de uma data pendente.",
+                ),
                 (
                     "F03",
                     "Corrigir frequência",
@@ -81,14 +110,26 @@ def produto():
                     "Consultar frequência",
                     "Grade, limite, faltas, saldo e percentual quando definido.",
                 ),
-                ("F05", "Adicionar atividade", "Prova ou trabalho associado à disciplina."),
+                (
+                    "F05",
+                    "Adicionar atividade",
+                    "Prova ou trabalho associado à disciplina.",
+                ),
                 (
                     "F06",
                     "Consultar agenda",
                     "Atividades em ordem cronológica, inclusive após reabrir.",
                 ),
-                ("F07", "Renomear disciplina", "Nome corrigido, sem alterar código ou histórico."),
-                ("F08", "Apagar dados da demo", "Reinício confirmado pelo próprio aplicativo."),
+                (
+                    "F07",
+                    "Renomear disciplina",
+                    "Nome corrigido, sem alterar código ou histórico.",
+                ),
+                (
+                    "F08",
+                    "Apagar dados da demo",
+                    "Reinício confirmado pelo próprio aplicativo.",
+                ),
             ],
             [1.35 * cm, 5.25 * cm, 10.4 * cm],
             dense=True,
@@ -108,22 +149,47 @@ def produto():
     )
     s.append(
         table(
-            ["Eixo da proposta", "Produto real em evolução", "Neste ZIP acadêmico"],
+            ["Função prevista", "Protótipo anterior → demo final", "Produto real"],
             [
-                ("Disciplinas", "Importação e revisão de dados acadêmicos.", "Cadastro manual de datas e aulas por encontro."),
-                ("Frequência", "Estimativas por localização e correção do estudante.", "Seis situações manuais, correção e saldo de faltas."),
-                ("Agenda", "Integração com atividades acadêmicas.", "Provas e trabalhos cadastrados manualmente."),
-                ("Plataforma", "Android/web, conta e serviços remotos.", "Página local, classes Python e SQLite, sem login ou rede."),
-                ("Parâmetros", "Configuração ampliada prevista na proposta.", "Mínimo fixo de 75% e 1, 2 ou 4 aulas de 50 min."),
+                (
+                    "Conta e acesso",
+                    "Não fazia parte da demo; segue fora do ZIP.",
+                    "Login e serviços de conta.",
+                ),
+                (
+                    "Disciplinas",
+                    "Cadastro manual já existia; agora a grade persiste em SQLite.",
+                    "Importação acadêmica com revisão manual.",
+                ),
+                (
+                    "Frequência",
+                    "Registro, consulta e correção já existiam; agora há seis situações, regras e persistência verificadas.",
+                    "Estimativas de localização e correção do estudante.",
+                ),
+                (
+                    "Agenda",
+                    "Não existia; agora recebe provas e trabalhos manuais.",
+                    "Integração com atividades acadêmicas.",
+                ),
+                (
+                    "Plataforma",
+                    "Antes terminal; agora página local, classes Python e SQLite.",
+                    "Android/web, sincronização e serviços remotos.",
+                ),
+                (
+                    "Parâmetros",
+                    "Agora 1, 2 ou 4 aulas de 50 min por encontro; mínimo fixo de 75%.",
+                    "Configuração mais ampla em evolução.",
+                ),
             ],
-            [3.2 * cm, 6.7 * cm, 7.1 * cm],
+            [3.1 * cm, 7.5 * cm, 6.4 * cm],
             dense=True,
         )
     )
     section(
         s,
         "Limites assumidos nesta versão",
-        "O protótipo anterior tinha cadastro e presença manual; esta versão acrescenta persistência, correção, consulta, agenda e tratamento de falhas. O limite inicial configurável da proposta foi fixado em 75% nesta demo para tornar verificável a regra de cálculo. Remarcação e edição individual de atividades também não estão aqui. Se uma data foi cadastrada errada, o usuário reinicia a demo e cadastra a grade novamente. Nenhuma automação excluída deste ZIP é apresentada como testada no relatório de verificação.",
+        "O protótipo anterior já permitia cadastro, registro, consulta e correção manual. Esta versão mantém essas ações e acrescenta persistência SQLite, agenda e contratos explícitos de erro e rollback. O limite inicial configurável da proposta foi fixado em 75% nesta demo para tornar verificável a regra de cálculo. Remarcação e edição individual de atividades não estão aqui. Se uma data foi cadastrada errada, o usuário reinicia a demo e cadastra a grade novamente. Nenhuma automação excluída deste ZIP é apresentada como testada no relatório de verificação.",
     )
 
     page(s, "02 · Contratos", "Cadastro e registro")
@@ -139,7 +205,7 @@ def produto():
         "F02 · Registrar frequência",
         "Disciplina existente e data da grade com situação pendente. Escolher presente, ausente, atrasado, saiu mais cedo, cancelada ou sem chamada.",
         "Cria um novo Registro para a data. A política de uma ou duas chamadas calcula faltas em aulas de 50 minutos. Depois do commit, a interface mostra situação e totais recalculados.",
-        "Disciplina/data inexistente, situação inválida ou data já resolvida sem modo de correção: rejeita e conserva registro, faltas e banco. Erro de escrita também conserva o estado anterior.",
+        "Disciplina/data inexistente, situação inválida, data já resolvida sem modo de correção ou registro alterado em outra janela: rejeita e conserva registro, faltas e banco. Para o último caso, a página deve ser atualizada antes de nova tentativa. Erro de escrita também conserva o estado anterior.",
     )
     section(
         s,
@@ -153,12 +219,12 @@ def produto():
         "F03 · Corrigir frequência",
         "Uma data da grade já tem situação resolvida. Escolher nova situação entre as seis opções e acionar Corrigir. A data e a quantidade de aulas não mudam.",
         "Um novo Registro imutável substitui o valor daquela data; não acrescenta outra linha nem soma faltas duas vezes. O SQLite confirma a troca antes da atualização em memória. Todos os totais são recalculados a partir da grade.",
-        "Correção de data ainda pendente, situação inválida, data fora da grade ou falha SQLite: resposta clara e registro anterior intacto. A correção não altera atividades nem nome da matéria.",
+        "Correção de data ainda pendente, situação inválida, data fora da grade, registro alterado em outra janela ou falha SQLite: resposta clara e registro anterior intacto. A correção não altera atividades nem nome da matéria.",
     )
     contrato(
         s,
         "F04 · Consultar frequência",
-        "Disciplina cadastrada. A página lista nomes; no celular há seletor por nome. Não é preciso memorizar o código. Pode consultar mesmo com encontros pendentes.",
+        "Disciplina cadastrada. A página lista nomes; em tela estreita há seletor por nome. Não é preciso memorizar o código. Pode consultar mesmo com encontros pendentes.",
         "Mostra datas, situações e faltas, aulas elegíveis, pendências, limite inteiro, faltas usadas e saldo. O percentual só aparece quando não resta pendência elegível. Ler ou atualizar a página não grava dados.",
         "Código inexistente na camada Python é rejeitado. A interface conserva a seleção válida e pode tentar novamente se o banco não estiver disponível; nenhuma consulta altera registros.",
     )
@@ -222,8 +288,16 @@ def produto():
             [
                 ("Presente", "0 falta", "0 falta"),
                 ("Ausente", "Todas as aulas do encontro", "Todas as aulas do encontro"),
-                ("Atrasado / saiu mais cedo", "0 falta", "Metade das aulas do encontro"),
-                ("Sem chamada", "0 falta; permanece na base", "0 falta; permanece na base"),
+                (
+                    "Atrasado / saiu mais cedo",
+                    "0 falta",
+                    "Metade das aulas do encontro",
+                ),
+                (
+                    "Sem chamada",
+                    "0 falta; permanece na base",
+                    "0 falta; permanece na base",
+                ),
                 ("Cancelada", "Sai da base", "Sai da base"),
             ],
             [5.6 * cm, 5.7 * cm, 5.7 * cm],
@@ -251,10 +325,22 @@ def produto():
         table(
             ["Relação", "Multiplicidade e implementação"],
             [
-                ("Controle → Disciplina", "Um controle guarda 0..* disciplinas; cada uma tem um código único."),
-                ("Disciplina → Registro", "Uma disciplina tem 1..* datas; cada data aponta para exatamente um Registro."),
-                ("Controle → Atividade", "Um controle guarda 0..* atividades; cada uma referencia uma disciplina por codigo_disciplina."),
-                ("Disciplina → Política", "Cada disciplina escolhe exatamente uma política; as subclasses especializam a mesma operação."),
+                (
+                    "Controle → Disciplina",
+                    "Um controle guarda 0..* disciplinas; cada uma tem um código único.",
+                ),
+                (
+                    "Disciplina → Registro",
+                    "Uma disciplina tem 1..* datas; cada data aponta para exatamente um Registro.",
+                ),
+                (
+                    "Controle → Atividade",
+                    "Um controle guarda 0..* atividades; cada uma referencia uma disciplina por codigo_disciplina.",
+                ),
+                (
+                    "Disciplina → Política",
+                    "Cada disciplina escolhe exatamente uma política; as subclasses especializam a mesma operação.",
+                ),
             ],
             [5.3 * cm, 11.7 * cm],
             dense=True,
@@ -317,7 +403,16 @@ def produto():
     )
     s.append(
         sequence_diagram(
-            [(0, 1, "atividade"), (1, 2, "POST"), (2, 3, "adicionar"), (3, 4, "validar"), (3, 5, "INSERT"), (5, 3, "ID + commit"), (3, 2, "agenda"), (2, 1, "200")],
+            [
+                (0, 1, "atividade"),
+                (1, 2, "POST"),
+                (2, 3, "adicionar"),
+                (3, 4, "validar"),
+                (3, 5, "INSERT"),
+                (5, 3, "ID + commit"),
+                (3, 2, "agenda"),
+                (2, 1, "200"),
+            ],
             ["Estudante", "Página", "web.py", "Controle", "Atividade", "Dados"],
         )
     )
@@ -328,7 +423,15 @@ def produto():
     )
     s.append(
         sequence_diagram(
-            [(0, 1, "APAGAR"), (1, 2, "POST"), (2, 3, "apagar_tudo"), (3, 4, "DELETEs"), (4, 3, "commit"), (3, 2, "vazio"), (2, 1, "200")],
+            [
+                (0, 1, "APAGAR"),
+                (1, 2, "POST"),
+                (2, 3, "apagar_tudo"),
+                (3, 4, "DELETEs"),
+                (4, 3, "commit"),
+                (3, 2, "vazio"),
+                (2, 1, "200"),
+            ],
             ["Estudante", "Página", "web.py", "Controle", "Dados"],
         )
     )
@@ -365,7 +468,12 @@ def produto():
 def verificacao():
     s = []
     page(s, "Quinta etapa · Verificação", "Frequência UFMG · Verificação")
-    s.append(P("Contratos, cenários e resultado observado da mesma versão do produto", "SubtitleX"))
+    s.append(
+        P(
+            "Contratos, cenários e resultado observado da mesma versão do produto",
+            "SubtitleX",
+        )
+    )
     s.append(
         table(
             ["Identificação", "Dados"],
@@ -487,6 +595,14 @@ def verificacao():
                 "OSError; ambos continuam pendentes.",
                 "Aprovado",
                 "test_falha_na_gravacao_preserva_memoria_e_banco",
+            ),
+            (
+                "C07b",
+                "Duas janelas carregam a mesma pendência; a primeira registra ausência.",
+                "A segunda não pode sobrescrever sem recarregar.",
+                "ValueError; ausência preservada no SQLite.",
+                "Aprovado",
+                "test_registro_desatualizado_nao_sobrescreve_outra_janela",
             ),
         ],
     )
@@ -648,6 +764,14 @@ def verificacao():
                 "Consulta ordenada sem mudar frequência.",
                 "Aprovado",
                 "test_agenda_vazia_e_ordenada_apos_reabrir",
+            ),
+            (
+                "C19b",
+                "Falha SQLite ao abrir o estado da agenda.",
+                "Avisar falha de leitura sem apagar atividades.",
+                "HTTP 503 com erro visível; estado não alterado.",
+                "Aprovado",
+                "test_falhas_de_leitura_e_gravacao_sao_visiveis",
             ),
         ],
     )
@@ -839,6 +963,11 @@ def verificacao():
                     "test_falha_na_gravacao_preserva_memoria_e_banco",
                 ),
                 (
+                    "Janela antiga podia sobrescrever um registro recente",
+                    "Atualizar SQLite só quando o estado anterior ainda coincide.",
+                    "test_registro_desatualizado_nao_sobrescreve_outra_janela",
+                ),
+                (
                     "Reset com exclusão parcial",
                     "DELETEs na mesma transação; memória limpa após commit.",
                     "test_reset_apaga_tudo_e_preserva_estado_se_sql_falhar",
@@ -895,7 +1024,9 @@ def verificacao():
     s.append(
         Preformatted(
             "\n".join(linhas_resumo),
-            ParagraphStyle("SaidaUnittest", fontName="Courier", fontSize=9.2, leading=11.2),
+            ParagraphStyle(
+                "SaidaUnittest", fontName="Courier", fontSize=9.2, leading=11.2
+            ),
         )
     )
     build("Frequencia_UFMG_Verificacao.pdf", s, wide=True)

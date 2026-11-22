@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
-# O menu usa este arquivo por padrão. Os testes passam caminhos temporários.
+# A interface web usa este arquivo por padrão. Os testes passam caminhos temporários.
 DB_PATH = Path(__file__).with_name("frequencia.db")
 
 
@@ -158,23 +158,39 @@ def obter_registros(codigo: str, caminho: str | Path = DB_PATH) -> list[tuple]:
 
 
 def salvar_registro(
-    codigo: str, dia: date, situacao: str, faltas: int, caminho: str | Path = DB_PATH
+    codigo: str,
+    dia: date,
+    situacao: str,
+    faltas: int | None,
+    situacao_anterior: str,
+    faltas_anteriores: int | None,
+    caminho: str | Path = DB_PATH,
 ) -> None:
-    """Substitui a situação de um encontro após a validação no domínio.
+    """Grava somente se o banco ainda contém o registro visto pelo domínio.
 
-    A cláusula UPSERT mantém uma única linha por data; uma correção não soma
-    outra falta. A camada de negócio só publica o Registro após este commit.
+    Cada data já tem uma linha pendente desde o cadastro. A condição impede que
+    outra janela sobrescreva silenciosamente uma decisão mais recente.
     """
     with conexao(caminho) as banco:
-        banco.execute(
+        cursor = banco.execute(
             """
-            INSERT INTO registros (disciplina_codigo, dia, situacao, faltas)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(disciplina_codigo, dia)
-            DO UPDATE SET situacao=excluded.situacao, faltas=excluded.faltas
+            UPDATE registros SET situacao = ?, faltas = ?
+            WHERE disciplina_codigo = ? AND dia = ?
+              AND situacao = ? AND faltas IS ?
         """,
-            (codigo, dia.isoformat(), situacao, faltas),
+            (
+                situacao,
+                faltas,
+                codigo,
+                dia.isoformat(),
+                situacao_anterior,
+                faltas_anteriores,
+            ),
         )
+        if cursor.rowcount != 1:
+            raise ValueError(
+                "Este registro mudou em outra janela. Atualize a página e tente novamente."
+            )
 
 
 def salvar_atividade(

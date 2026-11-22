@@ -294,19 +294,6 @@ jobs:
           sha256=$(sha256sum "$apk_path" | awk '{print $1}')
           echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
           echo "$sha256  $(basename $apk_path)" > app-release.apk.sha256
-      - name: Publish GitHub release with APK
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          tag_name="v0.0.${{ github.run_number }}"
-          cp apps/client/build/app/outputs/flutter-apk/app-release.apk frequencia-ufmg.apk
-          mv apps/client/app-release.apk.sha256 frequencia-ufmg.apk.sha256
-          if gh release view "$tag_name" --repo "$GITHUB_REPOSITORY" >/dev/null 2>\&1; then
-            echo "Release $tag_name already exists, reusing it"
-            gh release upload "$tag_name" frequencia-ufmg.apk frequencia-ufmg.apk.sha256 --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$tag_name" frequencia-ufmg.apk frequencia-ufmg.apk.sha256 --target ${{ steps.revision.outputs.sha }} --repo "$GITHUB_REPOSITORY" --title "Frequência UFMG $tag_name" --notes "Build ${{ github.run_number }} / ${{ steps.revision.outputs.sha }} / APK SHA-256: ${{ steps.checksum.outputs.sha256 }}"
-          fi
       - name: Authenticate to Google Cloud without a stored key
         id: gcp-auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
@@ -348,6 +335,20 @@ jobs:
             sleep 5
           done
           exit 1
+
+      - name: Publish GitHub release with APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag_name="v0.0.${{ github.run_number }}"
+          cp apps/client/build/app/outputs/flutter-apk/app-release.apk frequencia-ufmg.apk
+          mv apps/client/app-release.apk.sha256 frequencia-ufmg.apk.sha256
+          if gh release view "$tag_name" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag_name already exists, reusing it"
+            gh release upload "$tag_name" frequencia-ufmg.apk frequencia-ufmg.apk.sha256 --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag_name" frequencia-ufmg.apk frequencia-ufmg.apk.sha256 --target ${{ steps.revision.outputs.sha }} --repo "$GITHUB_REPOSITORY" --title "Frequência UFMG $tag_name" --notes "Build ${{ github.run_number }} / ${{ steps.revision.outputs.sha }} / APK SHA-256: ${{ steps.checksum.outputs.sha256 }}"
+          fi
 
       - name: Publish deployment summary
         run: |
