@@ -23,7 +23,7 @@
 
       <main class="content">
         <div id="load-error" class="surface load-error" role="alert" hidden>
-          <strong>Não foi possível carregar a demo</strong>
+          <strong id="load-error-title">Não foi possível carregar a demo</strong>
           <p id="load-error-message"></p>
           <button type="button" class="secondary" data-action="retry-load">Tentar novamente</button>
         </div>
@@ -32,6 +32,9 @@
             <div><p class="eyebrow">CONTROLE PESSOAL</p><h1>Suas disciplinas</h1></div>
             <button type="button" class="primary mobile-create" data-action="criar">Nova disciplina</button>
           </div>
+          <label id="mobile-course-picker" class="mobile-course-picker" hidden>Disciplina
+            <select id="mobile-course-select"></select>
+          </label>
           <div class="course-layout">
             <aside class="course-sidebar" aria-label="Lista de disciplinas">
               <div class="panel-heading"><h2>Disciplinas</h2><span id="course-count" class="count">0</span></div>

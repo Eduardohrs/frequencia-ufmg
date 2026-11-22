@@ -6,6 +6,8 @@ const ui = {
   view: "disciplinas",
   dates: [],
   reschedule: null,
+  refreshAfterDialog: false,
+  hasLoaded: false,
   toastTimer: null,
 };
 
@@ -49,15 +51,20 @@ async function load() {
     }
     if (ui.selected) sessionStorage.setItem("demo.selectedCourse", ui.selected);
     else sessionStorage.removeItem("demo.selectedCourse");
+    ui.hasLoaded = true;
     $("#load-error").hidden = true;
     $(".shell").classList.remove("load-failed");
     render();
   } catch (error) {
-    $("#load-error-message").textContent = error instanceof TypeError
+    const message = error instanceof TypeError
       ? "O servidor local não respondeu. Verifique o terminal e tente novamente."
       : error.message.replace(/^Não foi possível carregar os dados:\s*/, "");
+    $("#load-error-title").textContent = ui.hasLoaded
+      ? "Não foi possível atualizar" : "Não foi possível carregar a demo";
+    $("#load-error-message").textContent = ui.hasLoaded
+      ? `${message.replace(/[.!?]$/, "")}. Os dados abaixo são da última leitura.` : message;
     $("#load-error").hidden = false;
-    $(".shell").classList.add("load-failed");
+    $(".shell").classList.toggle("load-failed", !ui.hasLoaded);
   } finally {
     retry.disabled = false;
   }
@@ -94,8 +101,13 @@ function switchView(name, updateHash = true) {
 
 function render() {
   const courses = ui.state.disciplinas;
+  const picker = $("#mobile-course-picker");
+  picker.hidden = courses.length <= 1;
+  $("#mobile-course-select").innerHTML = courses.map((course) =>
+    `<option value="${escapeHtml(course.codigo)}">${escapeHtml(course.nome)} · ${escapeHtml(course.codigo)}</option>`
+  ).join("");
+  $("#mobile-course-select").value = ui.selected || "";
   $(".course-layout").classList.toggle("no-courses", courses.length === 0);
-  $(".course-sidebar").classList.toggle("single-course", courses.length <= 1);
   $("#course-count").textContent = courses.length;
   $("#course-list").innerHTML = courses.length ? courses.map((course) => {
     const pending = course.resumo.pendentes;
@@ -147,7 +159,7 @@ function courseDetail(course) {
 }
 
 function activityItem(activity) {
-  return `<div class="activity-item"><span class="activity-date"><strong>${activity.dia.split("-")[2]}</strong><small>${shortMonth(activity.dia)}</small></span>
+  return `<div class="activity-item"><span class="activity-date"><strong>${activity.dia.split("-")[2]}</strong><small>${shortMonth(activity.dia)}<br>${activity.dia.split("-")[0]}</small></span>
     <span class="activity-info"><strong>${escapeHtml(activity.titulo)}</strong><small>${escapeHtml(activity.tipo)} · ${escapeHtml(activity.nome_disciplina)}</small></span></div>`;
 }
 
@@ -177,12 +189,14 @@ function openDialog(id) {
     if (!course) return;
     $("#rename-context").textContent = course.nome;
     $('#rename-form [name="nome"]').value = course.nome;
+    $('#rename-form button[type="submit"]').disabled = true;
   }
   if (id === "reschedule-dialog") {
     const course = ui.state.disciplinas.find((item) => item.codigo === ui.selected);
     if (!course || !ui.reschedule) return;
     $("#reschedule-context").textContent = `${course.nome} · ${dateLabel(ui.reschedule)}`;
     $('#reschedule-form [name="novo_dia"]').value = ui.reschedule;
+    $('#reschedule-form button[type="submit"]').disabled = true;
   }
   dialog.showModal();
   $("input:not([type=hidden]),select", dialog)?.focus();
@@ -219,7 +233,7 @@ document.addEventListener("click", (event) => {
   const nav = event.target.closest("[data-view]");
   if (nav) { switchView(nav.dataset.view); return; }
   const courseButton = event.target.closest("[data-course]");
-  if (courseButton) { ui.selected = courseButton.dataset.course; sessionStorage.setItem("demo.selectedCourse", ui.selected); render(); return; }
+  if (courseButton) { selectCourse(courseButton.dataset.course); return; }
   const removeDate = event.target.closest("[data-remove-date]");
   if (removeDate) { ui.dates = ui.dates.filter((date) => date !== removeDate.dataset.removeDate); renderDates(); return; }
   if (event.target.closest("[data-close]")) { event.target.closest("dialog").close(); return; }
@@ -236,9 +250,14 @@ document.addEventListener("click", (event) => {
     box.innerHTML = `<form class="form-card"><div class="modal-header"><div><p class="eyebrow">FREQUÊNCIA</p><h2>${correcting ? "Corrigir registro" : "Registrar presença"}</h2></div><button type="button" class="icon-button" data-close aria-label="Fechar">×</button></div>
       <p class="modal-context">${escapeHtml(course.nome)} · ${dateLabel(record.dia)}</p><label>Situação
       <select name="situacao">${options.map((value) => `<option value="${value}" ${value === record.situacao ? "selected" : ""}>${statusLabel[value]}</option>`).join("")}</select></label>
-      <p class="field-error" data-error hidden></p><div class="form-actions"><button type="button" class="quiet-button" data-close>Cancelar</button><button type="submit" class="primary">Salvar registro</button></div></form>`;
+      <p class="field-error" data-error hidden></p><div class="form-actions"><button type="button" class="quiet-button" data-close>Cancelar</button><button type="submit" class="primary" ${correcting ? "disabled" : ""}>Salvar registro</button></div></form>`;
     document.body.append(box);
     box.addEventListener("close", () => box.remove(), { once: true });
+    if (correcting) {
+      $('[name="situacao"]', box).addEventListener("change", (changeEvent) => {
+        $('button[type="submit"]', box).disabled = changeEvent.target.value === record.situacao;
+      });
+    }
     $("form", box).addEventListener("submit", (submitEvent) => {
       submitEvent.preventDefault();
       submit($("form", box), "/api/registros", {
@@ -252,6 +271,25 @@ document.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (action === "retry-load") { load(); return; }
   if (action) openDialog({ criar: "course-dialog", atividade: "activity-dialog", renomear: "rename-dialog", reset: "reset-dialog" }[action]);
+});
+
+function selectCourse(code) {
+  ui.selected = code;
+  sessionStorage.setItem("demo.selectedCourse", code);
+  render();
+}
+
+$("#mobile-course-select").addEventListener("change", (event) => selectCourse(event.target.value));
+
+$('#rename-form [name="nome"]').addEventListener("input", (event) => {
+  const course = ui.state.disciplinas.find((item) => item.codigo === ui.selected);
+  $('#rename-form button[type="submit"]').disabled = event.target.value.trim() === course?.nome;
+  $('#rename-form [data-error]').hidden = true;
+});
+
+$('#reschedule-form [name="novo_dia"]').addEventListener("input", (event) => {
+  $('#reschedule-form button[type="submit"]').disabled = event.target.value === ui.reschedule;
+  $('#reschedule-form [data-error]').hidden = true;
 });
 
 function syncCourseRules() {
@@ -323,4 +361,15 @@ $("#reset-form").addEventListener("submit", (event) => {
   });
 });
 window.addEventListener("hashchange", () => switchView(location.hash.slice(1), false));
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  if ($("dialog[open]")) ui.refreshAfterDialog = true;
+  else load();
+});
+document.addEventListener("close", () => {
+  if (ui.refreshAfterDialog && !$("dialog[open]")) {
+    ui.refreshAfterDialog = false;
+    load();
+  }
+}, true);
 load().then(() => switchView(location.hash.slice(1), false));

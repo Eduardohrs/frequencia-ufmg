@@ -192,9 +192,9 @@ def product():
     contract(
         s,
         "F04 · Consultar frequência",
-        "Disciplina cadastrada; a interface lista seus nomes em ordem alfabética, com o código apenas como referência. No menu alternativo, o usuário escolhe o número ou 0 para voltar.",
+        "Disciplina cadastrada; no computador, a interface lista nomes em ordem alfabética; no celular, usa um seletor com todos os nomes. O código é referência secundária. No menu alternativo, o usuário escolhe o número ou 0 para voltar.",
         "A consulta exibe nome, grade, situação e faltas por data, base E, pendências, faltas A, limite L, saldo, excesso e frequência quando definida. Não grava dados.",
-        "Número fora da lista ou não numérico: pede uma escolha válida. Falha de leitura no navegador mostra erro persistente e Tentar novamente, sem apresentar um cadastro vazio fictício. Voltar não altera registros nem totais.",
+        "Número fora da lista ou não numérico: pede uma escolha válida. Falha inicial de leitura no navegador mostra erro persistente e Tentar novamente; falha posterior conserva a última leitura com aviso de desatualização. Voltar não altera registros nem totais.",
     )
     section(
         s,
@@ -213,7 +213,7 @@ def product():
         s,
         "F06 · Consultar agenda",
         "Basta abrir o programa; não recebe filtro. Pode estar vazia.",
-        "Lista atividades por data e ordem de inserção, com nome da disciplina e código secundário; se não houver itens, mostra Agenda vazia. Não grava dados.",
+        "Lista atividades por data e ordem de inserção, mostrando dia, mês, ano e nome da disciplina; se não houver itens, mostra Agenda vazia. Não grava dados.",
         "Como não há entrada a validar, não existe rejeição prevista nesta consulta.",
     )
     contract(
@@ -1220,7 +1220,7 @@ def verification():
                 (
                     "W05",
                     "Simular falha de SQLite na leitura/gravação, restaurar acesso e encerrar.",
-                    "Erro persistente, Tentar novamente recupera a página; encerramento controlado.",
+                    "Erro inicial persiste; erro posterior conserva última leitura; Tentar novamente recupera a página.",
                     "T25–T26 e Chrome · aprovado",
                 ),
                 (
@@ -1237,7 +1237,7 @@ def verification():
     section(
         s,
         "Limite desta evidência",
-        "T23–T25 percorrem pedidos HTTP reais com banco isolado; T26 verifica a entrada do programa; T27–T28 cobrem troca de data, colisão e falha de disco. Uma conferência adicional em Chrome verificou larguras de 390 e 320 px, criação sem botão intermediário para a data, registro, correções, agenda, navegação após recarregar, títulos longos e recuperação de falha inicial de leitura. A aparência não altera os cálculos: o servidor devolve números das classes Python. Serviços externos do aplicativo completo não fazem parte deste recorte.",
+        "T23–T25 percorrem pedidos HTTP reais com banco isolado; T26 verifica a entrada do programa; T27–T28 cobrem troca de data, colisão e falha de disco. Uma conferência adicional em Chrome verificou larguras de 390 e 320 px, criação, seis situações de frequência, correção, agenda com anos diferentes, três disciplinas no celular, troca entre abas, reset e recuperação de falhas inicial e posterior de leitura. A aparência não altera os cálculos: o servidor devolve números das classes Python. Serviços externos do aplicativo completo não fazem parte deste recorte.",
     )
 
     page(s, "Evidências", "Testes e defeitos corrigidos")

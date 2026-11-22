@@ -548,7 +548,9 @@ p {
 }
 
 .activity-date small {
+  display: block;
   font-size: .67rem;
+  line-height: 1.25;
   text-transform: uppercase
 }
 
@@ -615,7 +617,7 @@ p {
   font-size: 1.3rem
 }
 
-.mobile-create,.bottom-nav {
+.mobile-create,.bottom-nav,.mobile-course-picker {
   display: none
 }
 
@@ -779,46 +781,30 @@ p {
     grid-template-columns: minmax(0,1fr)
   }
 
-  .course-sidebar {
-    padding: 0;
-    border: 0;
-    background: transparent;
-    box-shadow: none
+  .course-sidebar { display: none }
+
+  .mobile-course-picker:not([hidden]) {
+    display: block;
+    margin-bottom: 14px;
+    font-size: .82rem;
+    font-weight: 700;
+    color: #365a4b
   }
 
-  .course-sidebar.single-course {
-    display: none
-  }
-
-  .course-list {
-    display: flex;
-    overflow-x: auto;
-    gap: 8px;
-    scrollbar-width: none
-  }
-
-  .course-list::-webkit-scrollbar { display: none }
-
-  .course-sidebar .panel-heading { display: none }
-
-  .course-choice {
-    flex: 0 0 138px;
+  .mobile-course-picker select {
+    display: block;
+    width: 100%;
     min-width: 0;
-    max-width: 180px;
-    padding: 10px 12px;
-    border-color: #d9e1e4;
-    background: #fff
+    min-height: 46px;
+    margin-top: 6px;
+    padding: 9px 12px;
+    border: 1px solid #cbd7d9;
+    border-radius: 11px;
+    background: #fff;
+    color: #102029;
+    font: inherit;
+    font-size: 1rem
   }
-
-  .course-choice strong {
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2
-  }
-
-  .course-choice small,.course-choice .course-meta { display: none }
 
   .course-detail .surface {
     padding: 20px
@@ -930,4 +916,6 @@ html {
 @media(max-width:360px) {
   .summary-grid { grid-template-columns: repeat(2,minmax(0,1fr)) }
   .summary-grid .stat:last-child { grid-column: 1 / -1 }
+  .detail-top { display: block }
+  .detail-top .secondary { margin-top: 10px }
 }

@@ -15,15 +15,19 @@ chamadas, aulas por encontro e adicionar cada data da grade. A matéria aparece
 imediatamente na lista pelo nome. Abra uma data e escolha a situação de
 frequência; a mesma linha oferece **Corrigir** depois de um registro. O cartão
 mostra faltas usadas, limite, saldo e frequência quando todas as aulas tiverem
-sido resolvidas. **Agenda** guarda provas e trabalhos vinculados à matéria.
+sido resolvidas. No celular, use o seletor **Disciplina** para alternar entre
+matérias; não é necessário memorizar códigos. **Agenda** guarda provas e
+trabalhos vinculados à matéria e mostra o ano de cada prazo.
 Use **Corrigir data** no encontro se a data da grade estiver errada: a presença,
 as faltas e os totais ficam preservados, inclusive após reabrir o navegador.
 Essa correção existe na interface visual; o menu de terminal conserva o fluxo
 principal de cadastro e frequência.
+
 **Renomear** altera só o nome. Em **Ajustes**, **Apagar dados da demo** requer
 digitar `APAGAR`; cancelar preserva tudo.
-Se o banco local estiver temporariamente indisponível ao abrir a página, a tela
-mostra o erro e **Tentar novamente**; ela não finge que o cadastro está vazio.
+Se o banco local estiver temporariamente indisponível, a tela mostra o erro e
+**Tentar novamente**. Se já houver dados carregados, eles permanecem visíveis
+com aviso de que podem estar desatualizados.
 
 O navegador só mostra os dados e envia as ações. `web.py` transforma essas ações
 em chamadas às classes de `models.py`, onde ficam validações e cálculos. `database.py`
