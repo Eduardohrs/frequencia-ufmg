@@ -225,7 +225,9 @@ class Disciplina:
             "limite": limite,
             "restantes": max(0, limite - faltas),
             "excesso": max(0, faltas - limite),
-            "frequencia": 100 * (total - faltas) / total if total and not pendentes else None,
+            "frequencia": 100 * (total - faltas) / total
+            if total and not pendentes
+            else None,
         }
 
 
@@ -253,7 +255,9 @@ class ControleAcademico:
         A mesma classe Disciplina recalcula os totais depois de reabrir, sem
         persistir um segundo resumo que poderia divergir dos registros.
         """
-        for codigo, nome, chamadas, aulas in database.listar_disciplinas(self._caminho_banco):
+        for codigo, nome, chamadas, aulas in database.listar_disciplinas(
+            self._caminho_banco
+        ):
             linhas = database.obter_registros(codigo, self._caminho_banco)
             datas = [date.fromisoformat(linha[0]) for linha in linhas]
             registros = {}
@@ -298,7 +302,9 @@ class ControleAcademico:
     @property
     def atividades(self):
         """Agenda cronológica somente de leitura; não modifica a frequência."""
-        return tuple(sorted(self._atividades, key=lambda a: (a.dia, a.identificador or 0)))
+        return tuple(
+            sorted(self._atividades, key=lambda a: (a.dia, a.identificador or 0))
+        )
 
     def adicionar_atividade(self, codigo, dia, tipo, titulo):
         """Inclui prova ou trabalho sem modificar a frequência.
@@ -360,7 +366,9 @@ class ControleAcademico:
         O Registro anterior continua imutável; a data passa a apontar para
         outro Registro. Em falha de validação ou gravação, nada é substituído.
         """
-        return self.obter_disciplina(codigo).registrar_presenca(dia, situacao, corrigir=corrigir)
+        return self.obter_disciplina(codigo).registrar_presenca(
+            dia, situacao, corrigir=corrigir
+        )
 
     def renomear_disciplina(self, codigo, novo_nome):
         """Corrige somente o nome, preservando grade, registros e atividades.

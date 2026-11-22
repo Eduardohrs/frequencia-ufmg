@@ -154,7 +154,9 @@ class DemoHandler(BaseHTTPRequestHandler):
             return
         if rota in ASSETS:
             nome, tipo = ASSETS[rota]
-            self.responder(200, (Path(__file__).with_name("web") / nome).read_bytes(), tipo)
+            self.responder(
+                200, (Path(__file__).with_name("web") / nome).read_bytes(), tipo
+            )
             return
         self.json(404, {"erro": "Página não encontrada."})
 

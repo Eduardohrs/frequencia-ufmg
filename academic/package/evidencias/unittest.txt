@@ -25,6 +25,6 @@ test_fluxo_completo_e_reabertura (test_web.InterfaceWebTest.test_fluxo_completo_
 test_ponto_de_entrada_pode_ser_encerrado (test_web.InterfaceWebTest.test_ponto_de_entrada_pode_ser_encerrado) ... ok
 
 ----------------------------------------------------------------------
-Ran 25 tests in 4.306s
+Ran 25 tests in 3.845s
 
 OK

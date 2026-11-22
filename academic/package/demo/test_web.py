@@ -130,7 +130,9 @@ class InterfaceWebTest(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(state["atividades"][0]["nome_disciplina"], "Circuitos")
-        status, state = self.post("/api/renomear", {"codigo": "DEMO01", "nome": "Circuitos 2"})
+        status, state = self.post(
+            "/api/renomear", {"codigo": "DEMO01", "nome": "Circuitos 2"}
+        )
         self.assertEqual(status, 200)
         self.assertEqual(state["atividades"][0]["nome_disciplina"], "Circuitos 2")
 
@@ -138,7 +140,9 @@ class InterfaceWebTest(unittest.TestCase):
         _, saved = self.get("/api/estado")
         saved = json.loads(saved)
         self.assertEqual(saved["disciplinas"][0]["nome"], "Circuitos 2")
-        self.assertEqual(saved["disciplinas"][0]["registros"][0]["situacao"], "presente")
+        self.assertEqual(
+            saved["disciplinas"][0]["registros"][0]["situacao"], "presente"
+        )
         self.assertEqual(saved["disciplinas"][0]["registros"][0]["dia"], "2026-11-02")
         self.assertEqual(saved["atividades"][0]["titulo"], "P1")
 
@@ -211,7 +215,9 @@ class InterfaceWebTest(unittest.TestCase):
 
     def test_falhas_de_leitura_e_gravacao_sao_visiveis(self):
         handler = self.server.RequestHandlerClass
-        with patch.object(handler, "controle", side_effect=sqlite3.OperationalError("disco")):
+        with patch.object(
+            handler, "controle", side_effect=sqlite3.OperationalError("disco")
+        ):
             status, body = self.get("/api/estado")
         self.assertEqual(status, 503)
         self.assertIn("disco", json.loads(body)["erro"])

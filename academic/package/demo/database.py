@@ -141,7 +141,9 @@ def listar_disciplinas(caminho: str | Path = DB_PATH) -> list[tuple]:
 def atualizar_nome(codigo: str, nome: str, caminho: str | Path = DB_PATH) -> None:
     """Troca só o nome de uma disciplina já validada pela camada de negócio."""
     with conexao(caminho) as banco:
-        cursor = banco.execute("UPDATE disciplinas SET nome = ? WHERE codigo = ?", (nome, codigo))
+        cursor = banco.execute(
+            "UPDATE disciplinas SET nome = ? WHERE codigo = ?", (nome, codigo)
+        )
         if cursor.rowcount != 1:
             raise ValueError("Disciplina não encontrada no banco de dados.")
 
