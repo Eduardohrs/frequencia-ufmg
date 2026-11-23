@@ -3,7 +3,6 @@
 from pathlib import Path
 
 from pdf_layout import (
-    VERSION,
     P,
     build,
     class_diagram,
@@ -14,7 +13,7 @@ from pdf_layout import (
 )
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import KeepTogether, PageBreak, Preformatted, Spacer
+from reportlab.platypus import KeepTogether, Preformatted, Spacer
 
 
 def cenarios(story, titulo, preparo, linhas):
@@ -59,7 +58,7 @@ def produto():
     section(
         s,
         "Escopo da entrega",
-        "Esta aplicação reúne o núcleo de controle de frequência em Python: cadastro manual da grade, registro e correção, consulta dos cálculos e agenda de atividades. Uma página local recebe as ações; as classes aplicam as regras e o SQLite conserva os dados entre execuções. O projeto maior, com aplicativo e integrações acadêmicas, está em https://github.com/Eduardohrs/frequencia-ufmg. Aqui, o estudante informa os dados manualmente para que o funcionamento das classes possa ser demonstrado do começo ao fim.",
+        "Esta aplicação reúne o núcleo de controle de frequência em Python: cadastro manual da grade, registro e correção, consulta dos cálculos e agenda de atividades. O recorte foi ajustado para apresentar as regras de POO numa aplicação executável em sala. A localização e as importações da proposta integram o aplicativo maior, disponível em https://github.com/Eduardohrs/frequencia-ufmg; na entrega, o estudante informa os dados pela página local. Em relação ao protótipo, o produto integra a agenda, a persistência SQLite e os fluxos de consulta e correção.",
     )
     section(s, "Funcionalidades")
     s.append(
@@ -202,7 +201,7 @@ def produto():
     section(
         s,
         "Correção e datas",
-        "Cada data tem um único Registro com a situação atual. A correção valida a nova situação, confirma a escrita no SQLite e então altera esse Registro em memória. A agenda guarda atividades em datas próprias; uma prova não altera a frequência. A grade é definida no cadastro. Uma reposição entra como data dessa grade; para corrigir uma data cadastrada errada, o estudante usa o reinício da demo e cadastra a grade novamente.",
+        "Cada data tem um único Registro com a situação atual. A correção valida a nova situação, confirma a escrita no SQLite e então altera esse Registro em memória. A agenda guarda atividades em datas próprias; uma prova não altera a frequência. A grade é definida no cadastro, incluindo reposições conhecidas. A edição posterior dessas datas é uma limitação da entrega: para refazê-las, é preciso reiniciar a demo. A combinação de uma aula com duas chamadas foi restringida a uma chamada, para manter as faltas em unidades inteiras.",
     )
 
     section(s, "Classes e arquitetura")
@@ -210,12 +209,12 @@ def produto():
     section(
         s,
         "Responsabilidades das classes",
-        "ControleAcademico coordena cadastro, busca, agenda e reinício. Disciplina guarda a grade, escolhe uma política de chamada e calcula o resumo. Cada Registro representa a situação atual de uma data; Atividade guarda prova ou trabalho. PoliticaChamada define calcular_faltas(); ChamadaUnica e ChamadaDupla implementam regras diferentes. Uma disciplina tem ao menos um Registro e exatamente uma política; uma atividade referencia uma disciplina por código.",
+        "ControleAcademico coordena cadastro, busca, agenda e reinício. Disciplina guarda a grade, escolhe uma política de chamada e calcula o resumo. Cada Registro representa a situação atual de uma data; Atividade guarda prova ou trabalho. PoliticaChamada define calcular_faltas(); ChamadaUnica e ChamadaDupla implementam regras diferentes. No diagrama, a seta indica navegabilidade (a classe de origem conhece a classe de destino) e os rótulos nas duas pontas são multiplicidades. Uma disciplina possui 1..* registros e 0..* atividades; cada registro e cada atividade pertencem a uma disciplina. Cada disciplina possui exatamente 1 política de chamada; o controle coordena 0..* disciplinas e 0..* atividades.",
     )
     section(
         s,
         "Orientação a objetos",
-        "A grade fica protegida em Disciplina._registros; a propriedade registros devolve cópias. O setter de nome valida antes da alteração; registrar_presenca controla a mudança que envolve regra de domínio. A classe abstrata e as duas subclasses demonstram herança por especialização. A chamada à mesma operação calcular_faltas(), com resultados distintos conforme a política, demonstra polimorfismo.",
+        "A grade fica protegida em Disciplina._registros; a propriedade registros devolve cópias. O setter de nome valida antes da alteração; registrar_presenca controla a mudança que envolve regra de domínio. PoliticaChamada e suas subclasses demonstram abstração, herança e polimorfismo: a mesma operação calcular_faltas() aplica a regra escolhida. Concentrar o cálculo nessas classes permite usar a mesma regra na página e nos testes; o SQLite persiste os resultados numa transação antes de atualizar os objetos.",
     )
     s.append(
         table(
@@ -242,7 +241,6 @@ def produto():
         )
     )
 
-    s.append(PageBreak())
     section(s, "Fluxos de sequência")
     section(
         s,
@@ -299,19 +297,18 @@ def verificacao():
         P(
             "<b>Integrante:</b> Eduardo Henrique Rodrigues Silva · "
             "<b>Disciplina:</b> APPOO · Prof.ª Luiza Bernardes Real<br/>"
-            f"<b>Versão final testada:</b> {VERSION} · "
-            "<b>Entrega:</b> Frequencia_UFMG_Entrega_Final.zip"
+            "<b>Entrega testada:</b> Frequencia_UFMG_Entrega_Final.zip"
         )
     )
     section(
         s,
         "Como a verificação foi feita",
-        "Os testes unittest exercitam as oito funcionalidades do Produto Final. Cada cenário cria objetos novos ou usa um banco SQLite temporário; o estado observado é comparado ao resultado esperado. As tabelas citam o nome do teste, que pode ser localizado em demo/test_models.py ou demo/test_web.py e na saída da última execução em evidencias/unittest.txt.",
+        "Os testes unittest exercitam as oito funcionalidades do Produto Final, na entrega identificada acima. Cada teste prepara objetos novos ou um SQLite temporário. As tabelas citam testes em demo/test_models.py ou demo/test_web.py; o resultado aparece em “Resultado da última execução” ao final deste PDF e em evidencias/unittest.txt no ZIP. E = aulas da base; A = faltas usadas; P = aulas pendentes; L = limite; F = frequência percentual. None indica percentual ainda indefinido.",
     )
     cenarios(
         s,
         "F01 · Cadastrar disciplina",
-        "Estado inicial: controle vazio; C04 injeta falha no banco temporário.",
+        "Estado inicial: controle vazio. C02 começa após cadastrar DEMO01 e registrar uma presença; C04 usa banco temporário com falha simulada.",
         [
             (
                 "C01",
@@ -331,7 +328,7 @@ def verificacao():
             ),
             (
                 "C03",
-                "Data repetida ou 2 chamadas em 1 aula.",
+                "Nome/código vazio; data repetida; duração 3; 3 chamadas; ou 2 chamadas em 1 aula.",
                 "Rejeitar; controle vazio.",
                 "ValueError; nenhuma disciplina criada.",
                 "Aprovado",
@@ -351,7 +348,7 @@ def verificacao():
     cenarios(
         s,
         "F02 · Registrar frequência",
-        "Estado inicial: DEMO01 com quatro encontros de duas aulas; C07 usa banco temporário.",
+        "Estado inicial: quatro encontros de duas aulas pendentes. C07 usa um encontro e banco temporário; C26 usa um encontro de quatro aulas.",
         [
             (
                 "C05",
@@ -363,7 +360,7 @@ def verificacao():
             ),
             (
                 "C06",
-                "Situação inválida ou data fora da grade.",
+                "Situação inválida, data fora da grade ou registrar novamente uma data resolvida.",
                 "Rejeitar; registros e totais iguais.",
                 "ValueError; estado preservado.",
                 "Aprovado",
@@ -377,13 +374,21 @@ def verificacao():
                 "Aprovado",
                 "test_falha_na_gravacao_preserva_memoria_e_banco",
             ),
+            (
+                "C26",
+                "Registrar atraso/saída com uma chamada; repetir com duas chamadas.",
+                "Em 4 aulas: uma chamada gera 0 falta; duas geram 2 faltas.",
+                "Retornos 0 e 2 conforme a política.",
+                "Aprovado",
+                "test_mesma_operacao_tem_resultado_conforme_chamada",
+            ),
         ],
     )
 
     cenarios(
         s,
         "F03 · Corrigir frequência",
-        "Estado inicial: quatro encontros de duas aulas; C10 usa duas ausências já registradas.",
+        "C08: quatro encontros de duas aulas, com duas ausências. C09: grade pendente, depois uma ausência. C10: uma ausência gravada pela API.",
         [
             (
                 "C08",
@@ -403,11 +408,11 @@ def verificacao():
             ),
             (
                 "C10",
-                "Tentar corrigir uma aula que mudou desde a consulta.",
-                "Rejeitar; manter registro recente.",
-                "HTTP 400; SQLite preservado.",
+                "Corrigir ausência para presença e consultar novamente.",
+                "Mesma data com situação presente após reabrir.",
+                "HTTP 200; nova consulta recupera presente.",
                 "Aprovado",
-                "test_aba_antiga_nao_sobrescreve_correcao_pela_api",
+                "test_correcao_pela_api_persiste_ao_reabrir",
             ),
         ],
     )
@@ -441,12 +446,15 @@ def verificacao():
                 "Aprovado",
                 "test_consulta_nao_altera_registros",
             ),
+            (
+                "C27",
+                "Resolver 2 presenças, 1 sem chamada e 1 cancelada; depois cancelar tudo.",
+                "Primeiro E=6, L=1, A=0, F=100%; depois E=L=0 e F indefinida.",
+                "Resumo com 6 aulas e limite 1; ao cancelar tudo, base zero e F=None.",
+                "Aprovado",
+                "test_correcao_atualiza_e_recalcula",
+            ),
         ],
-    )
-    section(
-        s,
-        "Limites de cálculo conferidos",
-        "Os testes também cobrem o piso de 25%, o encontro cancelado fora da base, o encontro sem chamada com zero faltas e a frequência indefinida enquanto há pendência. A regra de atraso ou saída muda conforme uma ou duas chamadas.",
     )
 
     cenarios(
@@ -464,7 +472,7 @@ def verificacao():
             ),
             (
                 "C15",
-                "Tipo inválido ou título vazio.",
+                "Disciplina inexistente, data inválida, tipo inválido ou título vazio.",
                 "Rejeitar; agenda vazia.",
                 "ValueError; agenda e grade iguais.",
                 "Aprovado",
@@ -516,7 +524,7 @@ def verificacao():
     cenarios(
         s,
         "F07 · Renomear disciplina",
-        "Estado inicial: DEMO01 com uma ausência e uma prova em banco temporário.",
+        "C20: DEMO01 com uma ausência e uma prova no SQLite. C21–C22: DEMO01 chamada Original, com grade pendente e agenda vazia.",
         [
             (
                 "C20",
@@ -548,7 +556,7 @@ def verificacao():
     cenarios(
         s,
         "F08 · Apagar dados da demo",
-        "Estado inicial: disciplina com presença e atividade em banco temporário.",
+        "C23 e C25: disciplina com ausência e prova no SQLite. C24: disciplina com uma data pendente e agenda vazia.",
         [
             (
                 "C23",
@@ -580,7 +588,7 @@ def verificacao():
     section(
         s,
         "Como reproduzir",
-        "No ZIP, entre em demo/ e execute <b>python -m unittest discover -v</b>. Para conferir pela interface, execute <b>python web.py</b>, use <b>Usar dados de exemplo</b> e abra <b>Ajustes → Executar testes</b>. Os cenários C01–C25 foram aprovados na última execução; as regressões de gravação parcial, correção entre abas e reset constam nas respectivas tabelas.",
+        "No ZIP, entre em demo/ e execute <b>python -m unittest discover -v</b>. Pela interface, execute <b>python web.py</b> e abra <b>Ajustes → Executar testes</b>; os testes preparam seus próprios dados. Os cenários C01–C27 foram aprovados na última execução. As regressões de gravação parcial e reset estão nas respectivas tabelas.",
     )
 
     evidencia = (Path(__file__).parent / "package/evidencias/unittest.txt").read_text(

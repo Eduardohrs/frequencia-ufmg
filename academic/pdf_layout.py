@@ -181,29 +181,23 @@ def class_diagram():
         back_y = e - 6 * sin(angle)
         wing_x = 2.7 * sin(angle)
         wing_y = 2.7 * cos(angle)
-        d.add(
-            Polygon(
-                [
-                    c,
-                    e,
-                    back_x + wing_x,
-                    back_y - wing_y,
-                    back_x - wing_x,
-                    back_y + wing_y,
-                ],
-                fillColor=ACCENT,
-                strokeColor=ACCENT,
-            )
-        )
+        for x, y in [
+            (back_x + wing_x, back_y - wing_y),
+            (back_x - wing_x, back_y + wing_y),
+        ]:
+            d.add(Line(x, y, c, e, strokeColor=ACCENT, strokeWidth=1.2))
 
     for a, b, c, e in [
         (140, 200, 170, 200),
         (305, 200, 335, 200),
         (72, 170, 72, 145),
-        (140, 145, 170, 170),
         (238, 170, 238, 145),
     ]:
         association(a, b, c, e)
+    # O cotovelo separa a ligação Atividade–Disciplina das demais associações.
+    d.add(Line(140, 115, 155, 115, strokeColor=ACCENT, strokeWidth=1.2))
+    d.add(Line(155, 115, 155, 180, strokeColor=ACCENT, strokeWidth=1.2))
+    association(155, 180, 170, 180)
     # A herança usa triângulo vazio apontado para a classe base.
     for a, b, c, e in [(155, 56, 238, 75), (320, 56, 238, 75)]:
         d.add(Line(a, b, c, e, strokeColor=ACCENT, strokeWidth=1.2))
@@ -216,10 +210,16 @@ def class_diagram():
         )
     )
     for x, y, label in [
-        (149, 208, "0..*"),
-        (313, 208, "1..*"),
+        (143, 208, "1"),
+        (149, 189, "0..*"),
+        (308, 208, "1"),
+        (313, 189, "1..*"),
+        (79, 163, "1"),
         (79, 151, "0..*"),
-        (244, 152, "1 política"),
+        (244, 163, "1"),
+        (244, 151, "1"),
+        (143, 104, "0..*"),
+        (161, 168, "1"),
     ]:
         d.add(String(x, y, label, fontName="Body", fontSize=7, fillColor=INK))
     return d

@@ -9,7 +9,7 @@ import fitz
 
 BASE = Path(__file__).parent
 ARCHIVE = BASE / "Frequencia_UFMG_Entrega_Final.zip"
-VERSION = "PF-03-WEB"
+PACKAGE_NAME = "Frequencia_UFMG_Entrega_Final.zip"
 
 
 def conferir_pdf(path, paginas_minimas, identificadores):
@@ -56,7 +56,7 @@ def main():
             conferir_pdf(
                 raiz / "relatorio/Frequencia_UFMG_Verificacao.pdf",
                 5,
-                [VERSION, *[f"F0{i}" for i in range(1, 9)], "Ran 28 tests", "OK"],
+                [PACKAGE_NAME, *[f"F0{i}" for i in range(1, 9)], "Ran 28 tests", "OK"],
             )
             evidencia = (raiz / "evidencias/unittest.txt").read_text(encoding="utf-8")
             assert "Ran 28 tests" in evidencia and evidencia.rstrip().endswith("OK")
@@ -70,7 +70,7 @@ def main():
             )
             assert execucao.returncode == 0, execucao.stdout + execucao.stderr
             assert "Ran 28 tests" in execucao.stdout + execucao.stderr
-    print(f"ZIP, PDFs e 28 testes aprovados: {VERSION}")
+    print(f"ZIP, PDFs e 28 testes aprovados: {PACKAGE_NAME}")
 
 
 if __name__ == "__main__":

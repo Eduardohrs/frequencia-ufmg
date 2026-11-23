@@ -7,5 +7,6 @@
 - O ZIP contém os mesmos PDFs, o código, a base SQLite inicial, README e testes.
 - `python academic/verify_package.py` extrai o ZIP e executa os 28 testes.
 
-A identificação da versão final testada aparece uma vez na Verificação, como
-exige o enunciado. O corpo do Produto Final descreve o funcionamento da demo.
+A identificação do pacote final testado aparece na Verificação e no Produto
+Final, como exige o enunciado. O corpo do Produto Final descreve o funcionamento
+da demo.
