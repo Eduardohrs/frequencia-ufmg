@@ -25,36 +25,36 @@ def conferir_pdf(path, paginas_minimas, identificadores):
 
 def main():
     obrigatorios = {
-        "LEIA-ME.md",
-        "demo/README.md",
-        "demo/web.py",
-        "demo/models.py",
-        "demo/database.py",
-        "demo/exemplo.py",
-        "demo/frequencia.db",
-        "demo/test_models.py",
-        "demo/test_web.py",
-        "demo/web/index.html",
-        "demo/web/app.css",
-        "demo/web/app.js",
+        "produto/README.md",
+        "produto/web.py",
+        "produto/models.py",
+        "produto/database.py",
+        "produto/exemplo.py",
+        "produto/frequencia.db",
+        "produto/test_models.py",
+        "produto/test_web.py",
+        "produto/web/index.html",
+        "produto/web/app.css",
+        "produto/web/app.js",
         "evidencias/unittest.txt",
-        "relatorio/Frequencia_UFMG_Produto_Final.pdf",
-        "relatorio/Frequencia_UFMG_Verificacao.pdf",
+        "documentos/entregas/Frequencia_UFMG_Produto_Final.pdf",
+        "documentos/entregas/Frequencia_UFMG_Verificacao.pdf",
     }
     with ZipFile(ARCHIVE) as arquivo:
         nomes = set(arquivo.namelist())
         assert obrigatorios <= nomes, f"Ausentes: {sorted(obrigatorios - nomes)}"
-        assert "demo/main.py" not in nomes and "demo/test_main.py" not in nomes
+        assert "produto/main.py" not in nomes and "produto/test_main.py" not in nomes
+        assert "LEIA-ME.md" not in nomes and "GUIA_APRESENTACAO.md" not in nomes
         with tempfile.TemporaryDirectory() as pasta:
             arquivo.extractall(pasta)
             raiz = Path(pasta)
             conferir_pdf(
-                raiz / "relatorio/Frequencia_UFMG_Produto_Final.pdf",
+                raiz / "documentos/entregas/Frequencia_UFMG_Produto_Final.pdf",
                 4,
                 [f"F0{i}" for i in range(1, 9)],
             )
             conferir_pdf(
-                raiz / "relatorio/Frequencia_UFMG_Verificacao.pdf",
+                raiz / "documentos/entregas/Frequencia_UFMG_Verificacao.pdf",
                 5,
                 [PACKAGE_NAME, *[f"F0{i}" for i in range(1, 9)], "Ran 28 tests", "OK"],
             )
@@ -62,7 +62,7 @@ def main():
             assert "Ran 28 tests" in evidencia and evidencia.rstrip().endswith("OK")
             execucao = subprocess.run(
                 ["py", "-m", "unittest", "discover", "-v"],
-                cwd=raiz / "demo",
+                cwd=raiz / "produto",
                 capture_output=True,
                 text=True,
                 timeout=90,
@@ -70,7 +70,7 @@ def main():
             )
             assert execucao.returncode == 0, execucao.stdout + execucao.stderr
             assert "Ran 28 tests" in execucao.stdout + execucao.stderr
-    print(f"ZIP, PDFs e 28 testes aprovados: {PACKAGE_NAME}")
+    print(f"ZIP, documentos e 28 testes aprovados: {PACKAGE_NAME}")
 
 
 if __name__ == "__main__":

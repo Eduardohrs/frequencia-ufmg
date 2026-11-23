@@ -47,7 +47,7 @@ firebase-debug.*.log
 academic/Frequencia_UFMG_Entrega_Final.zip
 academic/Frequencia_UFMG_Produto_Final.pdf
 academic/Frequencia_UFMG_Verificacao.pdf
-academic/package/relatorio/*.pdf
+academic/package/documentos/entregas/*.pdf
 
 # Local secret-scanner reports
 gitleaks-report.*

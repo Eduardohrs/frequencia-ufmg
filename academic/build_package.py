@@ -1,4 +1,4 @@
-"""Monta relatórios, evidência e ZIP da demo a partir dos fontes atuais."""
+"""Monta os artefatos da entrega a partir dos fontes atuais."""
 
 import shutil
 import subprocess
@@ -12,14 +12,31 @@ PACKAGE = ACADEMIC / "package"
 
 
 def main():
-    target_demo = PACKAGE / "demo"
-    target_demo.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ACADEMIC / "GUIA_APRESENTACAO.md", PACKAGE / "GUIA_APRESENTACAO.md")
+    # O ZIP é a entrega da professora: remove artefatos de apoio e deixa
+    # somente produto/, evidencias/ e documentos/entregas/.
+    for stale in ("demo", "relatorio", "LEIA-ME.md", "GUIA_APRESENTACAO.md"):
+        path = PACKAGE / stale
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+    target_product = PACKAGE / "produto"
+    target_product.mkdir(parents=True, exist_ok=True)
     for stale in ("main.py", "test_main.py"):
-        (target_demo / stale).unlink(missing_ok=True)
+        (target_product / stale).unlink(missing_ok=True)
     for source in [*DEMO.glob("*.py"), DEMO / "README.md", DEMO / "frequencia.db"]:
-        shutil.copy2(source, target_demo / source.name)
-    target_web = target_demo / "web"
+        destination = target_product / source.name
+        if source.name == "README.md":
+            texto = source.read_text(encoding="utf-8")
+            texto = texto.replace("`demo/`", "`produto/`")
+            texto = texto.replace("dados da demo", "dados do produto")
+            texto = texto.replace("esta demo", "este produto")
+            texto = texto.replace("essa demo", "esse produto")
+            destination.write_text(texto, encoding="utf-8")
+        else:
+            shutil.copy2(source, destination)
+    target_web = target_product / "web"
     target_web.mkdir(exist_ok=True)
     for source in (DEMO / "web").iterdir():
         if source.is_file():
@@ -38,12 +55,13 @@ def main():
     (PACKAGE / "evidencias/unittest.txt").write_text(evidence, encoding="utf-8")
 
     subprocess.run(["py", "academic/build_pdfs.py"], cwd=ROOT, check=True)
-    (PACKAGE / "relatorio").mkdir(exist_ok=True)
+    target_reports = PACKAGE / "documentos/entregas"
+    target_reports.mkdir(parents=True, exist_ok=True)
     for name in (
         "Frequencia_UFMG_Produto_Final.pdf",
         "Frequencia_UFMG_Verificacao.pdf",
     ):
-        shutil.copy2(ACADEMIC / name, PACKAGE / "relatorio" / name)
+        shutil.copy2(ACADEMIC / name, target_reports / name)
     archive = ACADEMIC / "Frequencia_UFMG_Entrega_Final.zip"
     with ZipFile(archive, "w", ZIP_DEFLATED) as output:
         for source in sorted(PACKAGE.rglob("*")):

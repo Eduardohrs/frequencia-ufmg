@@ -285,7 +285,7 @@ def produto():
     section(
         s,
         "Execução",
-        "O código, a base SQLite inicial e os testes estão em <b>Frequencia_UFMG_Entrega_Final.zip</b>. Com Python 3.11 ou superior, abra um terminal na pasta <b>demo</b> e execute <b>python web.py</b>. A página oferece cadastro manual e o botão <b>Usar dados de exemplo</b>.",
+        "O código, a base SQLite inicial e os testes estão em <b>Frequencia_UFMG_Entrega_Final.zip</b>. Com Python 3.11 ou superior, abra um terminal na pasta <b>produto</b> e execute <b>python web.py</b>. A página oferece cadastro manual e o botão <b>Usar dados de exemplo</b>.",
     )
     build("Frequencia_UFMG_Produto_Final.pdf", s)
 
@@ -303,7 +303,7 @@ def verificacao():
     section(
         s,
         "Como a verificação foi feita",
-        "Os testes unittest exercitam as oito funcionalidades do Produto Final, na entrega identificada acima. Cada teste prepara objetos novos ou um SQLite temporário. As tabelas citam testes em demo/test_models.py ou demo/test_web.py; o resultado aparece em “Resultado da última execução” ao final deste PDF e em evidencias/unittest.txt no ZIP. E = aulas da base; A = faltas usadas; P = aulas pendentes; L = limite; F = frequência percentual. None indica percentual ainda indefinido.",
+        "Os testes unittest exercitam as oito funcionalidades do Produto Final, na entrega identificada acima. Cada teste prepara objetos novos ou um SQLite temporário. As tabelas citam testes em produto/test_models.py ou produto/test_web.py; o resultado aparece em “Resultado da última execução” ao final deste PDF e em evidencias/unittest.txt no ZIP. E = aulas da base; A = faltas usadas; P = aulas pendentes; L = limite; F = frequência percentual. None indica percentual ainda indefinido.",
     )
     cenarios(
         s,
@@ -588,7 +588,7 @@ def verificacao():
     section(
         s,
         "Como reproduzir",
-        "No ZIP, entre em demo/ e execute <b>python -m unittest discover -v</b>. Pela interface, execute <b>python web.py</b> e abra <b>Ajustes → Executar testes</b>; os testes preparam seus próprios dados. Os cenários C01–C27 foram aprovados na última execução. As regressões de gravação parcial e reset estão nas respectivas tabelas.",
+        "No ZIP, entre em produto/ e execute <b>python -m unittest discover -v</b>. Pela interface, execute <b>python web.py</b> e abra <b>Ajustes → Executar testes</b>; os testes preparam seus próprios dados. Os cenários C01–C27 foram aprovados na última execução. As regressões de gravação parcial e reset estão nas respectivas tabelas.",
     )
 
     evidencia = (Path(__file__).parent / "package/evidencias/unittest.txt").read_text(

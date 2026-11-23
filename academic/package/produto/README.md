@@ -1,7 +1,7 @@
 # Frequência UFMG — produto acadêmico
 
 Python 3.11 ou superior. Usa somente a biblioteca padrão, incluindo SQLite. Não exige contas ou internet.
-Extraia o ZIP, abra o terminal **dentro da pasta `demo/`** e execute um comando:
+Extraia o ZIP, abra o terminal **dentro da pasta `produto/`** e execute um comando:
 
 ```text
 python web.py
@@ -11,7 +11,7 @@ O navegador abre automaticamente quando o terminal é interativo. Se não abrir,
 acesse **http://127.0.0.1:8878**. O servidor aceita conexões apenas do próprio
 computador. Na tela vazia, clique em **Usar dados de exemplo** para preencher
 uma disciplina fictícia, dois registros de frequência e uma prova. O botão só aparece quando
-não há disciplinas; **Ajustes → Apagar dados da demo** permite recomeçar.
+não há disciplinas; **Ajustes → Apagar dados do produto** permite recomeçar.
 Para preencher manualmente, use **Nova disciplina** e informe nome, código,
 chamadas, aulas por encontro e adicionar cada data da grade. A matéria aparece
 imediatamente na lista pelo nome. Abra uma data e escolha a situação de
@@ -20,7 +20,7 @@ mostra faltas usadas, limite, saldo e frequência quando todas as aulas tiverem
 sido resolvidas. Em uma janela estreita, use o seletor **Disciplina** para alternar entre
 matérias; não é necessário memorizar códigos. **Agenda** guarda provas e
 trabalhos vinculados à matéria e mostra o ano de cada prazo.
-**Renomear** altera só o nome. Em **Ajustes**, **Apagar dados da demo** requer
+**Renomear** altera só o nome. Em **Ajustes**, **Apagar dados do produto** requer
 digitar `APAGAR`; cancelar preserva tudo. O botão **Executar testes** roda os
 testes em bancos temporários e mostra o resultado nessa mesma tela. A mesma
 verificação pode ser executada no terminal com um único comando:
@@ -56,5 +56,5 @@ no SQLite; `web.py` liga a interface visual em `web/` às classes; `exemplo.py`
 monta dados fictícios fora das classes; `test_*.py` contém os testes independentes.
 O botão de exemplo usa as mesmas classes do cadastro manual e grava a amostra
 numa transação SQLite. Só existe uma interface de uso: a página local.
-Esta pasta é uma versão independente para avaliação de POO.
+Esta pasta é o recorte independente para avaliação de POO.
 O aplicativo completo está em https://github.com/Eduardohrs/frequencia-ufmg.

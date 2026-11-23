@@ -56,5 +56,5 @@ no SQLite; `web.py` liga a interface visual em `web/` às classes; `exemplo.py`
 monta dados fictícios fora das classes; `test_*.py` contém os testes independentes.
 O botão de exemplo usa as mesmas classes do cadastro manual e grava a amostra
 numa transação SQLite. Só existe uma interface de uso: a página local.
-Esta pasta é uma versão independente para avaliação de POO.
+Esta pasta é o recorte independente para avaliação de POO.
 O aplicativo completo está em https://github.com/Eduardohrs/frequencia-ufmg.
