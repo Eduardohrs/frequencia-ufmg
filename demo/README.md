@@ -1,4 +1,4 @@
-# Frequência UFMG — produto acadêmico PF-03-WEB
+# Frequência UFMG — produto acadêmico
 
 Python 3.11 ou superior. Usa somente a biblioteca padrão, incluindo SQLite. Não exige contas ou internet.
 Extraia o ZIP, abra o terminal **dentro da pasta `demo/`** e execute um comando:

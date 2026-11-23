@@ -1,4 +1,4 @@
-# Frequência UFMG · entrega acadêmica PF-03-WEB
+# Frequência UFMG · entrega acadêmica
 
 Abra `demo/README.md` para executar o produto. A demo usa apenas Python 3.11+,
 SQLite local e uma página no navegador. Ela começa vazia; o botão **Usar dados

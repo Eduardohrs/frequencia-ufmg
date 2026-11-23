@@ -102,9 +102,7 @@ def footer(canvas, doc):
     )
     canvas.setFillColor(BLUE)
     canvas.setFont("Body", 8)
-    canvas.drawString(
-        doc.leftMargin, 1.12 * cm, f"Frequência UFMG  |  APPOO 2026/2  |  {VERSION}"
-    )
+    canvas.drawString(doc.leftMargin, 1.12 * cm, "Frequência UFMG  |  APPOO 2026/2")
     canvas.drawRightString(width - doc.rightMargin, 1.12 * cm, f"Página {doc.page}")
     canvas.restoreState()
 
