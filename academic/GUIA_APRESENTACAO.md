@@ -23,6 +23,51 @@ arquivos manualmente.
   página e chama o controle. `demo/exemplo.py` monta uma amostra fictícia fora
   das classes; ela não é uma regra de frequência.
 
+## Mapa do código por blocos
+
+As linhas abaixo são um roteiro de leitura da cópia da demo. A ideia é explicar
+um bloco por vez, acompanhando o fluxo de uma ação, e não comentar cada linha
+trivial isoladamente.
+
+### `demo/models.py` — regras e POO
+
+| Linhas | Bloco | O que explicar |
+|---|---|---|
+| 24–49 | `PoliticaChamada`, `ChamadaUnica`, `ChamadaDupla` | A classe abstrata define o contrato `calcular_faltas`. As duas subclasses implementam a mesma operação com regras diferentes; isso é herança e polimorfismo. |
+| 55–90 | `Registro` e `Atividade` | `Registro` representa a situação atual de uma data. `Atividade` representa prova ou trabalho e valida seus próprios dados. |
+| 93–229 | `Disciplina` | Valida a grade, protege `_registros`, registra/corrige uma aula e recalcula o resumo. A gravação ocorre antes da alteração em memória para preservar o estado em caso de erro. |
+| 234–391 | `ControleAcademico` | Coordena cadastro, busca, agenda, renomeação e reinício. `_vincular` conecta o domínio ao SQLite sem colocar SQL dentro das regras. |
+
+### `demo/database.py` — persistência
+
+| Linhas | Bloco | O que explicar |
+|---|---|---|
+| 18–67 | conexão e criação das tabelas | Abre o SQLite local e garante a estrutura mínima antes do uso. |
+| 69–133 | cadastro e exemplo | Grava disciplina, registros pendentes e os dados de exemplo numa transação. |
+| 135–199 | leitura e alterações | Recupera disciplinas/registros/atividades e salva correções, nomes e atividades. |
+| 201–210 | `apagar_tudo` | Limpa as tabelas numa única operação; se houver erro, a transação não é confirmada. |
+
+### `demo/web.py` — entrada da aplicação
+
+| Linhas | Bloco | O que explicar |
+|---|---|---|
+| 31–119 | conversão, estado e rotas | Converte datas, transforma objetos em JSON e encaminha cada ação para `ControleAcademico`. |
+| 121–222 | `DemoHandler` | Recebe GET/POST da página, traduz erros para respostas HTTP e executa os testes sem reutilizar os dados da demo. |
+| 224–240 | `criar_servidor` e entrada | Inicia o servidor local em `127.0.0.1:8878`; este é o ponto de entrada, não existe um `main.py` separado. |
+
+### O que mostrar ao professor
+
+1. **Principal:** `demo/models.py`, porque concentra as classes, encapsulamento,
+   abstração, herança e polimorfismo.
+2. **Suporte indispensável:** `demo/database.py`, para mostrar persistência e
+   transações, e `demo/web.py`, para mostrar a separação entre interface e
+   regras de negócio.
+3. **Evidência:** `demo/test_models.py` e `demo/test_web.py`, escolhendo um
+   teste de sucesso e um de rejeição que preserva o estado.
+4. **Auxiliares:** `demo/exemplo.py` apenas prepara os dados fictícios; os
+   arquivos em `demo/web/` implementam a tela e não são o foco da explicação
+   de POO. Não há `main.py` na versão final: `web.py` é o executável da demo.
+
 ## Perguntas prováveis
 
 **Uma correção guarda o valor antigo?** Não. A mesma aula recebe a nova situação;

@@ -14,6 +14,7 @@ PACKAGE = ACADEMIC / "package"
 def main():
     target_demo = PACKAGE / "demo"
     target_demo.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ACADEMIC / "GUIA_APRESENTACAO.md", PACKAGE / "GUIA_APRESENTACAO.md")
     for stale in ("main.py", "test_main.py"):
         (target_demo / stale).unlink(missing_ok=True)
     for source in [*DEMO.glob("*.py"), DEMO / "README.md", DEMO / "frequencia.db"]:
