@@ -50,12 +50,12 @@ def main():
             raiz = Path(pasta)
             conferir_pdf(
                 raiz / "relatorio/Frequencia_UFMG_Produto_Final.pdf",
-                5,
+                4,
                 [f"F0{i}" for i in range(1, 9)],
             )
             conferir_pdf(
                 raiz / "relatorio/Frequencia_UFMG_Verificacao.pdf",
-                6,
+                5,
                 [VERSION, *[f"F0{i}" for i in range(1, 9)], "Ran 28 tests", "OK"],
             )
             evidencia = (raiz / "evidencias/unittest.txt").read_text(encoding="utf-8")

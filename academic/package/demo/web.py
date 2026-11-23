@@ -56,7 +56,6 @@ def estado(controle):
                         "aulas": registro.aulas,
                         "situacao": registro.situacao,
                         "faltas": registro.faltas,
-                        "versao": registro.versao,
                     }
                     for registro in disciplina.registros
                 ],
@@ -96,15 +95,11 @@ def executar_acao(controle, rota, dados):
         corrigir = dados.get("corrigir", False)
         if type(corrigir) is not bool:
             raise ValueError("A correção deve ser indicada como verdadeiro ou falso.")
-        versao = dados.get("versao")
-        if type(versao) is not int or versao < 0:
-            raise ValueError("Atualize a página antes de registrar esta aula.")
         controle.registrar_presenca(
             dados.get("codigo"),
             ler_data(dados.get("dia")),
             dados.get("situacao"),
             corrigir=corrigir,
-            versao_esperada=versao,
         )
     elif rota == "/api/atividades":
         controle.adicionar_atividade(

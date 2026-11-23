@@ -1,7 +1,5 @@
 """Gera os relatórios acadêmicos a partir das regras e testes da demo."""
 
-# ruff: noqa: E501
-
 from pathlib import Path
 
 from pdf_layout import (
@@ -16,20 +14,32 @@ from pdf_layout import (
 )
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import Preformatted, Spacer
+from reportlab.platypus import KeepTogether, PageBreak, Preformatted, Spacer
 
 
 def cenarios(story, titulo, preparo, linhas):
-    section(story, titulo, preparo)
     story.append(
-        table(
-            ["ID", "Regra e entrada", "Esperado", "Observado", "Situação", "Evidência"],
-            linhas,
-            [1.5 * cm, 4.1 * cm, 5.7 * cm, 5.7 * cm, 1.8 * cm, 6.7 * cm],
-            dense="tight",
+        KeepTogether(
+            [
+                P(titulo, "H2X"),
+                P(preparo),
+                table(
+                    [
+                        "ID",
+                        "Regra e entrada",
+                        "Esperado",
+                        "Observado",
+                        "Situação",
+                        "Evidência",
+                    ],
+                    linhas,
+                    [1.5 * cm, 4.1 * cm, 5.7 * cm, 5.7 * cm, 1.8 * cm, 6.7 * cm],
+                    dense="tight",
+                ),
+                Spacer(1, 0.12 * cm),
+            ]
         )
     )
-    story.append(Spacer(1, 0.12 * cm))
 
 
 def produto():
@@ -101,77 +111,66 @@ def produto():
             dense=True,
         )
     )
-    section(
-        s,
-        "Para executar",
-        "Extraia <b>Frequencia_UFMG_Entrega_Final.zip</b>, abra um terminal na pasta <b>demo</b> e execute <b>python web.py</b> com Python 3.11 ou superior. A página abre em http://127.0.0.1:8878. O botão <b>Usar dados de exemplo</b> preenche uma grade para demonstração; <b>Nova disciplina</b> inicia um cadastro próprio.",
-    )
-
-    page(s, "Produto final", "Contratos das funcionalidades")
-    s.append(
-        P(
-            "Cada linha indica o que se informa, o resultado da operação e o estado preservado quando a entrada é rejeitada."
-        )
-    )
+    section(s, "Contratos das funcionalidades")
     s.append(
         table(
-            ["ID", "Condição e entrada", "Sucesso", "Rejeição e estado"],
+            ["Funcionalidade", "Condição e entrada", "Sucesso", "Rejeição e estado"],
             [
                 (
-                    "F01",
+                    "<b>F01</b><br/>Cadastrar disciplina",
                     "Código e nome; 1 ou 2 chamadas; 1, 2 ou 4 aulas de 50 min por encontro; datas distintas. Duas chamadas exigem ao menos 2 aulas.",
                     "Código normalizado; disciplina e um registro pendente por data gravados juntos.",
                     "Código repetido, data ou combinação inválida: nenhuma disciplina ou grade parcial é criada.",
                 ),
                 (
-                    "F02",
+                    "<b>F02</b><br/>Registrar frequência",
                     "Disciplina e data da grade pendente; situação: presente, ausente, atrasado, saiu mais cedo, cancelada ou sem chamada.",
                     "A situação e as faltas daquela data são gravadas; o resumo é recalculado.",
-                    "Data/situação inválida, data já resolvida, versão antiga ou falha de gravação: registro e totais anteriores permanecem.",
+                    "Data/situação inválida, data já resolvida ou falha de gravação: registro e totais anteriores permanecem.",
                 ),
                 (
-                    "F03",
+                    "<b>F03</b><br/>Corrigir frequência",
                     "Data já resolvida; nova situação válida; opção Corrigir.",
                     "Altera o registro da mesma data e recalcula faltas, limite e percentual.",
-                    "Data pendente, entrada inválida, versão antiga ou falha de gravação: situação anterior permanece.",
+                    "Data pendente, entrada inválida ou falha de gravação: situação anterior permanece.",
                 ),
                 (
-                    "F04",
+                    "<b>F04</b><br/>Consultar frequência",
                     "Selecionar uma disciplina pelo nome.",
                     "Mostra encontros, faltas usadas, limite, saldo e frequência quando não há pendências.",
                     "Falha de leitura é informada; a consulta não modifica dados.",
                 ),
                 (
-                    "F05",
+                    "<b>F05</b><br/>Adicionar atividade",
                     "Disciplina existente; data, tipo prova/trabalho e título.",
                     "Atividade gravada e vinculada à disciplina.",
                     "Disciplina ou dados inválidos, ou falha de escrita: agenda e frequência permanecem iguais.",
                 ),
                 (
-                    "F06",
+                    "<b>F06</b><br/>Consultar agenda",
                     "Abrir Agenda ou o cartão da disciplina.",
                     "Atividades ordenadas por data e, no empate, por inclusão; persistem após reabrir.",
                     "Falha de leitura é informada; a agenda não é alterada.",
                 ),
                 (
-                    "F07",
+                    "<b>F07</b><br/>Renomear disciplina",
                     "Disciplina existente; novo nome não vazio.",
                     "Nome salvo e atualizado na lista e na agenda.",
                     "Nome inválido ou falha SQL: nome e demais dados anteriores permanecem.",
                 ),
                 (
-                    "F08",
+                    "<b>F08</b><br/>Apagar dados da demo",
                     "Em Ajustes, digitar exatamente APAGAR.",
                     "Disciplinas, registros e atividades removidos na mesma transação.",
                     "Outra confirmação ou falha SQL: todos os dados permanecem.",
                 ),
             ],
-            [1.4 * cm, 5.3 * cm, 5.0 * cm, 5.3 * cm],
+            [3.3 * cm, 4.5 * cm, 4.6 * cm, 4.6 * cm],
             dense="tight",
         )
     )
 
-    page(s, "Produto final", "Regras e exemplo de cálculo")
+    section(s, "Regras e exemplo de cálculo")
     section(
         s,
         "Unidade e limite",
@@ -206,7 +205,7 @@ def produto():
         "Cada data tem um único Registro com a situação atual. A correção valida a nova situação, confirma a escrita no SQLite e então altera esse Registro em memória. A agenda guarda atividades em datas próprias; uma prova não altera a frequência. A grade é definida no cadastro. Uma reposição entra como data dessa grade; para corrigir uma data cadastrada errada, o estudante usa o reinício da demo e cadastra a grade novamente.",
     )
 
-    page(s, "Produto final", "Classes e arquitetura")
+    section(s, "Classes e arquitetura")
     s.append(class_diagram())
     section(
         s,
@@ -243,7 +242,8 @@ def produto():
         )
     )
 
-    page(s, "Produto final", "Como as operações percorrem o sistema")
+    s.append(PageBreak())
+    section(s, "Fluxos de sequência")
     section(
         s,
         "Cadastro de disciplina",
@@ -267,13 +267,13 @@ def produto():
     section(
         s,
         "Registrar ou corrigir presença",
-        "A página envia data, situação e versão vista. Disciplina valida a operação e usa sua política para calcular faltas. O SQLite atualiza a linha daquela data apenas se a versão ainda coincidir; depois do commit, o mesmo Registro é atualizado em memória. Assim, uma aba antiga recebe erro e conserva o valor mais recente.",
+        "A página envia a data e a situação escolhida. Disciplina valida a operação, calcula as faltas e grava a correção no SQLite. Depois do commit, o mesmo Registro é atualizado em memória; uma nova consulta mostra a situação e os totais recalculados.",
     )
     s.append(
         sequence_diagram(
             [
                 (0, 1, "situação"),
-                (1, 2, "POST + versão"),
+                (1, 2, "data + situação"),
                 (2, 3, "registrar"),
                 (3, 4, "calcular"),
                 (3, 5, "UPDATE"),
@@ -283,6 +283,11 @@ def produto():
             ],
             ["Estudante", "Página", "web.py", "Disciplina", "Política", "Dados"],
         )
+    )
+    section(
+        s,
+        "Execução",
+        "O código, a base SQLite inicial e os testes estão em <b>Frequencia_UFMG_Entrega_Final.zip</b>. Com Python 3.11 ou superior, abra um terminal na pasta <b>demo</b> e execute <b>python web.py</b>. A página oferece cadastro manual e o botão <b>Usar dados de exemplo</b>.",
     )
     build("Frequencia_UFMG_Produto_Final.pdf", s)
 
@@ -342,7 +347,7 @@ def verificacao():
             ),
         ],
     )
-    page(s, "Verificação", "Registro e correção")
+    section(s, "Registro e correção")
     cenarios(
         s,
         "F02 · Registrar frequência",
@@ -398,7 +403,7 @@ def verificacao():
             ),
             (
                 "C10",
-                "Corrigir com versão antiga de outra aba.",
+                "Tentar corrigir uma aula que mudou desde a consulta.",
                 "Rejeitar; manter registro recente.",
                 "HTTP 400; SQLite preservado.",
                 "Aprovado",
@@ -406,7 +411,7 @@ def verificacao():
             ),
         ],
     )
-    page(s, "Verificação", "Consulta e agenda")
+    section(s, "Consulta e agenda")
     cenarios(
         s,
         "F04 · Consultar frequência",
@@ -475,7 +480,7 @@ def verificacao():
             ),
         ],
     )
-    page(s, "Verificação", "Agenda e nome")
+    section(s, "Agenda e nome")
     cenarios(
         s,
         "F06 · Consultar agenda",
@@ -539,7 +544,7 @@ def verificacao():
             ),
         ],
     )
-    page(s, "Verificação", "Reinício da demo")
+    section(s, "Reinício da demo")
     cenarios(
         s,
         "F08 · Apagar dados da demo",
@@ -578,28 +583,33 @@ def verificacao():
         "No ZIP, entre em demo/ e execute <b>python -m unittest discover -v</b>. Para conferir pela interface, execute <b>python web.py</b>, use <b>Usar dados de exemplo</b> e abra <b>Ajustes → Executar testes</b>. Os cenários C01–C25 foram aprovados na última execução; as regressões de gravação parcial, correção entre abas e reset constam nas respectivas tabelas.",
     )
 
-    page(s, "Verificação", "Resultado da última execução")
-    section(
-        s,
-        "Última execução",
-        "O conjunto automatizado executou 28 testes e terminou com OK. A saída integral está em evidencias/unittest.txt; cada teste citado nas tabelas aparece pelo nome nesse arquivo. Os testes de domínio usam objetos independentes, os de persistência usam bancos temporários e os de HTTP iniciam servidor local em porta temporária.",
-    )
     evidencia = (Path(__file__).parent / "package/evidencias/unittest.txt").read_text(
         encoding="utf-8"
     )
-    linhas = [
+    testes = [
         linha.split(" (", 1)[0] + " ... ok"
-        if " (" in linha and linha.endswith(" ... ok")
-        else linha
-        for linha in evidencia.strip().splitlines()
+        for linha in evidencia.splitlines()
+        if linha.endswith(" ... ok")
     ]
+    assert len(testes) == 28 and evidencia.rstrip().endswith("OK")
+    meio = len(testes) // 2
+    linhas = [f"{testes[i]:<70}{testes[i + meio]}" for i in range(meio)]
+    linhas.extend(["", "Ran 28 tests · OK"])
     s.append(
-        Preformatted(
-            "\n".join(linhas),
-            ParagraphStyle(
-                "SaidaUnittest", fontName="Courier", fontSize=7.8, leading=8.6
-            ),
-        )
+        KeepTogether(
+            [
+                P("Resultado da última execução", "H2X"),
+                P(
+                    "Os 28 testes foram aprovados. A saída integral, com duração e nomes das classes, está em evidencias/unittest.txt no ZIP. Os testes usam objetos ou bancos temporários e podem ser executados em qualquer ordem."
+                ),
+                Preformatted(
+                    "\n".join(linhas),
+                    ParagraphStyle(
+                        "SaidaUnittest", fontName="Courier", fontSize=7.6, leading=9
+                    ),
+                ),
+            ]
+        ),
     )
     build("Frequencia_UFMG_Verificacao.pdf", s, wide=True)
 

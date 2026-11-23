@@ -56,16 +56,14 @@ class Registro:
     """Situação atual de um encontro da grade.
 
     ``faltas=None`` significa pendente. O valor zero é diferente: indica que
-    a aula foi resolvida sem gerar falta. ``versao`` aumenta a cada alteração;
-    o SQLite a usa para recusar gravações feitas a partir de uma tela antiga.
-    A disciplina só altera estes dados depois de confirmar a gravação.
+    a aula foi resolvida sem gerar falta. A disciplina só altera estes dados
+    depois de confirmar a gravação.
     """
 
     dia: date
     aulas: int
     situacao: str = "pendente"
     faltas: int | None = None
-    versao: int = 0
 
 
 @dataclass(frozen=True)
@@ -179,9 +177,7 @@ class Disciplina:
         """Devolve cópias: quem consulta não altera a grade sem validação."""
         return tuple(replace(r) for r in self._registros.values())
 
-    def registrar_presenca(
-        self, dia: date, situacao: str, *, corrigir=False, versao_esperada=None
-    ):
+    def registrar_presenca(self, dia: date, situacao: str, *, corrigir=False):
         """Resolve uma aula da grade e devolve a situação atual.
 
         ``corrigir=True`` altera apenas um registro já resolvido; sem isso,
@@ -194,10 +190,6 @@ class Disciplina:
         if situacao not in SITUACOES:
             raise ValueError("Situação de frequência inválida.")
         registro = self._registros[dia]
-        if versao_esperada is not None and registro.versao != versao_esperada:
-            raise ValueError(
-                "Este registro mudou. Atualize a página e tente novamente."
-            )
         if corrigir and registro.situacao == "pendente":
             raise ValueError("Esta data está pendente. Use Registrar presença.")
         if registro.situacao != "pendente" and not corrigir:
@@ -207,10 +199,9 @@ class Disciplina:
         # A gravação, quando existe, ocorre antes da atualização em memória. Uma falha
         # no disco não deixa a interface mostrando um estado que não foi salvo.
         if self._salvar_registro is not None:
-            self._salvar_registro(dia, situacao, faltas, registro.versao)
+            self._salvar_registro(dia, situacao, faltas)
         registro.situacao = situacao
         registro.faltas = faltas
-        registro.versao += 1
         return replace(registro)
 
     def resumo(self):
@@ -270,9 +261,9 @@ class ControleAcademico:
             linhas = database.obter_registros(codigo, self._caminho_banco)
             datas = [date.fromisoformat(linha[0]) for linha in linhas]
             registros = {}
-            for dia_iso, situacao, faltas, versao in linhas:
+            for dia_iso, situacao, faltas in linhas:
                 dia = date.fromisoformat(dia_iso)
-                registros[dia] = Registro(dia, aulas, situacao, faltas, versao)
+                registros[dia] = Registro(dia, aulas, situacao, faltas)
             self._disciplinas[codigo] = self._vincular(
                 Disciplina(codigo, nome, chamadas, aulas, datas, registros)
             )
@@ -295,13 +286,12 @@ class ControleAcademico:
             def salvar_nome(nome):
                 database.atualizar_nome(disciplina.codigo, nome, self._caminho_banco)
 
-            def salvar_registro(dia, situacao, faltas, versao_anterior):
+            def salvar_registro(dia, situacao, faltas):
                 database.salvar_registro(
                     disciplina.codigo,
                     dia,
                     situacao,
                     faltas,
-                    versao_anterior,
                     self._caminho_banco,
                 )
 
@@ -370,15 +360,13 @@ class ControleAcademico:
             raise ValueError("Disciplina não encontrada. Cadastre-a primeiro.")
         return self._disciplinas[chave]
 
-    def registrar_presenca(
-        self, codigo, dia, situacao, *, corrigir=False, versao_esperada=None
-    ):
+    def registrar_presenca(self, codigo, dia, situacao, *, corrigir=False):
         """Valida pela Disciplina, grava no SQLite e só então atualiza a aula.
 
         Em falha de validação ou gravação, a situação anterior permanece.
         """
         return self.obter_disciplina(codigo).registrar_presenca(
-            dia, situacao, corrigir=corrigir, versao_esperada=versao_esperada
+            dia, situacao, corrigir=corrigir
         )
 
     def renomear_disciplina(self, codigo, novo_nome):

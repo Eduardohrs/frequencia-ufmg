@@ -37,7 +37,6 @@ class TesteFrequencia(unittest.TestCase):
             controle = ControleAcademico(persistente=True, caminho_banco=caminho)
             disciplina = controle.obter_disciplina("DEMO01")
             self.assertEqual(disciplina.resumo()["faltas"], 2)
-            self.assertEqual(disciplina.registros[0].versao, 1)
             self.assertEqual(disciplina.resumo()["pendentes"], 4)
             self.assertEqual(controle.atividades[0].titulo, "Avaliação fictícia")
             self.assertIsNotNone(controle.atividades[0].identificador)
@@ -284,15 +283,15 @@ class TesteFrequencia(unittest.TestCase):
         antes = (disciplina.registros, disciplina.resumo())
         self.assertEqual(
             antes[1],
-            dict(
-                aulas=8,
-                pendentes=8,
-                faltas=0,
-                limite=2,
-                restantes=2,
-                excesso=0,
-                frequencia=None,
-            ),
+            {
+                "aulas": 8,
+                "pendentes": 8,
+                "faltas": 0,
+                "limite": 2,
+                "restantes": 2,
+                "excesso": 0,
+                "frequencia": None,
+            },
         )
         self.assertEqual(controle.obter_disciplina("d").resumo(), antes[1])
         self.assertEqual((disciplina.registros, disciplina.resumo()), antes)
@@ -353,18 +352,12 @@ class TesteFrequencia(unittest.TestCase):
                 )
             controle = ControleAcademico(persistente=True, caminho_banco=caminho)
             disciplina = controle.obter_disciplina("ANT01")
-            self.assertEqual(
-                (disciplina.registros[0].situacao, disciplina.registros[0].versao),
-                ("ausente", 0),
-            )
+            self.assertEqual(disciplina.registros[0].situacao, "ausente")
             controle.registrar_presenca("ANT01", DIAS[0], "presente", corrigir=True)
             reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
             self.assertEqual(
-                (
-                    reaberto.obter_disciplina("ANT01").registros[0].situacao,
-                    reaberto.obter_disciplina("ANT01").registros[0].versao,
-                ),
-                ("presente", 1),
+                reaberto.obter_disciplina("ANT01").registros[0].situacao,
+                "presente",
             )
 
     def test_falha_na_gravacao_preserva_memoria_e_banco(self):
@@ -387,48 +380,17 @@ class TesteFrequencia(unittest.TestCase):
                 reaberto.obter_disciplina("DB02").registros[0].situacao, "pendente"
             )
 
-    def test_registro_desatualizado_nao_sobrescreve_outra_janela(self):
+    def test_correcao_persistida_entre_aberturas(self):
         with tempfile.TemporaryDirectory() as pasta:
             caminho = Path(pasta) / "teste.db"
-            primeira = ControleAcademico(persistente=True, caminho_banco=caminho)
-            primeira.criar_disciplina("DB03", "Teste", 1, 2, [DIAS[0]])
-            segunda = ControleAcademico(persistente=True, caminho_banco=caminho)
-            primeira.registrar_presenca("DB03", DIAS[0], "ausente")
-            antiga = segunda.obter_disciplina("DB03")
-            antes = (antiga.registros, antiga.resumo())
-            with self.assertRaisesRegex(ValueError, "mudou em outra janela"):
-                antiga.registrar_presenca(DIAS[0], "presente")
-            self.assertEqual((antiga.registros, antiga.resumo()), antes)
+            controle = ControleAcademico(persistente=True, caminho_banco=caminho)
+            controle.criar_disciplina("DB03", "Teste", 1, 2, [DIAS[0]])
+            controle.registrar_presenca("DB03", DIAS[0], "ausente")
+            controle.registrar_presenca("DB03", DIAS[0], "presente", corrigir=True)
+            reaberto = ControleAcademico(persistente=True, caminho_banco=caminho)
             self.assertEqual(
-                ControleAcademico(persistente=True, caminho_banco=caminho)
-                .obter_disciplina("DB03")
-                .registros[0]
-                .situacao,
-                "ausente",
-            )
-            # Até uma correção feita sobre a versão antiga exige recarregar.
-            terceira = ControleAcademico(persistente=True, caminho_banco=caminho)
-            primeira.registrar_presenca("DB03", DIAS[0], "presente", corrigir=True)
-            with self.assertRaisesRegex(ValueError, "mudou em outra janela"):
-                terceira.registrar_presenca("DB03", DIAS[0], "ausente", corrigir=True)
-            self.assertEqual(
-                ControleAcademico(persistente=True, caminho_banco=caminho)
-                .obter_disciplina("DB03")
-                .registros[0]
-                .situacao,
+                reaberto.obter_disciplina("DB03").registros[0].situacao,
                 "presente",
-            )
-            # Mesmo que A volte ao valor visto por C, a versão mudou duas vezes.
-            primeira.registrar_presenca("DB03", DIAS[0], "ausente", corrigir=True)
-            with self.assertRaisesRegex(ValueError, "mudou em outra janela"):
-                terceira.registrar_presenca("DB03", DIAS[0], "cancelada", corrigir=True)
-            atual = ControleAcademico(persistente=True, caminho_banco=caminho)
-            self.assertEqual(
-                (
-                    atual.obter_disciplina("DB03").registros[0].situacao,
-                    atual.obter_disciplina("DB03").registros[0].versao,
-                ),
-                ("ausente", 3),
             )
 
     def test_criar_e_registrar_do_zero(self):
@@ -438,30 +400,30 @@ class TesteFrequencia(unittest.TestCase):
         self.assertEqual((d.codigo, d.nome, d.chamadas), ("DEMO01", "Teste", 2))
         self.assertEqual(
             d.resumo(),
-            dict(
-                aulas=8,
-                pendentes=8,
-                faltas=0,
-                limite=2,
-                restantes=2,
-                excesso=0,
-                frequencia=None,
-            ),
+            {
+                "aulas": 8,
+                "pendentes": 8,
+                "faltas": 0,
+                "limite": 2,
+                "restantes": 2,
+                "excesso": 0,
+                "frequencia": None,
+            },
         )
         self.assertIs(controle.obter_disciplina("demo01"), d)
         self.assertEqual(d.registrar_presenca(DIAS[0], "presente").faltas, 0)
         self.assertEqual(d.registrar_presenca(DIAS[1], "ausente").faltas, 2)
         self.assertEqual(
             d.resumo(),
-            dict(
-                aulas=8,
-                pendentes=4,
-                faltas=2,
-                limite=2,
-                restantes=0,
-                excesso=0,
-                frequencia=None,
-            ),
+            {
+                "aulas": 8,
+                "pendentes": 4,
+                "faltas": 2,
+                "limite": 2,
+                "restantes": 0,
+                "excesso": 0,
+                "frequencia": None,
+            },
         )
 
     def test_codigo_duplicado_preserva_cadastro_e_frequencia(self):
@@ -547,15 +509,15 @@ class TesteFrequencia(unittest.TestCase):
         d.registrar_presenca(DIAS[3], "cancelada")
         self.assertEqual(
             d.resumo(),
-            dict(
-                aulas=6,
-                pendentes=0,
-                faltas=0,
-                limite=1,
-                restantes=1,
-                excesso=0,
-                frequencia=100.0,
-            ),
+            {
+                "aulas": 6,
+                "pendentes": 0,
+                "faltas": 0,
+                "limite": 1,
+                "restantes": 1,
+                "excesso": 0,
+                "frequencia": 100.0,
+            },
         )
         antes = d.registros
         d.resumo()
@@ -565,13 +527,13 @@ class TesteFrequencia(unittest.TestCase):
         d.registrar_presenca(DIAS[2], "cancelada", corrigir=True)
         self.assertEqual(
             d.resumo(),
-            dict(
-                aulas=0,
-                pendentes=0,
-                faltas=0,
-                limite=0,
-                restantes=0,
-                excesso=0,
-                frequencia=None,
-            ),
+            {
+                "aulas": 0,
+                "pendentes": 0,
+                "faltas": 0,
+                "limite": 0,
+                "restantes": 0,
+                "excesso": 0,
+                "frequencia": None,
+            },
         )

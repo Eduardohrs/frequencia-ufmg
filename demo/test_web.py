@@ -109,7 +109,6 @@ class InterfaceWebTest(unittest.TestCase):
                 "dia": "2026-11-02",
                 "situacao": "ausente",
                 "corrigir": False,
-                "versao": 0,
             },
         )
         self.assertEqual(status, 200)
@@ -121,12 +120,10 @@ class InterfaceWebTest(unittest.TestCase):
                 "dia": "2026-11-02",
                 "situacao": "presente",
                 "corrigir": True,
-                "versao": 1,
             },
         )
         self.assertEqual(status, 200)
         self.assertEqual(state["disciplinas"][0]["resumo"]["faltas"], 0)
-        self.assertEqual(state["disciplinas"][0]["registros"][0]["versao"], 2)
         status, state = self.post(
             "/api/atividades",
             {"codigo": "DEMO01", "dia": "2026-11-10", "tipo": "prova", "titulo": "P1"},
@@ -154,7 +151,7 @@ class InterfaceWebTest(unittest.TestCase):
         self.assertEqual(state, {"disciplinas": [], "atividades": []})
         self.assertEqual(json.loads(self.get("/api/estado")[1]), state)
 
-    def test_aba_antiga_nao_sobrescreve_correcao_pela_api(self):
+    def test_correcao_pela_api_persiste_ao_reabrir(self):
         self.post(
             "/api/disciplinas",
             {
@@ -165,43 +162,20 @@ class InterfaceWebTest(unittest.TestCase):
                 "datas": ["2026-11-02"],
             },
         )
-        for versao, (situacao, corrigir) in enumerate(
-            (
-                ("ausente", False),
-                ("presente", True),
-                ("ausente", True),
-            )
-        ):
-            status, state = self.post(
+        for situacao, corrigir in (("ausente", False), ("presente", True)):
+            status, _state = self.post(
                 "/api/registros",
                 {
                     "codigo": "D1",
                     "dia": "2026-11-02",
                     "situacao": situacao,
                     "corrigir": corrigir,
-                    "versao": versao,
                 },
             )
             self.assertEqual(status, 200)
-            self.assertEqual(
-                state["disciplinas"][0]["registros"][0]["versao"], versao + 1
-            )
-
-        status, body = self.post(
-            "/api/registros",
-            {
-                "codigo": "D1",
-                "dia": "2026-11-02",
-                "situacao": "cancelada",
-                "corrigir": True,
-                "versao": 1,
-            },
-        )
-        self.assertEqual(status, 400)
-        self.assertIn("Atualize a página", body["erro"])
         _, data = self.get("/api/estado")
         registro = json.loads(data)["disciplinas"][0]["registros"][0]
-        self.assertEqual((registro["situacao"], registro["versao"]), ("ausente", 3))
+        self.assertEqual(registro["situacao"], "presente")
 
     def test_entradas_invalidas_preservam_estado(self):
         self.post(
@@ -222,7 +196,6 @@ class InterfaceWebTest(unittest.TestCase):
                     "codigo": "D1",
                     "dia": "2026-11-03",
                     "situacao": "ausente",
-                    "versao": 0,
                 },
                 400,
             ),
@@ -232,13 +205,13 @@ class InterfaceWebTest(unittest.TestCase):
                     "codigo": "D1",
                     "dia": "2026-11-02",
                     "situacao": "ausente",
-                    "versao": True,
+                    "corrigir": True,
                 },
                 400,
             ),
             (
                 "/api/registros",
-                {"codigo": "D1", "dia": None, "situacao": "ausente", "versao": 0},
+                {"codigo": "D1", "dia": None, "situacao": "ausente"},
                 400,
             ),
             (

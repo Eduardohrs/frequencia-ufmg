@@ -26,8 +26,7 @@ arquivos manualmente.
 ## Perguntas prováveis
 
 **Uma correção guarda o valor antigo?** Não. A mesma aula recebe a nova situação;
-o banco mantém uma linha por data. Só o número da versão aumenta para impedir
-que uma aba antiga sobrescreva uma correção mais recente.
+o banco mantém uma linha por data e recalcula o resumo depois da alteração.
 
 **Como evita perda de dados quando o banco falha?** O SQLite conclui a transação
 antes de atualizar a memória. Em erro, a situação anterior permanece.

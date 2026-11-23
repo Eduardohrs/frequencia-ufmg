@@ -50,7 +50,6 @@ def inicializar_banco(caminho: str | Path = DB_PATH) -> None:
                 dia TEXT NOT NULL,
                 situacao TEXT NOT NULL,
                 faltas INTEGER,
-                versao INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (disciplina_codigo, dia),
                 FOREIGN KEY (disciplina_codigo) REFERENCES disciplinas(codigo)
             )
@@ -65,11 +64,6 @@ def inicializar_banco(caminho: str | Path = DB_PATH) -> None:
                 FOREIGN KEY (disciplina_codigo) REFERENCES disciplinas(codigo)
             )
         """)
-        colunas = {linha[1] for linha in banco.execute("PRAGMA table_info(registros)")}
-        if "versao" not in colunas:
-            banco.execute(
-                "ALTER TABLE registros ADD COLUMN versao INTEGER NOT NULL DEFAULT 0"
-            )
 
 
 def salvar_disciplina(
@@ -117,14 +111,13 @@ def salvar_exemplo(disciplina, atividade, caminho: str | Path = DB_PATH) -> int:
         )
         for registro in disciplina.registros:
             banco.execute(
-                "INSERT INTO registros (disciplina_codigo, dia, situacao, faltas, versao) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO registros (disciplina_codigo, dia, situacao, faltas) "
+                "VALUES (?, ?, ?, ?)",
                 (
                     disciplina.codigo,
                     registro.dia.isoformat(),
                     registro.situacao,
                     registro.faltas,
-                    registro.versao,
                 ),
             )
         cursor = banco.execute(
@@ -158,10 +151,10 @@ def atualizar_nome(codigo: str, nome: str, caminho: str | Path = DB_PATH) -> Non
 
 
 def obter_registros(codigo: str, caminho: str | Path = DB_PATH) -> list[tuple]:
-    """Devolve data, situação, faltas e versão, inclusive pendências."""
+    """Devolve data, situação e faltas, inclusive pendências."""
     with conexao(caminho) as banco:
         return banco.execute(
-            "SELECT dia, situacao, faltas, versao FROM registros "
+            "SELECT dia, situacao, faltas FROM registros "
             "WHERE disciplina_codigo = ? ORDER BY dia",
             (codigo,),
         ).fetchall()
@@ -172,33 +165,17 @@ def salvar_registro(
     dia: date,
     situacao: str,
     faltas: int | None,
-    versao_anterior: int,
     caminho: str | Path = DB_PATH,
 ) -> None:
-    """Grava somente se a versão vista pelo domínio ainda é a atual.
-
-    Cada data já tem uma linha pendente desde o cadastro. A versão cresce mesmo
-    quando uma correção volta à situação anterior, impedindo sobrescrita antiga.
-    """
+    """Atualiza a situação de uma data já validada pelo domínio."""
     with conexao(caminho) as banco:
         cursor = banco.execute(
-            """
-            UPDATE registros SET situacao = ?, faltas = ?, versao = versao + 1
-            WHERE disciplina_codigo = ? AND dia = ?
-              AND versao = ?
-        """,
-            (
-                situacao,
-                faltas,
-                codigo,
-                dia.isoformat(),
-                versao_anterior,
-            ),
+            "UPDATE registros SET situacao = ?, faltas = ? "
+            "WHERE disciplina_codigo = ? AND dia = ?",
+            (situacao, faltas, codigo, dia.isoformat()),
         )
         if cursor.rowcount != 1:
-            raise ValueError(
-                "Este registro mudou em outra janela. Atualize a página e tente novamente."
-            )
+            raise ValueError("Registro não encontrado no banco de dados.")
 
 
 def salvar_atividade(

@@ -1,5 +1,6 @@
 """Diagramação reproduzível dos relatórios acadêmicos em A4."""
 
+from math import atan2, cos, sin
 from pathlib import Path
 
 from reportlab.graphics.shapes import Drawing, Line, Polygon, Rect, String
@@ -166,20 +167,45 @@ def class_diagram():
 
     box(5, 170, 135, 60, "ControleAcademico", "criar / obter / apagar_tudo")
     box(170, 170, 135, 60, "Disciplina", "registrar / resumo")
-    box(335, 170, 130, 60, "Registro", "dia / situação / faltas / versão")
+    box(335, 170, 130, 60, "Registro", "dia / situação / faltas")
     box(5, 85, 135, 60, "Atividade", "data / tipo / título")
     box(170, 85, 135, 60, "PoliticaChamada", "calcular_faltas()")
     box(92, 5, 125, 51, "ChamadaUnica", "calcular_faltas()")
     box(258, 5, 125, 51, "ChamadaDupla", "calcular_faltas()")
+
+    def association(a, b, c, e):
+        """Desenha uma associação navegável com a ponta no destino."""
+        d.add(Line(a, b, c, e, strokeColor=ACCENT, strokeWidth=1.2))
+        angle = atan2(e - b, c - a)
+        back_x = c - 6 * cos(angle)
+        back_y = e - 6 * sin(angle)
+        wing_x = 2.7 * sin(angle)
+        wing_y = 2.7 * cos(angle)
+        d.add(
+            Polygon(
+                [
+                    c,
+                    e,
+                    back_x + wing_x,
+                    back_y - wing_y,
+                    back_x - wing_x,
+                    back_y + wing_y,
+                ],
+                fillColor=ACCENT,
+                strokeColor=ACCENT,
+            )
+        )
+
     for a, b, c, e in [
         (140, 200, 170, 200),
         (305, 200, 335, 200),
         (72, 170, 72, 145),
         (140, 145, 170, 170),
         (238, 170, 238, 145),
-        (238, 75, 155, 56),
-        (238, 75, 320, 56),
     ]:
+        association(a, b, c, e)
+    # A herança usa triângulo vazio apontado para a classe base.
+    for a, b, c, e in [(155, 56, 238, 75), (320, 56, 238, 75)]:
         d.add(Line(a, b, c, e, strokeColor=ACCENT, strokeWidth=1.2))
     d.add(
         Polygon(

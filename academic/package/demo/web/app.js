@@ -277,7 +277,6 @@ document.addEventListener("click", (event) => {
       submit($("form", box), "/api/registros", {
         codigo: course.codigo, dia: record.dia,
         situacao: $('[name="situacao"]', box).value, corrigir: correcting,
-        versao: record.versao,
       }, correcting ? "Registro corrigido." : "Presença registrada.");
     });
     box.showModal();
