@@ -105,6 +105,164 @@ class _IncrementalClient(_Client):
         }
 
 
+def test_incomplete_course_bulk_uses_module_bulk_before_html_fallback():
+    class ModuleBulkClient(_IncrementalClient):
+        def __init__(self, index, fetch):
+            super().__init__(index, fetch)
+            self.module_calls: list[tuple[int, str]] = []
+
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                    "_bulk_submission_complete": False,
+                }
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            self.module_calls.append((kwargs["course_id"], kwargs["kind"]))
+            return {
+                "1": {
+                    "description": "Descrição em lote",
+                    "dates_text": "Vencimento: 2026-12-01",
+                    "has_due_date": True,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": True,
+                    "_bulk_attachments_present": True,
+                    "_bulk_submission_complete": False,
+                }
+            }
+
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: {"description": "HTML", "attachments": []},
+        client_class=ModuleBulkClient,
+    )
+    result = service.sync_snapshots("owner", now=1, snapshots=_Snapshots())
+
+    assert result["failed"] == 0
+    assert client.module_calls == [(77, "assign")]
+    assert client.fetch_calls == []
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["module_bulk_activities"] == 1
+    assert summary["module_bulk_calls"] == 1
+    assert summary["html_activities"] == 0
+
+
+def test_module_bulk_ignores_activity_kinds_without_a_supported_service():
+    class ModuleBulkClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                    "_bulk_submission_complete": False,
+                }
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            raise AssertionError("unsupported activity kind must not call module bulk")
+
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1, kind="page")]},
+        lambda *, source_id, kind: {"description": "HTML", "attachments": []},
+        client_class=ModuleBulkClient,
+    )
+
+    result = service.sync_snapshots("owner", now=1, snapshots=_Snapshots())
+
+    assert result["failed"] == 0
+    assert client.fetch_calls == [1]
+    assert not any(event == "activity_snapshot_module_bulk_capture" for event, _ in logs)
+
+
+@pytest.mark.parametrize("mode", ["shape", "missing"])
+def test_module_bulk_failures_keep_the_html_fallback(mode):
+    class ProbeClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                    "_bulk_submission_complete": False,
+                }
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            if mode == "shape":
+                return []
+            return {}
+
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: {"description": "HTML", "attachments": []},
+        client_class=ProbeClient,
+    )
+    result = service.sync_snapshots("owner", now=1, snapshots=_Snapshots())
+
+    assert result["failed"] == 0
+    assert client.fetch_calls == [1]
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["module_bulk_failures"] == (1 if mode == "shape" else 0)
+    assert any(
+        event == "moodle_activity_module_bulk_detail_fallback" for event, _ in logs
+    ) if mode == "missing" else any(
+        event == "moodle_activity_module_bulk_unavailable" for event, _ in logs
+    )
+
+
+def test_module_bulk_skips_when_tokens_are_not_usable():
+    class ProbeClient(_IncrementalClient):
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            raise AssertionError("module endpoint should not be called")
+
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {}
+
+    service, client, _ = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: {"description": "HTML", "attachments": []},
+        client_class=ProbeClient,
+    )
+    service._tokens.load = lambda *args, **kwargs: SimpleNamespace(
+        term="2026-2", webservice_token=1, private_token=None
+    )
+
+    result = service.sync_snapshots("owner", now=1, snapshots=_Snapshots())
+
+    assert result["failed"] == 0
+    assert client.fetch_calls == [1]
+
+
 def _build(
     courses,
     index,

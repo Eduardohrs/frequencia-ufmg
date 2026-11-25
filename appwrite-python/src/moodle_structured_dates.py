@@ -376,6 +376,55 @@ class MoodleStructuredDatesClient:
         _require_json_endpoint(final_url, content_type, path)
         return _parse_course_activity_contents(payload, root=root)
 
+    def fetch_course_activity_module_bulk(
+        self,
+        *,
+        webservice_token: str,
+        private_token: str,
+        term: str,
+        course_id: int,
+        kind: str,
+    ) -> dict[str, dict[str, object]]:
+        """Read one activity type through Moodle's official mobile bulk API.
+
+        ``core_course_get_contents`` is a useful index, but UFMG's response
+        omits the description/attachment fields for some modules.  Moodle's
+        type-specific mobile functions expose those fields in one course
+        response, avoiding one HTML request per activity.  If the installation
+        does not expose a function, callers retain the existing HTML fallback.
+        """
+
+        _validate_mobile_tokens(webservice_token, private_token, course_id)
+        if kind not in {"assign", "quiz"}:
+            raise InvalidMoodleResponse("activity_module_kind")
+        root = _moodle_root(term)
+        path = f"{root}/webservice/rest/server.php"
+        function = {
+            "assign": "mod_assign_get_assignments",
+            "quiz": "mod_quiz_get_quizzes_by_courses",
+        }[kind]
+        parameters: dict[str, str] = {
+            "moodlewsrestformat": "json",
+            "moodlewssettingfileurl": "1",
+            "moodlewssettingfilter": "1",
+            "wsfunction": function,
+            "wstoken": webservice_token,
+            "courseids[0]": str(course_id),
+        }
+        payload, final_url, content_type = self._open(
+            Request(
+                f"{MOODLE_ORIGIN}{path}",
+                data=urlencode(parameters).encode(),
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                method="POST",
+            )
+        )
+        _require_json_endpoint(final_url, content_type, path)
+        return _parse_activity_module_bulk(payload, root=root, kind=kind)
+
     def fetch_activity(
         self, token: str, *, term: str, source_id: int, kind: str
     ) -> dict[str, object]:
@@ -1262,6 +1311,128 @@ def _parse_course_activity_contents(
             else "course_contents_shape"
         )
         raise InvalidMoodleResponse(reason) from None
+
+
+def _parse_activity_module_bulk(
+    payload: bytes, *, root: str, kind: str
+) -> dict[str, dict[str, object]]:
+    """Normalize Moodle's assignment/quiz bulk response to snapshot details."""
+
+    try:
+        decoded = json.loads(payload)
+        if not isinstance(decoded, dict) or "exception" in decoded:
+            raise ValueError("activity_module_upstream_error")
+        if kind == "assign":
+            raw_courses = decoded.get("courses")
+            item_key = "assignments"
+        else:
+            raw_courses = [{"quizzes": decoded.get("quizzes")}]
+            item_key = "quizzes"
+        if not isinstance(raw_courses, list) or len(raw_courses) > 100:
+            raise ValueError("activity_module_courses")
+        activities: dict[str, dict[str, object]] = {}
+        for course in raw_courses:
+            if not isinstance(course, dict):
+                raise ValueError("activity_module_course")
+            raw_items = course.get(item_key, [])
+            if not isinstance(raw_items, list) or len(raw_items) > 500:
+                raise ValueError("activity_module_items")
+            for raw in raw_items:
+                if not isinstance(raw, dict):
+                    raise ValueError("activity_module_item")
+                source_id = raw.get("cmid" if kind == "assign" else "coursemodule")
+                if type(source_id) is not int or not 1 <= source_id <= 2_147_483_647:
+                    raise ValueError("activity_module_id")
+                title = raw.get("name")
+                if not isinstance(title, str) or not title.strip() or len(title) > 1_024:
+                    raise ValueError("activity_module_title")
+                description_key = "activity" if kind == "assign" else "intro"
+                attachments = _module_activity_attachments(raw, root=root)
+                dates = _module_activity_dates(raw, kind=kind)
+                candidate: dict[str, object] = {
+                    "description": plain_activity_text(raw.get(description_key)),
+                    "_bulk_description_present": description_key in raw,
+                    "_bulk_attachments_present": _module_attachments_present(raw, kind=kind),
+                    "dates_text": dates["text"],
+                    "has_due_date": dates["has_due_date"],
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "_bulk_submission_complete": False,
+                    "attachments": attachments,
+                }
+                identifier = str(source_id)
+                previous = activities.get(identifier)
+                if previous is not None and previous != candidate:
+                    raise ValueError("activity_module_conflict")
+                activities[identifier] = candidate
+        return activities
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        reason = (
+            str(error)
+            if error.args and re.fullmatch(r"[a-z_]{1,64}", str(error))
+            else "activity_module_shape"
+        )
+        raise InvalidMoodleResponse(reason) from None
+
+
+def _module_attachments_present(raw: dict[str, object], *, kind: str) -> bool:
+    if kind == "assign":
+        return "introattachments" in raw and "activityattachments" in raw
+    # The quiz mobile endpoint does not consistently expose file lists.  Keep
+    # the HTML fallback when the installation omits them rather than silently
+    # losing offline attachments.
+    return "introattachments" in raw or "contents" in raw
+
+
+def _module_activity_attachments(
+    raw: dict[str, object], *, root: str
+) -> list[dict[str, str]]:
+    values: list[object] = []
+    for key in ("introattachments", "activityattachments", "contents"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list) or len(value) > 100:
+            raise ValueError("activity_module_attachments")
+        values.extend(value)
+    attachments: dict[str, dict[str, str]] = {}
+    for value in values:
+        if not isinstance(value, dict):
+            raise ValueError("activity_module_attachment")
+        if value.get("type", "file") != "file":
+            continue
+        name = value.get("filename")
+        if not isinstance(name, str) or not name or name.strip() != name or len(name) > 255:
+            raise ValueError("activity_module_attachment_name")
+        url = _canonical_file_url(value.get("fileurl"), root)
+        item = {"name": name, "url": url}
+        previous = attachments.get(url)
+        if previous is not None and previous != item:
+            raise ValueError("activity_module_attachment_conflict")
+        attachments[url] = item
+    return sorted(attachments.values(), key=lambda item: (item["name"], item["url"]))
+
+
+def _module_activity_dates(raw: dict[str, object], *, kind: str) -> dict[str, object]:
+    fields = (
+        (("allowsubmissionsfromdate", "Disponível a partir de"),
+         ("duedate", "Vencimento"),
+         ("cutoffdate", "Prazo final"),
+         ("gradingduedate", "Correção até"))
+        if kind == "assign"
+        else (("timeopen", "Disponível a partir de"), ("timeclose", "Encerramento"))
+    )
+    parts: list[str] = []
+    has_due_date = False
+    for key, label in fields:
+        value = raw.get(key, 0)
+        if type(value) is not int or value < 0 or value > 4_102_444_800:
+            raise ValueError("activity_module_date")
+        if value == 0:
+            continue
+        has_due_date |= key in {"duedate", "cutoffdate", "timeclose"}
+        parts.append(f"{label}: {datetime.fromtimestamp(value, UTC).isoformat()}")
+    return {"text": " ".join(parts)[:2_000], "has_due_date": has_due_date}
 
 
 def _course_activity_dates(value: object) -> dict[str, object]:

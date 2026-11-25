@@ -260,9 +260,13 @@ class CourseActivityService:
         bulk_submission_unknown = 0
         bulk_fallbacks = 0
         html_activities = 0
+        module_bulk_activities = 0
+        module_bulk_calls = 0
+        module_bulk_failures = 0
         updates_checked = 0
         updates_changed = 0
         failed: list[dict[str, object]] = []
+        pending_snapshots: list[tuple[str, dict[str, Any]]] = []
         courses = self._courses.list_courses()
         mobile_tokens = None
         try:
@@ -284,6 +288,7 @@ class CourseActivityService:
                 now,
                 snapshots,
                 mobile_tokens=mobile_tokens,
+                pending_saves=pending_snapshots,
             )
             try:
                 force = self._force
@@ -314,6 +319,9 @@ class CourseActivityService:
                         )
                         bulk_fallbacks += _metric(capture_result, "bulk_fallbacks")
                         html_activities += _metric(capture_result, "html_count")
+                        module_bulk_activities += _metric(capture_result, "module_bulk_count")
+                        module_bulk_calls += _metric(capture_result, "module_bulk_calls")
+                        module_bulk_failures += _metric(capture_result, "module_bulk_failures")
                         updates_checked += _metric(capture_result, "updates_checked")
                         updates_changed += _metric(capture_result, "updates_changed")
             except Exception as error:
@@ -331,6 +339,32 @@ class CourseActivityService:
                 }
                 failed.append(issue)
                 _emit(self._telemetry, "activity_snapshot_sync_failed", issue)
+        if pending_snapshots:
+            payload_bytes = sum(
+                len(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode())
+                for _, snapshot in pending_snapshots
+            )
+
+            def persist_snapshots() -> None:
+                save_batch = getattr(snapshots, "save_batch", None)
+                if callable(save_batch):
+                    save_batch(pending_snapshots)
+                    return
+                # Compatibility path for small in-memory fakes and older
+                # embedders.  Production uses the repository's atomic commit.
+                for course_id, snapshot in pending_snapshots:
+                    snapshots.save(course_id, snapshot)
+
+            timed_stage(
+                "activity_snapshot_persist",
+                persist_snapshots,
+                telemetry=self._telemetry,
+                fields={
+                    "snapshot_count": len(pending_snapshots),
+                    "snapshot_payload_bytes": payload_bytes,
+                    "batch": True,
+                },
+            )
         _emit(
             self._telemetry,
             "activity_snapshots_synced",
@@ -345,6 +379,9 @@ class CourseActivityService:
                 "bulk_submission_unknown": bulk_submission_unknown,
                 "bulk_fallbacks": bulk_fallbacks,
                 "html_activities": html_activities,
+                "module_bulk_activities": module_bulk_activities,
+                "module_bulk_calls": module_bulk_calls,
+                "module_bulk_failures": module_bulk_failures,
                 "updates_checked": updates_checked,
                 "updates_changed": updates_changed,
                 "concurrency": self._max_workers,
@@ -366,6 +403,7 @@ class CourseActivityService:
         snapshots: ActivitySnapshotRepository,
         *,
         mobile_tokens: object | None = None,
+        pending_saves: list[tuple[str, dict[str, Any]]] | None = None,
     ) -> dict[str, object]:
         course_id = course["id"]
         fields = {"course_id": course_id, "course_code": course["code"], "term": course["term"]}
@@ -459,6 +497,9 @@ class CourseActivityService:
         bulk_count = 0
         bulk_submission_unknown = 0
         bulk_fallbacks = 0
+        module_bulk_count = 0
+        module_bulk_calls = 0
+        module_bulk_failures = 0
         html_positions = set(changed_positions)
         bulk_method = getattr(self._client, "fetch_course_activity_bulk", None)
         bulk_details_complete = getattr(self._client, "bulk_activity_details_complete", True)
@@ -575,6 +616,96 @@ class CourseActivityService:
                 },
             )
 
+        module_bulk_method = getattr(self._client, "fetch_course_activity_module_bulk", None)
+        if (
+            html_positions
+            and callable(module_bulk_method)
+            and mobile_tokens is not None
+            and getattr(mobile_tokens, "term", None) == course["term"]
+        ):
+            webservice_token = getattr(mobile_tokens, "webservice_token", None)
+            private_token = getattr(mobile_tokens, "private_token", None)
+            if isinstance(webservice_token, str) and isinstance(private_token, str):
+                positions_by_module: dict[tuple[int, str], set[int]] = {}
+                for position in html_positions:
+                    entry = entries[position]
+                    key = (
+                        _entry_moodle_course_id(entry, index["moodle_course_id"]),
+                        str(entry["kind"]),
+                    )
+                    positions_by_module.setdefault(key, set()).add(position)
+                for (moodle_course_id, kind), positions in sorted(positions_by_module.items()):
+                    if kind not in {"assign", "quiz"}:
+                        continue
+                    module_bulk_calls += 1
+                    try:
+                        module_details = timed_stage(
+                            "activity_snapshot_module_bulk_capture",
+                            partial(
+                                module_bulk_method,
+                                webservice_token=webservice_token,
+                                private_token=private_token,
+                                term=course["term"],
+                                course_id=moodle_course_id,
+                                kind=kind,
+                            ),
+                            telemetry=self._telemetry,
+                            fields={
+                                **fields,
+                                "moodle_course_id": moodle_course_id,
+                                "kind": kind,
+                                "activity_count": len(positions),
+                            },
+                        )
+                        if not isinstance(module_details, dict):
+                            raise InvalidMoodleResponse("activity_module_bulk_shape")
+                    except Exception as error:
+                        module_bulk_failures += 1
+                        _emit(
+                            self._telemetry,
+                            "moodle_activity_module_bulk_unavailable",
+                            {
+                                **fields,
+                                "moodle_course_id": moodle_course_id,
+                                "kind": kind,
+                                "reason": type(error).__name__,
+                                "upstream_class": _classify_upstream(error)[0],
+                                "activity_count": len(positions),
+                            },
+                        )
+                        continue
+                    for position in positions:
+                        entry = entries[position]
+                        detail = module_details.get(str(entry["source_id"]))
+                        if not isinstance(detail, dict) or _bulk_detail_needs_html_fallback(detail):
+                            _emit(
+                                self._telemetry,
+                                "moodle_activity_module_bulk_detail_fallback",
+                                {
+                                    **fields,
+                                    "source_id": entry["source_id"],
+                                    "kind": kind,
+                                    "reason": (
+                                        "activity_missing_from_module_bulk_response"
+                                        if not isinstance(detail, dict)
+                                        else "missing_module_bulk_fields"
+                                    ),
+                                },
+                            )
+                            continue
+                        clean_detail = _clean_bulk_detail(detail)
+                        activities[position] = {
+                            **entry,
+                            **clean_detail,
+                            "files": [],
+                            "term": course["term"],
+                        }
+                        html_positions.discard(position)
+                        module_bulk_count += 1
+                        bulk_submission_unknown += int(
+                            clean_detail.get("submission_state") == "unknown"
+                        )
+
         def capture_activity(position: int, entry: dict[str, Any]) -> dict[str, object] | None:
             """Fetch one activity detail; return a bounded failure record or None."""
             started = monotonic()
@@ -641,9 +772,14 @@ class CourseActivityService:
         payload_bytes = len(
             json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         )
+        persist = (
+            (lambda: pending_saves.append((course_id, snapshot)))
+            if pending_saves is not None
+            else partial(snapshots.save, course_id, snapshot)
+        )
         timed_stage(
-            "activity_snapshot_persist",
-            partial(snapshots.save, course_id, snapshot),
+            "activity_snapshot_queue" if pending_saves is not None else "activity_snapshot_persist",
+            persist,
             telemetry=self._telemetry,
             fields={
                 **fields,
@@ -666,6 +802,9 @@ class CourseActivityService:
             "bulk_submission_unknown": bulk_submission_unknown,
             "bulk_fallbacks": bulk_fallbacks,
             "html_count": len(html_positions),
+            "module_bulk_count": module_bulk_count,
+            "module_bulk_calls": module_bulk_calls,
+            "module_bulk_failures": module_bulk_failures,
             "updates_checked": updates_checked,
             "updates_changed": updates_changed,
         }

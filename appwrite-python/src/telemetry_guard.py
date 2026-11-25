@@ -25,6 +25,8 @@ VOLATILE_FIELDS = frozenset(
     {
         "duration_ms",
         "firestore_duration_ms",
+        "firestore_read_duration_ms",
+        "firestore_write_duration_ms",
         "queue_wait_ms",
         "received_at_ms",
         "request_id",

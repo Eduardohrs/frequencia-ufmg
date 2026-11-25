@@ -26,6 +26,7 @@ from moodle_structured_dates import (
     _is_metaturma,
     _is_moodle_module,
     _mobile_tokens,
+    _parse_activity_module_bulk,
     _parse_activity_updates,
     _parse_calendar,
     _parse_course_activity_contents,
@@ -1357,6 +1358,247 @@ def test_activity_updates_since_and_bulk_client_use_official_endpoints() -> None
     )
     assert set(bulk) == {"701"}
     assert bulk["701"]["attachments"] == []
+
+
+def test_activity_module_bulk_uses_the_official_assignment_service() -> None:
+    payload = {
+        "courses": [
+            {
+                "id": 3701,
+                "assignments": [
+                    {
+                        "cmid": 701,
+                        "name": "Lista 1",
+                        "activity": "<p>Resolver exercícios</p>",
+                        "duedate": 1_798_000_000,
+                        "introattachments": [
+                            {
+                                "filename": "lista.pdf",
+                                "fileurl": (
+                                    "https://virtual.ufmg.br/20262/pluginfile.php/"
+                                    "1/mod_assign/introattachment/0/lista.pdf"
+                                ),
+                            }
+                        ],
+                        "activityattachments": [],
+                    }
+                ],
+            }
+        ],
+        "warnings": [],
+    }
+
+    class Client(MoodleStructuredDatesClient):
+        def _open(self, request):
+            assert request.full_url == "https://virtual.ufmg.br/20262/webservice/rest/server.php"
+            assert b"wsfunction=mod_assign_get_assignments" in request.data
+            assert b"courseids%5B0%5D=3701" in request.data
+            return json.dumps(payload).encode(), request.full_url, "application/json"
+
+    details = Client().fetch_course_activity_module_bulk(
+        webservice_token="b" * 16,
+        private_token="a" * 16,
+        term="2026-2",
+        course_id=3701,
+        kind="assign",
+    )
+    assert details["701"]["description"] == "Resolver exercícios"
+    assert details["701"]["_bulk_description_present"] is True
+    assert details["701"]["_bulk_attachments_present"] is True
+    assert details["701"]["attachments"][0]["name"] == "lista.pdf"
+
+
+def test_activity_module_bulk_rejects_unsupported_kind_before_network() -> None:
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        MoodleStructuredDatesClient().fetch_course_activity_module_bulk(
+            webservice_token="b" * 16,
+            private_token="a" * 16,
+            term="2026-2",
+            course_id=3701,
+            kind="page",
+        )
+
+    assert caught.value.reason == "activity_module_kind"
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload", "reason"),
+    [
+        ("assign", {"courses": [{"assignments": [{"cmid": "701"}]}]}, "activity_module_id"),
+        ("quiz", {"quizzes": [{"id": 701}]}, "activity_module_id"),
+        ("assign", {"courses": [{"assignments": "bad"}]}, "activity_module_items"),
+        ("assign", {"exception": "forbidden"}, "activity_module_upstream_error"),
+    ],
+)
+def test_activity_module_bulk_rejects_unsafe_shapes(
+    kind: str, payload: object, reason: str
+) -> None:
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_activity_module_bulk(json.dumps(payload).encode(), root="/20262", kind=kind)
+    assert caught.value.reason == reason
+
+
+def test_activity_module_bulk_covers_quiz_dates_and_optional_files() -> None:
+    payload = {
+        "quizzes": [
+            {
+                "coursemodule": 702,
+                "name": "Prova 1",
+                "intro": "<p>Questões</p>",
+                "introattachments": [],
+                "timeopen": 1_798_000_000,
+                "timeclose": 1_798_100_000,
+            }
+        ],
+        "warnings": [],
+    }
+
+    result = _parse_activity_module_bulk(json.dumps(payload).encode(), root="/20262", kind="quiz")
+
+    assert result["702"]["description"] == "Questões"
+    assert result["702"]["has_due_date"] is True
+    assert result["702"]["_bulk_attachments_present"] is True
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        ({"courses": None}, "activity_module_courses"),
+        ({"courses": [None]}, "activity_module_course"),
+        ({"courses": [{"assignments": [None]}]}, "activity_module_item"),
+        ({"courses": [{"assignments": [{"cmid": 1}]}]}, "activity_module_title"),
+        (
+            {
+                "courses": [
+                    {
+                        "assignments": [
+                            {"cmid": 1, "name": "A", "activity": "one"},
+                            {"cmid": 1, "name": "B", "activity": "two"},
+                        ]
+                    }
+                ]
+            },
+            "activity_module_conflict",
+        ),
+        (
+            {
+                "courses": [
+                    {
+                        "assignments": [
+                            {
+                                "cmid": 1,
+                                "name": "A",
+                                    "introattachments": "bad",
+                                "activityattachments": [],
+                            }
+                        ]
+                    }
+                ]
+            },
+            "activity_module_attachments",
+        ),
+        (
+            {
+                "courses": [
+                    {
+                        "assignments": [
+                            {
+                                "cmid": 1,
+                                "name": "A",
+                                "introattachments": [None],
+                                "activityattachments": [],
+                            }
+                        ]
+                    }
+                ]
+            },
+            "activity_module_attachment",
+        ),
+        (
+            {
+                "courses": [
+                    {
+                        "assignments": [
+                            {
+                                "cmid": 1,
+                                "name": "A",
+                                "introattachments": [
+                                    {
+                                        "filename": " bad.pdf",
+                                        "fileurl": "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_assign/introattachment/0/a.pdf",
+                                    }
+                                ],
+                                "activityattachments": [],
+                            }
+                        ]
+                    }
+                ]
+            },
+            "activity_module_attachment_name",
+        ),
+        (
+            {
+                "courses": [
+                    {
+                        "assignments": [
+                            {
+                                "cmid": 1,
+                                "name": "A",
+                                "introattachments": [
+                                    {
+                                        "filename": "a.pdf",
+                                        "fileurl": "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_assign/introattachment/0/a.pdf",
+                                    },
+                                    {
+                                        "filename": "b.pdf",
+                                        "fileurl": "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_assign/introattachment/0/a.pdf",
+                                    },
+                                ],
+                                "activityattachments": [],
+                            }
+                        ]
+                    }
+                ]
+            },
+            "activity_module_attachment_conflict",
+        ),
+        (
+            {
+                "courses": [
+                    {
+                        "assignments": [
+                            {"cmid": 1, "name": "A", "duedate": "tomorrow"}
+                        ]
+                    }
+                ]
+            },
+            "activity_module_date",
+        ),
+    ],
+)
+def test_activity_module_bulk_rejects_additional_shapes(payload: object, reason: str) -> None:
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_activity_module_bulk(json.dumps(payload).encode(), root="/20262", kind="assign")
+    assert caught.value.reason == reason
+
+
+def test_activity_module_bulk_skips_non_file_contents_without_marking_files_complete() -> None:
+    payload = {
+        "courses": [
+            {
+                "assignments": [
+                    {
+                        "cmid": 703,
+                        "name": "A",
+                        "introattachments": [{"type": "label"}],
+                    }
+                ]
+            }
+        ]
+    }
+    result = _parse_activity_module_bulk(json.dumps(payload).encode(), root="/20262", kind="assign")
+    assert result["703"]["attachments"] == []
+    assert result["703"]["_bulk_attachments_present"] is False
 
 
 @pytest.mark.parametrize(

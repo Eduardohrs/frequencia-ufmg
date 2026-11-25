@@ -14,6 +14,7 @@ from activity_snapshot_repository import (
     ActivitySnapshotRepository,
     InvalidActivitySnapshot,
     _encode,
+    _estimate_update_bytes,
 )
 from moodle_structured_dates import MoodleUnavailable
 from moodle_token_store import MoodleTokenStoreUnavailable
@@ -27,6 +28,21 @@ def activities():
 class Store(_Firestore):
     def get_user_document(self, *path):
         return {"fields": self.documents[tuple(path)]}
+
+
+class BatchStore:
+    def __init__(self) -> None:
+        self.commits: list[list[tuple[tuple[str, ...], dict[str, object]]]] = []
+
+    def commit_user_documents(self, *, updates, deletes) -> None:
+        assert deletes == []
+        self.commits.append(list(updates))
+
+
+class LegacyStore(Store):
+    """Exercise the compatibility path used by older Firestore fakes/clients."""
+
+    commit_user_documents = None
 
 
 def snapshot():
@@ -85,6 +101,64 @@ def test_snapshot_atomic_replacement_and_failure_preserve_the_last_version():
         _encode(
             {**snapshot(), "activities": [{**snapshot()["activities"][0], "unexpected": object()}]}
         )
+
+
+def test_snapshot_batch_uses_one_commit_for_small_course_set():
+    store = BatchStore()
+    repo = ActivitySnapshotRepository(store)
+    second = {**snapshot(), "course_id": "mat"}
+
+    repo.save_batch([("poo", snapshot()), ("mat", second)])
+
+    assert len(store.commits) == 1
+    assert [path for path, _ in store.commits[0]] == [
+        ("courses", "poo", "activitySnapshots", "current"),
+        ("courses", "mat", "activitySnapshots", "current"),
+    ]
+
+
+def test_snapshot_batch_falls_back_to_individual_patches_without_commit_api():
+    store = LegacyStore()
+    repo = ActivitySnapshotRepository(store)
+    second = {**snapshot(), "course_id": "mat"}
+
+    repo.save_batch([("poo", snapshot()), ("mat", second)])
+
+    assert [path for path, _ in store.patches] == [
+        ("courses", "poo", "activitySnapshots", "current"),
+        ("courses", "mat", "activitySnapshots", "current"),
+    ]
+
+
+def test_snapshot_batch_rejects_duplicates_and_supports_empty_input():
+    repo = ActivitySnapshotRepository(BatchStore())
+    repo.save_batch([])
+    with pytest.raises(InvalidActivitySnapshot, match="duplicate snapshot course"):
+        repo.save_batch([("poo", snapshot()), ("poo", snapshot())])
+
+
+def test_snapshot_batch_splits_when_the_commit_budget_is_reached():
+    store = BatchStore()
+    repo = ActivitySnapshotRepository(store)
+    entry = {
+        "source_id": "20",
+        "description": "x" * 480_000,
+        "attachments": [],
+        "files": [],
+        "term": "2026-2",
+    }
+    first = {**snapshot(), "activities": [entry]}
+    second = {**first, "course_id": "mat"}
+
+    repo.save_batch([("poo", first), ("mat", second)])
+
+    assert len(store.commits) == 2
+    assert _estimate_update_bytes(*store.commits[0][0]) > 400_000
+
+
+def test_snapshot_batch_estimator_rejects_non_serializable_fields():
+    with pytest.raises(InvalidActivitySnapshot, match="invalid activity snapshot"):
+        _estimate_update_bytes(("courses", "poo"), {"bad": object()})
 
 
 def test_sync_captures_all_content_and_keeps_failed_course_while_other_courses_update(activities):

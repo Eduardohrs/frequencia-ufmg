@@ -44,6 +44,13 @@ class _Firestore(Protocol):
         self, *segments: str, fields: Mapping[str, Any]
     ) -> dict[str, Any]: ...
 
+    def commit_user_documents(
+        self,
+        *,
+        updates: list[tuple[tuple[str, ...], Mapping[str, Any]]],
+        deletes: list[tuple[str, ...]],
+    ) -> None: ...
+
 
 class MoodleMaterialCatalogRepository:
     def __init__(
@@ -66,6 +73,7 @@ class MoodleMaterialCatalogRepository:
 
         totals = {"created": 0, "updated": 0, "unchanged": 0, "removed": 0, "writes": 0}
         now = _timestamp(self._now())
+        pending_updates: list[tuple[tuple[str, ...], Mapping[str, Any]]] = []
         for course in validated:
             existing = self._load(course["course_id"])
             previous_candidates = (
@@ -97,14 +105,22 @@ class MoodleMaterialCatalogRepository:
             ):
                 continue
             created_at = existing["created_at"] if existing is not None else now
-            self._firestore.patch_user_document(
-                "courses",
-                course["course_id"],
-                "materialCatalog",
-                "current",
-                fields=_encode({**comparable, "created_at": created_at, "updated_at": now}),
+            pending_updates.append(
+                (
+                    ("courses", course["course_id"], "materialCatalog", "current"),
+                    _encode({**comparable, "created_at": created_at, "updated_at": now}),
+                )
             )
             totals["writes"] += 1
+        if pending_updates:
+            commit = getattr(self._firestore, "commit_user_documents", None)
+            if callable(commit):
+                commit(updates=pending_updates, deletes=[])
+            else:
+                # Lightweight fakes and older embedders can still use patches;
+                # production Firestore clients take the atomic path above.
+                for path, fields in pending_updates:
+                    self._firestore.patch_user_document(*path, fields=fields)
         return totals
 
     def list_catalog(self, courses: list[dict[str, Any]]) -> list[dict[str, object]]:

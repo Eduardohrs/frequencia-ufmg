@@ -37,6 +37,18 @@ class _Firestore:
         return {"name": "/".join(path), "fields": fields}
 
 
+class _BatchFirestore(_Firestore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.commits: list[list[tuple[tuple[str, ...], dict[str, Any]]]] = []
+
+    def commit_user_documents(self, *, updates, deletes) -> None:
+        assert deletes == []
+        self.commits.append(list(updates))
+        for path, fields in updates:
+            self.documents[path] = fields
+
+
 def _candidate(**changes: object) -> dict[str, object]:
     candidate = {
         "source_id": "101",
@@ -108,6 +120,19 @@ def test_reconcile_is_idempotent_and_counts_item_changes() -> None:
     assert changed == {"created": 1, "updated": 1, "unchanged": 0, "removed": 0, "writes": 1}
     assert removed == {"created": 0, "updated": 0, "unchanged": 1, "removed": 1, "writes": 1}
     assert len(firestore.patches) == 3
+
+
+def test_reconcile_batches_changed_catalog_documents() -> None:
+    firestore = _BatchFirestore()
+    repository = MoodleMaterialCatalogRepository(firestore, now=lambda: NOW)
+
+    result = repository.reconcile(
+        [_course(), _course(course_id="course-b", course_code="MAT001")]
+    )
+
+    assert result["writes"] == 2
+    assert len(firestore.commits) == 1
+    assert len(firestore.commits[0]) == 2
 
 
 def test_list_returns_persisted_catalog_with_explicit_origin_and_course_identity() -> None:
