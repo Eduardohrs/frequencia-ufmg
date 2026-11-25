@@ -267,6 +267,7 @@ class CourseActivityService:
         updates_changed = 0
         failed: list[dict[str, object]] = []
         pending_snapshots: list[tuple[str, dict[str, Any]]] = []
+        pending_policy_updates: list[tuple[str, str, dict[str, Any]]] = []
         courses = self._courses.list_courses()
         mobile_tokens = None
         try:
@@ -303,7 +304,15 @@ class CourseActivityService:
                             self._policy.state(course_id, "activities").get("result")
                         )
                     capture_result, reused = self._policy.run(
-                        course_id, "activities", course["term"], now=now, fetch=capture, force=force
+                        course_id,
+                        "activities",
+                        course["term"],
+                        now=now,
+                        fetch=capture,
+                        force=force,
+                        defer_success=lambda course, source, state: pending_policy_updates.append(
+                            (course, source, state)
+                        ),
                     )
                 else:
                     capture_result = capture()
@@ -365,6 +374,9 @@ class CourseActivityService:
                     "batch": True,
                 },
             )
+            if self._policy is not None:
+                for course_id, source, state in pending_policy_updates:
+                    self._policy.persist_success(course_id, source, state)
         _emit(
             self._telemetry,
             "activity_snapshots_synced",
@@ -772,11 +784,15 @@ class CourseActivityService:
         payload_bytes = len(
             json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         )
-        persist = (
-            (lambda: pending_saves.append((course_id, snapshot)))
-            if pending_saves is not None
-            else partial(snapshots.save, course_id, snapshot)
-        )
+        def persist() -> None:
+            if pending_saves is None:
+                snapshots.save(course_id, snapshot)
+                return
+            validate_snapshot = getattr(snapshots, "validate_snapshot", None)
+            if callable(validate_snapshot):
+                validate_snapshot(course_id, snapshot)
+            pending_saves.append((course_id, snapshot))
+
         timed_stage(
             "activity_snapshot_queue" if pending_saves is not None else "activity_snapshot_persist",
             persist,

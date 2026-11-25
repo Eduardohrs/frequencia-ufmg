@@ -12,6 +12,7 @@ from firestore_rest import FirestoreNotFound
 # snapshot is already capped at 750 KiB, so the guard below keeps normal
 # courses in one request while splitting unusually large multi-course syncs.
 _SAFE_COMMIT_BYTES = 900_000
+_MAX_COMMIT_PARENT_COURSES = 20
 
 
 class ActivitySnapshotMissing(Exception):
@@ -66,6 +67,11 @@ class ActivitySnapshotRepository:
     def save(self, course_id: str, snapshot: dict[str, Any]) -> None:
         self.save_batch([(course_id, snapshot)])
 
+    def validate_snapshot(self, course_id: str, snapshot: dict[str, Any]) -> None:
+        """Validate a snapshot before a caller queues it for a later commit."""
+
+        self._build_update(course_id, snapshot)
+
     def save_batch(self, snapshots: list[tuple[str, dict[str, Any]]]) -> None:
         """Persist successful course snapshots in one atomic Firestore commit."""
 
@@ -76,34 +82,28 @@ class ActivitySnapshotRepository:
             if identifier in seen:
                 raise InvalidActivitySnapshot("duplicate snapshot course")
             seen.add(identifier)
-            encoded = _encode(snapshot)
-            if snapshot["course_id"] != identifier:
-                raise InvalidActivitySnapshot("snapshot course mismatch")
-            updates.append(
-                (
-                    ("courses", identifier, "activitySnapshots", "current"),
-                    {
-                        "schemaVersion": {"integerValue": "1"},
-                        "snapshotJson": {"stringValue": encoded},
-                        "contentHash": {"stringValue": sha256(encoded.encode()).hexdigest()},
-                        "updatedAt": {"timestampValue": snapshot["synced_at"]},
-                    },
-                )
-            )
+            updates.append(self._build_update(identifier, snapshot))
         if not updates:
             return
         commit = getattr(self._firestore, "commit_user_documents", None)
         if callable(commit):
             batch: list[tuple[tuple[str, ...], Mapping[str, Any]]] = []
             batch_bytes = 0
+            batch_courses: set[str] = set()
             for update in updates:
                 update_bytes = _estimate_update_bytes(*update)
-                if batch and batch_bytes + update_bytes > _SAFE_COMMIT_BYTES:
+                course_id = update[0][1]
+                if batch and (
+                    batch_bytes + update_bytes > _SAFE_COMMIT_BYTES
+                    or len(batch_courses) >= _MAX_COMMIT_PARENT_COURSES
+                ):
                     commit(updates=batch, deletes=[])
                     batch = []
                     batch_bytes = 0
+                    batch_courses = set()
                 batch.append(update)
                 batch_bytes += update_bytes
+                batch_courses.add(course_id)
             # ``updates`` is non-empty here, so the final batch always contains
             # at least the last update after the loop.
             commit(updates=batch, deletes=[])
@@ -111,6 +111,23 @@ class ActivitySnapshotRepository:
         # Keep the repository usable with small in-memory fakes and old callers.
         for path, fields in updates:
             self._firestore.patch_user_document(*path, fields=fields)
+
+    def _build_update(
+        self, course_id: str, snapshot: dict[str, Any]
+    ) -> tuple[tuple[str, ...], Mapping[str, Any]]:
+        identifier = validate_course_id(course_id)
+        encoded = _encode(snapshot)
+        if snapshot["course_id"] != identifier:
+            raise InvalidActivitySnapshot("snapshot course mismatch")
+        return (
+            ("courses", identifier, "activitySnapshots", "current"),
+            {
+                "schemaVersion": {"integerValue": "1"},
+                "snapshotJson": {"stringValue": encoded},
+                "contentHash": {"stringValue": sha256(encoded.encode()).hexdigest()},
+                "updatedAt": {"timestampValue": snapshot["synced_at"]},
+            },
+        )
 
 
 def _estimate_update_bytes(

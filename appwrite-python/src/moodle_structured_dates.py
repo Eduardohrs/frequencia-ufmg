@@ -1346,12 +1346,11 @@ def _parse_activity_module_bulk(
                 title = raw.get("name")
                 if not isinstance(title, str) or not title.strip() or len(title) > 1_024:
                     raise ValueError("activity_module_title")
-                description_key = "activity" if kind == "assign" else "intro"
                 attachments = _module_activity_attachments(raw, root=root)
                 dates = _module_activity_dates(raw, kind=kind)
                 candidate: dict[str, object] = {
-                    "description": plain_activity_text(raw.get(description_key)),
-                    "_bulk_description_present": description_key in raw,
+                    "description": _module_activity_description(raw, kind=kind),
+                    "_bulk_description_present": _module_description_present(raw, kind=kind),
                     "_bulk_attachments_present": _module_attachments_present(raw, kind=kind),
                     "dates_text": dates["text"],
                     "has_due_date": dates["has_due_date"],
@@ -1373,6 +1372,19 @@ def _parse_activity_module_bulk(
             else "activity_module_shape"
         )
         raise InvalidMoodleResponse(reason) from None
+
+
+def _module_activity_description(raw: dict[str, object], *, kind: str) -> str:
+    """Keep both the assignment statement and its submission instructions."""
+
+    keys = ("intro", "activity") if kind == "assign" else ("intro",)
+    parts = [plain_activity_text(raw.get(key)) for key in keys]
+    return "\n\n".join(part for part in parts if part)[:20_000]
+
+
+def _module_description_present(raw: dict[str, object], *, kind: str) -> bool:
+    keys = ("intro", "activity") if kind == "assign" else ("intro",)
+    return all(key in raw for key in keys)
 
 
 def _module_attachments_present(raw: dict[str, object], *, kind: str) -> bool:

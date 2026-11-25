@@ -5,12 +5,14 @@ from typing import Any
 
 import pytest
 
+import moodle_material_catalog_repository as catalog_module
 from moodle_material_catalog_repository import (
     MAX_CATALOG_BYTES,
     InvalidMoodleMaterialCatalog,
     MoodleMaterialCatalogRepository,
     _decode,
     _encode,
+    _estimate_update_bytes,
     _instant,
 )
 
@@ -133,6 +135,33 @@ def test_reconcile_batches_changed_catalog_documents() -> None:
     assert result["writes"] == 2
     assert len(firestore.commits) == 1
     assert len(firestore.commits[0]) == 2
+
+
+def test_reconcile_splits_batches_at_the_security_rules_parent_limit() -> None:
+    firestore = _BatchFirestore()
+    repository = MoodleMaterialCatalogRepository(firestore, now=lambda: NOW)
+    courses = [
+        _course(course_id=f"course-{index}", course_code=f"MAT{index:03d}")
+        for index in range(21)
+    ]
+
+    result = repository.reconcile(courses)
+
+    assert result["writes"] == 21
+    assert [len(commit) for commit in firestore.commits] == [20, 1]
+
+
+def test_reconcile_splits_batches_at_the_serialized_payload_limit(monkeypatch) -> None:
+    firestore = _BatchFirestore()
+    repository = MoodleMaterialCatalogRepository(firestore, now=lambda: NOW)
+    monkeypatch.setattr(catalog_module, "_SAFE_COMMIT_BYTES", 1_000)
+
+    result = repository.reconcile(
+        [_course(), _course(course_id="course-b", course_code="MAT001")]
+    )
+
+    assert result["writes"] == 2
+    assert [len(commit) for commit in firestore.commits] == [1, 1]
 
 
 def test_list_returns_persisted_catalog_with_explicit_origin_and_course_identity() -> None:
@@ -370,6 +399,11 @@ def test_encode_rejects_an_oversized_material_payload() -> None:
                 "updated_at": "2026-10-16T03:00:00Z",
             }
         )
+
+
+def test_material_commit_estimator_rejects_non_serializable_fields() -> None:
+    with pytest.raises(InvalidMoodleMaterialCatalog):
+        _estimate_update_bytes(("courses", "course-a"), {"bad": object()})
 
 
 def _stored_document() -> dict[str, Any]:

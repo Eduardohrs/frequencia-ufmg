@@ -187,7 +187,9 @@ class FirestoreRestClient:
             )
         writes.extend({"delete": self._document_name(path)} for path in deletes)
         try:
-            body = json.dumps({"writes": writes}, separators=(",", ":")).encode()
+            body = json.dumps(
+                {"writes": writes}, ensure_ascii=False, separators=(",", ":")
+            ).encode()
         except (TypeError, ValueError):
             raise ValueError("Firestore fields must be JSON serializable") from None
         if len(body) > MAX_PAYLOAD_BYTES:

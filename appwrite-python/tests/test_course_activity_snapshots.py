@@ -156,6 +156,30 @@ def test_snapshot_batch_splits_when_the_commit_budget_is_reached():
     assert _estimate_update_bytes(*store.commits[0][0]) > 400_000
 
 
+def test_snapshot_batch_splits_at_the_security_rules_parent_limit():
+    store = BatchStore()
+    repo = ActivitySnapshotRepository(store)
+    snapshots = [
+        (f"course-{index}", {**snapshot(), "course_id": f"course-{index}"})
+        for index in range(21)
+    ]
+
+    repo.save_batch(snapshots)
+
+    assert [len(commit) for commit in store.commits] == [20, 1]
+
+
+def test_capture_persists_immediately_without_a_pending_batch(activities):
+    service, _, _, _, _, _, _, _ = activities
+    service._courses.list_courses = lambda: [{"id": "poo", "code": "ELE631", "term": "2026-2"}]
+    store = Store()
+    repo = ActivitySnapshotRepository(store)
+
+    service._capture_snapshot("owner", {"id": "poo", "code": "ELE631", "term": "2026-2"}, 1, repo)
+
+    assert repo.load("poo")["course_id"] == "poo"
+
+
 def test_snapshot_batch_estimator_rejects_non_serializable_fields():
     with pytest.raises(InvalidActivitySnapshot, match="invalid activity snapshot"):
         _estimate_update_bytes(("courses", "poo"), {"bad": object()})

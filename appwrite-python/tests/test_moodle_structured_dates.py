@@ -1369,6 +1369,7 @@ def test_activity_module_bulk_uses_the_official_assignment_service() -> None:
                     {
                         "cmid": 701,
                         "name": "Lista 1",
+                        "intro": "<p>Requisitos da lista</p>",
                         "activity": "<p>Resolver exercícios</p>",
                         "duedate": 1_798_000_000,
                         "introattachments": [
@@ -1402,7 +1403,7 @@ def test_activity_module_bulk_uses_the_official_assignment_service() -> None:
         course_id=3701,
         kind="assign",
     )
-    assert details["701"]["description"] == "Resolver exercícios"
+    assert details["701"]["description"] == "Requisitos da lista\n\nResolver exercícios"
     assert details["701"]["_bulk_description_present"] is True
     assert details["701"]["_bulk_attachments_present"] is True
     assert details["701"]["attachments"][0]["name"] == "lista.pdf"
