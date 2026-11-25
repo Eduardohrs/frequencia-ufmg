@@ -1222,10 +1222,21 @@ def _parse_course_activity_contents(
                 )
                 candidate: dict[str, object] = {
                     "description": plain_activity_text(module.get("description")),
+                    # Moodle's course-wide export may omit fields that the
+                    # activity page still exposes.  Keep these provenance
+                    # flags internal so the caller can decide when to use the
+                    # precise HTML fallback without persisting them in the
+                    # user-facing snapshot.
+                    "_bulk_description_present": "description" in module,
+                    "_bulk_attachments_present": "contents" in module,
                     "dates_text": dates["text"],
                     "has_due_date": dates["has_due_date"],
                     "submission_state": "unknown",
                     "submission_text": "",
+                    # The course-wide service has no student-specific
+                    # submission status.  Force the activity-page fallback
+                    # until a module-specific status endpoint is available.
+                    "_bulk_submission_complete": False,
                     "attachments": attachments,
                 }
                 identifier = str(source_id)

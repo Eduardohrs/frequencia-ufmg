@@ -74,6 +74,7 @@ class _IncrementalClient(_Client):
     def __init__(self, index, fetch) -> None:
         super().__init__(index, fetch)
         self.update_calls: list[int] = []
+        self.update_course_ids: list[int] = []
         self.bulk_calls: list[int] = []
         self.changed_ids: set[int] = set()
         self.bulk_result: dict[str, dict[str, object]] | None = None
@@ -81,6 +82,7 @@ class _IncrementalClient(_Client):
 
     def activity_updates_since(self, token, *, term, course_id, since):
         self.update_calls.append(since)
+        self.update_course_ids.append(course_id)
         if self.fail_updates:
             raise InvalidMoodleResponse("updates_unavailable")
         return set(self.changed_ids)
@@ -261,6 +263,79 @@ def test_incremental_sync_bulk_reads_only_modules_reported_as_changed():
     assert summary["updates_changed"] == 1
 
 
+def test_incremental_sync_checks_each_metaturma_course():
+    class MetaturmaClient(_IncrementalClient):
+        def activity_updates_since(self, token, *, term, course_id, since):
+            self.update_calls.append(since)
+            self.update_course_ids.append(course_id)
+            return {2} if course_id == 88 else set()
+
+    first = _entry(1)
+    second = _entry(2)
+    second["moodle_course_id"] = "88"
+    index = {"ELEpoo": [first, second]}
+    service, client, logs = _build(
+        [_course("poo")],
+        index,
+        lambda *, source_id, kind: {"description": "html", "attachments": []},
+        client_class=MetaturmaClient,
+    )
+    snapshots = _Snapshots()
+    service.sync_snapshots("owner", now=1_793_188_800, snapshots=snapshots)
+    client.bulk_calls.clear()
+
+    result = service.sync_snapshots("owner", now=1_793_188_900, snapshots=snapshots)
+
+    assert result["failed"] == 0
+    assert client.update_course_ids[-2:] == [77, 88]
+    assert client.bulk_calls == [88]
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["updates_checked"] == 2
+    assert summary["updates_changed"] == 1
+
+
+def test_bulk_omissions_fall_back_to_html_without_persisting_private_flags():
+    class IncompleteBulkClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                    "_bulk_submission_complete": False,
+                }
+            }
+
+    service, client, _ = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: {
+            "description": "HTML instructions",
+            "dates_text": "Vencimento: 2026-12-01",
+            "has_due_date": True,
+            "submission_state": "not_submitted",
+            "submission_text": "Nenhum envio",
+            "attachments": [{"name": "enunciado.pdf", "url": "https://moodle/file"}],
+        },
+        client_class=IncompleteBulkClient,
+    )
+    snapshots = _Snapshots()
+
+    result = service.sync_snapshots("owner", now=1, snapshots=snapshots)
+
+    assert result["failed"] == 0
+    assert client.fetch_calls == [1]
+    saved = snapshots.saved["poo"]["activities"][0]
+    assert saved["description"] == "HTML instructions"
+    assert not any(key.startswith("_bulk_") for key in saved)
+
+
 def test_bulk_miss_falls_back_only_for_the_missing_changed_activity():
     courses = [_course("poo")]
     index = {"ELEpoo": [_entry(1), _entry(2)]}
@@ -322,6 +397,10 @@ def test_incremental_helpers_reject_invalid_snapshots_and_timestamps():
     assert activities_module._snapshot_epoch({"synced_at": "1960-01-01T00:00:00Z"}) is None
     assert activities_module._metric({}, "missing") == 0
     assert activities_module._metric({"count": "bad"}, "count") == 0
+    with pytest.raises(InvalidMoodleResponse):
+        activities_module._entry_moodle_course_id({"moodle_course_id": "bad"}, "77")
+    with pytest.raises(InvalidMoodleResponse):
+        activities_module._entry_moodle_course_id({"moodle_course_id": "0"}, "77")
 
 
 def test_token_store_failure_falls_back_to_html_and_is_observable():

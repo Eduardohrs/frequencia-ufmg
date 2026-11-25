@@ -135,6 +135,48 @@ def _detail_is_complete(activity: dict[str, Any]) -> bool:
     return required.issubset(activity) and isinstance(activity.get("attachments"), list)
 
 
+def _bulk_detail_needs_html_fallback(detail: dict[str, Any]) -> bool:
+    """Reject only bulk payloads that explicitly omit page-only fields.
+
+    ``core_course_get_contents`` is intentionally used for the cheap, course-wide
+    read, but Moodle does not guarantee that its module export contains the
+    description, intro attachments, or the current student's submission state.
+    The parser marks those omissions with private flags.  Keeping the decision
+    here (rather than treating an empty string/list as valid data) prevents a
+    successful bulk response from erasing details that the existing activity
+    page parser can still retrieve.  Test doubles from older callers omit the
+    flags and remain compatible.
+    """
+
+    return any(
+        detail.get(flag) is False
+        for flag in (
+            "_bulk_description_present",
+            "_bulk_attachments_present",
+            "_bulk_submission_complete",
+        )
+    )
+
+
+def _clean_bulk_detail(detail: dict[str, Any]) -> dict[str, Any]:
+    """Remove parser-only provenance flags before persisting a snapshot."""
+
+    return {key: value for key, value in detail.items() if not key.startswith("_bulk_")}
+
+
+def _entry_moodle_course_id(entry: dict[str, Any], default: object) -> int:
+    """Return the Moodle course that owns an indexed activity."""
+
+    raw_course_id = entry.get("moodle_course_id", default)
+    try:
+        moodle_course_id = int(str(raw_course_id))
+    except (TypeError, ValueError):
+        raise InvalidMoodleResponse("activity_course_id") from None
+    if not 1 <= moodle_course_id <= 2_147_483_647:
+        raise InvalidMoodleResponse("activity_course_id")
+    return moodle_course_id
+
+
 def _metric(result: dict[str, object], key: str) -> int:
     value = result.get(key, 0)
     return value if type(value) is int and value >= 0 else 0
@@ -323,27 +365,43 @@ class CourseActivityService:
                 reused_count = 0
             else:
                 try:
-                    updates_checked = 1
-                    changed_ids = self._client.activity_updates_since(
-                        session.token,
-                        term=course["term"],
-                        course_id=int(str(index["moodle_course_id"])),
-                        since=since,
-                    )
-                    if not isinstance(changed_ids, set) or not all(
-                        type(value) is int for value in changed_ids
-                    ):
-                        raise InvalidMoodleResponse("activity_updates_shape")
+                    # A canonical discipline may contain activities imported
+                    # from one or more metaturmas.  Probe every Moodle course
+                    # represented by the index; checking only the canonical
+                    # course would silently keep stale metaturma dates.
+                    course_by_position: dict[int, int] = {}
                     for position, entry in enumerate(entries):
-                        if int(str(entry["source_id"])) in changed_ids:
+                        course_by_position[position] = _entry_moodle_course_id(
+                            entry, index["moodle_course_id"]
+                        )
+
+                    changed_by_course: dict[int, set[int]] = {}
+                    for moodle_course_id in sorted(set(course_by_position.values())):
+                        updates_checked += 1
+                        changed_ids = self._client.activity_updates_since(
+                            session.token,
+                            term=course["term"],
+                            course_id=moodle_course_id,
+                            since=since,
+                        )
+                        if not isinstance(changed_ids, set) or not all(
+                            type(value) is int for value in changed_ids
+                        ):
+                            raise InvalidMoodleResponse("activity_updates_shape")
+                        changed_by_course[moodle_course_id] = changed_ids
+                    for position, entry in enumerate(entries):
+                        if int(str(entry["source_id"])) in changed_by_course.get(
+                            course_by_position[position], set()
+                        ):
                             changed_positions.add(position)
                             if activities[position] is not None:
                                 activities[position] = None
                                 reused_count -= 1
                     updates_changed = sum(
                         1
-                        for entry in entries
-                        if int(str(entry["source_id"])) in changed_ids
+                        for position, entry in enumerate(entries)
+                        if int(str(entry["source_id"]))
+                        in changed_by_course.get(course_by_position[position], set())
                     )
                 except Exception as error:
                     _emit(
@@ -374,37 +432,51 @@ class CourseActivityService:
             private_token = getattr(mobile_tokens, "private_token", None)
             if isinstance(webservice_token, str) and isinstance(private_token, str):
                 try:
-                    bulk_details = timed_stage(
-                        "activity_snapshot_bulk_capture",
-                        partial(
-                            bulk_method,
-                            webservice_token=webservice_token,
-                            private_token=private_token,
-                            term=course["term"],
-                            course_id=int(str(index["moodle_course_id"])),
-                        ),
-                        telemetry=self._telemetry,
-                        fields={
-                            **fields,
-                            "moodle_course_id": index["moodle_course_id"],
-                            "activity_count": len(changed_positions),
-                        },
-                    )
-                    if not isinstance(bulk_details, dict):
-                        raise InvalidMoodleResponse("course_activity_bulk_shape")
-                    for position in tuple(changed_positions):
-                        entry = entries[position]
-                        detail = bulk_details.get(str(entry["source_id"]))
-                        if not isinstance(detail, dict):
-                            continue
-                        activities[position] = {
-                            **entry,
-                            **detail,
-                            "files": [],
-                            "term": course["term"],
-                        }
-                        html_positions.discard(position)
-                        bulk_count += 1
+                    positions_by_course: dict[int, set[int]] = {}
+                    for position in changed_positions:
+                        moodle_course_id = _entry_moodle_course_id(
+                            entries[position], index["moodle_course_id"]
+                        )
+                        positions_by_course.setdefault(moodle_course_id, set()).add(position)
+
+                    # Metaturma activities are owned by their own Moodle
+                    # course.  Read each distinct course once instead of
+                    # sending a metaturma activity to the canonical endpoint.
+                    for moodle_course_id, positions in sorted(positions_by_course.items()):
+                        bulk_details = timed_stage(
+                            "activity_snapshot_bulk_capture",
+                            partial(
+                                bulk_method,
+                                webservice_token=webservice_token,
+                                private_token=private_token,
+                                term=course["term"],
+                                course_id=moodle_course_id,
+                            ),
+                            telemetry=self._telemetry,
+                            fields={
+                                **fields,
+                                "moodle_course_id": moodle_course_id,
+                                "activity_count": len(positions),
+                            },
+                        )
+                        if not isinstance(bulk_details, dict):
+                            raise InvalidMoodleResponse("course_activity_bulk_shape")
+                        for position in positions:
+                            entry = entries[position]
+                            detail = bulk_details.get(str(entry["source_id"]))
+                            if not isinstance(detail, dict):
+                                continue
+                            if _bulk_detail_needs_html_fallback(detail):
+                                continue
+                            clean_detail = _clean_bulk_detail(detail)
+                            activities[position] = {
+                                **entry,
+                                **clean_detail,
+                                "files": [],
+                                "term": course["term"],
+                            }
+                            html_positions.discard(position)
+                            bulk_count += 1
                 except Exception as error:
                     _emit(
                         self._telemetry,
