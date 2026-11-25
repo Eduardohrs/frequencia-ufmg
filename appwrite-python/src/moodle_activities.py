@@ -119,6 +119,32 @@ class _ActivityParser(HTMLParser):
             self.cell.append(text)
 
 
+class _PlainTextParser(HTMLParser):
+    """Strip Moodle's formatted HTML without retaining markup or URLs."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        text = " ".join(data.split())
+        if text:
+            self.parts.append(text)
+
+
+def plain_activity_text(value: object, *, limit: int = 20_000) -> str:
+    """Return bounded plain text from an API description or a missing value."""
+
+    if not isinstance(value, str):
+        return ""
+    parser = _PlainTextParser()
+    try:
+        parser.feed(value)
+    except (ValueError, AssertionError):
+        return ""
+    return " ".join(parser.parts)[:limit]
+
+
 def parse_activity_page(payload: bytes, *, term: str, kind: str) -> dict[str, object]:
     if re.fullmatch(r"20[2-9][0-9]-[12]", term) is None or kind not in {"assign", "quiz"}:
         raise InvalidActivityPage("activity_request")

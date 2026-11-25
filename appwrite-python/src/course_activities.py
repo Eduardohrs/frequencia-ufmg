@@ -24,6 +24,7 @@ from moodle_structured_dates import (
 )
 from moodle_token_store import (
     AppwriteMoodleTokenStore,
+    MoodleAuthorizationRequired,
     MoodleTokenStoreUnavailable,
 )
 from sync_timing import Telemetry, _emit, timed_stage
@@ -36,6 +37,8 @@ DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY = 4
 MIN_ACTIVITY_SNAPSHOT_CONCURRENCY = 1
 MAX_ACTIVITY_SNAPSHOT_CONCURRENCY = 8
 MAX_REPORTED_FAILED_COURSES = 20
+EMPTY_DESCRIPTION_RECHECK_SECONDS = 60 * 60
+SUBMISSION_RECHECK_SECONDS = 60 * 60
 
 
 class _Sessions(Protocol):
@@ -76,6 +79,138 @@ def _classify_upstream(error: BaseException) -> tuple[str, int | None]:
             return f"http_{status}", status
         return "parser", None
     return "error", None
+
+
+def _load_previous_snapshot(
+    snapshots: ActivitySnapshotRepository, course_id: str, term: str
+) -> dict[str, Any] | None:
+    try:
+        previous = snapshots.load(course_id)
+    except (ActivitySnapshotMissing, InvalidActivitySnapshot):
+        return None
+    if not isinstance(previous, dict) or previous.get("term") != term:
+        return None
+    activities = previous.get("activities")
+    if not isinstance(activities, list) or any(not isinstance(item, dict) for item in activities):
+        return None
+    return previous
+
+
+def _snapshot_by_source(previous: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if previous is None:
+        return {}
+    return {
+        str(activity["source_id"]): activity
+        for activity in cast(list[dict[str, Any]], previous["activities"])
+        if "source_id" in activity
+    }
+
+
+def _snapshot_epoch(previous: dict[str, Any]) -> int | None:
+    value = previous.get("synced_at")
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        timestamp = parsed.timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if timestamp < 0:
+        return None
+    return int(timestamp)
+
+
+def _same_activity_index(old: dict[str, Any], current: dict[str, Any]) -> bool:
+    keys = ("source_id", "kind", "title", "url", "relevance")
+    return all(old.get(key) == current.get(key) for key in keys)
+
+
+def _detail_is_complete(activity: dict[str, Any]) -> bool:
+    required = {
+        "description",
+        "dates_text",
+        "has_due_date",
+        "submission_state",
+        "submission_text",
+        "attachments",
+    }
+    return required.issubset(activity) and isinstance(activity.get("attachments"), list)
+
+
+def _detail_can_be_reused(
+    activity: dict[str, Any], *, snapshot_epoch: int | None, now: int
+) -> bool:
+    """Reuse stable details, but bound fields Moodle can change silently.
+
+    Moodle can hide an assignment description until its opening time without
+    changing the activity index or reporting an update.  An empty cached
+    description therefore needs a bounded retry window; otherwise it would
+    remain empty forever after the activity opens.  Submission status is also
+    user-specific: for group assignments, a teammate's submission may not be
+    reported by the current-user change feed.  Bound assignment reuse so that
+    the next refresh eventually reads the activity page again.
+    """
+
+    if not _detail_is_complete(activity):
+        return False
+    if activity.get("kind") == "assignment":
+        if snapshot_epoch is None or now < snapshot_epoch:
+            return False
+        if now - snapshot_epoch >= SUBMISSION_RECHECK_SECONDS:
+            return False
+    description = activity.get("description")
+    if not isinstance(description, str) or description.strip():
+        return True
+    if snapshot_epoch is None or now < snapshot_epoch:
+        return False
+    return now - snapshot_epoch < EMPTY_DESCRIPTION_RECHECK_SECONDS
+
+
+def _bulk_detail_needs_html_fallback(detail: dict[str, Any]) -> bool:
+    """Reject only bulk payloads that explicitly omit page-only fields.
+
+    ``core_course_get_contents`` is intentionally used for the cheap, course-wide
+    read, but Moodle does not guarantee that its module export contains the
+    description, intro attachments, or the current student's submission state.
+    The parser marks those omissions with private flags.  Keeping the decision
+    here (rather than treating an empty string/list as valid data) prevents a
+    successful bulk response from erasing details that the existing activity
+    page parser can still retrieve.  Test doubles from older callers omit the
+    flags and remain compatible.
+    """
+
+    return any(
+        detail.get(flag) is False
+        for flag in (
+            "_bulk_description_present",
+            "_bulk_attachments_present",
+            "_bulk_submission_complete",
+        )
+    )
+
+
+def _clean_bulk_detail(detail: dict[str, Any]) -> dict[str, Any]:
+    """Remove parser-only provenance flags before persisting a snapshot."""
+
+    return {key: value for key, value in detail.items() if not key.startswith("_bulk_")}
+
+
+def _entry_moodle_course_id(entry: dict[str, Any], default: object) -> int:
+    """Return the Moodle course that owns an indexed activity."""
+
+    raw_course_id = entry.get("moodle_course_id", default)
+    try:
+        moodle_course_id = int(str(raw_course_id))
+    except (TypeError, ValueError):
+        raise InvalidMoodleResponse("activity_course_id") from None
+    if not 1 <= moodle_course_id <= 2_147_483_647:
+        raise InvalidMoodleResponse("activity_course_id")
+    return moodle_course_id
+
+
+def _metric(result: dict[str, object], key: str) -> int:
+    value = result.get(key, 0)
+    return value if type(value) is int and value >= 0 else 0
 
 
 class CourseActivityService:
@@ -123,16 +258,38 @@ class CourseActivityService:
         updated = 0
         reused_total = 0
         failed_activities = 0
+        reused_activities = 0
+        bulk_activities = 0
+        html_activities = 0
+        updates_checked = 0
+        updates_changed = 0
         failed: list[dict[str, object]] = []
         courses = self._courses.list_courses()
+        mobile_tokens = None
+        try:
+            mobile_tokens = self._tokens.load(user_id, now=now)
+        except (MoodleAuthorizationRequired, MoodleTokenStoreUnavailable, ValueError) as error:
+            _emit(
+                self._telemetry,
+                "moodle_activity_bulk_unavailable",
+                {"reason": type(error).__name__, "stage": "token_load"},
+            )
         for course in courses:
             course_id = course["id"]
             fields = {"course_id": course_id, "course_code": course["code"], "term": course["term"]}
 
-            capture = partial(self._capture_snapshot, user_id, course, now, snapshots)
+            capture = partial(
+                self._capture_snapshot,
+                user_id,
+                course,
+                now,
+                snapshots,
+                mobile_tokens=mobile_tokens,
+            )
             try:
                 force = self._force
                 reused = False
+                capture_result: dict[str, object] | None = None
                 if self._policy is not None:
                     try:
                         previous = snapshots.load(course_id)
@@ -141,15 +298,21 @@ class CourseActivityService:
                         force = force or bool(
                             self._policy.state(course_id, "activities").get("result")
                         )
-                    _, reused = self._policy.run(
+                    capture_result, reused = self._policy.run(
                         course_id, "activities", course["term"], now=now, fetch=capture, force=force
                     )
                 else:
-                    capture()
+                    capture_result = capture()
                 if reused:
                     reused_total += 1
                 else:
                     updated += 1
+                    if capture_result is not None:
+                        reused_activities += _metric(capture_result, "reused_count")
+                        bulk_activities += _metric(capture_result, "bulk_count")
+                        html_activities += _metric(capture_result, "html_count")
+                        updates_checked += _metric(capture_result, "updates_checked")
+                        updates_changed += _metric(capture_result, "updates_changed")
             except Exception as error:
                 if isinstance(error, ActivitySnapshotCaptureFailed):
                     reason = error.first_reason
@@ -174,6 +337,11 @@ class CourseActivityService:
                 "failed": len(failed),
                 **({"reused": reused_total} if self._policy is not None else {}),
                 "failed_activities": failed_activities,
+                "reused_activities": reused_activities,
+                "bulk_activities": bulk_activities,
+                "html_activities": html_activities,
+                "updates_checked": updates_checked,
+                "updates_changed": updates_changed,
                 "concurrency": self._max_workers,
                 "duration_ms": round((monotonic() - started) * 1000),
             },
@@ -186,7 +354,13 @@ class CourseActivityService:
         }
 
     def _capture_snapshot(
-        self, user_id: str, course: dict[str, Any], now: int, snapshots: ActivitySnapshotRepository
+        self,
+        user_id: str,
+        course: dict[str, Any],
+        now: int,
+        snapshots: ActivitySnapshotRepository,
+        *,
+        mobile_tokens: object | None = None,
     ) -> dict[str, object]:
         course_id = course["id"]
         fields = {"course_id": course_id, "course_code": course["code"], "term": course["term"]}
@@ -194,6 +368,170 @@ class CourseActivityService:
         entries = cast(list[dict[str, Any]], index["activities"])
         session = self._source(user_id, course_id, now)[1]
         activities: list[dict[str, Any] | None] = [None] * len(entries)
+        previous = _load_previous_snapshot(snapshots, course_id, course["term"])
+        previous_by_source = _snapshot_by_source(previous)
+        incremental_supported = callable(getattr(self._client, "activity_updates_since", None))
+        reuse_allowed = incremental_supported and previous is not None
+        changed_positions = set(range(len(entries)))
+        reused_count = 0
+        updates_checked = 0
+        updates_changed = 0
+
+        if reuse_allowed:
+            previous = cast(dict[str, Any], previous)
+            previous_epoch = _snapshot_epoch(previous)
+            for position, entry in enumerate(entries):
+                old = previous_by_source.get(str(entry["source_id"]))
+                if (
+                    old is not None
+                    and _same_activity_index(old, entry)
+                    and _detail_can_be_reused(old, snapshot_epoch=previous_epoch, now=now)
+                ):
+                    activities[position] = {**old, **entry}
+                    changed_positions.discard(position)
+                    reused_count += 1
+            since = _snapshot_epoch(previous)
+            if since is None:
+                changed_positions = set(range(len(entries)))
+                activities = [None] * len(entries)
+                reused_count = 0
+            else:
+                try:
+                    # A canonical discipline may contain activities imported
+                    # from one or more metaturmas.  Probe every Moodle course
+                    # represented by the index; checking only the canonical
+                    # course would silently keep stale metaturma dates.
+                    course_by_position: dict[int, int] = {}
+                    for position, entry in enumerate(entries):
+                        course_by_position[position] = _entry_moodle_course_id(
+                            entry, index["moodle_course_id"]
+                        )
+
+                    changed_by_course: dict[int, set[int]] = {}
+                    for moodle_course_id in sorted(set(course_by_position.values())):
+                        updates_checked += 1
+                        changed_ids = self._client.activity_updates_since(
+                            session.token,
+                            term=course["term"],
+                            course_id=moodle_course_id,
+                            since=since,
+                        )
+                        if not isinstance(changed_ids, set) or not all(
+                            type(value) is int for value in changed_ids
+                        ):
+                            raise InvalidMoodleResponse("activity_updates_shape")
+                        changed_by_course[moodle_course_id] = changed_ids
+                    for position, entry in enumerate(entries):
+                        if int(str(entry["source_id"])) in changed_by_course.get(
+                            course_by_position[position], set()
+                        ):
+                            changed_positions.add(position)
+                            if activities[position] is not None:
+                                activities[position] = None
+                                reused_count -= 1
+                    updates_changed = sum(
+                        1
+                        for position, entry in enumerate(entries)
+                        if int(str(entry["source_id"]))
+                        in changed_by_course.get(course_by_position[position], set())
+                    )
+                except Exception as error:
+                    _emit(
+                        self._telemetry,
+                        "moodle_activity_updates_unavailable",
+                        {
+                            **fields,
+                            "reason": type(error).__name__,
+                            "upstream_class": _classify_upstream(error)[0],
+                        },
+                    )
+                    # A failed change check cannot prove that reused details are
+                    # current; refresh the complete index through the bulk path.
+                    changed_positions = set(range(len(entries)))
+                    activities = [None] * len(entries)
+                    reused_count = 0
+
+        bulk_count = 0
+        html_positions = set(changed_positions)
+        bulk_method = getattr(self._client, "fetch_course_activity_bulk", None)
+        bulk_details_complete = getattr(self._client, "bulk_activity_details_complete", True)
+        if (
+            changed_positions
+            and callable(bulk_method)
+            and bulk_details_complete is True
+            and mobile_tokens is not None
+            and getattr(mobile_tokens, "term", None) == course["term"]
+        ):
+            webservice_token = getattr(mobile_tokens, "webservice_token", None)
+            private_token = getattr(mobile_tokens, "private_token", None)
+            if isinstance(webservice_token, str) and isinstance(private_token, str):
+                try:
+                    positions_by_course: dict[int, set[int]] = {}
+                    for position in changed_positions:
+                        moodle_course_id = _entry_moodle_course_id(
+                            entries[position], index["moodle_course_id"]
+                        )
+                        positions_by_course.setdefault(moodle_course_id, set()).add(position)
+
+                    # Metaturma activities are owned by their own Moodle
+                    # course.  Read each distinct course once instead of
+                    # sending a metaturma activity to the canonical endpoint.
+                    for moodle_course_id, positions in sorted(positions_by_course.items()):
+                        bulk_details = timed_stage(
+                            "activity_snapshot_bulk_capture",
+                            partial(
+                                bulk_method,
+                                webservice_token=webservice_token,
+                                private_token=private_token,
+                                term=course["term"],
+                                course_id=moodle_course_id,
+                            ),
+                            telemetry=self._telemetry,
+                            fields={
+                                **fields,
+                                "moodle_course_id": moodle_course_id,
+                                "activity_count": len(positions),
+                            },
+                        )
+                        if not isinstance(bulk_details, dict):
+                            raise InvalidMoodleResponse("course_activity_bulk_shape")
+                        for position in positions:
+                            entry = entries[position]
+                            detail = bulk_details.get(str(entry["source_id"]))
+                            if not isinstance(detail, dict):
+                                continue
+                            if _bulk_detail_needs_html_fallback(detail):
+                                continue
+                            clean_detail = _clean_bulk_detail(detail)
+                            activities[position] = {
+                                **entry,
+                                **clean_detail,
+                                "files": [],
+                                "term": course["term"],
+                            }
+                            html_positions.discard(position)
+                            bulk_count += 1
+                except Exception as error:
+                    _emit(
+                        self._telemetry,
+                        "moodle_activity_bulk_unavailable",
+                        {
+                            **fields,
+                            "reason": type(error).__name__,
+                            "upstream_class": _classify_upstream(error)[0],
+                            "activity_count": len(changed_positions),
+                        },
+                    )
+        elif changed_positions and callable(bulk_method) and bulk_details_complete is False:
+            _emit(
+                self._telemetry,
+                "moodle_activity_bulk_skipped",
+                {
+                    **fields,
+                    "reason": "page_only_fields_incomplete",
+                    "activity_count": len(changed_positions),
+                },
+            )
 
         def capture_activity(position: int, entry: dict[str, Any]) -> dict[str, object] | None:
             """Fetch one activity detail; return a bounded failure record or None."""
@@ -237,14 +575,16 @@ class CourseActivityService:
             activities[position] = {**entry, **detail, "files": [], "term": course["term"]}
             return None
 
-        # Bounded pool: every activity is attempted even when others fail, and the
-        # snapshot order stays equal to the index order regardless of completion order.
-        with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
-            futures = [
-                pool.submit(capture_activity, position, entry)
-                for position, entry in enumerate(entries)
-            ]
-            outcomes = [future.result() for future in futures]
+        outcomes: list[dict[str, object] | None] = []
+        if html_positions:
+            # Bounded pool: every unresolved activity is attempted even when
+            # another one fails, while the final snapshot remains index-ordered.
+            with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
+                futures = [
+                    pool.submit(capture_activity, position, entries[position])
+                    for position in sorted(html_positions)
+                ]
+                outcomes = [future.result() for future in futures]
         failures = [outcome for outcome in outcomes if outcome is not None]
         if failures:
             raise ActivitySnapshotCaptureFailed(
@@ -267,9 +607,22 @@ class CourseActivityService:
                 **fields,
                 "activity_count": len(activities),
                 "snapshot_payload_bytes": payload_bytes,
+                "reused_count": reused_count,
+                "bulk_count": bulk_count,
+                "html_count": len(html_positions),
+                "updates_checked": updates_checked,
+                "updates_changed": updates_changed,
             },
         )
-        return {"activity_count": len(activities), "snapshot_payload_bytes": payload_bytes}
+        return {
+            "activity_count": len(activities),
+            "snapshot_payload_bytes": payload_bytes,
+            "reused_count": reused_count,
+            "bulk_count": bulk_count,
+            "html_count": len(html_positions),
+            "updates_checked": updates_checked,
+            "updates_changed": updates_changed,
+        }
 
     def authorize_saved(
         self, user_id: str, course_id: str, detail: dict[str, Any], *, now: int
