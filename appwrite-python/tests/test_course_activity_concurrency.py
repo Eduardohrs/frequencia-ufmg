@@ -9,6 +9,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
+import course_activities as activities_module
 import main as function
 from activity_snapshot_repository import ActivitySnapshotMissing
 from course_activities import (
@@ -23,6 +24,7 @@ from moodle_structured_dates import (
     MoodleStructuredDatesClient,
     MoodleUnavailable,
 )
+from moodle_token_store import MoodleTokenStoreUnavailable
 
 
 def _course(course_id: str) -> dict[str, str]:
@@ -68,9 +70,50 @@ class _Client:
         return self._fetch(source_id=source_id, kind=kind)
 
 
-def _build(courses, index, fetch, *, max_workers=DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY, logs=None):
+class _IncrementalClient(_Client):
+    def __init__(self, index, fetch) -> None:
+        super().__init__(index, fetch)
+        self.update_calls: list[int] = []
+        self.bulk_calls: list[int] = []
+        self.changed_ids: set[int] = set()
+        self.bulk_result: dict[str, dict[str, object]] | None = None
+        self.fail_updates = False
+
+    def activity_updates_since(self, token, *, term, course_id, since):
+        self.update_calls.append(since)
+        if self.fail_updates:
+            raise InvalidMoodleResponse("updates_unavailable")
+        return set(self.changed_ids)
+
+    def fetch_course_activity_bulk(self, *, webservice_token, private_token, term, course_id):
+        self.bulk_calls.append(course_id)
+        if self.bulk_result is not None:
+            return dict(self.bulk_result)
+        return {
+            entry["source_id"]: {
+                "description": f"bulk detail {entry['source_id']}",
+                "dates_text": "",
+                "has_due_date": False,
+                "submission_state": "unknown",
+                "submission_text": "",
+                "attachments": [],
+            }
+            for entries in self._index.values()
+            for entry in entries
+        }
+
+
+def _build(
+    courses,
+    index,
+    fetch,
+    *,
+    max_workers=DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY,
+    logs=None,
+    client_class=_Client,
+):
     logs = [] if logs is None else logs
-    client = _Client(index, fetch)
+    client = client_class(index, fetch)
     course_map = {course["id"]: course for course in courses}
     service = CourseActivityService(
         SimpleNamespace(
@@ -83,7 +126,9 @@ def _build(courses, index, fetch, *, max_workers=DEFAULT_ACTIVITY_SNAPSHOT_CONCU
         SimpleNamespace(load=lambda user_id, *, now: SimpleNamespace(token="token-safe")),
         client,
         SimpleNamespace(
-            load=lambda *args, **kwargs: SimpleNamespace(term="2026-2", private_token="p" * 32)
+            load=lambda *args, **kwargs: SimpleNamespace(
+                term="2026-2", webservice_token="w" * 32, private_token="p" * 32
+            )
         ),
         telemetry=lambda event, fields: logs.append((event, dict(fields))),
         max_workers=max_workers,
@@ -130,7 +175,7 @@ def test_concurrent_capture_preserves_index_order_despite_out_of_order_completio
     assert [a["source_id"] for a in saved["activities"]] == [str(i) for i in range(1, 9)]
     assert [a["description"] for a in saved["activities"]] == [f"detail {i}" for i in range(1, 9)]
     assert all(a["files"] == [] and a["term"] == "2026-2" for a in saved["activities"])
-    summary = next(fields for event, fields in logs if event == "activity_snapshots_synced")
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
     assert summary["total_courses"] == 1
     assert summary["updated"] == 1
     assert summary["failed"] == 0
@@ -138,6 +183,284 @@ def test_concurrent_capture_preserves_index_order_despite_out_of_order_completio
     assert summary["concurrency"] == 4
     assert isinstance(summary["duration_ms"], int)
     assert "reused" not in summary
+
+
+def test_first_sync_uses_one_course_bulk_read_instead_of_one_html_request_per_activity():
+    courses = [_course("poo")]
+    index = {"ELEpoo": [_entry(1), _entry(2), _entry(3, kind="quiz")]}
+
+    service, client, logs = _build(
+        courses,
+        index,
+        lambda *, source_id, kind: {"description": "html", "attachments": []},
+        client_class=_IncrementalClient,
+    )
+    snapshots = _Snapshots()
+
+    result = service.sync_snapshots("owner", now=1_793_188_800, snapshots=snapshots)
+
+    assert result["failed"] == 0
+    assert client.bulk_calls == [77]
+    assert client.fetch_calls == []
+    assert [item["description"] for item in snapshots.saved["poo"]["activities"]] == [
+        "bulk detail 1",
+        "bulk detail 2",
+        "bulk detail 3",
+    ]
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["bulk_activities"] == 3
+    assert summary["html_activities"] == 0
+
+
+def test_incremental_sync_reuses_snapshot_when_moodle_reports_no_changes():
+    courses = [_course("poo")]
+    index = {"ELEpoo": [_entry(1), _entry(2)]}
+    service, client, _ = _build(
+        courses,
+        index,
+        lambda *, source_id, kind: {"description": "html", "attachments": []},
+        client_class=_IncrementalClient,
+    )
+    snapshots = _Snapshots()
+    service.sync_snapshots("owner", now=1_793_188_800, snapshots=snapshots)
+    client.fetch_calls.clear()
+    client.bulk_calls.clear()
+    client.changed_ids = set()
+
+    result = service.sync_snapshots("owner", now=1_793_188_900, snapshots=snapshots)
+
+    assert result["failed"] == 0
+    assert client.update_calls[-1] == 1_793_188_800
+    assert client.bulk_calls == []
+    assert client.fetch_calls == []
+
+
+def test_incremental_sync_bulk_reads_only_modules_reported_as_changed():
+    courses = [_course("poo")]
+    index = {"ELEpoo": [_entry(1), _entry(2), _entry(3)]}
+    service, client, logs = _build(
+        courses,
+        index,
+        lambda *, source_id, kind: {"description": "html", "attachments": []},
+        client_class=_IncrementalClient,
+    )
+    snapshots = _Snapshots()
+    service.sync_snapshots("owner", now=1_793_188_800, snapshots=snapshots)
+    client.bulk_calls.clear()
+    client.fetch_calls.clear()
+    client.changed_ids = {2}
+
+    result = service.sync_snapshots("owner", now=1_793_188_900, snapshots=snapshots)
+
+    assert result["failed"] == 0
+    assert client.bulk_calls == [77]
+    assert client.fetch_calls == []
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["reused_activities"] == 2
+    assert summary["bulk_activities"] == 1
+    assert summary["updates_changed"] == 1
+
+
+def test_bulk_miss_falls_back_only_for_the_missing_changed_activity():
+    courses = [_course("poo")]
+    index = {"ELEpoo": [_entry(1), _entry(2)]}
+    service, client, logs = _build(
+        courses,
+        index,
+        lambda *, source_id, kind: {
+            "description": f"html detail {source_id}",
+            "dates_text": "",
+            "has_due_date": False,
+            "submission_state": "unknown",
+            "submission_text": "",
+            "attachments": [],
+        },
+        client_class=_IncrementalClient,
+    )
+    snapshots = _Snapshots()
+    service.sync_snapshots("owner", now=1_793_188_800, snapshots=snapshots)
+    client.changed_ids = {2}
+    client.bulk_result = {}
+
+    result = service.sync_snapshots("owner", now=1_793_188_900, snapshots=snapshots)
+
+    assert result["failed"] == 0
+    assert client.fetch_calls == [2]
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["reused_activities"] == 1
+    assert summary["bulk_activities"] == 0
+    assert summary["html_activities"] == 1
+
+
+def test_failed_change_probe_refreshes_all_through_bulk_path():
+    courses = [_course("poo")]
+    index = {"ELEpoo": [_entry(1), _entry(2)]}
+    service, client, _ = _build(
+        courses,
+        index,
+        lambda *, source_id, kind: {"description": "html", "attachments": []},
+        client_class=_IncrementalClient,
+    )
+    snapshots = _Snapshots()
+    service.sync_snapshots("owner", now=1_793_188_800, snapshots=snapshots)
+    client.fail_updates = True
+    client.bulk_calls.clear()
+
+    result = service.sync_snapshots("owner", now=1_793_188_900, snapshots=snapshots)
+
+    assert result["failed"] == 0
+    assert client.bulk_calls == [77]
+    assert client.fetch_calls == []
+
+
+def test_incremental_helpers_reject_invalid_snapshots_and_timestamps():
+    snapshots = _Snapshots()
+    snapshots.saved["poo"] = {"term": "2026-2", "activities": [None]}
+    assert activities_module._load_previous_snapshot(snapshots, "poo", "2026-2") is None
+    assert activities_module._snapshot_epoch({}) is None
+    assert activities_module._snapshot_epoch({"synced_at": "not-a-date"}) is None
+    assert activities_module._snapshot_epoch({"synced_at": "1960-01-01T00:00:00Z"}) is None
+    assert activities_module._metric({}, "missing") == 0
+    assert activities_module._metric({"count": "bad"}, "count") == 0
+
+
+def test_token_store_failure_falls_back_to_html_and_is_observable():
+    courses = [_course("poo")]
+    index = {"ELEpoo": [_entry(1)]}
+    service, client, logs = _build(
+        courses,
+        index,
+        lambda *, source_id, kind: {"description": "html", "attachments": []},
+    )
+
+    def fail_load(*args, **kwargs):
+        raise MoodleTokenStoreUnavailable("store unavailable")
+
+    service._tokens = SimpleNamespace(load=fail_load)
+    assert service.sync_snapshots("owner", now=1, snapshots=_Snapshots())["failed"] == 0
+    assert any(event == "moodle_activity_bulk_unavailable" for event, _ in logs)
+
+
+def test_policy_result_without_capture_metrics_does_not_break_summary():
+    service, _, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: {"description": "unused", "attachments": []},
+    )
+
+    class NullPolicy:
+        def state(self, course_id, source):
+            return {}
+
+        def run(self, *args, **kwargs):
+            return None, False
+
+    service._policy = NullPolicy()
+    assert service.sync_snapshots("owner", now=1, snapshots=_Snapshots())["updated"] == 1
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["bulk_activities"] == 0
+
+
+def test_invalid_previous_timestamp_refreshes_all_incremental_entries():
+    service, client, _ = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1), _entry(2)]},
+        lambda *, source_id, kind: {"description": "unused", "attachments": []},
+        client_class=_IncrementalClient,
+    )
+    snapshots = _Snapshots()
+    snapshots.saved["poo"] = {
+        "course_id": "poo",
+        "term": "2026-2",
+        "synced_at": "invalid",
+        "activities": [],
+    }
+    service.sync_snapshots("owner", now=1, snapshots=snapshots)
+    assert client.bulk_calls == [77]
+
+
+def test_invalid_update_shape_falls_back_to_bulk_refresh():
+    class BadUpdatesClient(_IncrementalClient):
+        def activity_updates_since(self, token, *, term, course_id, since):
+            self.update_calls.append(since)
+            return [2]
+
+    service, client, _ = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1), _entry(2)]},
+        lambda *, source_id, kind: {"description": "unused", "attachments": []},
+        client_class=BadUpdatesClient,
+    )
+    snapshots = _Snapshots()
+    service.sync_snapshots("owner", now=1_793_188_800, snapshots=snapshots)
+    client.bulk_calls.clear()
+    service.sync_snapshots("owner", now=1_793_188_900, snapshots=snapshots)
+    assert client.bulk_calls == [77]
+
+
+def test_new_index_entry_takes_the_non_reused_update_branch():
+    service, client, _ = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1), _entry(2)]},
+        lambda *, source_id, kind: {"description": "unused", "attachments": []},
+        client_class=_IncrementalClient,
+    )
+    snapshots = _Snapshots()
+    service.sync_snapshots("owner", now=1_793_188_800, snapshots=snapshots)
+    client._index["ELEpoo"].append(_entry(3))
+    client.changed_ids = {3}
+    client.bulk_calls.clear()
+    service.sync_snapshots("owner", now=1_793_188_900, snapshots=snapshots)
+    assert client.bulk_calls == [77]
+
+
+def test_invalid_mobile_token_shape_skips_bulk_without_failing_sync():
+    service, client, _ = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: {"description": "html", "attachments": []},
+        client_class=_IncrementalClient,
+    )
+    service._tokens = SimpleNamespace(
+        load=lambda *args, **kwargs: SimpleNamespace(
+            term="2026-2", webservice_token=1, private_token=None
+        )
+    )
+    snapshots = _Snapshots()
+    assert service.sync_snapshots("owner", now=1, snapshots=snapshots)["failed"] == 0
+    assert client.bulk_calls == []
+    assert client.fetch_calls == [1]
+
+
+def test_bulk_invalid_payload_and_exception_fall_back_to_html():
+    class BadBulkClient(_IncrementalClient):
+        mode = "shape"
+
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            if self.mode == "shape":
+                return []
+            raise MoodleUnavailable("bulk unavailable", upstream_status=503)
+
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: {
+            "description": "html",
+            "dates_text": "",
+            "has_due_date": False,
+            "submission_state": "unknown",
+            "submission_text": "",
+            "attachments": [],
+        },
+        client_class=BadBulkClient,
+    )
+    snapshots = _Snapshots()
+    service.sync_snapshots("owner", now=1, snapshots=snapshots)
+    client.mode = "error"
+    service.sync_snapshots("owner", now=2, snapshots=_Snapshots())
+    assert client.fetch_calls == [1, 1]
+    assert sum(event == "moodle_activity_bulk_unavailable" for event, _ in logs) >= 2
 
 
 def test_partial_failure_attempts_every_activity_and_preserves_the_previous_snapshot():

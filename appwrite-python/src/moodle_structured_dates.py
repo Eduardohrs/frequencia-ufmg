@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 from diario_teaching_plan import TeachingPlanParseError, parse_teaching_plan_html
-from moodle_activities import InvalidActivityPage, parse_activity_page
+from moodle_activities import InvalidActivityPage, parse_activity_page, plain_activity_text
 from ufmg_session_store import UFMGReauthenticationRequired
 
 MAX_RESPONSE_BYTES = 1_048_576
@@ -292,6 +292,79 @@ class MoodleStructuredDatesClient:
         return _parse_course_states(
             self._ajax(root, ajax_path, sesskey, calls), root, 1, activities=True
         )[0]
+
+    def activity_updates_since(
+        self,
+        token: str,
+        *,
+        term: str,
+        course_id: int,
+        since: int,
+    ) -> set[int]:
+        """Return course-module ids changed in Moodle since the last snapshot.
+
+        Moodle exposes this through the same authenticated AJAX service used for
+        the course index.  It is deliberately a change detector: it does not
+        return activity bodies, so callers still choose one bulk read only when
+        a module actually changed.
+        """
+
+        if type(course_id) is not int or not 1 <= course_id <= 2_147_483_647:
+            raise InvalidMoodleResponse("activity_updates_course_id")
+        if type(since) is not int or since < 0:
+            raise InvalidMoodleResponse("activity_updates_since")
+        root, ajax_path, sesskey = self._connect(token, term)
+        calls = [
+            {
+                "index": 0,
+                "methodname": "core_course_get_updates_since",
+                "args": {"courseid": course_id, "since": since, "filter": []},
+            }
+        ]
+        return _parse_activity_updates(self._ajax(root, ajax_path, sesskey, calls))
+
+    def fetch_course_activity_bulk(
+        self,
+        *,
+        webservice_token: str,
+        private_token: str,
+        term: str,
+        course_id: int,
+    ) -> dict[str, dict[str, object]]:
+        """Read all visible assignment/quiz details in one Moodle request.
+
+        ``core_course_get_contents`` already returns every visible module,
+        descriptions, activity dates and module files.  The old implementation
+        requested one HTML page per assignment; this method keeps the same
+        persisted shape while replacing that N+1 network pattern with one
+        course-level REST call.
+        """
+
+        _validate_mobile_tokens(webservice_token, private_token, course_id)
+        root = _moodle_root(term)
+        path = f"{root}/webservice/rest/server.php"
+        payload, final_url, content_type = self._open(
+            Request(
+                f"{MOODLE_ORIGIN}{path}",
+                data=urlencode(
+                    {
+                        "moodlewsrestformat": "json",
+                        "moodlewssettingfileurl": "1",
+                        "moodlewssettingfilter": "1",
+                        "wsfunction": "core_course_get_contents",
+                        "wstoken": webservice_token,
+                        "courseid": str(course_id),
+                    }
+                ).encode(),
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                method="POST",
+            )
+        )
+        _require_json_endpoint(final_url, content_type, path)
+        return _parse_course_activity_contents(payload, root=root)
 
     def fetch_activity(
         self, token: str, *, term: str, source_id: int, kind: str
@@ -1064,6 +1137,157 @@ def _parse_course_states(
     return states
 
 
+def _parse_activity_updates(payload: bytes) -> set[int]:
+    """Parse one ``core_course_get_updates_since`` AJAX response."""
+
+    try:
+        decoded = json.loads(payload)
+        if not isinstance(decoded, list) or len(decoded) != 1:
+            raise ValueError("activity_updates_call_count")
+        item = decoded[0]
+        if not isinstance(item, dict) or item.get("error") is not False:
+            raise ValueError("activity_updates_upstream_error")
+        raw_data = item.get("data")
+        if isinstance(raw_data, str):
+            if len(raw_data) > MAX_RESPONSE_BYTES:
+                raise ValueError("activity_updates_data")
+            try:
+                raw_data = json.loads(raw_data)
+            except json.JSONDecodeError:
+                raise ValueError("activity_updates_inner_json") from None
+        if not isinstance(raw_data, dict):
+            raise ValueError("activity_updates_data")
+        if "instances" not in raw_data:
+            raise ValueError("activity_updates_instances")
+        raw_instances = raw_data["instances"]
+        if not isinstance(raw_instances, list) or len(raw_instances) > 500:
+            raise ValueError("activity_updates_instances")
+        changed: set[int] = set()
+        for raw_instance in raw_instances:
+            if not isinstance(raw_instance, dict):
+                raise ValueError("activity_updates_instance")
+            raw_id = raw_instance.get("id")
+            if type(raw_id) is not int or not 1 <= raw_id <= 2_147_483_647:
+                raise ValueError("activity_updates_instance_id")
+            updates = raw_instance.get("updates", [])
+            if not isinstance(updates, list) or len(updates) > 100:
+                raise ValueError("activity_updates_list")
+            if updates:
+                changed.add(raw_id)
+        return changed
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        reason = (
+            str(error)
+            if error.args and re.fullmatch(r"[a-z_]{1,64}", str(error))
+            else "activity_updates_shape"
+        )
+        raise InvalidMoodleResponse(reason) from None
+
+
+def _parse_course_activity_contents(
+    payload: bytes, *, root: str
+) -> dict[str, dict[str, object]]:
+    """Extract assignment/quiz details from Moodle's course-wide contents."""
+
+    try:
+        decoded = json.loads(payload)
+        if not isinstance(decoded, list) or len(decoded) > 100:
+            raise ValueError("course_contents_shape")
+        activities: dict[str, dict[str, object]] = {}
+        for section in decoded:
+            if not isinstance(section, dict):
+                raise ValueError("course_section_shape")
+            modules = section.get("modules", [])
+            if not isinstance(modules, list) or len(modules) > 500:
+                raise ValueError("course_contents_modules")
+            for module in modules:
+                if not isinstance(module, dict) or module.get("uservisible") is False:
+                    continue
+                kind = module.get("modname")
+                if kind not in {"assign", "quiz"}:
+                    continue
+                source_id = module.get("id")
+                title = module.get("name")
+                if (
+                    type(source_id) is not int
+                    or not 1 <= source_id <= 2_147_483_647
+                    or not isinstance(title, str)
+                    or not title.strip()
+                    or len(title) > 1_024
+                ):
+                    raise ValueError("course_activity_fields")
+                dates = _course_activity_dates(module.get("dates", []))
+                attachments = _course_activity_attachments(
+                    module.get("contents", []), root=root
+                )
+                candidate: dict[str, object] = {
+                    "description": plain_activity_text(module.get("description")),
+                    "dates_text": dates["text"],
+                    "has_due_date": dates["has_due_date"],
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": attachments,
+                }
+                identifier = str(source_id)
+                previous = activities.get(identifier)
+                if previous is not None and previous != candidate:
+                    raise ValueError("course_activity_conflict")
+                activities[identifier] = candidate
+        return activities
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        reason = (
+            str(error)
+            if error.args and re.fullmatch(r"[a-z_]{1,64}", str(error))
+            else "course_contents_shape"
+        )
+        raise InvalidMoodleResponse(reason) from None
+
+
+def _course_activity_dates(value: object) -> dict[str, object]:
+    if not isinstance(value, list) or len(value) > 20:
+        raise ValueError("course_activity_dates")
+    parts: list[str] = []
+    has_due_date = False
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("course_activity_date")
+        label = item.get("label")
+        timestamp = item.get("timestamp")
+        if not isinstance(label, str) or len(label) > 200 or type(timestamp) is not int:
+            raise ValueError("course_activity_date_fields")
+        if timestamp < 0 or timestamp > 4_102_444_800:
+            raise ValueError("course_activity_date_range")
+        normalized = "".join(
+            char
+            for char in unicodedata.normalize("NFKD", label).lower()
+            if not unicodedata.combining(char)
+        )
+        has_due_date |= normalized.startswith(("vencimento", "due date", "due"))
+        parts.append(f"{label}: {datetime.fromtimestamp(timestamp, UTC).isoformat()}")
+    return {"text": " ".join(parts)[:2_000], "has_due_date": has_due_date}
+
+
+def _course_activity_attachments(value: object, *, root: str) -> list[dict[str, str]]:
+    if not isinstance(value, list) or len(value) > 100:
+        raise ValueError("course_activity_contents")
+    attachments: dict[str, dict[str, str]] = {}
+    for item in value:
+        if not isinstance(item, dict) or item.get("type", "file") != "file":
+            continue
+        name = item.get("filename")
+        if not isinstance(name, str) or not name or name.strip() != name or len(name) > 255:
+            raise ValueError("course_activity_attachment_name")
+        # Snapshots must never persist a private token.  The token is added only
+        # by authorize_saved immediately before a user opens a downloaded file.
+        url = _canonical_file_url(item.get("fileurl"), root)
+        attachment = {"name": name, "url": url}
+        previous = attachments.get(url)
+        if previous is not None and previous != attachment:
+            raise ValueError("course_activity_attachment_conflict")
+        attachments[url] = attachment
+    return sorted(attachments.values(), key=lambda item: (item["name"], item["url"]))
+
+
 def _parse_module_files(
     payload: bytes,
     *,
@@ -1163,20 +1387,65 @@ def _private_file_url(value: object, root: str, private_token: str) -> str:
     return f"{MOODLE_ORIGIN}{root}/tokenpluginfile.php/{private_token}/{suffix}?forcedownload=1"
 
 
+def _canonical_file_url(value: object, root: str) -> str:
+    """Return a token-free canonical pluginfile URL for snapshot storage."""
+
+    if not isinstance(value, str) or len(value) > 4_096:
+        raise ValueError("module_file_url")
+    parsed = urlsplit(value)
+    prefixes = (
+        f"{root}/webservice/pluginfile.php/",
+        f"{root}/pluginfile.php/",
+        f"{root}/tokenpluginfile.php/",
+    )
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "virtual.ufmg.br"
+        or parsed.port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise ValueError("module_file_url")
+    prefix = next((candidate for candidate in prefixes if parsed.path.startswith(candidate)), None)
+    if prefix is None:
+        raise ValueError("module_file_url")
+    suffix = parsed.path.removeprefix(prefix)
+    segments = suffix.split("/")
+    # tokenpluginfile paths contain the private token between the endpoint and
+    # the actual file path; remove it before persisting the canonical URL.
+    if prefix.endswith("tokenpluginfile.php/"):
+        if len(segments) < 2 or not segments[0] or _MOBILE_TOKEN.fullmatch(segments[0]) is None:
+            raise ValueError("module_file_url")
+        suffix = "/".join(segments[1:])
+        segments = suffix.split("/")
+    if (
+        len(segments) < 5
+        or any(not segment or segment in {".", ".."} for segment in segments)
+        or any("\\" in segment for segment in segments)
+    ):
+        raise ValueError("module_file_url")
+    return f"{MOODLE_ORIGIN}{root}/pluginfile.php/{suffix}"
+
+
+def _validate_mobile_tokens(webservice_token: str, private_token: str, course_id: int) -> None:
+    if (
+        _MOBILE_TOKEN.fullmatch(webservice_token) is None
+        or _MOBILE_TOKEN.fullmatch(private_token) is None
+        or type(course_id) is not int
+        or not 1 <= course_id <= 2_147_483_647
+    ):
+        raise ValueError("invalid Moodle file request")
+
+
 def _validate_mobile_file_request(
     webservice_token: str,
     private_token: str,
     course_id: int,
     source_id: int,
 ) -> None:
-    if (
-        _MOBILE_TOKEN.fullmatch(webservice_token) is None
-        or _MOBILE_TOKEN.fullmatch(private_token) is None
-        or type(course_id) is not int
-        or not 1 <= course_id <= 2_147_483_647
-        or type(source_id) is not int
-        or not 1 <= source_id <= 2_147_483_647
-    ):
+    _validate_mobile_tokens(webservice_token, private_token, course_id)
+    if type(source_id) is not int or not 1 <= source_id <= 2_147_483_647:
         raise ValueError("invalid Moodle file request")
 
 

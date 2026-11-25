@@ -26,7 +26,9 @@ from moodle_structured_dates import (
     _is_metaturma,
     _is_moodle_module,
     _mobile_tokens,
+    _parse_activity_updates,
     _parse_calendar,
+    _parse_course_activity_contents,
     _parse_course_list,
     _parse_course_states,
     _parse_module_files,
@@ -988,6 +990,373 @@ def test_lists_module_files_with_private_file_urls_without_exposing_ws_token() -
     assert b"options%5B0%5D%5Bvalue%5D=701" in request.data
     assert b"bbbbbbbbbbbbbbbb" in request.data
     assert "bbbbbbbbbbbbbbbb" not in repr(files)
+
+
+def test_course_contents_bulk_parser_returns_token_free_activity_snapshot_details() -> None:
+    payload = [
+        {
+            "modules": [
+                {
+                    "id": 701,
+                    "name": "Enviar protótipo",
+                    "modname": "assign",
+                    "description": "<p>Leia <strong>o enunciado</strong>.</p>",
+                    "dates": [
+                        {"label": "Vencimento", "timestamp": 1_795_000_000},
+                        {"label": "Aberto", "timestamp": 1_794_000_000},
+                    ],
+                    "contents": [
+                        {
+                            "type": "file",
+                            "filename": "enunciado.pdf",
+                            "fileurl": (
+                                "https://virtual.ufmg.br/20262/webservice/pluginfile.php/"
+                                "700/mod_assign/intro/0/enunciado.pdf?token=ignored"
+                            ),
+                        },
+                        {"type": "folder", "filename": "ignored"},
+                    ],
+                },
+                {
+                    "id": 702,
+                    "name": "Prova 1",
+                    "modname": "quiz",
+                    "description": "<div>Questões</div>",
+                    "dates": [],
+                    "contents": [],
+                },
+                {"id": 703, "name": "Fórum", "modname": "forum"},
+                {"id": 704, "name": "Oculta", "modname": "assign", "uservisible": False},
+            ]
+        }
+    ]
+
+    parsed = _parse_course_activity_contents(json.dumps(payload).encode(), root="/20262")
+
+    assert set(parsed) == {"701", "702"}
+    assert parsed["701"]["description"] == "Leia o enunciado ."
+    assert parsed["701"]["has_due_date"] is True
+    assert parsed["701"]["submission_state"] == "unknown"
+    assert parsed["701"]["attachments"] == [
+        {
+            "name": "enunciado.pdf",
+            "url": (
+                "https://virtual.ufmg.br/20262/pluginfile.php/"
+                "700/mod_assign/intro/0/enunciado.pdf"
+            ),
+        }
+    ]
+    assert "token=" not in repr(parsed)
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (b"not-json", "course_contents_shape"),
+        (json.dumps([None]).encode(), "course_section_shape"),
+        (json.dumps([{"modules": None}]).encode(), "course_contents_modules"),
+        (
+            json.dumps([{"modules": [{"modname": "assign", "id": 1, "name": ""}]}]).encode(),
+            "course_activity_fields",
+        ),
+        (
+            json.dumps(
+                [
+                    {
+                        "modules": [
+                            {
+                                "id": 701,
+                                "name": "A",
+                                "modname": "assign",
+                                "dates": [{"label": "Vencimento", "timestamp": "bad"}],
+                                "contents": [],
+                            }
+                        ]
+                    }
+                ]
+            ).encode(),
+            "course_activity_date_fields",
+        ),
+        (
+            json.dumps(
+                [
+                    {
+                        "modules": [
+                            {
+                                "id": 701,
+                                "name": "A",
+                                "modname": "assign",
+                                "dates": [],
+                                "contents": [
+                                    {
+                                        "type": "file",
+                                        "filename": "a.pdf",
+                                        "fileurl": "https://attacker.example/a.pdf",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ]
+            ).encode(),
+            "module_file_url",
+        ),
+    ],
+)
+def test_course_contents_bulk_parser_rejects_malformed_shapes(payload: bytes, reason: str) -> None:
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_course_activity_contents(payload, root="/20262")
+    assert caught.value.reason == reason
+
+
+def test_course_contents_bulk_parser_rejects_conflicts_and_nested_limits() -> None:
+    for payload in [{}, [{}] * 101]:
+        with pytest.raises(InvalidMoodleResponse) as caught:
+            _parse_course_activity_contents(json.dumps(payload).encode(), root="/20262")
+        assert caught.value.reason == "course_contents_shape"
+
+    duplicate = {
+        "modules": [
+            {
+                "id": 701,
+                "name": "A",
+                "modname": "assign",
+                "description": "one",
+                "dates": [],
+                "contents": [],
+            },
+            {
+                "id": 701,
+                "name": "B",
+                "modname": "assign",
+                "description": "two",
+                "dates": [],
+                "contents": [],
+            },
+        ]
+    }
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_course_activity_contents(json.dumps([duplicate]).encode(), root="/20262")
+    assert caught.value.reason == "course_activity_conflict"
+
+    invalid_dates = [
+        {"modules": [{"id": 701, "name": "A", "modname": "assign", "dates": None}]},
+        {
+            "modules": [
+                {
+                    "id": 701,
+                    "name": "A",
+                    "modname": "assign",
+                    "dates": [{"label": "Due", "timestamp": -1}],
+                }
+            ]
+        },
+    ]
+    for section in invalid_dates:
+        with pytest.raises(InvalidMoodleResponse):
+            _parse_course_activity_contents(json.dumps([section]).encode(), root="/20262")
+
+    non_mapping_date = {
+        "modules": [
+            {"id": 701, "name": "A", "modname": "assign", "dates": [None]}
+        ]
+    }
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_course_activity_contents(json.dumps([non_mapping_date]).encode(), root="/20262")
+    assert caught.value.reason == "course_activity_date"
+
+    missing_contents = {
+        "modules": [
+            {
+                "id": 701,
+                "name": "A",
+                "modname": "assign",
+                "dates": [],
+                "contents": None,
+            }
+        ]
+    }
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_course_activity_contents(json.dumps([missing_contents]).encode(), root="/20262")
+    assert caught.value.reason == "course_activity_contents"
+
+    invalid_attachment = {
+        "modules": [
+            {
+                "id": 701,
+                "name": "A",
+                "modname": "assign",
+                "dates": [],
+                "contents": [{"type": "file", "filename": ""}],
+            }
+        ]
+    }
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_course_activity_contents(json.dumps([invalid_attachment]).encode(), root="/20262")
+    assert caught.value.reason == "course_activity_attachment_name"
+
+    duplicate_files = {
+        "modules": [
+            {
+                "id": 701,
+                "name": "A",
+                "modname": "assign",
+                "dates": [],
+                "contents": [
+                    {
+                        "type": "file",
+                        "filename": "A.pdf",
+                        "fileurl": "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_assign/content/1/a.pdf",
+                    },
+                    {
+                        "type": "file",
+                        "filename": "B.pdf",
+                        "fileurl": "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_assign/content/1/a.pdf",
+                    },
+                ],
+            }
+        ]
+    }
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_course_activity_contents(json.dumps([duplicate_files]).encode(), root="/20262")
+    assert caught.value.reason == "course_activity_attachment_conflict"
+
+
+def test_canonical_file_url_strips_tokenpluginfile_token_and_rejects_bad_paths() -> None:
+    tokenized = (
+        "https://virtual.ufmg.br/20262/tokenpluginfile.php/"
+        "aaaaaaaaaaaaaaaa/1/mod_assign/content/1/a.pdf"
+    )
+    assert module._canonical_file_url(tokenized, "/20262").endswith(
+        "/20262/pluginfile.php/1/mod_assign/content/1/a.pdf"
+    )
+    for url in [
+        None,
+        "https://virtual.ufmg.br/20262/not-pluginfile/1/mod_assign/content/1/a.pdf",
+        "https://virtual.ufmg.br/20262/tokenpluginfile.php/short/1/mod_assign/content/1/a.pdf",
+        "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_assign/content/../a.pdf",
+    ]:
+        with pytest.raises(ValueError, match="module_file_url"):
+            module._canonical_file_url(url, "/20262")
+
+
+def test_activity_updates_parser_returns_changed_course_module_ids() -> None:
+    payload = [
+        {
+            "error": False,
+            "data": {
+                "instances": [
+                    {"id": 701, "updates": [{"name": "content", "timeupdated": 1}]},
+                    {"id": 702, "updates": []},
+                ]
+            },
+        }
+    ]
+    assert _parse_activity_updates(json.dumps(payload).encode()) == {701}
+
+
+def test_activity_updates_parser_accepts_moodle_inner_json_and_rejects_nested_shapes() -> None:
+    inner = json.dumps({"instances": [{"id": 701, "updates": []}]})
+    assert _parse_activity_updates(
+        json.dumps([{"error": False, "data": inner}]).encode()
+    ) == set()
+    malformed = [
+        {"error": False, "data": "not-json"},
+        {"error": False, "data": []},
+        {"error": False, "data": {"instances": {}}},
+        {"error": False, "data": {"instances": [None]}},
+        {"error": False, "data": {"instances": [{"id": 701, "updates": {}}]}},
+    ]
+    for item in malformed:
+        with pytest.raises(InvalidMoodleResponse):
+            _parse_activity_updates(json.dumps([item]).encode())
+    oversized = "x" * (module.MAX_RESPONSE_BYTES + 1)
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_activity_updates(
+            json.dumps([{"error": False, "data": oversized}]).encode()
+        )
+    assert caught.value.reason == "activity_updates_data"
+
+
+def test_activity_updates_since_validates_course_and_timestamp() -> None:
+    client = MoodleStructuredDatesClient(opener=_Opener([]))
+    for course_id in [True, 0, -1, 2_147_483_648]:
+        with pytest.raises(InvalidMoodleResponse, match="invalid Moodle response") as caught:
+            client.activity_updates_since("token", term="2026-2", course_id=course_id, since=1)
+        assert caught.value.reason == "activity_updates_course_id"
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        client.activity_updates_since("token", term="2026-2", course_id=1, since=-1)
+    assert caught.value.reason == "activity_updates_since"
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (b"not-json", "activity_updates_shape"),
+        (json.dumps([]).encode(), "activity_updates_call_count"),
+        (json.dumps([{"error": True}]).encode(), "activity_updates_upstream_error"),
+        (json.dumps([{"error": False, "data": {}}]).encode(), "activity_updates_instances"),
+        (
+            json.dumps(
+                [{"error": False, "data": {"instances": [{"id": 0, "updates": []}]}}]
+            ).encode(),
+            "activity_updates_instance_id",
+        ),
+    ],
+)
+def test_activity_updates_parser_rejects_malformed_shapes(payload: bytes, reason: str) -> None:
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_activity_updates(payload)
+    assert caught.value.reason == reason
+
+
+def test_activity_updates_since_and_bulk_client_use_official_endpoints() -> None:
+    response = [
+        {
+            "id": 1,
+            "name": "Section",
+            "modules": [
+                {
+                    "id": 701,
+                    "name": "A",
+                    "modname": "assign",
+                    "description": "A",
+                    "dates": [],
+                    "contents": [],
+                }
+            ],
+        }
+    ]
+
+    class Client(MoodleStructuredDatesClient):
+        def _connect(self, token, term):
+            return "/20262", "ajax", "sesskey-safe"
+
+        def _ajax(self, root, path, key, calls):
+            assert calls[0]["methodname"] == "core_course_get_updates_since"
+            assert calls[0]["args"] == {"courseid": 3701, "since": 123, "filter": []}
+            return json.dumps(
+                [{"error": False, "data": {"instances": [{"id": 701, "updates": [{}]}]}}]
+            ).encode()
+
+        def _open(self, request):
+            assert request.full_url == "https://virtual.ufmg.br/20262/webservice/rest/server.php"
+            assert b"wsfunction=core_course_get_contents" in request.data
+            assert b"courseid=3701" in request.data
+            return json.dumps(response).encode(), request.full_url, "application/json"
+
+    client = Client()
+    assert client.activity_updates_since("session", term="2026-2", course_id=3701, since=123) == {
+        701
+    }
+    bulk = client.fetch_course_activity_bulk(
+        webservice_token="b" * 16,
+        private_token="a" * 16,
+        term="2026-2",
+        course_id=3701,
+    )
+    assert set(bulk) == {"701"}
+    assert bulk["701"]["attachments"] == []
 
 
 @pytest.mark.parametrize(

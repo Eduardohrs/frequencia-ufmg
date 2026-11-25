@@ -1,6 +1,6 @@
 import pytest
 
-from moodle_activities import InvalidActivityPage, parse_activity_page
+from moodle_activities import InvalidActivityPage, parse_activity_page, plain_activity_text
 from moodle_structured_dates import InvalidMoodleResponse, MoodleStructuredDatesClient
 from ufmg_session_store import UFMGReauthenticationRequired
 
@@ -161,6 +161,21 @@ def test_activity_reader_handles_unknown_draft_and_invalid_teacher_links_without
     )
     with pytest.raises(InvalidActivityPage, match="attachment_limit"):
         parse_activity_page(html, term="2026-2", kind="assign")
+
+
+def test_plain_activity_text_handles_missing_values_and_parser_errors(monkeypatch):
+    assert plain_activity_text(None) == ""
+    assert plain_activity_text("<p> </p>") == ""
+
+    class BrokenParser:
+        def __init__(self):
+            self.parts = []
+
+        def feed(self, value):
+            raise AssertionError("malformed html")
+
+    monkeypatch.setattr("moodle_activities._PlainTextParser", BrokenParser)
+    assert plain_activity_text("<p>broken") == ""
 
 
 def test_activity_client_validates_permissions_redirects_and_membership_sources():
