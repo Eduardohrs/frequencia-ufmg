@@ -5,8 +5,10 @@ from collections import defaultdict
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from functools import partial
+from time import monotonic
 from typing import Any, Protocol
 
+from academic_sync_lineage import MOODLE_CALENDAR
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
 from sync_timing import Telemetry, _emit, timed_stage
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
@@ -127,6 +129,7 @@ class MoodleDateImportService:
         unmatched = 0
         unmatched_events: list[dict[str, object]] = []
         unsafe_courses: set[str] = set()
+        matching_started = monotonic()
         for event in events:
             matches = [course for course in courses if _matches(event, course)]
             if len(matches) != 1:
@@ -148,6 +151,20 @@ class MoodleDateImportService:
             grouped[matches[0]["id"]].append(
                 {key: event[key] for key in ("source_id", "title", "due_at", "kind")}
             )
+
+        _emit(
+            self._telemetry,
+            "academic_sync_stage_completed",
+            {
+                "stage": "moodle_date_matching",
+                "duration_ms": round((monotonic() - matching_started) * 1_000, 3),
+                "event_count": len(events),
+                "matched": len(events) - unmatched,
+                "unmatched": unmatched,
+                "unsafe_course_count": len(unsafe_courses),
+                "consumer": "course_date_persistence",
+            },
+        )
 
         result: dict[str, Any] = {
             "total": len(events),
@@ -206,6 +223,25 @@ class MoodleDateImportService:
                 result["removed"] = result.get("removed", 0) + imported["removed"]
         if failed_courses:
             result["failed_courses"] = failed_courses
+        _emit(
+            self._telemetry,
+            "academic_sync_lineage",
+            {
+                **MOODLE_CALENDAR,
+                "source": "moodle_calendar",
+                "dataset": "calendar_events",
+                "consumer": "agenda_and_course_dates",
+                "extracted": result["total"],
+                "matched": result["matched"],
+                "unmatched": result["unmatched"],
+                "created": result["created"],
+                "updated": result["updated"],
+                "unchanged": result["unchanged"],
+                "removed": result.get("removed", 0),
+                "failed_courses": len(failed_courses),
+                "covered_terms": sorted(completed_terms),
+            },
+        )
         return result
 
 

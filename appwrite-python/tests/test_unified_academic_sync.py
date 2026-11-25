@@ -453,7 +453,7 @@ def test_sync_reports_duration_and_progress_for_each_slow_stage() -> None:
 
     service.sync("user", now=42)
 
-    assert telemetry == [
+    assert telemetry[:4] == [
         ("academic_sync_stage_completed", {"stage": "siga", "duration_ms": 400.0}),
         ("academic_sync_stage_completed", {"stage": "moodle", "duration_ms": 700.0}),
         (
@@ -475,6 +475,28 @@ def test_sync_reports_duration_and_progress_for_each_slow_stage() -> None:
             },
         ),
     ]
+    assert telemetry[4][0] == "academic_sync_lineage"
+    expected = {
+        "source": "teaching_plan",
+        "dataset": "assessments_and_schedule",
+        "consumer": "course_dates_and_teaching_plan_view",
+        "courses_considered": 1,
+        "plans_imported": 1,
+        "changes_applied": 0,
+        "unchanged": 1,
+        "review_required": 0,
+        "overlap_policy": "plan_assessments_reconcile_into_course_dates",
+    }
+    assert {key: telemetry[4][1][key] for key in expected} == expected
+    diario_endpoint = (
+        "GET/POST https://sistemas.ufmg.br/diario/JasperServlet "
+        "(official Diário document/transition)"
+    )
+    assert diario_endpoint in telemetry[4][1]["endpoints"]
+    assert any(
+        destination["path"] == "courses/{course_id}/sessions/{session_id}"
+        for destination in telemetry[4][1]["destinations"]
+    )
 
 
 def test_deferred_plan_does_not_repeat_reconciliation_or_create_false_review_errors():

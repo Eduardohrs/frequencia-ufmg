@@ -3,7 +3,7 @@
 import json
 import re
 import secrets
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from os import environ
 from pathlib import Path
@@ -173,8 +173,12 @@ _PREFLIGHT_MAX_AGE = "86400"
 class _RequestMetrics:
     """Accumulate dependency counts safely across overview worker threads."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self, telemetry: Callable[[str, Mapping[str, object]], None] | None = None
+    ) -> None:
         self._lock = Lock()
+        self._telemetry = telemetry
+        self._dependency_sequence = 0
         self._reads = 0
         self._writes = 0
         self._failures = 0
@@ -183,7 +187,7 @@ class _RequestMetrics:
         self._read_duration_ms = 0.0
         self._write_duration_ms = 0.0
 
-    def record(self, _event: str, fields: Mapping[str, object]) -> None:
+    def record(self, event: str, fields: Mapping[str, object]) -> None:
         with self._lock:
             if fields.get("kind") == "read":
                 self._reads += 1
@@ -201,6 +205,19 @@ class _RequestMetrics:
                     self._read_duration_ms += duration
                 else:
                     self._write_duration_ms += duration
+            self._dependency_sequence += 1
+            enriched = {
+                **fields,
+                # This makes every dependency call independently searchable;
+                # the deduplicator must not collapse two identical reads.
+                "dependency_sequence": self._dependency_sequence,
+            }
+        if self._telemetry is not None:
+            try:
+                self._telemetry(event, enriched)
+            except Exception:
+                # Dependency diagnostics must never break the request.
+                return
 
     def snapshot(self) -> dict[str, int | float]:
         with self._lock:
@@ -222,7 +239,11 @@ def main(context: Any) -> Any:
     method = context.req.method.upper()
     path = context.req.path.rstrip("/") or "/"
     request_id = _validated_request_id(context.req.headers)
-    metrics = _RequestMetrics()
+    metrics = _RequestMetrics(
+        lambda event, fields: _academic_sync_telemetry(
+            context, event, {"request_id": request_id, **fields}
+        )
+    )
     request_token = _REQUEST_ID.set(request_id)
     status_token = _RESPONSE_STATUS.set(200)
     metrics_token = _REQUEST_METRICS.set(metrics)
@@ -771,7 +792,7 @@ def _official_calendar(context: Any, origin: str | None, *, apply: bool) -> Any:
         service = _official_calendar_service(
             context.req.headers,
             cast(str, user_id),
-            lambda event, fields: _academic_sync_telemetry(context, event, fields),
+            _request_scoped_telemetry(context),
         )
         result = service.apply(payload) if apply else service.preview()
     except InvalidOfficialCalendarRequest:
@@ -1038,7 +1059,7 @@ def _moodle_date_import(context: Any, origin: str | None) -> Any:
         result = _moodle_date_import_service(
             context.req.headers,
             cast(str, user_id),
-            lambda event, fields: _academic_sync_telemetry(context, event, fields),
+            _request_scoped_telemetry(context),
         ).import_dates(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
         return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
@@ -1081,7 +1102,7 @@ def _moodle_sync(context: Any, origin: str | None) -> Any:
         result = _moodle_sync_service(
             context.req.headers,
             cast(str, user_id),
-            lambda event, fields: _academic_sync_telemetry(context, event, fields),
+            _request_scoped_telemetry(context),
         ).sync(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
         return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
@@ -1161,9 +1182,12 @@ def _unified_academic_sync(context: Any, origin: str | None) -> Any:
         return _enqueue_academic_sync(context, origin, cast(str, user_id), payload)
     try:
         progress = _academic_sync_progress(context, cast(str, user_id), payload.get("progress_id"))
+        request_id = _REQUEST_ID.get()
 
         def telemetry(event: str, fields: Mapping[str, object]) -> None:
-            _academic_sync_telemetry(context, event, fields)
+            enriched = dict(fields)
+            enriched["request_id"] = request_id
+            _academic_sync_telemetry(context, event, enriched)
             if progress is not None:
                 progress.observe(event, fields)
 
@@ -1246,7 +1270,7 @@ def _sync_job(context: Any, user_id: str, headers: dict[str, str] | None = None)
     return AcademicSyncJob(
         _firestore(headers if headers is not None else context.req.headers, user_id),
         now=lambda: int(time()),
-        telemetry=lambda event, fields: _academic_sync_telemetry(context, event, fields),
+        telemetry=_request_scoped_telemetry(context),
     )
 
 
@@ -1328,11 +1352,12 @@ def _academic_sync_worker(context: Any) -> Any:
     progress = AcademicSyncProgress(
         _firestore(headers, uid),
         operation,
-        telemetry=lambda event, fields: _academic_sync_telemetry(context, event, fields),
+        telemetry=_request_scoped_telemetry(context, operation_id=operation),
     )
+    worker_telemetry = _request_scoped_telemetry(context, operation_id=operation)
 
     def telemetry(event: str, fields: Mapping[str, object]) -> None:
-        _academic_sync_telemetry(context, event, {"operation_id": operation, **fields})
+        worker_telemetry(event, fields)
         progress.observe(event, fields)
 
     try:
@@ -1370,6 +1395,30 @@ def _academic_sync_telemetry(context: Any, event: str, fields: Mapping[str, obje
     writer(context, event, **{"request_id": _REQUEST_ID.get(), **fields})
 
 
+def _request_scoped_telemetry(
+    context: Any, *, operation_id: str | None = None
+) -> Callable[[str, Mapping[str, object]], None]:
+    """Keep request correlation when a service emits telemetry from a worker.
+
+    ``ContextVar`` values are intentionally not inherited by the thread pool used
+    for Moodle activity details.  Capture the validated request id at the route
+    boundary, then attach it explicitly to every event emitted by that service.
+    This makes per-request endpoint timing reconstructable even when requests
+    finish on different worker threads.
+    """
+
+    request_id = _REQUEST_ID.get()
+
+    def emit(event: str, fields: Mapping[str, object]) -> None:
+        enriched = dict(fields)
+        enriched["request_id"] = request_id
+        if operation_id is not None:
+            enriched["operation_id"] = operation_id
+        _academic_sync_telemetry(context, event, enriched)
+
+    return emit
+
+
 def _academic_sync_progress(
     context: Any,
     user_id: str,
@@ -1380,7 +1429,7 @@ def _academic_sync_progress(
     return AcademicSyncProgress(
         _firestore(context.req.headers, user_id),
         operation_id,
-        telemetry=lambda event, fields: _academic_sync_telemetry(context, event, fields),
+        telemetry=_request_scoped_telemetry(context, operation_id=operation_id),
     )
 
 
@@ -1392,7 +1441,9 @@ def _moodle_content_discovery(context: Any, origin: str | None) -> Any:
         return _ufmg_session_error(context, origin, "moodle_content_discovery_rejected", 400)
     try:
         result = _moodle_content_discovery_service(
-            context.req.headers, cast(str, user_id)
+            context.req.headers,
+            cast(str, user_id),
+            telemetry=_request_scoped_telemetry(context),
         ).discover(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
         return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
@@ -2430,7 +2481,7 @@ def _moodle_date_import_service(
 ) -> MoodleDateImportService:
     return MoodleDateImportService(
         _ufmg_session_store(headers),
-        MoodleStructuredDatesClient(),
+        MoodleStructuredDatesClient(telemetry=telemetry),
         _course_repository(headers, user_id),
         AcademicDateRepository(_firestore(headers, user_id)),
         calendar_state=MoodleCalendarState(_firestore(headers, user_id), telemetry=telemetry),
@@ -2461,7 +2512,7 @@ def _course_activity_service(
 ) -> CourseActivityService:
     courses = courses or _course_repository(headers, user_id)
     sessions = sessions or _ufmg_session_store(headers)
-    client = client or MoodleStructuredDatesClient()
+    client = client or MoodleStructuredDatesClient(telemetry=telemetry)
     tokens = _moodle_token_store(headers)
     return CourseActivityService(
         courses,
@@ -2480,7 +2531,7 @@ def _moodle_sync_service(
     headers: dict[str, str], user_id: str, telemetry: Any = None, *, force: bool = False
 ) -> MoodleSyncService:
     sessions = _ufmg_session_store(headers)
-    client = MoodleStructuredDatesClient()
+    client = MoodleStructuredDatesClient(telemetry=telemetry)
     courses = _course_repository(headers, user_id)
     return MoodleSyncService(
         MoodleDateImportService(
@@ -2496,6 +2547,7 @@ def _moodle_sync_service(
             client,
             courses,
             _moodle_material_catalog_repository(headers, user_id),
+            telemetry=telemetry,
         ),
         MoodleMobileCapabilityService(
             sessions,
@@ -2527,8 +2579,8 @@ def _unified_academic_sync_service(
     force: bool = False,
 ) -> UnifiedAcademicSyncService:
     sessions = RequestCachedUFMGSessionStore(_ufmg_session_store(headers))
-    enrollments = UFMGEnrollmentClient()
-    client = MoodleStructuredDatesClient()
+    enrollments = UFMGEnrollmentClient(telemetry=telemetry)
+    client = MoodleStructuredDatesClient(telemetry=telemetry)
     firestore = _firestore(headers, user_id)
     courses = CourseRepository(firestore)
     dates = AcademicDateRepository(firestore)
@@ -2567,6 +2619,7 @@ def _unified_academic_sync_service(
             client,
             courses,
             MoodleMaterialCatalogRepository(firestore),
+            telemetry=telemetry,
         ),
         MoodleMobileCapabilityService(
             sessions,
@@ -2625,13 +2678,14 @@ def _official_calendar_service(
 
 
 def _moodle_content_discovery_service(
-    headers: dict[str, str], user_id: str
+    headers: dict[str, str], user_id: str, telemetry: Any = None
 ) -> MoodleContentDiscoveryService:
     return MoodleContentDiscoveryService(
         _ufmg_session_store(headers),
-        MoodleStructuredDatesClient(),
+        MoodleStructuredDatesClient(telemetry=telemetry),
         _course_repository(headers, user_id),
         _moodle_material_catalog_repository(headers, user_id),
+        telemetry=telemetry,
     )
 
 
@@ -3047,12 +3101,23 @@ def _route_name(path: str) -> str:
 
 
 def _telemetry_entity_id(fields: Mapping[str, Any]) -> str:
-    """Resolve the report entity, falling back to the current request scope."""
+    """Resolve the report entity and keep separate requests distinct.
+
+    Threaded callbacks may carry an explicit request id while the worker's
+    ``ContextVar`` is empty.  Include that captured id in the deduplication
+    identity so equal endpoint responses from two requests are not collapsed.
+    """
+
+    entity = ""
     for name in ("entity_id", "operation_id", "session_id", "course_id"):
         value = fields.get(name)
         if value:
-            return str(value)
-    return f"request:{_REQUEST_ID.get()}"
+            entity = str(value)
+            break
+    request_id = str(fields.get("request_id") or _REQUEST_ID.get() or "")
+    if not entity:
+        entity = "request"
+    return f"{entity}:request:{request_id}" if request_id else entity
 
 
 def _log(context: Any, event: str, **fields: Any) -> None:

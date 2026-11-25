@@ -5,6 +5,7 @@ from hashlib import md5
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request
 
 import pytest
 
@@ -148,6 +149,75 @@ def test_client_reuses_one_authenticated_moodle_connection_per_term() -> None:
     assert second == first
     assert len(opener.requests) == 2
     assert client.connection_count == 1
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_outcome", "expected_reason"),
+    [
+        (
+            _Response(b"ok", "https://virtual.ufmg.br/20262/my/"),
+            "succeeded",
+            "",
+        ),
+        (OSError("socket reset"), "network_error", "OSError"),
+    ],
+)
+def test_http_dependency_telemetry_captures_success_and_transport_failure(
+    response: _Response | OSError, expected_outcome: str, expected_reason: str
+) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    client = MoodleStructuredDatesClient(
+        opener=_Opener([response]),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    )
+
+    if expected_outcome == "succeeded":
+        client._open(Request("https://virtual.ufmg.br/20262/my/"))
+    else:
+        with pytest.raises(MoodleUnavailable):
+            client._open(Request("https://virtual.ufmg.br/20262/my/"))
+
+    event, fields = events[-1]
+    assert event == "moodle_http_request_completed"
+    assert fields["outcome"] == expected_outcome
+    assert fields["reason"] == expected_reason
+    assert fields["host"] == "virtual.ufmg.br"
+    assert fields["path"] == "/20262/my/"
+    assert fields["operation"] == "moodle_http"
+    assert fields["request_sequence"] == 1
+    assert isinstance(fields["duration_ms"], float)
+
+
+def test_http_dependency_telemetry_keeps_distinct_sequences_for_repeated_failures() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    client = MoodleStructuredDatesClient(
+        opener=_Opener([OSError("first timeout"), OSError("second timeout")]),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    )
+
+    for _ in range(2):
+        with pytest.raises(MoodleUnavailable):
+            client._open(Request("https://virtual.ufmg.br/20262/mod/assign/view.php?id=20"))
+
+    assert [fields["request_sequence"] for _, fields in events] == [1, 2]
+
+
+def test_request_operation_names_allowlisted_moodle_endpoints_without_credentials() -> None:
+    assert module._request_operation(
+        Request(
+            "https://virtual.ufmg.br/20262/lib/ajax/service.php?info=core_calendar_get_calendar_monthly_view"
+        )
+    ) == "moodle_ajax:core_calendar_get_calendar_monthly_view"
+    assert module._request_operation(
+        Request(
+            "https://virtual.ufmg.br/20262/webservice/rest/server.php",
+            data=b"wsfunction=unexpected%20value&wstoken=secret",
+            method="POST",
+        )
+    ) == "moodle_webservice:unknown"
+    assert module._request_operation(
+        Request("https://virtual.ufmg.br/20262/mod/url/view.php?id=12")
+    ) == "moodle_diario_launch"
 
 
 def test_diario_probe_accepts_a_direct_pdf_redirect_without_exposing_parameters() -> None:

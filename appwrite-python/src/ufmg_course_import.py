@@ -5,11 +5,13 @@ import re
 import ssl
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
+from time import perf_counter
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from sync_timing import Telemetry, _emit, timed_stage
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
 _ENROLLMENTS_URL = "https://sistemas.ufmg.br/siga-ws/seam/resource/rest/WsMatriculas"
@@ -85,35 +87,84 @@ class UFMGEnrollmentClient:
         *,
         open_response: Callable[..., Any] = _open_response,
         timeout_seconds: float = 10,
+        telemetry: Telemetry | None = None,
     ) -> None:
         if not 1 <= timeout_seconds <= 15:
             raise ValueError("invalid UFMG enrollment timeout")
         self._open = open_response
         self._timeout_seconds = timeout_seconds
+        self._telemetry = telemetry
 
     def fetch(self, token: str) -> list[dict[str, object]]:
+        started = perf_counter()
+        status: int | None = None
+        response_bytes = 0
+        outcome = "failed"
+        reason = ""
         request = Request(
             _ENROLLMENTS_URL,
             headers={"Cookie": f"LtpaToken2={token}"},
         )
         try:
-            with self._open(request, timeout=self._timeout_seconds) as response:
-                if not _is_enrollment_response(response):
-                    raise UFMGReauthenticationRequired("UFMG reauthentication required")
-                raw = response.read(_MAX_RESPONSE_BYTES + 1)
-        except UFMGReauthenticationRequired:
-            raise
-        except HTTPError as error:
-            raise UFMGEnrollmentUnavailable("http_error", upstream_status=error.code) from None
-        except OSError as error:
-            raise UFMGEnrollmentUnavailable(_transport_reason(error)) from None
-        if len(raw) > _MAX_RESPONSE_BYTES:
-            raise InvalidUFMGEnrollmentResponse("invalid UFMG enrollment response")
-        try:
-            payload = json.loads(raw.decode("windows-1252"))
-            return _parse_courses(payload)
+            try:
+                with self._open(request, timeout=self._timeout_seconds) as response:
+                    status = getattr(response, "status", None) or getattr(response, "code", None)
+                    if not _is_enrollment_response(response):
+                        reason = "reauthentication_required"
+                        outcome = "reauthentication_required"
+                        raise UFMGReauthenticationRequired("UFMG reauthentication required")
+                    raw = response.read(_MAX_RESPONSE_BYTES + 1)
+                    response_bytes = len(raw)
+            except HTTPError as error:
+                status = error.code
+                outcome = "upstream_error"
+                reason = "http_error"
+                raise UFMGEnrollmentUnavailable(
+                    "http_error", upstream_status=error.code
+                ) from None
+            except OSError as error:
+                outcome = "network_error"
+                reason = _transport_reason(error)
+                raise UFMGEnrollmentUnavailable(_transport_reason(error)) from None
+            if len(raw) > _MAX_RESPONSE_BYTES:
+                outcome = "response_oversized"
+                reason = "response_oversized"
+                raise InvalidUFMGEnrollmentResponse("invalid UFMG enrollment response")
+            result = timed_stage(
+                "siga_enrollment_parse",
+                lambda: _parse_courses(json.loads(raw.decode("windows-1252"))),
+                telemetry=self._telemetry,
+                fields={
+                    "response_bytes": len(raw),
+                    "consumer": "course_and_schedule_import",
+                },
+            )
+            outcome = "succeeded"
+            return result
         except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError):
+            outcome = "parse_error"
+            reason = "invalid_enrollment_response"
             raise InvalidUFMGEnrollmentResponse("invalid UFMG enrollment response") from None
+        finally:
+            _emit(
+                self._telemetry,
+                "siga_http_request_completed",
+                {
+                    "host": "sistemas.ufmg.br",
+                    "path": "/siga-ws/seam/resource/rest/WsMatriculas",
+                    "method": "GET",
+                    "status_code": status,
+                    "status_class": f"{status // 100}xx" if status is not None else "network",
+                    "outcome": outcome,
+                    "reason": reason,
+                    "duration_ms": round((perf_counter() - started) * 1_000, 3),
+                    "timeout_seconds": self._timeout_seconds,
+                    "request_bytes": 0,
+                    "response_bytes": response_bytes,
+                    "retry_count": 0,
+                    "attempt": 1,
+                },
+            )
 
 
 class UFMGCourseImportService:

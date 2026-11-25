@@ -265,6 +265,7 @@ class CourseActivityService:
         module_bulk_failures = 0
         updates_checked = 0
         updates_changed = 0
+        activity_entries_seen = 0
         failed: list[dict[str, object]] = []
         pending_snapshots: list[tuple[str, dict[str, Any]]] = []
         pending_policy_updates: list[tuple[str, str, dict[str, Any]]] = []
@@ -281,6 +282,7 @@ class CourseActivityService:
         for course in courses:
             course_id = course["id"]
             fields = {"course_id": course_id, "course_code": course["code"], "term": course["term"]}
+            course_started = monotonic()
 
             capture = partial(
                 self._capture_snapshot,
@@ -321,6 +323,7 @@ class CourseActivityService:
                 else:
                     updated += 1
                     if capture_result is not None:
+                        activity_entries_seen += _metric(capture_result, "activity_count")
                         reused_activities += _metric(capture_result, "reused_count")
                         bulk_activities += _metric(capture_result, "bulk_count")
                         bulk_submission_unknown += _metric(
@@ -333,6 +336,20 @@ class CourseActivityService:
                         module_bulk_failures += _metric(capture_result, "module_bulk_failures")
                         updates_checked += _metric(capture_result, "updates_checked")
                         updates_changed += _metric(capture_result, "updates_changed")
+                _emit(
+                    self._telemetry,
+                    "activity_snapshot_course_decision",
+                    {
+                        **fields,
+                        "outcome": "reused" if reused else "refreshed",
+                        "force": force,
+                        "duration_ms": round((monotonic() - course_started) * 1_000, 3),
+                        "activity_count": _metric(capture_result, "activity_count")
+                        if capture_result is not None
+                        else None,
+                        "consumer": "discipline_activity_view_and_offline_snapshot",
+                    },
+                )
             except Exception as error:
                 if isinstance(error, ActivitySnapshotCaptureFailed):
                     reason = error.first_reason
@@ -348,23 +365,40 @@ class CourseActivityService:
                 }
                 failed.append(issue)
                 _emit(self._telemetry, "activity_snapshot_sync_failed", issue)
+                _emit(
+                    self._telemetry,
+                    "activity_snapshot_course_decision",
+                    {
+                        **fields,
+                        "outcome": "failed_retained_previous",
+                        "force": self._force,
+                        "duration_ms": round((monotonic() - course_started) * 1_000, 3),
+                        "reason": reason,
+                        "consumer": "discipline_activity_view_and_offline_snapshot",
+                    },
+                )
         if pending_snapshots:
             payload_bytes = sum(
                 len(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode())
                 for _, snapshot in pending_snapshots
             )
 
-            def persist_snapshots() -> None:
+            def persist_snapshots() -> dict[str, str]:
                 save_batch = getattr(snapshots, "save_batch", None)
                 if callable(save_batch):
-                    save_batch(pending_snapshots)
-                    return
+                    result = save_batch(pending_snapshots)
+                    return result if isinstance(result, dict) else {}
                 # Compatibility path for small in-memory fakes and older
                 # embedders.  Production uses the repository's atomic commit.
+                failures: dict[str, str] = {}
                 for course_id, snapshot in pending_snapshots:
-                    snapshots.save(course_id, snapshot)
+                    try:
+                        snapshots.save(course_id, snapshot)
+                    except Exception as error:
+                        failures[course_id] = type(error).__name__
+                return failures
 
-            timed_stage(
+            persistence_failures = timed_stage(
                 "activity_snapshot_persist",
                 persist_snapshots,
                 telemetry=self._telemetry,
@@ -374,6 +408,27 @@ class CourseActivityService:
                     "batch": True,
                 },
             )
+            for course_id, reason in persistence_failures.items():
+                course = next(
+                    (item for item in courses if item["id"] == course_id),
+                    {"id": course_id, "code": "unknown", "term": "unknown"},
+                )
+                issue = {
+                    "course_id": course_id,
+                    "course_code": course["code"],
+                    "term": course["term"],
+                    "reason": "firestore_snapshot_write_failed",
+                    "exception_type": reason,
+                    "retained_previous": True,
+                    "stage": "activity_snapshot_persist",
+                }
+                failed.append(issue)
+                updated = max(0, updated - 1)
+                _emit(self._telemetry, "activity_snapshot_persistence_failed", issue)
+            if persistence_failures:
+                pending_policy_updates = [
+                    item for item in pending_policy_updates if item[0] not in persistence_failures
+                ]
             if self._policy is not None:
                 for course_id, source, state in pending_policy_updates:
                     self._policy.persist_success(course_id, source, state)
@@ -396,6 +451,7 @@ class CourseActivityService:
                 "module_bulk_failures": module_bulk_failures,
                 "updates_checked": updates_checked,
                 "updates_changed": updates_changed,
+                "activity_entries_seen": activity_entries_seen,
                 "concurrency": self._max_workers,
                 "duration_ms": round((monotonic() - started) * 1000),
             },

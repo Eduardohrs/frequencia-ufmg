@@ -7,7 +7,7 @@ from os import environ
 from time import perf_counter
 from typing import Any, cast
 from urllib.error import HTTPError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 MAX_PAYLOAD_BYTES = 1_048_576
@@ -223,6 +223,7 @@ class FirestoreRestClient:
     ) -> dict[str, Any]:
         started = perf_counter()
         status: int | None = None
+        response_body = b""
         outcome = "failed"
         headers = {"Authorization": f"Bearer {self._id_token}"}
         if body is not None:
@@ -274,6 +275,15 @@ class FirestoreRestClient:
                     "outcome": outcome,
                     "status_class": f"{status // 100}xx" if status is not None else "network",
                     "status_code": status,
+                    # Keep the dependency trace useful without leaking the
+                    # verified uid, document contents, or bearer token. The
+                    # request body size is enough to spot oversized writes;
+                    # response size helps separate a slow read from parsing.
+                    "resource": _telemetry_resource(url),
+                    "request_bytes": len(body or b""),
+                    "response_bytes": len(response_body),
+                    "attempt": 1,
+                    "retry_count": 0,
                 },
             )
 
@@ -318,6 +328,23 @@ def _error_code(response_body: bytes) -> str:
     if isinstance(error, dict) and isinstance(error.get("status"), str) and error["status"]:
         return cast(str, error["status"])
     return "RESOURCE_EXHAUSTED"
+
+
+def _telemetry_resource(url: str) -> str:
+    """Return a bounded Firestore path with owner and document IDs redacted."""
+
+    path = urlsplit(url).path
+    marker = "/documents/users/"
+    if marker not in path:
+        return path or "/"
+    prefix, remainder = path.split(marker, 1)
+    segments = remainder.split("/")
+    segments[0] = "{user}"
+    # Firestore alternates collection/document segments. Keep collection names
+    # so the trace remains actionable, but never emit any document identifier.
+    for index in range(2, len(segments), 2):
+        segments[index] = "{doc}"
+    return prefix + marker + "/".join(segments)
 
 
 def _segment(value: str, field: str) -> str:

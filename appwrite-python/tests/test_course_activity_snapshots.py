@@ -11,6 +11,7 @@ from test_main import FakeContext, FakeRequest
 import main as function
 from activity_snapshot_repository import (
     ActivitySnapshotMissing,
+    ActivitySnapshotPersistenceFailed,
     ActivitySnapshotRepository,
     InvalidActivitySnapshot,
     _encode,
@@ -43,6 +44,28 @@ class LegacyStore(Store):
     """Exercise the compatibility path used by older Firestore fakes/clients."""
 
     commit_user_documents = None
+
+
+class FailingBatchStore(BatchStore):
+    def __init__(self, failed_course: str) -> None:
+        super().__init__()
+        self.failed_course = failed_course
+        self.patches: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    def commit_user_documents(self, *, updates, deletes) -> None:
+        raise RuntimeError("batch rejected")
+
+    def patch_user_document(self, *path, fields):
+        course_id = path[1]
+        if course_id == self.failed_course:
+            raise RuntimeError("course was deleted")
+        self.patches.append((tuple(path), fields))
+        return {"fields": fields}
+
+
+class FailingLegacyStore(LegacyStore):
+    def patch_user_document(self, *path, fields):
+        raise RuntimeError("write rejected")
 
 
 def snapshot():
@@ -128,6 +151,46 @@ def test_snapshot_batch_falls_back_to_individual_patches_without_commit_api():
         ("courses", "poo", "activitySnapshots", "current"),
         ("courses", "mat", "activitySnapshots", "current"),
     ]
+
+
+def test_snapshot_batch_isolates_a_rejected_course_after_batch_failure():
+    store = FailingBatchStore("mat")
+    repo = ActivitySnapshotRepository(store)
+    second = {**snapshot(), "course_id": "mat"}
+
+    failures = repo.save_batch([("poo", snapshot()), ("mat", second)])
+
+    assert failures == {"mat": "RuntimeError"}
+    assert [path[1] for path, _ in store.patches] == ["poo"]
+
+
+def test_snapshot_batch_isolates_rejection_in_an_earlier_commit():
+    store = FailingBatchStore("course-0")
+    repo = ActivitySnapshotRepository(store)
+    snapshots = [
+        (f"course-{index}", {**snapshot(), "course_id": f"course-{index}"})
+        for index in range(21)
+    ]
+
+    failures = repo.save_batch(snapshots)
+
+    assert failures == {"course-0": "RuntimeError"}
+    assert len(store.patches) == 20
+
+
+def test_snapshot_batch_reports_legacy_patch_failures():
+    repo = ActivitySnapshotRepository(FailingLegacyStore())
+
+    assert repo.save_batch([("poo", snapshot())]) == {"poo": "RuntimeError"}
+
+
+def test_snapshot_save_surfaces_a_single_persistence_failure():
+    repo = ActivitySnapshotRepository(FailingLegacyStore())
+
+    with pytest.raises(ActivitySnapshotPersistenceFailed) as caught:
+        repo.save("poo", snapshot())
+
+    assert caught.value.failures == {"poo": "RuntimeError"}
 
 
 def test_snapshot_batch_rejects_duplicates_and_supports_empty_input():
@@ -235,6 +298,29 @@ def test_sync_captures_all_content_and_keeps_failed_course_while_other_courses_u
     )
 
 
+def test_sync_reports_snapshot_persistence_failure_without_aborting_the_sync(activities):
+    service, _, _, _, _, _, logs, _ = activities
+    course = {"id": "poo", "code": "ELE631", "term": "2026-2"}
+    service._courses.list_courses = lambda: [course]
+    service._courses.get_course = lambda _: course
+
+    class FailingSnapshots:
+        def load(self, _course_id):
+            raise ActivitySnapshotMissing()
+
+        def save(self, _course_id, _snapshot):
+            raise RuntimeError("Firestore write rejected")
+
+    result = service.sync_snapshots("owner", now=1793188800, snapshots=FailingSnapshots())
+
+    assert result["updated"] == 0 and result["failed"] == 1
+    failure = next(
+        fields for event, fields in logs if event == "activity_snapshot_persistence_failed"
+    )
+    assert failure["course_id"] == "poo"
+    assert failure["reason"] == "firestore_snapshot_write_failed"
+
+
 def test_authorizing_saved_content_never_loads_a_session_or_calls_moodle(activities):
     service, _, sessions, client, tokens, _, logs, _ = activities
 
@@ -306,7 +392,7 @@ def test_saved_api_works_with_expired_session_and_reports_missing_or_corrupt_sna
     function.main(context)
     # Ler repetidamente o mesmo relatório não cria novas escritas de log,
     # mas o log por requisição continua emitido.
-    assert not any(
+    assert any(
         json.loads(row).get("snapshot_synced_at") == snapshot()["synced_at"] for row in context.logs
     )
     assert any(json.loads(row).get("event") == "request_completed" for row in context.logs)

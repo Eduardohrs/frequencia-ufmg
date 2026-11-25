@@ -1,5 +1,6 @@
 import json
 from base64 import b64encode
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -71,6 +72,41 @@ class FakeContext:
 
     def error(self, message: str) -> None:
         self.errors.append(message)
+
+
+def test_request_scoped_telemetry_preserves_request_id_in_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/sync/moodle"))
+    monkeypatch.setattr(
+        function,
+        "_academic_sync_telemetry",
+        lambda _context, event, fields: events.append((event, dict(fields))),
+    )
+    token = function._REQUEST_ID.set("request-thread-123")
+    try:
+        telemetry = function._request_scoped_telemetry(context)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(telemetry, "moodle_http_request_completed", {"duration_ms": 17}).result()
+    finally:
+        function._REQUEST_ID.reset(token)
+
+    assert events == [
+        (
+            "moodle_http_request_completed",
+            {"duration_ms": 17, "request_id": "request-thread-123"},
+        )
+    ]
+
+
+def test_telemetry_entity_identity_includes_explicit_request_id() -> None:
+    first = function._telemetry_entity_id({"request_id": "request-a"})
+    second = function._telemetry_entity_id({"request_id": "request-b"})
+    assert first != second
+    assert function._telemetry_entity_id(
+        {"course_id": "course-1", "request_id": "request-a"}
+    ) == "course-1:request:request-a"
 
 
 def test_official_calendar_preview_and_apply_routes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -277,7 +313,7 @@ def test_moodle_sync_factory_shares_one_client_across_all_remote_stages(
     catalog = object()
     tokens = object()
     monkeypatch.setattr(function, "_ufmg_session_store", lambda _headers: sessions)
-    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: client)
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda **_: client)
     monkeypatch.setattr(function, "_course_repository", lambda _headers, _user: courses)
     monkeypatch.setattr(function, "_firestore", lambda _headers, _user: firestore)
     monkeypatch.setattr(
@@ -582,8 +618,8 @@ def test_unified_academic_sync_factory_reuses_one_moodle_client(
     firestore = object()
     tokens = object()
     monkeypatch.setattr(function, "_ufmg_session_store", lambda _headers: sessions)
-    monkeypatch.setattr(function, "UFMGEnrollmentClient", lambda: enrollments)
-    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: client)
+    monkeypatch.setattr(function, "UFMGEnrollmentClient", lambda **_: enrollments)
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda **_: client)
     monkeypatch.setattr(function, "_firestore", lambda _headers, _user: firestore)
     monkeypatch.setattr(function, "_moodle_token_store", lambda _headers: tokens)
     monkeypatch.setattr(function, "_pendency_repository", lambda _headers: "pendencies")
@@ -1080,7 +1116,9 @@ def test_moodle_content_discovery_returns_candidates_but_logs_only_counts(
             assert user_id == "user" and now > 0
             return result
 
-    monkeypatch.setattr(function, "_moodle_content_discovery_service", lambda *_: Service())
+    monkeypatch.setattr(
+        function, "_moodle_content_discovery_service", lambda *_, **__: Service()
+    )
     context = FakeContext(FakeRequest("POST", "/v1/ufmg/discover/content"))
 
     body = function.main(context)["body"]
@@ -1214,7 +1252,9 @@ def test_moodle_content_discovery_sanitizes_failures(
         def discover(self, *_args: Any, **_kwargs: Any) -> None:
             raise failure
 
-    monkeypatch.setattr(function, "_moodle_content_discovery_service", lambda *_: Service())
+        monkeypatch.setattr(
+            function, "_moodle_content_discovery_service", lambda *_, **__: Service()
+        )
     result = function.main(FakeContext(FakeRequest("POST", "/v1/ufmg/discover/content")))
     assert result["status"] == status
     assert result["body"] == {"error": error}
@@ -1229,7 +1269,9 @@ def test_moodle_content_discovery_logs_safe_failure_classification(
         def discover(self, *_args: Any, **_kwargs: Any) -> None:
             raise ValueError("private upstream detail")
 
-    monkeypatch.setattr(function, "_moodle_content_discovery_service", lambda *_: Service())
+    monkeypatch.setattr(
+        function, "_moodle_content_discovery_service", lambda *_, **__: Service()
+    )
     context = FakeContext(FakeRequest("POST", "/v1/ufmg/discover/content"))
 
     function.main(context)
@@ -1358,7 +1400,7 @@ def test_moodle_mobile_capability_factory_uses_server_dependencies(
     values = {"sessions": object(), "client": object(), "tokens": object()}
     monkeypatch.setattr(function, "_ufmg_session_store", lambda _headers: values["sessions"])
     monkeypatch.setattr(function, "_moodle_token_store", lambda _headers: values["tokens"])
-    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: values["client"])
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda **_: values["client"])
 
     service = function._moodle_mobile_capability_service({})
 
@@ -1574,7 +1616,7 @@ def test_moodle_diario_plan_factory_uses_server_dependencies(
 ) -> None:
     values = {"sessions": object(), "client": object()}
     monkeypatch.setattr(function, "_ufmg_session_store", lambda _: values["sessions"])
-    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: values["client"])
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda **_: values["client"])
 
     service = function._moodle_diario_plan_service({})
 
@@ -1773,7 +1815,7 @@ def test_teaching_plan_import_factory_shares_firestore(
     values = {"firestore": object(), "sessions": object(), "client": object()}
     monkeypatch.setattr(function, "_firestore", lambda *_: values["firestore"])
     monkeypatch.setattr(function, "_ufmg_session_store", lambda *_: values["sessions"])
-    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: values["client"])
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda **_: values["client"])
     monkeypatch.setattr(function, "_course_repository", lambda *_: "courses")
 
     service = function._moodle_teaching_plan_import_service({}, "user-1")
@@ -2057,14 +2099,14 @@ def test_moodle_content_discovery_factory_uses_server_dependencies(
     }
     captured: tuple[object, ...] = ()
     monkeypatch.setattr(function, "_ufmg_session_store", lambda _: values["sessions"])
-    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: values["client"])
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda **_: values["client"])
     monkeypatch.setattr(function, "_course_repository", lambda *_: values["courses"])
     monkeypatch.setattr(
         function, "_moodle_material_catalog_repository", lambda *_: values["catalog"]
     )
 
     class Service:
-        def __init__(self, *dependencies: object) -> None:
+        def __init__(self, *dependencies: object, **_: object) -> None:
             nonlocal captured
             captured = dependencies
 
@@ -2208,7 +2250,7 @@ def test_moodle_date_import_factory_composes_only_server_side_dependencies(
     }
     captured: tuple[object, ...] = ()
     monkeypatch.setattr(function, "_ufmg_session_store", lambda _headers: values["sessions"])
-    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda: values["client"])
+    monkeypatch.setattr(function, "MoodleStructuredDatesClient", lambda **_: values["client"])
     monkeypatch.setattr(function, "_course_repository", lambda *_: values["courses"])
     monkeypatch.setattr(function, "_firestore", lambda *_: values["firestore"])
     monkeypatch.setattr(function, "AcademicDateRepository", lambda value: values["dates"])
@@ -3217,6 +3259,41 @@ def test_firestore_telemetry_aggregates_without_identifiers(
         "firestore_writes": 1,
     }
     assert "private-user" not in json.dumps(metrics.snapshot())
+
+
+def test_firestore_telemetry_forwards_each_dependency_event_with_sequence():
+    events: list[tuple[str, dict[str, object]]] = []
+    metrics = function._RequestMetrics(
+        lambda event, fields: events.append((event, dict(fields)))
+    )
+
+    metrics.record(
+        "firestore_request_completed",
+        {"kind": "read", "resource": "/courses/{course}", "outcome": "succeeded"},
+    )
+    metrics.record(
+        "firestore_request_completed",
+        {"kind": "read", "resource": "/courses/{course}", "outcome": "succeeded"},
+    )
+
+    assert [event for event, _ in events] == [
+        "firestore_request_completed",
+        "firestore_request_completed",
+    ]
+    assert [fields["dependency_sequence"] for _, fields in events] == [1, 2]
+
+
+def test_firestore_telemetry_callback_failure_does_not_break_metrics():
+    def fail(*_args: object) -> None:
+        raise RuntimeError("telemetry sink unavailable")
+
+    metrics = function._RequestMetrics(fail)
+    metrics.record(
+        "firestore_request_completed",
+        {"kind": "write", "outcome": "failed", "duration_ms": 4},
+    )
+
+    assert metrics.snapshot()["firestore_failures"] == 1
 
 
 @pytest.mark.parametrize(

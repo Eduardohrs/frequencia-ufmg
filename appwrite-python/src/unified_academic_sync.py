@@ -5,6 +5,7 @@ from functools import partial
 from time import monotonic
 from typing import Protocol, cast
 
+from academic_sync_lineage import DIARIO_TEACHING_PLAN
 from firestore_rest import FirestoreAccessDenied, FirestoreUnavailable
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
 from moodle_token_store import MoodleTokenStoreUnavailable
@@ -191,6 +192,21 @@ class UnifiedAcademicSyncService:
 
         if len(exceptions) > 50:
             raise ValueError("too many academic sync exceptions")
+        self._emit(
+            "academic_sync_lineage",
+            {
+                **DIARIO_TEACHING_PLAN,
+                "source": "teaching_plan",
+                "dataset": "assessments_and_schedule",
+                "consumer": "course_dates_and_teaching_plan_view",
+                "courses_considered": summary["available"],
+                "plans_imported": summary["imported"],
+                "changes_applied": summary["applied"],
+                "unchanged": summary["unchanged"],
+                "review_required": summary["review_required"],
+                "overlap_policy": "plan_assessments_reconcile_into_course_dates",
+            },
+        )
         return {
             "siga": siga,
             "moodle": {
