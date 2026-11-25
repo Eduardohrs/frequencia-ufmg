@@ -8,6 +8,7 @@ from functools import partial
 from time import monotonic
 from typing import Any, Protocol
 
+from academic_sync_lineage import MOODLE_CALENDAR
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
 from sync_timing import Telemetry, _emit, timed_stage
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
@@ -226,6 +227,7 @@ class MoodleDateImportService:
             self._telemetry,
             "academic_sync_lineage",
             {
+                **MOODLE_CALENDAR,
                 "source": "moodle_calendar",
                 "dataset": "calendar_events",
                 "consumer": "agenda_and_course_dates",

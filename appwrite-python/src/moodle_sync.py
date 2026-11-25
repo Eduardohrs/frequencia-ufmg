@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from typing import Protocol
 
+from academic_sync_lineage import MOODLE_ACTIVITY_SNAPSHOT, MOODLE_CALENDAR
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
 from moodle_token_store import MoodleTokenStoreUnavailable
 from sync_timing import Telemetry, _emit, timed_stage
@@ -77,6 +78,7 @@ class MoodleSyncService:
             self._telemetry,
             "academic_sync_lineage",
             {
+                **MOODLE_CALENDAR,
                 "source": "moodle_calendar",
                 "dataset": "course_dates_and_deadlines",
                 "consumer": "agenda_and_course_schedule",
@@ -92,6 +94,7 @@ class MoodleSyncService:
             self._telemetry,
             "academic_sync_lineage",
             {
+                **MOODLE_ACTIVITY_SNAPSHOT,
                 "source": "moodle_activity_snapshot",
                 "dataset": "activity_metadata_and_attachments",
                 "consumer": "discipline_activity_view_and_offline_snapshot",

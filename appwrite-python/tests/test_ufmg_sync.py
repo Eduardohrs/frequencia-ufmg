@@ -219,7 +219,7 @@ def test_siga_sync_reports_the_duration_of_each_internal_stage() -> None:
         ),
     ]
     assert events[4][0] == "academic_sync_lineage"
-    assert events[4][1] == {
+    expected = {
         "source": "siga_enrollment",
         "dataset": "courses_and_schedule",
         "consumer": "course_repository_and_schedule_repository",
@@ -230,6 +230,17 @@ def test_siga_sync_reports_the_duration_of_each_internal_stage() -> None:
         "meetings_imported": 1,
         "schedule_conflicts": 0,
     }
+    assert {key: events[4][1][key] for key in expected} == expected
+    assert events[4][1]["endpoints"] == [
+        "GET https://sistemas.ufmg.br/siga-ws/seam/resource/rest/WsMatriculas"
+    ]
+    assert "listaObj[0].matriculas[].turma.atividadeAcademica.codigo" in events[4][1][
+        "response_fields_used"
+    ]
+    assert any(
+        destination["path"] == "courses/{course_id}/meetings/{meeting_id}"
+        for destination in events[4][1]["destinations"]
+    )
 
 
 @pytest.mark.parametrize(

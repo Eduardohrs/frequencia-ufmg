@@ -40,6 +40,29 @@ e a execução geral só falha quando o contrato marca a dependência como fatal
 | Moodle `core_course_get_contents` / `activity_details` | parse em lote de descrições, datas e anexos | snapshot por disciplina | detalhe da atividade e download direto |
 | Diário de Classe / `assessments_and_schedule` | parse do plano, importação de avaliações e reconciliação | plano e datas da disciplina | cronograma e revisão de alterações |
 
+Os eventos `academic_sync_lineage` carregam, além das contagens, a matriz
+`endpoints`, `response_fields_used`, `field_mapping` e `destinations`. Assim a
+consulta não depende de interpretar um nome genérico de dataset: cada item
+mostra o campo de resposta usado, a transformação, o caminho de destino e os
+campos persistidos.
+
+### Contrato semântico das datas
+
+- **Aulas/sessões:** são as ocorrências do `Cronograma` do plano de ensino do
+  Diário. A reconciliação grava `courses/{course_id}/sessions/{session_id}` e
+  preserva presença, cancelamento e ajustes manuais.
+- **Prazos de atividade:** vêm do calendário do Moodle (`assign`/`quiz`) e dos
+  assessments do Diário. O Moodle grava `academicDates` com `kind=assignment`
+  ou `quiz`; o Diário grava `kind=assessment`.
+- **Eventos gerais:** são eventos Moodle associados a uma disciplina cujo
+  `modulename` não é `assign` nem `quiz`; viram `academicDates` com
+  `kind=event`. Eventos Moodle sem `course` são descartados porque não podem
+  ser atribuídos a uma disciplina sem adivinhação.
+- **Detalhe da atividade:** o snapshot Moodle guarda descrição, datas, estado
+  de entrega, anexos e URL em `activitySnapshots`; ele pode repetir o mesmo
+  instante de um prazo na agenda, mas não grava uma segunda data em
+  `academicDates`.
+
 ## Calendário versus atividades: não são a mesma coisa
 
 Uma atividade do Moodle pode possuir `duedate` e, portanto, aparecer também no
@@ -91,8 +114,9 @@ corpo de resposta ou identificador do usuário:
 
 - `siga_http_request_completed`: status, resultado, motivo, bytes e duração da
   resposta de matrículas;
-- `moodle_http_request_completed`: host, caminho permitido, método, status,
-  motivo, timeout, bytes, tipo de conteúdo e duração;
+- `moodle_http_request_completed`: operação allowlisted (método AJAX ou
+  `wsfunction`), host, caminho permitido, método, status, motivo, timeout,
+  bytes, tipo de conteúdo e duração;
 - `moodle_ajax_batch_completed`: quantidade e nomes dos métodos do lote Moodle,
   bytes e consumidor;
 - `moodle_session_connection_created/reused`: custo lógico de criar/reutilizar
@@ -105,8 +129,10 @@ corpo de resposta ou identificador do usuário:
   exatamente uma disciplina;
 - `activity_snapshot_course_decision`: por disciplina, informa `reused`,
   `refreshed` ou `failed_retained_previous`, quantidade e duração;
-- `academic_sync_lineage`: relação origem→dataset→consumidor e contagens
-  (`extracted`, `matched`, `created`, `updated`, `unchanged`, falhas, etc.);
+- `academic_sync_lineage`: relação origem→dataset→consumidor, contagens
+  (`extracted`, `matched`, `created`, `updated`, `unchanged`, falhas, etc.) e a
+  matriz de campos (`endpoints`, `response_fields_used`, `field_mapping`,
+  `destinations`);
 - `firestore_request_completed`: operação, recurso com IDs redigidos, bytes,
   status e duração.
 
@@ -121,13 +147,13 @@ filtrar event = academic_sync_stage_completed
 agrupar por stage e somar duration_ms
 
 filtrar event = moodle_http_request_completed
-agrupar por path, outcome e status_code
+agrupar por operation, path, outcome e status_code
 
 filtrar event = activity_snapshot_course_decision
 agrupar por course_code e outcome
 
 filtrar event = academic_sync_lineage
-comparar dataset, consumer e contagens
+comparar dataset, consumer, endpoint e field_mapping
 ```
 
 Para uma execução, primeiro fixe `execution_id`/`operation_id` e o horário do

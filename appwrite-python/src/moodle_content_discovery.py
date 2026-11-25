@@ -5,6 +5,7 @@ from collections import defaultdict
 from functools import partial
 from typing import Any, Protocol
 
+from academic_sync_lineage import MOODLE_MATERIAL_CATALOG
 from sync_timing import Telemetry, _emit, timed_stage
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
@@ -146,6 +147,7 @@ class MoodleContentDiscoveryService:
             self._telemetry,
             "academic_sync_lineage",
             {
+                **MOODLE_MATERIAL_CATALOG,
                 "source": "moodle_course_state",
                 "dataset": "resource_candidates",
                 "consumer": "material_catalog_and_teaching_plan_selection",

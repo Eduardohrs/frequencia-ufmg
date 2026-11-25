@@ -476,7 +476,7 @@ def test_sync_reports_duration_and_progress_for_each_slow_stage() -> None:
         ),
     ]
     assert telemetry[4][0] == "academic_sync_lineage"
-    assert telemetry[4][1] == {
+    expected = {
         "source": "teaching_plan",
         "dataset": "assessments_and_schedule",
         "consumer": "course_dates_and_teaching_plan_view",
@@ -487,6 +487,16 @@ def test_sync_reports_duration_and_progress_for_each_slow_stage() -> None:
         "review_required": 0,
         "overlap_policy": "plan_assessments_reconcile_into_course_dates",
     }
+    assert {key: telemetry[4][1][key] for key in expected} == expected
+    diario_endpoint = (
+        "GET/POST https://sistemas.ufmg.br/diario/JasperServlet "
+        "(official Diário document/transition)"
+    )
+    assert diario_endpoint in telemetry[4][1]["endpoints"]
+    assert any(
+        destination["path"] == "courses/{course_id}/sessions/{session_id}"
+        for destination in telemetry[4][1]["destinations"]
+    )
 
 
 def test_deferred_plan_does_not_repeat_reconciliation_or_create_false_review_errors():

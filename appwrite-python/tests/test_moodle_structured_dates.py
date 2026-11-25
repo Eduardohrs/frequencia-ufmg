@@ -183,7 +183,26 @@ def test_http_dependency_telemetry_captures_success_and_transport_failure(
     assert fields["reason"] == expected_reason
     assert fields["host"] == "virtual.ufmg.br"
     assert fields["path"] == "/20262/my/"
+    assert fields["operation"] == "moodle_http"
     assert isinstance(fields["duration_ms"], float)
+
+
+def test_request_operation_names_allowlisted_moodle_endpoints_without_credentials() -> None:
+    assert module._request_operation(
+        Request(
+            "https://virtual.ufmg.br/20262/lib/ajax/service.php?info=core_calendar_get_calendar_monthly_view"
+        )
+    ) == "moodle_ajax:core_calendar_get_calendar_monthly_view"
+    assert module._request_operation(
+        Request(
+            "https://virtual.ufmg.br/20262/webservice/rest/server.php",
+            data=b"wsfunction=unexpected%20value&wstoken=secret",
+            method="POST",
+        )
+    ) == "moodle_webservice:unknown"
+    assert module._request_operation(
+        Request("https://virtual.ufmg.br/20262/mod/url/view.php?id=12")
+    ) == "moodle_diario_launch"
 
 
 def test_diario_probe_accepts_a_direct_pdf_redirect_without_exposing_parameters() -> None:

@@ -930,6 +930,7 @@ class MoodleStructuredDatesClient:
                 self._telemetry,
                 "moodle_http_request_completed",
                 {
+                    "operation": _request_operation(request),
                     "host": parsed.hostname or "unknown",
                     "path": parsed.path or "/",
                     "method": request.get_method() or "GET",
@@ -950,6 +951,35 @@ class MoodleStructuredDatesClient:
 
 def _request_size(data: object) -> int:
     return len(data) if isinstance(data, (bytes, bytearray)) else 0
+
+
+def _request_operation(request: Request) -> str:
+    """Identify an allowlisted Moodle operation without logging credentials."""
+
+    parsed = urlsplit(request.full_url)
+    if parsed.path.endswith("/lib/ajax/service.php"):
+        query_values = parse_qs(parsed.query).get("info", [])
+        methods = re.findall(r"[a-z][a-z0-9_]{2,80}", ",".join(query_values))
+        return (
+            "moodle_ajax:" + ",".join(sorted(set(methods)))
+            if methods
+            else "moodle_ajax:unknown"
+        )
+    if parsed.path.endswith("/webservice/rest/server.php"):
+        request_data = request.data
+        raw_data = request_data if isinstance(request_data, (bytes, bytearray)) else b""
+        body_values = parse_qs(raw_data.decode("ascii", errors="ignore"))
+        function = body_values.get("wsfunction", ["unknown"])[0]
+        if not re.fullmatch(r"[a-z][a-z0-9_]{2,100}", function):
+            function = "unknown"
+        return f"moodle_webservice:{function}"
+    if parsed.path.endswith("/mod/url/view.php"):
+        return "moodle_diario_launch"
+    if re.search(r"/mod/(assign|quiz)/view\.php$", parsed.path):
+        return "moodle_activity_page"
+    if parsed.hostname == "sistemas.ufmg.br" and parsed.path == "/diario/JasperServlet":
+        return "ufmg_diario_jasper"
+    return "moodle_http"
 
 
 class _SAMLFormParser(HTMLParser):

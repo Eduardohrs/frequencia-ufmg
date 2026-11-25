@@ -5,6 +5,7 @@ from functools import partial
 from time import monotonic
 from typing import Protocol, cast
 
+from academic_sync_lineage import DIARIO_TEACHING_PLAN
 from firestore_rest import FirestoreAccessDenied, FirestoreUnavailable
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
 from moodle_token_store import MoodleTokenStoreUnavailable
@@ -194,6 +195,7 @@ class UnifiedAcademicSyncService:
         self._emit(
             "academic_sync_lineage",
             {
+                **DIARIO_TEACHING_PLAN,
                 "source": "teaching_plan",
                 "dataset": "assessments_and_schedule",
                 "consumer": "course_dates_and_teaching_plan_view",

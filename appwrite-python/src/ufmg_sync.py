@@ -4,6 +4,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+from academic_sync_lineage import SIGA_ENROLLMENT
 from sync_timing import Telemetry, _emit, timed_stage
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
@@ -87,6 +88,7 @@ class UFMGSyncService:
             self._telemetry,
             "academic_sync_lineage",
             {
+                **SIGA_ENROLLMENT,
                 "source": "siga_enrollment",
                 "dataset": "courses_and_schedule",
                 "consumer": "course_repository_and_schedule_repository",
