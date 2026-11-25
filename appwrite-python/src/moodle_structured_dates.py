@@ -495,55 +495,6 @@ class MoodleStructuredDatesClient:
         _require_json_endpoint(final_url, content_type, path)
         return _parse_activity_module_bulk(payload, root=root, kind=kind)
 
-    def fetch_course_activity_module_bulk(
-        self,
-        *,
-        webservice_token: str,
-        private_token: str,
-        term: str,
-        course_id: int,
-        kind: str,
-    ) -> dict[str, dict[str, object]]:
-        """Read one activity type through Moodle's official mobile bulk API.
-
-        ``core_course_get_contents`` is a useful index, but UFMG's response
-        omits the description/attachment fields for some modules.  Moodle's
-        type-specific mobile functions expose those fields in one course
-        response, avoiding one HTML request per activity.  If the installation
-        does not expose a function, callers retain the existing HTML fallback.
-        """
-
-        _validate_mobile_tokens(webservice_token, private_token, course_id)
-        if kind not in {"assign", "quiz"}:
-            raise InvalidMoodleResponse("activity_module_kind")
-        root = _moodle_root(term)
-        path = f"{root}/webservice/rest/server.php"
-        function = {
-            "assign": "mod_assign_get_assignments",
-            "quiz": "mod_quiz_get_quizzes_by_courses",
-        }[kind]
-        parameters: dict[str, str] = {
-            "moodlewsrestformat": "json",
-            "moodlewssettingfileurl": "1",
-            "moodlewssettingfilter": "1",
-            "wsfunction": function,
-            "wstoken": webservice_token,
-            "courseids[0]": str(course_id),
-        }
-        payload, final_url, content_type = self._open(
-            Request(
-                f"{MOODLE_ORIGIN}{path}",
-                data=urlencode(parameters).encode(),
-                headers={
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Accept": "application/json",
-                },
-                method="POST",
-            )
-        )
-        _require_json_endpoint(final_url, content_type, path)
-        return _parse_activity_module_bulk(payload, root=root, kind=kind)
-
     def fetch_activity(
         self, token: str, *, term: str, source_id: int, kind: str
     ) -> dict[str, object]:
