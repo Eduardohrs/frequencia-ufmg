@@ -3082,6 +3082,8 @@ def test_request_id_is_echoed_and_correlates_the_request_log(
         "duration_ms": pytest.approx(0, abs=100),
         "event": "request_completed",
         "firestore_duration_ms": 0.0,
+        "firestore_read_duration_ms": 0.0,
+        "firestore_write_duration_ms": 0.0,
         "firestore_failures": 0,
         "firestore_not_found": 0,
         "firestore_reads": 0,
@@ -3207,6 +3209,8 @@ def test_firestore_telemetry_aggregates_without_identifiers(
 
     assert metrics.snapshot() == {
         "firestore_duration_ms": 15.25,
+        "firestore_read_duration_ms": 13.25,
+        "firestore_write_duration_ms": 2.0,
         "firestore_failures": 1,
         "firestore_not_found": 1,
         "firestore_reads": 3,

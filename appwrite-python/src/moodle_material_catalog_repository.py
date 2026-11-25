@@ -13,6 +13,8 @@ from course_service import InvalidCourse
 
 MAX_CANDIDATES = 500
 MAX_CATALOG_BYTES = 750_000
+_SAFE_COMMIT_BYTES = 900_000
+_MAX_COMMIT_PARENT_COURSES = 20
 _COURSE_KEYS = {
     "course_id",
     "course_code",
@@ -44,6 +46,13 @@ class _Firestore(Protocol):
         self, *segments: str, fields: Mapping[str, Any]
     ) -> dict[str, Any]: ...
 
+    def commit_user_documents(
+        self,
+        *,
+        updates: list[tuple[tuple[str, ...], Mapping[str, Any]]],
+        deletes: list[tuple[str, ...]],
+    ) -> None: ...
+
 
 class MoodleMaterialCatalogRepository:
     def __init__(
@@ -66,6 +75,7 @@ class MoodleMaterialCatalogRepository:
 
         totals = {"created": 0, "updated": 0, "unchanged": 0, "removed": 0, "writes": 0}
         now = _timestamp(self._now())
+        pending_updates: list[tuple[tuple[str, ...], Mapping[str, Any]]] = []
         for course in validated:
             existing = self._load(course["course_id"])
             previous_candidates = (
@@ -97,14 +107,39 @@ class MoodleMaterialCatalogRepository:
             ):
                 continue
             created_at = existing["created_at"] if existing is not None else now
-            self._firestore.patch_user_document(
-                "courses",
-                course["course_id"],
-                "materialCatalog",
-                "current",
-                fields=_encode({**comparable, "created_at": created_at, "updated_at": now}),
+            pending_updates.append(
+                (
+                    ("courses", course["course_id"], "materialCatalog", "current"),
+                    _encode({**comparable, "created_at": created_at, "updated_at": now}),
+                )
             )
             totals["writes"] += 1
+        if pending_updates:
+            commit = getattr(self._firestore, "commit_user_documents", None)
+            if callable(commit):
+                batch: list[tuple[tuple[str, ...], Mapping[str, Any]]] = []
+                batch_bytes = 0
+                batch_courses: set[str] = set()
+                for update in pending_updates:
+                    update_bytes = _estimate_update_bytes(*update)
+                    course_id = update[0][1]
+                    if batch and (
+                        batch_bytes + update_bytes > _SAFE_COMMIT_BYTES
+                        or len(batch_courses) >= _MAX_COMMIT_PARENT_COURSES
+                    ):
+                        commit(updates=batch, deletes=[])
+                        batch = []
+                        batch_bytes = 0
+                        batch_courses = set()
+                    batch.append(update)
+                    batch_bytes += update_bytes
+                    batch_courses.add(course_id)
+                commit(updates=batch, deletes=[])
+            else:
+                # Lightweight fakes and older embedders can still use patches;
+                # production Firestore clients take the atomic path above.
+                for path, fields in pending_updates:
+                    self._firestore.patch_user_document(*path, fields=fields)
         return totals
 
     def list_catalog(self, courses: list[dict[str, Any]]) -> list[dict[str, object]]:
@@ -280,6 +315,23 @@ def _encode(value: Mapping[str, Any]) -> dict[str, Any]:
         "createdAt": {"timestampValue": value["created_at"]},
         "updatedAt": {"timestampValue": value["updated_at"]},
     }
+
+
+def _estimate_update_bytes(
+    path: tuple[str, ...], fields: Mapping[str, Any]
+) -> int:
+    """Estimate one commit write using the same UTF-8 encoding as Firestore."""
+
+    try:
+        return len(
+            json.dumps(
+                {"update": {"name": "/".join(path), "fields": fields}},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode()
+        )
+    except (TypeError, ValueError):
+        raise InvalidMoodleMaterialCatalog("invalid Moodle material catalogue") from None
 
 
 def _decode(document: Mapping[str, Any]) -> dict[str, Any]:

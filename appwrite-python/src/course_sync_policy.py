@@ -45,6 +45,11 @@ class CourseSyncPolicy:
             )
             raise
 
+    def persist_success(self, course_id: str, source: str, state: dict[str, Any]) -> None:
+        """Persist a successful state after its associated snapshot is durable."""
+
+        self._save(course_id, source, state)
+
     def confirm_plan(
         self, course_id: str, *, now: int, term: str = "", paused: bool = True
     ) -> None:
@@ -73,6 +78,7 @@ class CourseSyncPolicy:
         fetch: Callable[[], dict[str, object]],
         force: bool = False,
         created_at: int | None = None,
+        defer_success: Callable[[str, str, dict[str, Any]], None] | None = None,
     ) -> tuple[dict[str, Any], bool]:
         state = self.state(course_id, source)
         paused = self.manual_paused(course_id, key.split(":")[0]) if source == "plan" else False
@@ -162,7 +168,10 @@ class CourseSyncPolicy:
             last_attempt_at=now,
             next_due_at=now + (21600 if source == "activities" else 86400),
         )
-        self._save(course_id, source, state)
+        if defer_success is None:
+            self._save(course_id, source, state)
+        else:
+            defer_success(course_id, source, state)
         _emit(
             self.telemetry,
             "course_sync_source_updated",

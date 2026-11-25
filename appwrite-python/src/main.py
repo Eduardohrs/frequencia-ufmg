@@ -180,6 +180,8 @@ class _RequestMetrics:
         self._failures = 0
         self._not_found = 0
         self._duration_ms = 0.0
+        self._read_duration_ms = 0.0
+        self._write_duration_ms = 0.0
 
     def record(self, _event: str, fields: Mapping[str, object]) -> None:
         with self._lock:
@@ -195,11 +197,17 @@ class _RequestMetrics:
             duration = fields.get("duration_ms")
             if isinstance(duration, int | float):
                 self._duration_ms += duration
+                if fields.get("kind") == "read":
+                    self._read_duration_ms += duration
+                else:
+                    self._write_duration_ms += duration
 
     def snapshot(self) -> dict[str, int | float]:
         with self._lock:
             return {
                 "firestore_duration_ms": round(self._duration_ms, 3),
+                "firestore_read_duration_ms": round(self._read_duration_ms, 3),
+                "firestore_write_duration_ms": round(self._write_duration_ms, 3),
                 "firestore_failures": self._failures,
                 "firestore_not_found": self._not_found,
                 "firestore_reads": self._reads,
