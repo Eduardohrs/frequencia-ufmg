@@ -100,6 +100,15 @@ def test_request_scoped_telemetry_preserves_request_id_in_worker(
     ]
 
 
+def test_telemetry_entity_identity_includes_explicit_request_id() -> None:
+    first = function._telemetry_entity_id({"request_id": "request-a"})
+    second = function._telemetry_entity_id({"request_id": "request-b"})
+    assert first != second
+    assert function._telemetry_entity_id(
+        {"course_id": "course-1", "request_id": "request-a"}
+    ) == "course-1:request:request-a"
+
+
 def test_official_calendar_preview_and_apply_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(function, "_authentication", lambda *_: ("user-1", None))
 

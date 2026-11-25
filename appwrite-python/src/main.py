@@ -3101,12 +3101,23 @@ def _route_name(path: str) -> str:
 
 
 def _telemetry_entity_id(fields: Mapping[str, Any]) -> str:
-    """Resolve the report entity, falling back to the current request scope."""
+    """Resolve the report entity and keep separate requests distinct.
+
+    Threaded callbacks may carry an explicit request id while the worker's
+    ``ContextVar`` is empty.  Include that captured id in the deduplication
+    identity so equal endpoint responses from two requests are not collapsed.
+    """
+
+    entity = ""
     for name in ("entity_id", "operation_id", "session_id", "course_id"):
         value = fields.get(name)
         if value:
-            return str(value)
-    return f"request:{_REQUEST_ID.get()}"
+            entity = str(value)
+            break
+    request_id = str(fields.get("request_id") or _REQUEST_ID.get() or "")
+    if not entity:
+        entity = "request"
+    return f"{entity}:request:{request_id}" if request_id else entity
 
 
 def _log(context: Any, event: str, **fields: Any) -> None:

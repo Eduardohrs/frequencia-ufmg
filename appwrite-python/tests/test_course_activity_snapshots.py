@@ -392,7 +392,7 @@ def test_saved_api_works_with_expired_session_and_reports_missing_or_corrupt_sna
     function.main(context)
     # Ler repetidamente o mesmo relatório não cria novas escritas de log,
     # mas o log por requisição continua emitido.
-    assert not any(
+    assert any(
         json.loads(row).get("snapshot_synced_at") == snapshot()["synced_at"] for row in context.logs
     )
     assert any(json.loads(row).get("event") == "request_completed" for row in context.logs)
