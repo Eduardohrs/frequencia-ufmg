@@ -1,5 +1,6 @@
 import json
 from base64 import b64encode
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -71,6 +72,32 @@ class FakeContext:
 
     def error(self, message: str) -> None:
         self.errors.append(message)
+
+
+def test_request_scoped_telemetry_preserves_request_id_in_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    context = FakeContext(FakeRequest("POST", "/v1/ufmg/sync/moodle"))
+    monkeypatch.setattr(
+        function,
+        "_academic_sync_telemetry",
+        lambda _context, event, fields: events.append((event, dict(fields))),
+    )
+    token = function._REQUEST_ID.set("request-thread-123")
+    try:
+        telemetry = function._request_scoped_telemetry(context)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(telemetry, "moodle_http_request_completed", {"duration_ms": 17}).result()
+    finally:
+        function._REQUEST_ID.reset(token)
+
+    assert events == [
+        (
+            "moodle_http_request_completed",
+            {"duration_ms": 17, "request_id": "request-thread-123"},
+        )
+    ]
 
 
 def test_official_calendar_preview_and_apply_routes(monkeypatch: pytest.MonkeyPatch) -> None:

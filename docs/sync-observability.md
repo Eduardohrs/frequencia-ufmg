@@ -115,8 +115,11 @@ corpo de resposta ou identificador do usuário:
 - `siga_http_request_completed`: status, resultado, motivo, bytes e duração da
   resposta de matrículas;
 - `moodle_http_request_completed`: operação allowlisted (método AJAX ou
-  `wsfunction`), host, caminho permitido, método, status, motivo, timeout,
-  bytes, tipo de conteúdo e duração;
+  `wsfunction`), host, caminho permitido, método, `request_sequence`, status,
+  motivo, timeout, bytes, tipo de conteúdo e duração. O `request_id` é
+  capturado no início da requisição e anexado explicitamente também quando a
+  atividade é consultada pelo pool de threads; não depende de `ContextVar` no
+  worker;
 - `moodle_ajax_batch_completed`: quantidade e nomes dos métodos do lote Moodle,
   bytes e consumidor;
 - `moodle_session_connection_created/reused`: custo lógico de criar/reutilizar
@@ -134,7 +137,8 @@ corpo de resposta ou identificador do usuário:
   matriz de campos (`endpoints`, `response_fields_used`, `field_mapping`,
   `destinations`);
 - `firestore_request_completed`: operação, recurso com IDs redigidos, bytes,
-  status e duração.
+  status, `dependency_sequence` e duração, sempre ligado ao mesmo
+  `request_id` da execução.
 
 ## Consultas operacionais
 
