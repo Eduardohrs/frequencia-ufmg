@@ -336,6 +336,32 @@ def test_bulk_omissions_fall_back_to_html_without_persisting_private_flags():
     assert not any(key.startswith("_bulk_") for key in saved)
 
 
+def test_incomplete_bulk_capability_skips_the_extra_request():
+    class IncompleteBulkCapabilityClient(_IncrementalClient):
+        bulk_activity_details_complete = False
+
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: {
+            "description": "HTML instructions",
+            "dates_text": "",
+            "has_due_date": False,
+            "submission_state": "not_submitted",
+            "submission_text": "Nenhum envio",
+            "attachments": [],
+        },
+        client_class=IncompleteBulkCapabilityClient,
+    )
+
+    result = service.sync_snapshots("owner", now=1, snapshots=_Snapshots())
+
+    assert result["failed"] == 0
+    assert client.bulk_calls == []
+    assert client.fetch_calls == [1]
+    assert any(event == "moodle_activity_bulk_skipped" for event, _ in logs)
+
+
 def test_bulk_miss_falls_back_only_for_the_missing_changed_activity():
     courses = [_course("poo")]
     index = {"ELEpoo": [_entry(1), _entry(2)]}
@@ -401,6 +427,31 @@ def test_incremental_helpers_reject_invalid_snapshots_and_timestamps():
         activities_module._entry_moodle_course_id({"moodle_course_id": "bad"}, "77")
     with pytest.raises(InvalidMoodleResponse):
         activities_module._entry_moodle_course_id({"moodle_course_id": "0"}, "77")
+
+
+def test_empty_descriptions_are_rechecked_after_the_bounded_reuse_window():
+    complete = {
+        "description": "",
+        "dates_text": "",
+        "has_due_date": False,
+        "submission_state": "unknown",
+        "submission_text": "",
+        "attachments": [],
+    }
+
+    assert activities_module._detail_can_be_reused(complete, snapshot_epoch=1, now=1)
+    assert activities_module._detail_can_be_reused(
+        complete,
+        snapshot_epoch=1,
+        now=1 + activities_module.EMPTY_DESCRIPTION_RECHECK_SECONDS - 1,
+    )
+    assert not activities_module._detail_can_be_reused(
+        complete,
+        snapshot_epoch=1,
+        now=1 + activities_module.EMPTY_DESCRIPTION_RECHECK_SECONDS,
+    )
+    assert not activities_module._detail_can_be_reused(complete, snapshot_epoch=None, now=1)
+    assert not activities_module._detail_can_be_reused({"description": ""}, snapshot_epoch=1, now=1)
 
 
 def test_token_store_failure_falls_back_to_html_and_is_observable():

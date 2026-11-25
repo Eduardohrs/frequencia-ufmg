@@ -37,6 +37,7 @@ DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY = 4
 MIN_ACTIVITY_SNAPSHOT_CONCURRENCY = 1
 MAX_ACTIVITY_SNAPSHOT_CONCURRENCY = 8
 MAX_REPORTED_FAILED_COURSES = 20
+EMPTY_DESCRIPTION_RECHECK_SECONDS = 60 * 60
 
 
 class _Sessions(Protocol):
@@ -133,6 +134,27 @@ def _detail_is_complete(activity: dict[str, Any]) -> bool:
         "attachments",
     }
     return required.issubset(activity) and isinstance(activity.get("attachments"), list)
+
+
+def _detail_can_be_reused(
+    activity: dict[str, Any], *, snapshot_epoch: int | None, now: int
+) -> bool:
+    """Reuse stable details, but recheck empty descriptions periodically.
+
+    Moodle can hide an assignment description until its opening time without
+    changing the activity index or reporting an update.  An empty cached
+    description therefore needs a bounded retry window; otherwise it would
+    remain empty forever after the activity opens.
+    """
+
+    if not _detail_is_complete(activity):
+        return False
+    description = activity.get("description")
+    if not isinstance(description, str) or description.strip():
+        return True
+    if snapshot_epoch is None or now < snapshot_epoch:
+        return False
+    return now - snapshot_epoch < EMPTY_DESCRIPTION_RECHECK_SECONDS
 
 
 def _bulk_detail_needs_html_fallback(detail: dict[str, Any]) -> bool:
@@ -348,12 +370,13 @@ class CourseActivityService:
 
         if reuse_allowed:
             previous = cast(dict[str, Any], previous)
+            previous_epoch = _snapshot_epoch(previous)
             for position, entry in enumerate(entries):
                 old = previous_by_source.get(str(entry["source_id"]))
                 if (
                     old is not None
                     and _same_activity_index(old, entry)
-                    and _detail_is_complete(old)
+                    and _detail_can_be_reused(old, snapshot_epoch=previous_epoch, now=now)
                 ):
                     activities[position] = {**old, **entry}
                     changed_positions.discard(position)
@@ -422,9 +445,11 @@ class CourseActivityService:
         bulk_count = 0
         html_positions = set(changed_positions)
         bulk_method = getattr(self._client, "fetch_course_activity_bulk", None)
+        bulk_details_complete = getattr(self._client, "bulk_activity_details_complete", True)
         if (
             changed_positions
             and callable(bulk_method)
+            and bulk_details_complete is True
             and mobile_tokens is not None
             and getattr(mobile_tokens, "term", None) == course["term"]
         ):
@@ -488,6 +513,16 @@ class CourseActivityService:
                             "activity_count": len(changed_positions),
                         },
                     )
+        elif changed_positions and callable(bulk_method) and bulk_details_complete is False:
+            _emit(
+                self._telemetry,
+                "moodle_activity_bulk_skipped",
+                {
+                    **fields,
+                    "reason": "page_only_fields_incomplete",
+                    "activity_count": len(changed_positions),
+                },
+            )
 
         def capture_activity(position: int, entry: dict[str, Any]) -> dict[str, object] | None:
             """Fetch one activity detail; return a bounded failure record or None."""

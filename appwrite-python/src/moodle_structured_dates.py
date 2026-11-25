@@ -114,6 +114,13 @@ class _Opener(Protocol):
 class MoodleStructuredDatesClient:
     """Complete SAML without exposing cookies and read Moodle's calendar API."""
 
+    # ``core_course_get_contents`` is a useful course-wide index, but Moodle's
+    # export for assignments/quizzes does not include the student-specific
+    # submission state (and assignments may omit intro attachments).  Until a
+    # module-specific endpoint supplies those fields, callers must keep the
+    # activity-page fallback and should not pay for an unused bulk request.
+    bulk_activity_details_complete = False
+
     def __init__(
         self,
         *,
