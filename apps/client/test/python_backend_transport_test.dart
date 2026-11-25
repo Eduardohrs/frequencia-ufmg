@@ -223,7 +223,7 @@ void main() {
   );
 
   test(
-    'job polling waits 20s between attempts and caps at 90 attempts',
+    'job polling waits 5s between attempts and keeps the 30-minute budget',
     () async {
       final delays = <Duration>[];
       var posts = 0;
@@ -251,9 +251,9 @@ void main() {
         throwsA(isA<PythonBackendException>()),
       );
       expect(posts, 1);
-      expect(polls, 90);
-      expect(delays, hasLength(90));
-      expect(delays.toSet(), {const Duration(seconds: 20)});
+      expect(polls, 360);
+      expect(delays, hasLength(360));
+      expect(delays.toSet(), {const Duration(seconds: 5)});
     },
   );
 
@@ -409,7 +409,7 @@ void main() {
           );
         }),
       );
-      // The worker only finishes after the client's 90 local polls.
+      // The worker only finishes after the client's 360 local polls.
       await expectLater(
         transport.syncAllAcademicData(
           background: true,
@@ -428,7 +428,7 @@ void main() {
                 allOf(
                   contains('reason=observation_expired'),
                   contains('server_job_not_cancelled=true'),
-                  contains('attempts=90'),
+                  contains('attempts=360'),
                   contains('elapsed_ms='),
                   contains('operation_id=sync-test123'),
                 ),
@@ -436,10 +436,10 @@ void main() {
         ),
       );
       expect(posts, 1);
-      expect(gets, 90);
-      expect(polls, hasLength(90));
+      expect(gets, 360);
+      expect(polls, hasLength(360));
       expect(polls.first, (1, 'running'));
-      expect(polls.last, (90, 'running'));
+      expect(polls.last, (360, 'running'));
       // The saved job is still there and is re-found without a new POST.
       workerFinished = true;
       expect(await transport.pendingAcademicSyncId(), 'sync-test123');
@@ -450,7 +450,7 @@ void main() {
       expect(restored.siga.courses.created, 1);
       expect(restorePolls, [(1, 'succeeded')]);
       expect(posts, 1);
-      expect(gets, 92);
+      expect(gets, 362);
     },
   );
 
@@ -512,7 +512,7 @@ void main() {
                 ),
           ),
         );
-        if (entry.key == 'running') expect(gets, 90);
+        if (entry.key == 'running') expect(gets, 360);
       }
     },
   );

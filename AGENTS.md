@@ -4,6 +4,11 @@ Eduardo owns merge decisions. Do not merge, enable auto-merge, push directly to 
 
 ## Code Review Rules
 
+### Authentication evidence gate
+- Before changing code or opening a PR for an integration that depends on a live authenticated external system, obtain and record evidence from that authenticated session first (network/API capture, response contract, or equivalent server-side trace).
+- If authentication, browser access, or required telemetry is unavailable, stop at investigation and ask Eduardo for the smallest explicit authorization or login action needed. Do not replace missing evidence with guesses, synthetic responses, or a large speculative implementation.
+- Treat a successful local/mock test as insufficient evidence for a Moodle/UFMG integration change; keep live-session evidence separate from local and production evidence.
+
 ### Evidence and scope
 - Review the current head SHA against its base and recheck prior findings against the actual new code. Follow callers through the production path; a helper, mock-only test or unused wrapper does not deliver the feature.
 - Report reproducible, consequential defects with a concrete trigger, impact and file/line. Distinguish confirmed defects from missing evidence; do not invent infrastructure causes (including IPv4/IPv6) from generic timeouts. Do not repeat resolved findings or block on stylistic preferences.
