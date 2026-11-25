@@ -38,6 +38,7 @@ MIN_ACTIVITY_SNAPSHOT_CONCURRENCY = 1
 MAX_ACTIVITY_SNAPSHOT_CONCURRENCY = 8
 MAX_REPORTED_FAILED_COURSES = 20
 EMPTY_DESCRIPTION_RECHECK_SECONDS = 60 * 60
+SUBMISSION_RECHECK_SECONDS = 60 * 60
 
 
 class _Sessions(Protocol):
@@ -139,16 +140,24 @@ def _detail_is_complete(activity: dict[str, Any]) -> bool:
 def _detail_can_be_reused(
     activity: dict[str, Any], *, snapshot_epoch: int | None, now: int
 ) -> bool:
-    """Reuse stable details, but recheck empty descriptions periodically.
+    """Reuse stable details, but bound fields Moodle can change silently.
 
     Moodle can hide an assignment description until its opening time without
     changing the activity index or reporting an update.  An empty cached
     description therefore needs a bounded retry window; otherwise it would
-    remain empty forever after the activity opens.
+    remain empty forever after the activity opens.  Submission status is also
+    user-specific: for group assignments, a teammate's submission may not be
+    reported by the current-user change feed.  Bound assignment reuse so that
+    the next refresh eventually reads the activity page again.
     """
 
     if not _detail_is_complete(activity):
         return False
+    if activity.get("kind") == "assignment":
+        if snapshot_epoch is None or now < snapshot_epoch:
+            return False
+        if now - snapshot_epoch >= SUBMISSION_RECHECK_SECONDS:
+            return False
     description = activity.get("description")
     if not isinstance(description, str) or description.strip():
         return True

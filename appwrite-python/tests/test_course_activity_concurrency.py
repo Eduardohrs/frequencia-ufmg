@@ -454,6 +454,43 @@ def test_empty_descriptions_are_rechecked_after_the_bounded_reuse_window():
     assert not activities_module._detail_can_be_reused({"description": ""}, snapshot_epoch=1, now=1)
 
 
+def test_assignment_submission_details_are_rechecked_after_a_bounded_window():
+    complete_assignment = {
+        "kind": "assignment",
+        "description": "Instructions are visible",
+        "dates_text": "",
+        "has_due_date": False,
+        "submission_state": "not_submitted",
+        "submission_text": "Nenhum envio",
+        "attachments": [],
+    }
+
+    assert activities_module._detail_can_be_reused(complete_assignment, snapshot_epoch=1, now=1)
+    assert activities_module._detail_can_be_reused(
+        complete_assignment,
+        snapshot_epoch=1,
+        now=1 + activities_module.SUBMISSION_RECHECK_SECONDS - 1,
+    )
+    assert not activities_module._detail_can_be_reused(
+        complete_assignment,
+        snapshot_epoch=1,
+        now=1 + activities_module.SUBMISSION_RECHECK_SECONDS,
+    )
+    assert not activities_module._detail_can_be_reused(
+        complete_assignment,
+        snapshot_epoch=2,
+        now=1,
+    )
+
+    # Quizzes do not use the assignment submission-status path.
+    quiz = {**complete_assignment, "kind": "quiz"}
+    assert activities_module._detail_can_be_reused(
+        quiz,
+        snapshot_epoch=1,
+        now=1 + activities_module.SUBMISSION_RECHECK_SECONDS,
+    )
+
+
 def test_token_store_failure_falls_back_to_html_and_is_observable():
     courses = [_course("poo")]
     index = {"ELEpoo": [_entry(1)]}
