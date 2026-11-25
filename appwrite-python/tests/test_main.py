@@ -3225,6 +3225,41 @@ def test_firestore_telemetry_aggregates_without_identifiers(
     assert "private-user" not in json.dumps(metrics.snapshot())
 
 
+def test_firestore_telemetry_forwards_each_dependency_event_with_sequence():
+    events: list[tuple[str, dict[str, object]]] = []
+    metrics = function._RequestMetrics(
+        lambda event, fields: events.append((event, dict(fields)))
+    )
+
+    metrics.record(
+        "firestore_request_completed",
+        {"kind": "read", "resource": "/courses/{course}", "outcome": "succeeded"},
+    )
+    metrics.record(
+        "firestore_request_completed",
+        {"kind": "read", "resource": "/courses/{course}", "outcome": "succeeded"},
+    )
+
+    assert [event for event, _ in events] == [
+        "firestore_request_completed",
+        "firestore_request_completed",
+    ]
+    assert [fields["dependency_sequence"] for _, fields in events] == [1, 2]
+
+
+def test_firestore_telemetry_callback_failure_does_not_break_metrics():
+    def fail(*_args: object) -> None:
+        raise RuntimeError("telemetry sink unavailable")
+
+    metrics = function._RequestMetrics(fail)
+    metrics.record(
+        "firestore_request_completed",
+        {"kind": "write", "outcome": "failed", "duration_ms": 4},
+    )
+
+    assert metrics.snapshot()["firestore_failures"] == 1
+
+
 @pytest.mark.parametrize(
     "origin",
     ["https://evil.example", "https://frequencia-ufmg-eduardo.web.app.evil.example"],

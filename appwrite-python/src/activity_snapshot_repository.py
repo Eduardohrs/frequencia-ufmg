@@ -23,6 +23,14 @@ class InvalidActivitySnapshot(Exception):
     """The saved or incoming snapshot is malformed or exceeds its budget."""
 
 
+class ActivitySnapshotPersistenceFailed(Exception):
+    """One or more course snapshot writes could not be persisted."""
+
+    def __init__(self, failures: Mapping[str, str]) -> None:
+        self.failures = dict(failures)
+        super().__init__(f"{len(self.failures)} activity snapshot write(s) failed")
+
+
 class _Firestore(Protocol):
     def get_user_document(self, *segments: str) -> dict[str, Any]: ...
     def patch_user_document(self, *segments: str, fields: Mapping[str, Any]) -> dict[str, Any]: ...
@@ -65,15 +73,24 @@ class ActivitySnapshotRepository:
             raise InvalidActivitySnapshot("invalid stored activity snapshot") from None
 
     def save(self, course_id: str, snapshot: dict[str, Any]) -> None:
-        self.save_batch([(course_id, snapshot)])
+        failures = self.save_batch([(course_id, snapshot)])
+        if failures:
+            raise ActivitySnapshotPersistenceFailed(failures)
 
     def validate_snapshot(self, course_id: str, snapshot: dict[str, Any]) -> None:
         """Validate a snapshot before a caller queues it for a later commit."""
 
         self._build_update(course_id, snapshot)
 
-    def save_batch(self, snapshots: list[tuple[str, dict[str, Any]]]) -> None:
-        """Persist successful course snapshots in one atomic Firestore commit."""
+    def save_batch(self, snapshots: list[tuple[str, dict[str, Any]]]) -> dict[str, str]:
+        """Persist snapshots in batches, isolating a rejected course write.
+
+        Firestore commits are atomic.  If a batch is rejected because one
+        course disappeared or its rule check failed, retrying each update
+        independently preserves the healthy courses instead of discarding the
+        whole sync result.  The caller receives only the failed course ids so
+        it can retain their previous snapshots and report an actionable log.
+        """
 
         updates: list[tuple[tuple[str, ...], Mapping[str, Any]]] = []
         seen: set[str] = set()
@@ -84,7 +101,19 @@ class ActivitySnapshotRepository:
             seen.add(identifier)
             updates.append(self._build_update(identifier, snapshot))
         if not updates:
-            return
+            return {}
+        failures: dict[str, str] = {}
+
+        def persist_individually(
+            batch: list[tuple[tuple[str, ...], Mapping[str, Any]]],
+        ) -> None:
+            for path, fields in batch:
+                course_id = path[1]
+                try:
+                    self._firestore.patch_user_document(*path, fields=fields)
+                except Exception as error:
+                    failures[course_id] = type(error).__name__
+
         commit = getattr(self._firestore, "commit_user_documents", None)
         if callable(commit):
             batch: list[tuple[tuple[str, ...], Mapping[str, Any]]] = []
@@ -97,7 +126,10 @@ class ActivitySnapshotRepository:
                     batch_bytes + update_bytes > _SAFE_COMMIT_BYTES
                     or len(batch_courses) >= _MAX_COMMIT_PARENT_COURSES
                 ):
-                    commit(updates=batch, deletes=[])
+                    try:
+                        commit(updates=batch, deletes=[])
+                    except Exception:
+                        persist_individually(batch)
                     batch = []
                     batch_bytes = 0
                     batch_courses = set()
@@ -106,11 +138,18 @@ class ActivitySnapshotRepository:
                 batch_courses.add(course_id)
             # ``updates`` is non-empty here, so the final batch always contains
             # at least the last update after the loop.
-            commit(updates=batch, deletes=[])
-            return
+            try:
+                commit(updates=batch, deletes=[])
+            except Exception:
+                persist_individually(batch)
+            return failures
         # Keep the repository usable with small in-memory fakes and old callers.
         for path, fields in updates:
-            self._firestore.patch_user_document(*path, fields=fields)
+            try:
+                self._firestore.patch_user_document(*path, fields=fields)
+            except Exception as error:
+                failures[path[1]] = type(error).__name__
+        return failures
 
     def _build_update(
         self, course_id: str, snapshot: dict[str, Any]

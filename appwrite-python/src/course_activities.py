@@ -383,17 +383,22 @@ class CourseActivityService:
                 for _, snapshot in pending_snapshots
             )
 
-            def persist_snapshots() -> None:
+            def persist_snapshots() -> dict[str, str]:
                 save_batch = getattr(snapshots, "save_batch", None)
                 if callable(save_batch):
-                    save_batch(pending_snapshots)
-                    return
+                    result = save_batch(pending_snapshots)
+                    return result if isinstance(result, dict) else {}
                 # Compatibility path for small in-memory fakes and older
                 # embedders.  Production uses the repository's atomic commit.
+                failures: dict[str, str] = {}
                 for course_id, snapshot in pending_snapshots:
-                    snapshots.save(course_id, snapshot)
+                    try:
+                        snapshots.save(course_id, snapshot)
+                    except Exception as error:
+                        failures[course_id] = type(error).__name__
+                return failures
 
-            timed_stage(
+            persistence_failures = timed_stage(
                 "activity_snapshot_persist",
                 persist_snapshots,
                 telemetry=self._telemetry,
@@ -403,6 +408,27 @@ class CourseActivityService:
                     "batch": True,
                 },
             )
+            for course_id, reason in persistence_failures.items():
+                course = next(
+                    (item for item in courses if item["id"] == course_id),
+                    {"id": course_id, "code": "unknown", "term": "unknown"},
+                )
+                issue = {
+                    "course_id": course_id,
+                    "course_code": course["code"],
+                    "term": course["term"],
+                    "reason": "firestore_snapshot_write_failed",
+                    "exception_type": reason,
+                    "retained_previous": True,
+                    "stage": "activity_snapshot_persist",
+                }
+                failed.append(issue)
+                updated = max(0, updated - 1)
+                _emit(self._telemetry, "activity_snapshot_persistence_failed", issue)
+            if persistence_failures:
+                pending_policy_updates = [
+                    item for item in pending_policy_updates if item[0] not in persistence_failures
+                ]
             if self._policy is not None:
                 for course_id, source, state in pending_policy_updates:
                     self._policy.persist_success(course_id, source, state)

@@ -3,7 +3,7 @@
 import json
 import re
 import secrets
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from os import environ
 from pathlib import Path
@@ -173,8 +173,12 @@ _PREFLIGHT_MAX_AGE = "86400"
 class _RequestMetrics:
     """Accumulate dependency counts safely across overview worker threads."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self, telemetry: Callable[[str, Mapping[str, object]], None] | None = None
+    ) -> None:
         self._lock = Lock()
+        self._telemetry = telemetry
+        self._dependency_sequence = 0
         self._reads = 0
         self._writes = 0
         self._failures = 0
@@ -183,7 +187,7 @@ class _RequestMetrics:
         self._read_duration_ms = 0.0
         self._write_duration_ms = 0.0
 
-    def record(self, _event: str, fields: Mapping[str, object]) -> None:
+    def record(self, event: str, fields: Mapping[str, object]) -> None:
         with self._lock:
             if fields.get("kind") == "read":
                 self._reads += 1
@@ -201,6 +205,19 @@ class _RequestMetrics:
                     self._read_duration_ms += duration
                 else:
                     self._write_duration_ms += duration
+            self._dependency_sequence += 1
+            enriched = {
+                **fields,
+                # This makes every dependency call independently searchable;
+                # the deduplicator must not collapse two identical reads.
+                "dependency_sequence": self._dependency_sequence,
+            }
+        if self._telemetry is not None:
+            try:
+                self._telemetry(event, enriched)
+            except Exception:
+                # Dependency diagnostics must never break the request.
+                return
 
     def snapshot(self) -> dict[str, int | float]:
         with self._lock:
@@ -222,7 +239,9 @@ def main(context: Any) -> Any:
     method = context.req.method.upper()
     path = context.req.path.rstrip("/") or "/"
     request_id = _validated_request_id(context.req.headers)
-    metrics = _RequestMetrics()
+    metrics = _RequestMetrics(
+        lambda event, fields: _academic_sync_telemetry(context, event, fields)
+    )
     request_token = _REQUEST_ID.set(request_id)
     status_token = _RESPONSE_STATUS.set(200)
     metrics_token = _REQUEST_METRICS.set(metrics)
