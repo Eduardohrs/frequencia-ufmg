@@ -1,5 +1,6 @@
 import copy
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -239,3 +240,60 @@ def test_snapshot_failure_retains_parser_reason_and_keeps_previous_copy(activiti
     assert failures[0]["kind"] == "assign"
     assert failures[0]["source_id"] == "20"
     assert failures[0]["title"]
+
+
+def test_snapshot_order_is_deterministic_and_partial_failure_keeps_the_stored_copy(activities):
+    from moodle_structured_dates import InvalidMoodleResponse
+
+    service, _, _, client, _, _, logs, _ = activities
+    service._courses.list_courses = lambda: [{"id": "poo", "code": "ELE631", "term": "2026-2"}]
+    entries = [
+        {
+            "source_id": str(i),
+            "title": f"T{i}",
+            "kind": "assign" if i % 2 else "quiz",
+            "url": f"https://virtual.ufmg.br/20262/mod/assign/view.php?id={i}",
+            "relevance": "other",
+        }
+        for i in range(1, 7)
+    ]
+    client.list_activities = lambda *args, **kwargs: entries
+
+    def fetch(token, *, term, source_id, kind):
+        # Earlier indexes finish later, so completions arrive out of order.
+        time.sleep(0.03 * (len(entries) - source_id))
+        if source_id == 2:
+            raise InvalidMoodleResponse("activity_page_shape", details={"upstream_status": 503})
+        return {"description": f"d{source_id}", "attachments": [], "submission_state": "open"}
+
+    client.fetch_activity = fetch
+    store = Store()
+    repo = ActivitySnapshotRepository(store)
+    repo.save("poo", snapshot())
+    before = copy.deepcopy(store.documents)
+    result = service.sync_snapshots("owner", now=1793188800, snapshots=repo)
+    assert result["failed"] == 1 and result["updated"] == 0
+    assert result["failed_courses"][0]["reason"] == "activity_page_shape"
+    # The stored snapshot is byte-identical to the previous valid copy.
+    assert store.documents == before
+    assert repo.load("poo") == snapshot()
+    failures = [f for e, f in logs if e == "activity_snapshot_activity_failed"]
+    assert len(failures) == 1
+    assert failures[0]["source_id"] == "2"
+    assert failures[0]["upstream_class"] == "http_503"
+    assert failures[0]["upstream_status"] == 503
+    assert failures[0]["reason"] == "activity_page_shape"
+    summary = next(f for e, f in logs if e == "activity_snapshots_synced")
+    assert summary["failed_activities"] == 1 and summary["failed"] == 1
+
+    client.fetch_activity = lambda token, *, term, source_id, kind: {
+        "description": f"d{source_id}",
+        "attachments": [],
+        "submission_state": "open",
+    }
+    result = service.sync_snapshots("owner", now=1793188801, snapshots=repo)
+    assert result["updated"] == 1 and result["failed"] == 0
+    saved = repo.load("poo")
+    assert [a["source_id"] for a in saved["activities"]] == [str(i) for i in range(1, 7)]
+    assert [a["description"] for a in saved["activities"]] == [f"d{i}" for i in range(1, 7)]
+    assert all(a["files"] == [] and a["term"] == "2026-2" for a in saved["activities"])

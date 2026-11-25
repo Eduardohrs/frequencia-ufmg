@@ -2854,6 +2854,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
   static String _syncMessageFor(Object error) {
     if (error is PythonBackendException) {
       return switch (error.code) {
+        PythonBackendError.jobUnobserved =>
+          'A sincronização continua processando no servidor. Consulte o resultado em instantes.',
         PythonBackendError.ufmgUnavailable ||
         PythonBackendError.unavailable ||
         PythonBackendError.timeout =>

@@ -57,11 +57,18 @@ PythonUnifiedAcademicSyncResult syncResult({bool partial = false}) =>
 
 class ProgressGateway implements BackendAcademicSyncProgressGateway {
   final response = Completer<PythonUnifiedAcademicSyncResult>();
+  final restoreResponse = Completer<PythonUnifiedAcademicSyncResult>();
+  final restoreResults = <Future<PythonUnifiedAcademicSyncResult>>[];
   final updates = StreamController<AcademicSyncProgress>.broadcast(sync: true);
   int calls = 0;
+  int restoreCalls = 0;
   bool lastForce = false;
   String? operationId;
+  String? restoreOperationId;
   bool throwsOnWatch = false;
+  void Function(int attempt, String status)? _lastOnPoll;
+  void Function(int attempt, String code)? _lastOnPollFailure;
+
   @override
   Stream<AcademicSyncProgress> watchSyncProgress(String operationId) {
     if (throwsOnWatch) throw StateError('listener unavailable');
@@ -72,12 +79,39 @@ class ProgressGateway implements BackendAcademicSyncProgressGateway {
   Future<PythonUnifiedAcademicSyncResult> syncWithProgress(
     String id, {
     bool force = false,
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
   }) {
     calls++;
     lastForce = force;
     operationId = id;
+    _lastOnPoll = onPoll;
+    _lastOnPollFailure = onPollFailure;
     return response.future;
   }
+
+  @override
+  Future<PythonUnifiedAcademicSyncResult> restoreAcademicSync(
+    String id, {
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
+  }) {
+    restoreCalls++;
+    restoreOperationId = id;
+    _lastOnPoll = onPoll;
+    _lastOnPollFailure = onPollFailure;
+    return restoreResults.isNotEmpty
+        ? restoreResults.removeAt(0)
+        : restoreResponse.future;
+  }
+
+  /// Drives the onPoll callback of the in-flight sync/restore call.
+  void emitPoll(int attempt, String status) =>
+      _lastOnPoll?.call(attempt, status);
+
+  /// Drives the onPollFailure callback of the in-flight sync/restore call.
+  void emitPollFailure(int attempt, String code) =>
+      _lastOnPollFailure?.call(attempt, code);
 
   @override
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() =>

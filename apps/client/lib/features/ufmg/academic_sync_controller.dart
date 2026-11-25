@@ -25,8 +25,12 @@ final class AcademicSyncController extends ChangeNotifier {
   bool visible = false;
   bool progressUnavailable = false;
   bool receivedProgress = false;
+  bool observationLost = false;
   bool _disposed = false;
   bool isRestoring = false;
+  final Stopwatch _elapsed = Stopwatch();
+  int _pollAttempt = 0;
+  String? _operationId;
 
   bool get isRunning => _active != null;
   static const stages = [
@@ -34,7 +38,28 @@ final class AcademicSyncController extends ChangeNotifier {
     'Datas e materiais',
     'Planos de ensino',
   ];
+
+  /// Last stage reported by the server, when progress was received.
+  String? get lastStage {
+    final current = progress;
+    if (current == null || !receivedProgress || progressUnavailable) {
+      return null;
+    }
+    return _stageLabel(current);
+  }
+
+  static String _stageLabel(AcademicSyncProgress value) =>
+      value.completed >= stages.length
+      ? 'Finalizando sincronização…'
+      : stages[value.completed];
+
   String get title {
+    if (observationLost) {
+      final stage = lastStage;
+      return stage == null
+          ? 'Processando no servidor…'
+          : 'Processando no servidor • $stage';
+    }
     if (error != null) return 'Não foi possível concluir a sincronização';
     if (!isRunning && result != null) {
       return unifiedSyncIssues(result!).isEmpty
@@ -43,9 +68,7 @@ final class AcademicSyncController extends ChangeNotifier {
     }
     if (progressUnavailable) return 'Sincronizando • progresso indisponível';
     if (!receivedProgress) return 'Iniciando sincronização…';
-    return progress!.completed == 3
-        ? 'Finalizando sincronização…'
-        : stages[progress!.completed];
+    return _stageLabel(progress!);
   }
 
   Future<void> restore() async {
@@ -55,20 +78,32 @@ final class AcademicSyncController extends ChangeNotifier {
         if (id != null && _active == null && !_disposed) {
           isRestoring = true;
           try {
-            await _begin(id);
+            await _begin(id, restore: true);
           } finally {
             isRestoring = false;
           }
         }
       } catch (failure, stack) {
-        _progressFailure(
-          progress?.operationId ?? 'restore',
-          failure,
-          stack,
-          stage: 'restore',
-        );
+        final unobserved =
+            failure is PythonBackendException &&
+            failure.code == PythonBackendError.jobUnobserved;
+        if (!unobserved) {
+          _progressFailure(
+            progress?.operationId ?? 'restore',
+            failure,
+            stack,
+            stage: 'restore',
+          );
+        }
       }
     }
+  }
+
+  /// Re-finds the saved server job (GET only, never another POST) after the
+  /// local observation deadline expired.
+  Future<void> retry() async {
+    logInteraction('sync_retry_observation');
+    await restore();
   }
 
   Future<PythonUnifiedAcademicSyncResult> start({bool force = false}) {
@@ -78,19 +113,28 @@ final class AcademicSyncController extends ChangeNotifier {
   Future<PythonUnifiedAcademicSyncResult> _begin(
     String id, {
     bool force = false,
+    bool restore = false,
   }) {
     if (_active case final active?) return active;
-    result = null;
+    // A restore re-attaches to the saved job: any previously observed result
+    // stays available for "Ver resultado" while the job is re-observed.
+    if (!restore) result = null;
     error = null;
+    observationLost = false;
     visible = true;
     progressUnavailable = false;
     receivedProgress = false;
+    _pollAttempt = 0;
+    _operationId = id;
+    _elapsed
+      ..reset()
+      ..start();
     progress = AcademicSyncProgress(
       operationId: id,
       completed: 0,
       status: 'running',
     );
-    _active = _execute(id, force: force);
+    _active = _execute(id, force: force, restore: restore);
     _notify();
     return _active!;
   }
@@ -98,25 +142,70 @@ final class AcademicSyncController extends ChangeNotifier {
   Future<PythonUnifiedAcademicSyncResult> _execute(
     String id, {
     bool force = false,
+    bool restore = false,
   }) async {
+    _logSyncEvent('academic_sync_started', {
+      'mode': restore ? 'restore' : 'start',
+      'attempts': 0,
+      'elapsed_ms': 0,
+    });
     try {
       _watch(id);
       final completed = await runAuditedOperation(
         logger: logger,
         operation: AuditedOperation.academicSync,
-        action: () => gateway.syncWithProgress(id, force: force),
+        action: () => restore
+            ? gateway.restoreAcademicSync(
+                id,
+                onPoll: _onPoll,
+                onPollFailure: _onPollFailure,
+              )
+            : gateway.syncWithProgress(
+                id,
+                force: force,
+                onPoll: _onPoll,
+                onPollFailure: _onPollFailure,
+              ),
       );
       result = completed;
-      visible = unifiedSyncIssues(completed).isNotEmpty;
+      observationLost = false;
+      final issues = unifiedSyncIssues(completed);
+      visible = issues.isNotEmpty;
+      final status = issues.isEmpty ? 'succeeded' : 'partial';
       progress = AcademicSyncProgress(
         operationId: id,
         completed: 3,
-        status: unifiedSyncIssues(completed).isEmpty ? 'succeeded' : 'partial',
-        reviewRequired: unifiedSyncIssues(completed).length,
+        status: status,
+        reviewRequired: issues.length,
       );
+      _logSyncEvent('academic_sync_terminal_observed', {
+        'status': status,
+        'attempts': _pollAttempt,
+        'elapsed_ms': _elapsed.elapsedMilliseconds,
+      });
       return completed;
     } catch (failure) {
-      error = failure;
+      if (failure is PythonBackendException &&
+          failure.code == PythonBackendError.jobUnobserved) {
+        // The server job is still queued/running: keep an explainable,
+        // recoverable state instead of an endless spinner or a fake error.
+        observationLost = true;
+        visible = true;
+        _logSyncEvent('academic_sync_observation_deadline', {
+          'code': failure.code.name,
+          'attempts': _pollAttempt,
+          'elapsed_ms': _elapsed.elapsedMilliseconds,
+          'stage': lastStage ?? 'unknown',
+          'status': progress?.status ?? 'unknown',
+        });
+      } else {
+        error = failure;
+        _logSyncEvent('academic_sync_failed', {
+          'code': _safeCode(failure),
+          'stage': lastStage ?? 'unknown',
+          'elapsed_ms': _elapsed.elapsedMilliseconds,
+        });
+      }
       rethrow;
     } finally {
       _stopWatching(id);
@@ -128,6 +217,52 @@ final class AcademicSyncController extends ChangeNotifier {
         );
       }
       _notify();
+    }
+  }
+
+  void _onPoll(int attempt, String status) {
+    _pollAttempt = attempt;
+    // Bounded telemetry: first poll plus every 15th attempt only.
+    if (attempt == 1 || attempt % 15 == 0) {
+      _logSyncEvent('academic_sync_poll', {
+        'attempt': attempt,
+        'status': status,
+        'stage': lastStage ?? status,
+        'elapsed_ms': _elapsed.elapsedMilliseconds,
+      });
+    }
+  }
+
+  void _onPollFailure(int attempt, String code) {
+    // Bounded telemetry: first failure plus every 15th attempt only.
+    if (attempt == 1 || attempt % 15 == 0) {
+      _logSyncEvent('academic_sync_poll_failed', {
+        'attempt': attempt,
+        'code': code,
+        'stage': lastStage ?? code,
+        'elapsed_ms': _elapsed.elapsedMilliseconds,
+      });
+    }
+  }
+
+  /// App went to background. The Firestore progress watch stays alive; only
+  /// the structured pause event is recorded.
+  void onPaused() {
+    _logSyncEvent('academic_sync_paused', {
+      'running': isRunning,
+      'stage': lastStage ?? 'unknown',
+    });
+  }
+
+  /// App returned to the foreground: log it and re-find the saved job when
+  /// nothing is running, without creating another one.
+  Future<void> onResumed() async {
+    _logSyncEvent('academic_sync_resumed', {
+      'running': isRunning,
+      'stage': lastStage ?? 'unknown',
+    });
+    if (!isRunning && !_disposed) {
+      await restore();
     }
   }
 
@@ -213,6 +348,25 @@ final class AcademicSyncController extends ChangeNotifier {
           .catchError((_) {}),
     );
   }
+
+  /// Structured sync telemetry. Only safe fields (operation id, stage,
+  /// attempt, elapsed time, safe code) — never credentials or headers.
+  void _logSyncEvent(String event, Map<String, Object> fields) {
+    final parameters = <String, Object>{
+      'operation': 'academic_sync',
+      'screen': 'academic_sync',
+      ...fields,
+    };
+    final operationId = progress?.operationId ?? _operationId;
+    if (operationId != null) parameters['operation_id'] = operationId;
+    unawaited(
+      logger.logEvent(event, parameters: parameters).catchError((_) {}),
+    );
+  }
+
+  static String _safeCode(Object failure) => failure is PythonBackendException
+      ? failure.code.name
+      : failure.runtimeType.toString();
 
   void _notify() {
     if (!_disposed) notifyListeners();

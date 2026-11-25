@@ -250,12 +250,30 @@ final class _FirebasePythonBackendVerifier
   Future<PythonUnifiedAcademicSyncResult> syncWithProgress(
     String operationId, {
     bool force = false,
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
   }) async {
     await (_activation ??= _activateAppCheck());
     return _transport.syncAllAcademicData(
       progressId: operationId,
       background: true,
       force: force,
+      onPoll: onPoll,
+      onPollFailure: onPollFailure,
+    );
+  }
+
+  @override
+  Future<PythonUnifiedAcademicSyncResult> restoreAcademicSync(
+    String operationId, {
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
+  }) async {
+    await (_activation ??= _activateAppCheck());
+    return _transport.restoreAcademicSync(
+      operationId,
+      onPoll: onPoll,
+      onPollFailure: onPollFailure,
     );
   }
 

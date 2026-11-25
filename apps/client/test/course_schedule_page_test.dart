@@ -1592,6 +1592,14 @@ final class _NoopProgressGateway implements BackendAcademicSyncProgressGateway {
   Future<PythonUnifiedAcademicSyncResult> syncWithProgress(
     String operationId, {
     bool force = false,
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
+  }) => throw UnimplementedError();
+  @override
+  Future<PythonUnifiedAcademicSyncResult> restoreAcademicSync(
+    String operationId, {
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
   }) => throw UnimplementedError();
   @override
   Stream<AcademicSyncProgress> watchSyncProgress(String operationId) =>

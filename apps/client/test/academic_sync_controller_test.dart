@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frequencia_ufmg/backend/academic_sync_progress.dart';
+import 'package:frequencia_ufmg/backend/python_backend_transport.dart';
 import 'package:frequencia_ufmg/features/ufmg/academic_sync_controller.dart';
 import 'package:frequencia_ufmg/features/ufmg/academic_sync_banner.dart';
 import 'package:frequencia_ufmg/observability/app_logger.dart';
@@ -20,9 +21,11 @@ void main() {
       );
       final restoring = controller.restore();
       await Future<void>.delayed(Duration.zero);
-      expect(gateway.operationId, 'sync-existing123');
+      expect(gateway.restoreOperationId, 'sync-existing123');
+      // Restore is GET-only: it must never call syncWithProgress (no new POST).
+      expect(gateway.calls, 0);
       expect(controller.isRunning, isTrue);
-      gateway.response.complete(syncResult());
+      gateway.restoreResponse.complete(syncResult());
       await restoring;
       expect(controller.title, 'Sincronização concluída');
       controller.dispose();
@@ -412,10 +415,378 @@ void main() {
       await gateway.updates.close();
     },
   );
+
+  test(
+    'disposing mid-run and reopening restores the saved job without a second POST',
+    () async {
+      final gateway = _ResumableGateway();
+      final logger = _Logger();
+      final first = AcademicSyncController(
+        gateway: gateway,
+        logger: logger,
+        idGenerator: () => 'sync-first123',
+      );
+      final pending = first.start();
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.calls, 1);
+      first.dispose(); // screen recreated while the job runs
+      gateway.response.complete(syncResult());
+      await pending;
+      // A brand-new controller (new screen) re-finds the saved job GET-only.
+      final reopened = AcademicSyncController(gateway: gateway, logger: logger);
+      final restoring = reopened.restore();
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.restoreCalls, 1);
+      expect(gateway.restoreOperationId, 'sync-existing123');
+      expect(gateway.calls, 1); // still exactly one syncWithProgress (one POST)
+      gateway.restoreResponse.complete(syncResult());
+      await restoring;
+      // No spinner without state: the reopened controller reaches a terminal title.
+      expect(reopened.isRunning, isFalse);
+      expect(reopened.error, isNull);
+      expect(reopened.title, 'Sincronização concluída');
+      reopened.dispose();
+      await gateway.updates.close();
+    },
+  );
+
+  test(
+    'a job finishing after the last poll becomes a recoverable server-side state and retry finds the result',
+    () async {
+      final gateway = _ResumableGateway();
+      final logger = _Logger();
+      final deadline = Completer<PythonUnifiedAcademicSyncResult>();
+      gateway.restoreResults.add(deadline.future);
+      final controller = AcademicSyncController(
+        gateway: gateway,
+        logger: logger,
+      );
+      final restoring = controller.restore();
+      await Future<void>.delayed(Duration.zero);
+      gateway.updates.add(
+        const AcademicSyncProgress(
+          operationId: 'sync-existing123',
+          completed: 1,
+          status: 'running',
+        ),
+      );
+      gateway.emitPoll(1, 'running');
+      gateway.emitPoll(90, 'running');
+      deadline.completeError(
+        const PythonBackendException(
+          PythonBackendError.jobUnobserved,
+          requestContext:
+              'stage=job_wait operation_id=sync-existing123 '
+              'reason=observation_expired server_job_not_cancelled=true '
+              'attempts=90 elapsed_ms=1800000',
+        ),
+      );
+      await restoring;
+      expect(controller.observationLost, isTrue);
+      expect(controller.visible, isTrue);
+      expect(controller.error, isNull);
+      expect(controller.isRunning, isFalse);
+      expect(controller.title, contains('Processando no servidor'));
+      expect(controller.title, contains('Datas e materiais'));
+      expect(controller.lastStage, 'Datas e materiais');
+      final deadlineEvent =
+          logger.eventParameters['academic_sync_observation_deadline']!;
+      expect(deadlineEvent['code'], 'jobUnobserved');
+      expect(deadlineEvent['attempts'], 90);
+      expect(deadlineEvent['elapsed_ms'], isA<int>());
+      expect(deadlineEvent['operation_id'], 'sync-existing123');
+      // Structured events never carry credentials or headers.
+      for (final parameters in logger.eventParameters.values) {
+        final serialized = parameters.toString();
+        expect(serialized, isNot(contains('Bearer')));
+        expect(serialized, isNot(contains('token')));
+        expect(serialized, isNot(contains('password')));
+        expect(serialized, isNot(contains('cookie')));
+      }
+      // Retry re-finds the saved job (GET only) and observes the terminal state.
+      gateway.restoreResults.add(
+        Future<PythonUnifiedAcademicSyncResult>.value(syncResult()),
+      );
+      await controller.retry();
+      expect(controller.observationLost, isFalse);
+      expect(controller.result, isNotNull);
+      expect(controller.title, 'Sincronização concluída');
+      expect(gateway.calls, 0); // restore/retry never created another job
+      expect(gateway.restoreCalls, 2);
+      expect(logger.events, contains('academic_sync_terminal_observed'));
+      expect(
+        logger.eventParameters['academic_sync_terminal_observed']!['status'],
+        'succeeded',
+      );
+      controller.dispose();
+      await gateway.updates.close();
+    },
+  );
+
+  test('poll events are bounded to the first and every 15th attempt', () async {
+    final gateway = ProgressGateway();
+    final logger = _Logger();
+    final controller = AcademicSyncController(
+      gateway: gateway,
+      logger: logger,
+      idGenerator: () => 'sync-poll123',
+    );
+    final pending = controller.start();
+    await Future<void>.delayed(Duration.zero);
+    for (var attempt = 1; attempt <= 20; attempt++) {
+      gateway.emitPoll(attempt, 'running');
+    }
+    expect(
+      logger.events.where((event) => event == 'academic_sync_poll').length,
+      2,
+    );
+    expect(logger.eventParameters['academic_sync_poll']!['attempt'], 15);
+    expect(
+      logger.eventParameters['academic_sync_poll']!['operation_id'],
+      'sync-poll123',
+    );
+    gateway.response.complete(syncResult());
+    await pending;
+    expect(logger.events, contains('academic_sync_started'));
+    controller.dispose();
+    await gateway.updates.close();
+  });
+
+  test(
+    'transient poll failures are recorded bounded with the operation id and never restart the job',
+    () async {
+      final gateway = ProgressGateway();
+      final logger = _Logger();
+      final controller = AcademicSyncController(
+        gateway: gateway,
+        logger: logger,
+        idGenerator: () => 'sync-pollfail123',
+      );
+      final pending = controller.start();
+      await Future<void>.delayed(Duration.zero);
+      for (var attempt = 1; attempt <= 20; attempt++) {
+        gateway.emitPollFailure(attempt, 'unavailable');
+      }
+      final failures = logger.events.where(
+        (event) => event == 'academic_sync_poll_failed',
+      );
+      expect(failures.length, 2); // attempts 1 and 15 only
+      expect(
+        logger.eventParameters['academic_sync_poll_failed']!['attempt'],
+        15,
+      );
+      expect(
+        logger.eventParameters['academic_sync_poll_failed']!['code'],
+        'unavailable',
+      );
+      expect(
+        logger.eventParameters['academic_sync_poll_failed']!['operation_id'],
+        'sync-pollfail123',
+      );
+      expect(gateway.calls, 1); // still exactly one job creation (one POST)
+      gateway.response.complete(syncResult());
+      await pending;
+      expect(logger.events, contains('academic_sync_terminal_observed'));
+      controller.dispose();
+      await gateway.updates.close();
+    },
+  );
+
+  test(
+    'pause and resume log structured events with the operation id and resume re-finds the job once',
+    () async {
+      final gateway = _ResumableGateway();
+      final logger = _Logger();
+      final controller = AcademicSyncController(
+        gateway: gateway,
+        logger: logger,
+      );
+      final restoring = controller.restore();
+      await Future<void>.delayed(Duration.zero);
+      controller.onPaused();
+      expect(logger.events, contains('academic_sync_paused'));
+      expect(
+        logger.eventParameters['academic_sync_paused']!['operation_id'],
+        'sync-existing123',
+      );
+      // The Firestore watch stays alive across the pause.
+      gateway.updates.add(
+        const AcademicSyncProgress(
+          operationId: 'sync-existing123',
+          completed: 2,
+          status: 'running',
+        ),
+      );
+      expect(controller.receivedProgress, isTrue);
+      // Resuming while still running must not start a second operation.
+      await controller.onResumed();
+      expect(logger.events, contains('academic_sync_resumed'));
+      expect(
+        logger.eventParameters['academic_sync_resumed']!['operation_id'],
+        'sync-existing123',
+      );
+      expect(gateway.restoreCalls, 1);
+      gateway.restoreResponse.complete(syncResult());
+      await restoring;
+      expect(controller.title, 'Sincronização concluída');
+      // Resuming when idle re-finds the saved job again, still GET-only.
+      await controller.onResumed();
+      expect(gateway.restoreCalls, 2);
+      expect(gateway.calls, 0);
+      controller.dispose();
+      await gateway.updates.close();
+    },
+  );
+
+  test(
+    'a transient failure surfaces an error and restore then recovers the saved partial result',
+    () async {
+      final gateway = _ResumableGateway();
+      final logger = _Logger();
+      final controller = AcademicSyncController(
+        gateway: gateway,
+        logger: logger,
+        idGenerator: () => 'sync-transient1',
+      );
+      final failed = controller.start();
+      await Future<void>.delayed(Duration.zero);
+      gateway.response.completeError(
+        const PythonBackendException(PythonBackendError.unavailable),
+      );
+      await expectLater(failed, throwsA(isA<PythonBackendException>()));
+      expect(controller.error, isA<PythonBackendException>());
+      expect(controller.title, contains('Não foi possível'));
+      expect(logger.events, contains('academic_sync_failed'));
+      expect(
+        logger.eventParameters['academic_sync_failed']!['code'],
+        'unavailable',
+      );
+      // The saved job is still on the server: restore (GET only) recovers it.
+      gateway.restoreResults.add(
+        Future<PythonUnifiedAcademicSyncResult>.value(
+          syncResult(partial: true),
+        ),
+      );
+      await controller.restore();
+      expect(controller.error, isNull);
+      expect(controller.result, isNotNull);
+      // A partial result still surfaces its issues.
+      expect(controller.title, 'Confira as pendências da sincronização');
+      expect(controller.result!.exceptions.single.courseCode, 'ESA019');
+      expect(gateway.calls, 1);
+      controller.dispose();
+      await gateway.updates.close();
+    },
+  );
+
+  testWidgets(
+    'observation-lost banner offers retry and result without blocking navigation',
+    (tester) async {
+      final gateway = _ResumableGateway();
+      final controller = AcademicSyncController(
+        gateway: gateway,
+        logger: _Logger(),
+      );
+      var navigated = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                AcademicSyncBanner(
+                  controller: controller,
+                  onReview: () => navigated = true,
+                ),
+                TextButton(
+                  key: const Key('behind-banner'),
+                  onPressed: () => navigated = true,
+                  child: const Text('Navegar'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      // First restore observes a partial result.
+      gateway.restoreResults.add(
+        Future<PythonUnifiedAcademicSyncResult>.value(
+          syncResult(partial: true),
+        ),
+      );
+      await controller.restore();
+      await tester.pumpAndSettle();
+      expect(controller.result, isNotNull);
+      // The next observation hits the local deadline while the server job runs.
+      final deadline = Completer<PythonUnifiedAcademicSyncResult>();
+      gateway.restoreResults.add(deadline.future);
+      final retrying = controller.retry();
+      await tester.pump();
+      gateway.updates.add(
+        const AcademicSyncProgress(
+          operationId: 'sync-existing123',
+          completed: 1,
+          status: 'running',
+        ),
+      );
+      await tester.pump();
+      deadline.completeError(
+        const PythonBackendException(PythonBackendError.jobUnobserved),
+      );
+      await retrying;
+      await tester.pumpAndSettle();
+      expect(controller.observationLost, isTrue);
+      expect(find.textContaining('Processando no servidor'), findsOneWidget);
+      expect(find.text('Datas e materiais'), findsOneWidget);
+      expect(find.byKey(const Key('retry-sync-banner')), findsOneWidget);
+      // The previously observed result is still offered.
+      expect(find.byKey(const Key('open-sync-result')), findsOneWidget);
+      // Non-modal banner: the control behind it is still tappable.
+      await tester.tap(find.byKey(const Key('behind-banner')));
+      await tester.pump();
+      expect(navigated, isTrue);
+      // Retry from the banner re-finds the job and observes the result.
+      gateway.restoreResults.add(
+        Future<PythonUnifiedAcademicSyncResult>.value(syncResult()),
+      );
+      await tester.tap(find.byKey(const Key('retry-sync-banner')));
+      await tester.pumpAndSettle();
+      expect(controller.observationLost, isFalse);
+      expect(controller.result, isNotNull);
+      expect(gateway.calls, 0); // never a second POST
+      expect(gateway.restoreCalls, 3);
+      // The details sheet also offers the recoverable retry action.
+      final deadlineAgain = Completer<PythonUnifiedAcademicSyncResult>();
+      gateway.restoreResults.add(deadlineAgain.future);
+      final retryingAgain = controller.retry();
+      await tester.pump();
+      deadlineAgain.completeError(
+        const PythonBackendException(PythonBackendError.jobUnobserved),
+      );
+      await retryingAgain;
+      await tester.pumpAndSettle();
+      expect(controller.observationLost, isTrue);
+      await tester.tap(find.byKey(const Key('academic-sync-indicator')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('retry-sync-sheet')), findsOneWidget);
+      gateway.restoreResults.add(
+        Future<PythonUnifiedAcademicSyncResult>.value(syncResult()),
+      );
+      await tester.tap(find.byKey(const Key('retry-sync-sheet')));
+      await tester.pumpAndSettle();
+      expect(controller.observationLost, isFalse);
+      expect(controller.result, isNotNull);
+      expect(gateway.restoreCalls, 5);
+      expect(gateway.calls, 0);
+      expect(tester.takeException(), isNull);
+      controller.dispose();
+      await gateway.updates.close();
+    },
+  );
 }
 
 class _Logger implements AppLogger {
   final events = <String>[];
+  final eventParameters = <String, Map<String, Object>>{};
   final errors = <String>[];
   bool failRecording = false;
   bool failEvents = false;
@@ -423,6 +794,7 @@ class _Logger implements AppLogger {
   Future<void> logEvent(String name, {Map<String, Object>? parameters}) async {
     if (failEvents) throw StateError('logger unavailable');
     events.add(name);
+    if (parameters != null) eventParameters[name] = parameters;
   }
 
   @override

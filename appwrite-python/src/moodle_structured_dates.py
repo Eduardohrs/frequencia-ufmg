@@ -12,8 +12,9 @@ from hashlib import md5, sha256
 from html.parser import HTMLParser
 from http.cookiejar import Cookie, CookieJar
 from secrets import token_hex
+from threading import Lock
 from typing import Any, Protocol
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
@@ -47,6 +48,15 @@ class InvalidMoodleResponse(Exception):
 
 class MoodleUnavailable(Exception):
     """The structured Moodle source could not be reached."""
+
+    def __init__(
+        self, message: str = "Moodle is unavailable", *,
+        upstream_status: int | None = None,
+        timed_out: bool = False,
+    ) -> None:
+        self.upstream_status = upstream_status
+        self.timed_out = timed_out
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -125,6 +135,7 @@ class MoodleStructuredDatesClient:
         self._connection_token_digest: bytes | None = None
         self._connections: dict[str, tuple[str, str, str]] = {}
         self._connection_count = 0
+        self._connection_lock = Lock()
 
     @property
     def connection_count(self) -> int:
@@ -546,48 +557,55 @@ class MoodleStructuredDatesClient:
     def _connect(self, token: str, term: str) -> tuple[str, str, str]:
         _validate_token(token)
         token_digest = sha256(token.encode()).digest()
-        if token_digest != self._connection_token_digest:
-            self._connections.clear()
-            self._connection_token_digest = token_digest
-        cached = self._connections.get(term)
-        if cached is not None:
-            return cached
-        root = _moodle_root(term)
-        sso_url = f"{MOODLE_ORIGIN}{root}/auth/shibboleth/index.php"
-        ajax_path = f"{root}/lib/ajax/service.php"
-        if self._jar is not None:
-            self._jar.clear(".sistemas.ufmg.br", "/", "LtpaToken2")
-            self._jar.set_cookie(_ltpa_cookie(token))
+        # Double-checked locking: concurrent callers share ONE SAML connection per
+        # token/term, so the cookie jar and connection cache stay consistent.
+        if token_digest == self._connection_token_digest:
+            cached = self._connections.get(term)
+            if cached is not None:
+                return cached
+        with self._connection_lock:
+            if token_digest != self._connection_token_digest:
+                self._connections.clear()
+                self._connection_token_digest = token_digest
+            cached = self._connections.get(term)
+            if cached is not None:
+                return cached
+            root = _moodle_root(term)
+            sso_url = f"{MOODLE_ORIGIN}{root}/auth/shibboleth/index.php"
+            ajax_path = f"{root}/lib/ajax/service.php"
+            if self._jar is not None:
+                self._jar.clear(".sistemas.ufmg.br", "/", "LtpaToken2")
+                self._jar.set_cookie(_ltpa_cookie(token))
 
-        saml_page, saml_url, _ = self._open(Request(sso_url, headers={"Accept": "text/html"}))
-        _require_identity_provider(saml_url)
-        form = _SAMLFormParser()
-        try:
-            form.feed(saml_page.decode("utf-8"))
-        except UnicodeDecodeError:
-            raise InvalidMoodleResponse("sso_encoding") from None
-        action, relay_state, assertion = form.result()
-        _require_moodle_acs(action, root)
+            saml_page, saml_url, _ = self._open(Request(sso_url, headers={"Accept": "text/html"}))
+            _require_identity_provider(saml_url)
+            form = _SAMLFormParser()
+            try:
+                form.feed(saml_page.decode("utf-8"))
+            except UnicodeDecodeError:
+                raise InvalidMoodleResponse("sso_encoding") from None
+            action, relay_state, assertion = form.result()
+            _require_moodle_acs(action, root)
 
-        dashboard, dashboard_url, _ = self._open(
-            Request(
-                action,
-                data=urlencode({"RelayState": relay_state, "SAMLResponse": assertion}).encode(),
-                headers={
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Accept": "text/html",
-                },
-                method="POST",
+            dashboard, dashboard_url, _ = self._open(
+                Request(
+                    action,
+                    data=urlencode({"RelayState": relay_state, "SAMLResponse": assertion}).encode(),
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Accept": "text/html",
+                    },
+                    method="POST",
+                )
             )
-        )
-        _require_moodle_page(dashboard_url, root)
-        match = _SESSKEY.search(dashboard)
-        if match is None:
-            raise UFMGReauthenticationRequired("UFMG reauthentication required")
-        connection = (root, ajax_path, match.group(1).decode())
-        self._connections[term] = connection
-        self._connection_count += 1
-        return connection
+            _require_moodle_page(dashboard_url, root)
+            match = _SESSKEY.search(dashboard)
+            if match is None:
+                raise UFMGReauthenticationRequired("UFMG reauthentication required")
+            connection = (root, ajax_path, match.group(1).decode())
+            self._connections[term] = connection
+            self._connection_count += 1
+            return connection
 
     def _ajax(
         self,
@@ -622,8 +640,14 @@ class MoodleStructuredDatesClient:
                 body = response.read(limit + 1)
                 url = response.geturl()
                 content_type = response.headers.get_content_type()
-        except OSError:
-            raise MoodleUnavailable("Moodle is unavailable") from None
+        except HTTPError as error:
+            # HTTPError is an OSError subclass: classify it before the generic branch.
+            raise MoodleUnavailable("Moodle is unavailable", upstream_status=error.code) from None
+        except TimeoutError:
+            raise MoodleUnavailable("Moodle is unavailable", timed_out=True) from None
+        except OSError as error:
+            timed_out = isinstance(error, URLError) and isinstance(error.reason, TimeoutError)
+            raise MoodleUnavailable("Moodle is unavailable", timed_out=timed_out) from None
         if len(body) > limit:
             raise InvalidMoodleResponse("response_oversized")
         return body, url, content_type

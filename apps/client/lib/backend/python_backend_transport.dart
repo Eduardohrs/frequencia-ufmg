@@ -14,6 +14,7 @@ enum PythonBackendError {
   destructiveConflict,
   duplicateCourse,
   invalidResponse,
+  jobUnobserved,
   moodleAuthorizationRequired,
   rateLimited,
   replayed,
@@ -2751,6 +2752,8 @@ final class PythonBackendTransport
     String? progressId,
     bool background = false,
     bool force = false,
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
   }) async {
     var response = await _authenticatedRequest(
       path: '/v1/ufmg/sync/all',
@@ -2766,8 +2769,33 @@ final class PythonBackendTransport
       final accepted = Map<String, Object?>.from(
         jsonDecode(response.body) as Map,
       );
-      response = await _waitForAcademicSync(accepted['operation_id'] as String);
+      response = await _waitForAcademicSync(
+        accepted['operation_id'] as String,
+        onPoll: onPoll,
+        onPollFailure: onPollFailure,
+      );
     }
+    return _unifiedAcademicSyncResult(response);
+  }
+
+  /// Reattaches to an already-running server-side sync job using GET only:
+  /// a restored job never submits another POST /v1/ufmg/sync/all.
+  Future<PythonUnifiedAcademicSyncResult> restoreAcademicSync(
+    String operationId, {
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
+  }) async {
+    final response = await _pollAcademicSyncJob(
+      operationId,
+      onPoll: onPoll,
+      onPollFailure: onPollFailure,
+    );
+    return _unifiedAcademicSyncResult(response);
+  }
+
+  PythonUnifiedAcademicSyncResult _unifiedAcademicSyncResult(
+    http.Response response,
+  ) {
     try {
       final value = Map<String, Object?>.from(jsonDecode(response.body) as Map);
       if (!_hasExactKeys(value, const {
@@ -2918,9 +2946,29 @@ final class PythonBackendTransport
         : null;
   }
 
-  Future<http.Response> _waitForAcademicSync(String operation) async {
+  Future<http.Response> _waitForAcademicSync(
+    String operation, {
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
+  }) => _pollAcademicSyncJob(
+    operation,
+    onPoll: onPoll,
+    onPollFailure: onPollFailure,
+  );
+
+  /// Polls GET /v1/ufmg/sync/job until the job reaches a terminal state or
+  /// the local observation deadline expires. The server job is never
+  /// cancelled or restarted from here: when the deadline expires the caller
+  /// can re-find the same operation later via [restoreAcademicSync].
+  Future<http.Response> _pollAcademicSyncJob(
+    String operation, {
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
+  }) async {
+    const maxAttempts = 90;
+    final watch = Stopwatch()..start();
     // Poll the saved result, never restart the job after a dropped read.
-    for (var attempt = 0; attempt < 90; attempt++) {
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       http.Response response;
       try {
         response = await _authenticatedRequest(path: '/v1/ufmg/sync/job');
@@ -2929,6 +2977,8 @@ final class PythonBackendTransport
             failure.code != PythonBackendError.timeout) {
           rethrow;
         }
+        // Transient read loss is recorded but never restarts the server job.
+        onPollFailure?.call(attempt, failure.code.name);
         await _jobDelay(const Duration(seconds: 20));
         continue;
       }
@@ -2939,10 +2989,12 @@ final class PythonBackendTransport
           requestContext: 'stage=job_result reason=operation_replaced',
         );
       }
-      if (value['status'] == 'succeeded') {
+      final status = value['status'] is String ? value['status'] as String : '';
+      onPoll?.call(attempt, status);
+      if (status == 'succeeded') {
         return http.Response(jsonEncode(value['result']), 200);
       }
-      if (value['status'] == 'failed') {
+      if (status == 'failed') {
         throw PythonBackendException(
           value['failure_code'] == 'UFMGReauthenticationRequired'
               ? PythonBackendError.ufmgReauthenticationRequired
@@ -2955,10 +3007,11 @@ final class PythonBackendTransport
       await _jobDelay(const Duration(seconds: 20));
     }
     throw PythonBackendException(
-      PythonBackendError.timeout,
+      PythonBackendError.jobUnobserved,
       requestContext:
           'stage=job_wait operation_id=$operation '
-          'reason=observation_expired server_job_not_cancelled=true',
+          'reason=observation_expired server_job_not_cancelled=true '
+          'attempts=$maxAttempts elapsed_ms=${watch.elapsedMilliseconds}',
     );
   }
 
