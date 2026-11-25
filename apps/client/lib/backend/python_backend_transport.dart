@@ -2965,7 +2965,13 @@ final class PythonBackendTransport
     void Function(int attempt, String status)? onPoll,
     void Function(int attempt, String code)? onPollFailure,
   }) async {
-    const maxAttempts = 90;
+    // Keep the same 30-minute observation budget while checking five times
+    // more often.  The server job is already running asynchronously; a
+    // 20-second interval made a completed sync look frozen for almost a full
+    // polling interval in the app.  GET-only polling is cheap and never
+    // creates another job.
+    const maxAttempts = 360;
+    const pollDelay = Duration(seconds: 5);
     final watch = Stopwatch()..start();
     // Poll the saved result, never restart the job after a dropped read.
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -2979,7 +2985,7 @@ final class PythonBackendTransport
         }
         // Transient read loss is recorded but never restarts the server job.
         onPollFailure?.call(attempt, failure.code.name);
-        await _jobDelay(const Duration(seconds: 20));
+        await _jobDelay(pollDelay);
         continue;
       }
       final value = Map<String, Object?>.from(jsonDecode(response.body) as Map);
@@ -3004,7 +3010,7 @@ final class PythonBackendTransport
               'backend_error=${value['failure_code']}',
         );
       }
-      await _jobDelay(const Duration(seconds: 20));
+      await _jobDelay(pollDelay);
     }
     throw PythonBackendException(
       PythonBackendError.jobUnobserved,

@@ -167,16 +167,14 @@ def _detail_can_be_reused(
 
 
 def _bulk_detail_needs_html_fallback(detail: dict[str, Any]) -> bool:
-    """Reject only bulk payloads that explicitly omit page-only fields.
+    """Reject bulk payloads that omit fields needed by the offline snapshot.
 
-    ``core_course_get_contents`` is intentionally used for the cheap, course-wide
-    read, but Moodle does not guarantee that its module export contains the
-    description, intro attachments, or the current student's submission state.
-    The parser marks those omissions with private flags.  Keeping the decision
-    here (rather than treating an empty string/list as valid data) prevents a
-    successful bulk response from erasing details that the existing activity
-    page parser can still retrieve.  Test doubles from older callers omit the
-    flags and remain compatible.
+    ``core_course_get_contents`` does not expose the current student's
+    submission state.  That is an honest ``unknown`` value, not a reason to
+    request one HTML page per activity.  Description and attachment omissions
+    still fall back because those fields are part of the saved offline
+    activity contract.  Test doubles from older callers omit the flags and
+    remain compatible.
     """
 
     return any(
@@ -184,7 +182,6 @@ def _bulk_detail_needs_html_fallback(detail: dict[str, Any]) -> bool:
         for flag in (
             "_bulk_description_present",
             "_bulk_attachments_present",
-            "_bulk_submission_complete",
         )
     )
 
@@ -260,6 +257,8 @@ class CourseActivityService:
         failed_activities = 0
         reused_activities = 0
         bulk_activities = 0
+        bulk_submission_unknown = 0
+        bulk_fallbacks = 0
         html_activities = 0
         updates_checked = 0
         updates_changed = 0
@@ -310,6 +309,10 @@ class CourseActivityService:
                     if capture_result is not None:
                         reused_activities += _metric(capture_result, "reused_count")
                         bulk_activities += _metric(capture_result, "bulk_count")
+                        bulk_submission_unknown += _metric(
+                            capture_result, "bulk_submission_unknown"
+                        )
+                        bulk_fallbacks += _metric(capture_result, "bulk_fallbacks")
                         html_activities += _metric(capture_result, "html_count")
                         updates_checked += _metric(capture_result, "updates_checked")
                         updates_changed += _metric(capture_result, "updates_changed")
@@ -339,6 +342,8 @@ class CourseActivityService:
                 "failed_activities": failed_activities,
                 "reused_activities": reused_activities,
                 "bulk_activities": bulk_activities,
+                "bulk_submission_unknown": bulk_submission_unknown,
+                "bulk_fallbacks": bulk_fallbacks,
                 "html_activities": html_activities,
                 "updates_checked": updates_checked,
                 "updates_changed": updates_changed,
@@ -452,6 +457,8 @@ class CourseActivityService:
                     reused_count = 0
 
         bulk_count = 0
+        bulk_submission_unknown = 0
+        bulk_fallbacks = 0
         html_positions = set(changed_positions)
         bulk_method = getattr(self._client, "fetch_course_activity_bulk", None)
         bulk_details_complete = getattr(self._client, "bulk_activity_details_complete", True)
@@ -499,8 +506,40 @@ class CourseActivityService:
                             entry = entries[position]
                             detail = bulk_details.get(str(entry["source_id"]))
                             if not isinstance(detail, dict):
+                                bulk_fallbacks += 1
+                                _emit(
+                                    self._telemetry,
+                                    "moodle_activity_bulk_detail_fallback",
+                                    {
+                                        **fields,
+                                        "source_id": entry["source_id"],
+                                        "kind": entry["kind"],
+                                        "reason": "activity_missing_from_bulk_response",
+                                        "missing_fields": ["activity"],
+                                    },
+                                )
                                 continue
                             if _bulk_detail_needs_html_fallback(detail):
+                                bulk_fallbacks += 1
+                                missing_fields = [
+                                    field
+                                    for field, flag in (
+                                        ("description", "_bulk_description_present"),
+                                        ("attachments", "_bulk_attachments_present"),
+                                    )
+                                    if detail.get(flag) is False
+                                ]
+                                _emit(
+                                    self._telemetry,
+                                    "moodle_activity_bulk_detail_fallback",
+                                    {
+                                        **fields,
+                                        "source_id": entry["source_id"],
+                                        "kind": entry["kind"],
+                                        "reason": "missing_bulk_fields",
+                                        "missing_fields": missing_fields,
+                                    },
+                                )
                                 continue
                             clean_detail = _clean_bulk_detail(detail)
                             activities[position] = {
@@ -511,6 +550,9 @@ class CourseActivityService:
                             }
                             html_positions.discard(position)
                             bulk_count += 1
+                            bulk_submission_unknown += int(
+                                clean_detail.get("submission_state") == "unknown"
+                            )
                 except Exception as error:
                     _emit(
                         self._telemetry,
@@ -609,6 +651,8 @@ class CourseActivityService:
                 "snapshot_payload_bytes": payload_bytes,
                 "reused_count": reused_count,
                 "bulk_count": bulk_count,
+                "bulk_submission_unknown": bulk_submission_unknown,
+                "bulk_fallbacks": bulk_fallbacks,
                 "html_count": len(html_positions),
                 "updates_checked": updates_checked,
                 "updates_changed": updates_changed,
@@ -619,6 +663,8 @@ class CourseActivityService:
             "snapshot_payload_bytes": payload_bytes,
             "reused_count": reused_count,
             "bulk_count": bulk_count,
+            "bulk_submission_unknown": bulk_submission_unknown,
+            "bulk_fallbacks": bulk_fallbacks,
             "html_count": len(html_positions),
             "updates_checked": updates_checked,
             "updates_changed": updates_changed,

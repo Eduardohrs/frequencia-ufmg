@@ -211,6 +211,8 @@ def test_first_sync_uses_one_course_bulk_read_instead_of_one_html_request_per_ac
     ]
     summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
     assert summary["bulk_activities"] == 3
+    assert summary["bulk_submission_unknown"] == 3
+    assert summary["bulk_fallbacks"] == 0
     assert summary["html_activities"] == 0
 
 
@@ -312,7 +314,7 @@ def test_bulk_omissions_fall_back_to_html_without_persisting_private_flags():
                 }
             }
 
-    service, client, _ = _build(
+    service, client, logs = _build(
         [_course("poo")],
         {"ELEpoo": [_entry(1)]},
         lambda *, source_id, kind: {
@@ -334,6 +336,14 @@ def test_bulk_omissions_fall_back_to_html_without_persisting_private_flags():
     saved = snapshots.saved["poo"]["activities"][0]
     assert saved["description"] == "HTML instructions"
     assert not any(key.startswith("_bulk_") for key in saved)
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["bulk_fallbacks"] == 1
+    assert summary["html_activities"] == 1
+    fallback = next(
+        fields for event, fields in logs if event == "moodle_activity_bulk_detail_fallback"
+    )
+    assert fallback["source_id"] == "1"
+    assert fallback["missing_fields"] == ["description", "attachments"]
 
 
 def test_incomplete_bulk_capability_skips_the_extra_request():
@@ -390,7 +400,12 @@ def test_bulk_miss_falls_back_only_for_the_missing_changed_activity():
     summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
     assert summary["reused_activities"] == 1
     assert summary["bulk_activities"] == 0
+    assert summary["bulk_fallbacks"] == 1
     assert summary["html_activities"] == 1
+    fallback = next(
+        fields for event, fields in logs if event == "moodle_activity_bulk_detail_fallback"
+    )
+    assert fallback["reason"] == "activity_missing_from_bulk_response"
 
 
 def test_failed_change_probe_refreshes_all_through_bulk_path():
