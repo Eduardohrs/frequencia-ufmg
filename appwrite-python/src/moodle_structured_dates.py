@@ -151,6 +151,8 @@ class MoodleStructuredDatesClient:
         self._connections: dict[str, tuple[str, str, str]] = {}
         self._connection_count = 0
         self._connection_lock = Lock()
+        self._request_sequence = 0
+        self._request_lock = Lock()
 
     @property
     def connection_count(self) -> int:
@@ -884,6 +886,13 @@ class MoodleStructuredDatesClient:
     def _open(self, request: Request) -> tuple[bytes, str, str]:
         return self._open_bounded(request, limit=MAX_RESPONSE_BYTES)
 
+    def _next_request_sequence(self) -> int:
+        """Return a unique call number for this client, including threaded calls."""
+
+        with self._request_lock:
+            self._request_sequence += 1
+            return self._request_sequence
+
     def _open_bounded(self, request: Request, *, limit: int) -> tuple[bytes, str, str]:
         started = perf_counter()
         status: int | None = None
@@ -892,6 +901,7 @@ class MoodleStructuredDatesClient:
         reason: str | None = None
         response_content_type: str | None = None
         request_url = request.full_url
+        request_sequence = self._next_request_sequence()
         try:
             try:
                 with self._opener.open(request, timeout=self._timeout) as response:
@@ -943,6 +953,7 @@ class MoodleStructuredDatesClient:
                     "request_bytes": _request_size(request.data),
                     "response_bytes": len(response_body),
                     "response_content_type": response_content_type or "",
+                    "request_sequence": request_sequence,
                     "retry_count": 0,
                     "attempt": 1,
                 },

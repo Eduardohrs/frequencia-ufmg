@@ -240,7 +240,9 @@ def main(context: Any) -> Any:
     path = context.req.path.rstrip("/") or "/"
     request_id = _validated_request_id(context.req.headers)
     metrics = _RequestMetrics(
-        lambda event, fields: _academic_sync_telemetry(context, event, fields)
+        lambda event, fields: _academic_sync_telemetry(
+            context, event, {"request_id": request_id, **fields}
+        )
     )
     request_token = _REQUEST_ID.set(request_id)
     status_token = _RESPONSE_STATUS.set(200)

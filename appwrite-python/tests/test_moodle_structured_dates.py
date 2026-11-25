@@ -184,7 +184,22 @@ def test_http_dependency_telemetry_captures_success_and_transport_failure(
     assert fields["host"] == "virtual.ufmg.br"
     assert fields["path"] == "/20262/my/"
     assert fields["operation"] == "moodle_http"
+    assert fields["request_sequence"] == 1
     assert isinstance(fields["duration_ms"], float)
+
+
+def test_http_dependency_telemetry_keeps_distinct_sequences_for_repeated_failures() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    client = MoodleStructuredDatesClient(
+        opener=_Opener([OSError("first timeout"), OSError("second timeout")]),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    )
+
+    for _ in range(2):
+        with pytest.raises(MoodleUnavailable):
+            client._open(Request("https://virtual.ufmg.br/20262/mod/assign/view.php?id=20"))
+
+    assert [fields["request_sequence"] for _, fields in events] == [1, 2]
 
 
 def test_request_operation_names_allowlisted_moodle_endpoints_without_credentials() -> None:
