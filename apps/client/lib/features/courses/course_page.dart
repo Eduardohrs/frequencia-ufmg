@@ -221,9 +221,16 @@ class _CoursePageState extends State<CoursePage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _deliveryActive = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.paused) {
+      // Keep the sync controller and its Firestore watch alive across the
+      // pause; only record the structured pause event.
+      _academicSync?.onPaused();
+    }
     if (_deliveryActive) {
       _watchDay();
       unawaited(_automaticAttendance?.refresh(afterCurrent: true));
+      // Re-find the saved server job on resume without creating another one.
+      unawaited(_academicSync?.onResumed());
     }
     if (_deliveryActive && _usingOverviewSnapshot) {
       _reconcileCheckpoints(

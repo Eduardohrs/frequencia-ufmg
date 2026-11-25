@@ -5,7 +5,18 @@ abstract interface class BackendAcademicSyncProgressGateway
   Future<PythonUnifiedAcademicSyncResult> syncWithProgress(
     String operationId, {
     bool force = false,
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
   });
+
+  /// Reattaches to a saved server-side job with GET only — never creates
+  /// another job (no POST) — until the terminal state or the local deadline.
+  Future<PythonUnifiedAcademicSyncResult> restoreAcademicSync(
+    String operationId, {
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
+  });
+
   Stream<AcademicSyncProgress> watchSyncProgress(String operationId);
 }
 

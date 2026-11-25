@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'academic_sync_controller.dart';
 
@@ -40,35 +42,38 @@ class AcademicSyncBanner extends StatelessWidget {
                       horizontal: 16,
                       vertical: 0,
                     ),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          height: 48,
-                          child: Icon(
-                            controller.error != null
-                                ? Icons.error_outline
-                                : controller.isRunning
-                                ? Icons.sync
-                                : Icons.info_outline,
+                    child: controller.observationLost
+                        ? _observationLost(context)
+                        : Row(
+                            children: [
+                              SizedBox(
+                                height: 48,
+                                child: Icon(
+                                  controller.error != null
+                                      ? Icons.error_outline
+                                      : controller.isRunning
+                                      ? Icons.sync
+                                      : Icons.info_outline,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  controller.title,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (!controller.isRunning)
+                                IconButton(
+                                  key: const Key('dismiss-sync-banner'),
+                                  tooltip:
+                                      'Dispensar este aviso de sincronização',
+                                  onPressed: controller.dismiss,
+                                  icon: const Icon(Icons.close, size: 18),
+                                ),
+                            ],
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            controller.title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (!controller.isRunning)
-                          IconButton(
-                            key: const Key('dismiss-sync-banner'),
-                            tooltip: 'Dispensar este aviso de sincronização',
-                            onPressed: controller.dismiss,
-                            icon: const Icon(Icons.close, size: 18),
-                          ),
-                      ],
-                    ),
                   ),
                 ),
               ),
@@ -78,6 +83,53 @@ class AcademicSyncBanner extends StatelessWidget {
       );
     },
   );
+
+  /// Recoverable state shown while the server job is still queued/running
+  /// after the local observation deadline expired. Non-modal: normal
+  /// navigation stays possible.
+  Widget _observationLost(BuildContext context) {
+    final stage = controller.lastStage;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const SizedBox(height: 48, child: Icon(Icons.cloud_sync)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                controller.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        if (stage != null) ...[
+          const SizedBox(height: 4),
+          Text(stage, style: Theme.of(context).textTheme.bodySmall),
+        ],
+        const SizedBox(height: 8),
+        Wrap(
+          alignment: WrapAlignment.end,
+          children: [
+            if (controller.result != null)
+              TextButton(
+                key: const Key('open-sync-result'),
+                onPressed: () => _details(detailsContext ?? context),
+                child: const Text('Ver resultado'),
+              ),
+            TextButton(
+              key: const Key('retry-sync-banner'),
+              onPressed: () => unawaited(controller.retry()),
+              child: const Text('Tentar novamente'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
 
   void _details(BuildContext context) {
     controller.logInteraction('sync_progress_details');
@@ -139,6 +191,12 @@ class AcademicSyncBanner extends StatelessWidget {
                               : Icons.radio_button_unchecked,
                         ),
                         title: Text(AcademicSyncController.stages[index]),
+                      ),
+                    if (controller.observationLost)
+                      OutlinedButton(
+                        key: const Key('retry-sync-sheet'),
+                        onPressed: () => unawaited(controller.retry()),
+                        child: const Text('Tentar novamente'),
                       ),
                     if (controller.result != null || controller.error != null)
                       FilledButton(

@@ -37,7 +37,13 @@ from activity_snapshot_repository import (  # noqa: E402
 from appwrite_storage import StorageNotProvisioned, StorageUnavailable  # noqa: E402
 from attendance_service import InvalidAttendanceRequest, evaluate_attendance  # noqa: E402
 from checkpoint_service import validate_checkpoint_payload  # noqa: E402
-from course_activities import CourseActivityService, CourseMoodleNotLinked  # noqa: E402
+from course_activities import (  # noqa: E402
+    DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY,
+    MAX_ACTIVITY_SNAPSHOT_CONCURRENCY,
+    MIN_ACTIVITY_SNAPSHOT_CONCURRENCY,
+    CourseActivityService,
+    CourseMoodleNotLinked,
+)
 from course_repository import (  # noqa: E402
     CourseRepository,
     DuplicateCourseCode,
@@ -2424,6 +2430,16 @@ def _moodle_date_import_service(
     )
 
 
+def _activity_snapshot_max_workers() -> int:
+    """Bounded Moodle activity snapshot pool size from the environment."""
+    raw = environ.get("MOODLE_ACTIVITY_SNAPSHOT_CONCURRENCY", "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY
+    return min(max(value, MIN_ACTIVITY_SNAPSHOT_CONCURRENCY), MAX_ACTIVITY_SNAPSHOT_CONCURRENCY)
+
+
 def _course_activity_service(
     headers: dict[str, str],
     user_id: str,
@@ -2448,6 +2464,7 @@ def _course_activity_service(
         telemetry=telemetry,
         policy=policy,
         force=force,
+        max_workers=_activity_snapshot_max_workers(),
     )
 
 

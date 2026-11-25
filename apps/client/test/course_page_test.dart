@@ -1418,6 +1418,9 @@ void main() {
     tester,
   ) async {
     final gateway = _RecoveredUFMGGateway();
+    // The saved job is recovered GET-only (restoreAcademicSync) …
+    gateway.progress.restoreResponse.complete(syncResult(partial: true));
+    // … and the due automatic refresh is the only POST create (syncWithProgress).
     gateway.progress.response.complete(syncResult(partial: true));
     final schedule = _FakeUFMGSyncSchedule(due: true);
     await tester.pumpWidget(
@@ -1437,7 +1440,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(gateway.progress.calls, 2);
+    expect(gateway.progress.restoreCalls, 1);
+    expect(gateway.progress.calls, 1); // exactly one POST create in total
     expect(schedule.deadlines.length, 2);
     await tester.pumpWidget(const SizedBox());
     await gateway.progress.updates.close();
@@ -5772,7 +5776,24 @@ final class _ProgressUFMGGateway extends _UFMGGateway
   Future<PythonUnifiedAcademicSyncResult> syncWithProgress(
     String operationId, {
     bool force = false,
-  }) => progress.syncWithProgress(operationId, force: force);
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
+  }) => progress.syncWithProgress(
+    operationId,
+    force: force,
+    onPoll: onPoll,
+    onPollFailure: onPollFailure,
+  );
+  @override
+  Future<PythonUnifiedAcademicSyncResult> restoreAcademicSync(
+    String operationId, {
+    void Function(int attempt, String status)? onPoll,
+    void Function(int attempt, String code)? onPollFailure,
+  }) => progress.restoreAcademicSync(
+    operationId,
+    onPoll: onPoll,
+    onPollFailure: onPollFailure,
+  );
   @override
   Future<PythonUnifiedAcademicSyncResult> syncAllAcademicData() =>
       progress.syncAllAcademicData();

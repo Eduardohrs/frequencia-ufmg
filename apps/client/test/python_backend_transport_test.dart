@@ -285,6 +285,316 @@ void main() {
   );
 
   test(
+    'transient job read failures are reported through onPollFailure and never re-POST',
+    () async {
+      var posts = 0;
+      var failedReads = 0;
+      final failures = <(int, String)>[];
+      final polls = <(int, String)>[];
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        jobDelay: (_) async {},
+        client: MockClient((r) async {
+          if (r.method == 'POST') {
+            posts++;
+            return http.Response('{"operation_id":"sync-test123"}', 202);
+          }
+          // Each dropped GET is retried once inside the transport, so two
+          // failed poll attempts consume four mock reads.
+          if (failedReads++ < 4) {
+            throw http.ClientException('connection temporarily lost');
+          }
+          return http.Response(
+            '{"operation_id":"sync-test123","status":"succeeded","result":'
+            '{"siga":{"courses":{"created":0,"existing":0,"total":0},'
+            '"schedules":{"total":0,"updated":0,"unchanged":0,"conflicts":0,'
+            '"missing_courses":0,"meetings_imported":0,"pendencies_created":0},'
+            '"checked_at":"2026-10-24T12:00:00Z",'
+            '"next_automatic_sync_at":"2026-12-06T00:00:00Z"},'
+            '"moodle":{"dates":{"total":0,"matched":0,"unmatched":0,"created":0,'
+            '"updated":0,"unchanged":0},"content":{"course_total":0,'
+            '"candidate_total":0,"metaturma_candidate_total":0,"found":0,"empty":0,'
+            '"unmatched":0,"ambiguous":0},"capabilities":null},'
+            '"teaching_plans":{"available":0,"imported":0,"applied":0,"unchanged":0,'
+            '"review_required":0},"exceptions":[]}}',
+            200,
+          );
+        }),
+      );
+      await transport.syncAllAcademicData(
+        background: true,
+        onPoll: (attempt, status) => polls.add((attempt, status)),
+        onPollFailure: (attempt, code) => failures.add((attempt, code)),
+      );
+      expect(posts, 1);
+      // The GET read retry inside _authenticatedRequest absorbs one dropped
+      // read per attempt, so two transient poll failures are observed before
+      // the third poll succeeds — and the job is never re-POSTed.
+      expect(failures, [(1, 'unavailable'), (2, 'unavailable')]);
+      expect(polls, [(3, 'succeeded')]);
+    },
+  );
+
+  test(
+    'a job that outlives the local poll deadline is re-found with GET only and a single POST',
+    () async {
+      var posts = 0;
+      var gets = 0;
+      var workerFinished = false;
+      final polls = <(int, String)>[];
+      final restorePolls = <(int, String)>[];
+      final resultBody = {
+        'siga': {
+          'courses': {'created': 1, 'existing': 4, 'total': 5},
+          'schedules': {
+            'total': 5,
+            'updated': 1,
+            'unchanged': 3,
+            'conflicts': 1,
+            'missing_courses': 0,
+            'meetings_imported': 2,
+            'pendencies_created': 1,
+          },
+          'checked_at': '2026-10-24T12:00:00Z',
+          'next_automatic_sync_at': '2026-12-06T00:00:00Z',
+        },
+        'moodle': {
+          'dates': {
+            'total': 0,
+            'matched': 0,
+            'unmatched': 0,
+            'created': 0,
+            'updated': 0,
+            'unchanged': 0,
+          },
+          'content': {
+            'course_total': 0,
+            'candidate_total': 0,
+            'metaturma_candidate_total': 0,
+            'found': 0,
+            'empty': 0,
+            'unmatched': 0,
+            'ambiguous': 0,
+          },
+          'capabilities': null,
+        },
+        'teaching_plans': {
+          'available': 0,
+          'imported': 0,
+          'applied': 0,
+          'unchanged': 0,
+          'review_required': 0,
+        },
+        'exceptions': [],
+      };
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        jobDelay: (_) async {},
+        client: MockClient((r) async {
+          if (r.method == 'POST') {
+            posts++;
+            return http.Response('{"operation_id":"sync-test123"}', 202);
+          }
+          gets++;
+          final status = workerFinished ? 'succeeded' : 'running';
+          return http.Response(
+            jsonEncode({
+              'operation_id': 'sync-test123',
+              'status': status,
+              if (status == 'succeeded') 'result': resultBody,
+            }),
+            200,
+          );
+        }),
+      );
+      // The worker only finishes after the client's 90 local polls.
+      await expectLater(
+        transport.syncAllAcademicData(
+          background: true,
+          onPoll: (attempt, status) => polls.add((attempt, status)),
+        ),
+        throwsA(
+          isA<PythonBackendException>()
+              .having(
+                (error) => error.code,
+                'code',
+                PythonBackendError.jobUnobserved,
+              )
+              .having(
+                (error) => error.requestContext,
+                'requestContext',
+                allOf(
+                  contains('reason=observation_expired'),
+                  contains('server_job_not_cancelled=true'),
+                  contains('attempts=90'),
+                  contains('elapsed_ms='),
+                  contains('operation_id=sync-test123'),
+                ),
+              ),
+        ),
+      );
+      expect(posts, 1);
+      expect(gets, 90);
+      expect(polls, hasLength(90));
+      expect(polls.first, (1, 'running'));
+      expect(polls.last, (90, 'running'));
+      // The saved job is still there and is re-found without a new POST.
+      workerFinished = true;
+      expect(await transport.pendingAcademicSyncId(), 'sync-test123');
+      final restored = await transport.restoreAcademicSync(
+        'sync-test123',
+        onPoll: (attempt, status) => restorePolls.add((attempt, status)),
+      );
+      expect(restored.siga.courses.created, 1);
+      expect(restorePolls, [(1, 'succeeded')]);
+      expect(posts, 1);
+      expect(gets, 92);
+    },
+  );
+
+  test(
+    'restore maps failed job codes, replaced operations and its own deadline',
+    () async {
+      final transportFor = <String, http.Response Function()>{
+        'ufmg-reauth': () => http.Response(
+          '{"operation_id":"sync-test123","status":"failed","failure_code":"UFMGReauthenticationRequired"}',
+          200,
+        ),
+        'other-failure': () => http.Response(
+          '{"operation_id":"sync-test123","status":"failed","failure_code":"MoodleUnavailable"}',
+          200,
+        ),
+        'replaced': () => http.Response(
+          '{"operation_id":"other-operation","status":"running"}',
+          200,
+        ),
+        'running': () => http.Response(
+          '{"operation_id":"sync-test123","status":"running"}',
+          200,
+        ),
+      };
+      final expected = {
+        'ufmg-reauth': PythonBackendError.ufmgReauthenticationRequired,
+        'other-failure': PythonBackendError.unavailable,
+        'replaced': PythonBackendError.invalidResponse,
+        'running': PythonBackendError.jobUnobserved,
+      };
+      var gets = 0;
+      for (final entry in transportFor.entries) {
+        gets = 0;
+        final transport = PythonBackendTransport(
+          endpoint: Uri.parse('https://backend.example'),
+          tokens: _Tokens(),
+          jobDelay: (_) async {},
+          client: MockClient((_) async {
+            gets++;
+            return entry.value();
+          }),
+        );
+        await expectLater(
+          transport.restoreAcademicSync('sync-test123'),
+          throwsA(
+            isA<PythonBackendException>()
+                .having((error) => error.code, 'code', expected[entry.key])
+                .having(
+                  (error) => error.requestContext ?? '',
+                  'context',
+                  entry.key == 'other-failure'
+                      ? allOf(
+                          contains('operation_id=sync-test123'),
+                          contains('backend_error=MoodleUnavailable'),
+                        )
+                      : entry.key == 'replaced'
+                      ? contains('reason=operation_replaced')
+                      : isNot(contains('Bearer')),
+                ),
+          ),
+        );
+        if (entry.key == 'running') expect(gets, 90);
+      }
+    },
+  );
+
+  test(
+    'onPoll reports every successful job poll with attempt and status',
+    () async {
+      final polls = <(int, String)>[];
+      var reads = 0;
+      final transport = PythonBackendTransport(
+        endpoint: Uri.parse('https://backend.example'),
+        tokens: _Tokens(),
+        jobDelay: (_) async {},
+        client: MockClient((r) async {
+          if (r.method == 'POST') {
+            return http.Response('{"operation_id":"sync-test123"}', 202);
+          }
+          reads++;
+          final status = reads < 3 ? 'running' : 'succeeded';
+          return http.Response(
+            jsonEncode({
+              'operation_id': 'sync-test123',
+              'status': status,
+              if (status == 'succeeded')
+                'result': {
+                  'siga': {
+                    'courses': {'created': 0, 'existing': 1, 'total': 1},
+                    'schedules': {
+                      'total': 1,
+                      'updated': 0,
+                      'unchanged': 1,
+                      'conflicts': 0,
+                      'missing_courses': 0,
+                      'meetings_imported': 0,
+                      'pendencies_created': 0,
+                    },
+                    'checked_at': '2026-10-24T12:00:00Z',
+                    'next_automatic_sync_at': '2026-12-06T00:00:00Z',
+                  },
+                  'moodle': {
+                    'dates': {
+                      'total': 0,
+                      'matched': 0,
+                      'unmatched': 0,
+                      'created': 0,
+                      'updated': 0,
+                      'unchanged': 0,
+                    },
+                    'content': {
+                      'course_total': 0,
+                      'candidate_total': 0,
+                      'metaturma_candidate_total': 0,
+                      'found': 0,
+                      'empty': 0,
+                      'unmatched': 0,
+                      'ambiguous': 0,
+                    },
+                    'capabilities': null,
+                  },
+                  'teaching_plans': {
+                    'available': 0,
+                    'imported': 0,
+                    'applied': 0,
+                    'unchanged': 0,
+                    'review_required': 0,
+                  },
+                  'exceptions': [],
+                },
+            }),
+            200,
+          );
+        }),
+      );
+      await transport.syncAllAcademicData(
+        background: true,
+        onPoll: (attempt, status) => polls.add((attempt, status)),
+      );
+      expect(polls, [(1, 'running'), (2, 'running'), (3, 'succeeded')]);
+    },
+  );
+
+  test(
     'parallel metadata reads reuse App Check instead of minting one-use tokens',
     () async {
       final tokens = _DelayedRegularAppCheckTokens();
