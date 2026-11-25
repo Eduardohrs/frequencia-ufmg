@@ -359,6 +359,13 @@ def test_request_emits_sanitized_dependency_telemetry() -> None:
                 "outcome": "succeeded",
                 "status_class": "2xx",
                 "status_code": 200,
+                "resource": (
+                    "/v1/projects/project/databases/(default)/documents/users/{user}/courses/{doc}"
+                ),
+                "request_bytes": 0,
+                "response_bytes": 2,
+                "attempt": 1,
+                "retry_count": 0,
             },
         )
     ]
@@ -388,6 +395,14 @@ def test_missing_document_is_an_observable_miss_not_a_dependency_failure() -> No
                 "outcome": "not_found",
                 "status_class": "4xx",
                 "status_code": 404,
+                "resource": (
+                    "/v1/projects/project/databases/(default)/documents/users/{user}/courses/"
+                    "{doc}/teachingPlans/{doc}"
+                ),
+                "request_bytes": 0,
+                "response_bytes": 2,
+                "attempt": 1,
+                "retry_count": 0,
             },
         )
     ]
@@ -558,6 +573,13 @@ def test_429_raises_rate_limited_preserving_status_and_error_code() -> None:
                 "outcome": "rate_limited",
                 "status_class": "4xx",
                 "status_code": 429,
+                "resource": (
+                    "/v1/projects/project/databases/(default)/documents/users/{user}/courses/{doc}"
+                ),
+                "request_bytes": 39,
+                "response_bytes": len(body),
+                "attempt": 1,
+                "retry_count": 0,
             },
         )
     ]
@@ -584,3 +606,15 @@ def test_429_without_parseable_body_defaults_to_resource_exhausted() -> None:
         client.get_user_document("courses", "course-1")
     assert caught.value.error_code == "RESOURCE_EXHAUSTED"
     assert caught.value.status_code == 429
+
+
+def test_telemetry_resource_redacts_document_ids_and_handles_non_document_urls() -> None:
+    from firestore_rest import _telemetry_resource
+
+    assert (
+        _telemetry_resource("https://firestore.googleapis.com/v1/projects/p") == "/v1/projects/p"
+    )
+    assert _telemetry_resource(
+        "https://firestore.googleapis.com/v1/projects/p/databases/(default)/documents/"
+        "users/u/courses/c/teachingPlans/t"
+    ).endswith("users/{user}/courses/{doc}/teachingPlans/{doc}")

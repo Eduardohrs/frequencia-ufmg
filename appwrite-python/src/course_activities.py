@@ -265,6 +265,7 @@ class CourseActivityService:
         module_bulk_failures = 0
         updates_checked = 0
         updates_changed = 0
+        activity_entries_seen = 0
         failed: list[dict[str, object]] = []
         pending_snapshots: list[tuple[str, dict[str, Any]]] = []
         pending_policy_updates: list[tuple[str, str, dict[str, Any]]] = []
@@ -281,6 +282,7 @@ class CourseActivityService:
         for course in courses:
             course_id = course["id"]
             fields = {"course_id": course_id, "course_code": course["code"], "term": course["term"]}
+            course_started = monotonic()
 
             capture = partial(
                 self._capture_snapshot,
@@ -321,6 +323,7 @@ class CourseActivityService:
                 else:
                     updated += 1
                     if capture_result is not None:
+                        activity_entries_seen += _metric(capture_result, "activity_count")
                         reused_activities += _metric(capture_result, "reused_count")
                         bulk_activities += _metric(capture_result, "bulk_count")
                         bulk_submission_unknown += _metric(
@@ -333,6 +336,20 @@ class CourseActivityService:
                         module_bulk_failures += _metric(capture_result, "module_bulk_failures")
                         updates_checked += _metric(capture_result, "updates_checked")
                         updates_changed += _metric(capture_result, "updates_changed")
+                _emit(
+                    self._telemetry,
+                    "activity_snapshot_course_decision",
+                    {
+                        **fields,
+                        "outcome": "reused" if reused else "refreshed",
+                        "force": force,
+                        "duration_ms": round((monotonic() - course_started) * 1_000, 3),
+                        "activity_count": _metric(capture_result, "activity_count")
+                        if capture_result is not None
+                        else None,
+                        "consumer": "discipline_activity_view_and_offline_snapshot",
+                    },
+                )
             except Exception as error:
                 if isinstance(error, ActivitySnapshotCaptureFailed):
                     reason = error.first_reason
@@ -348,6 +365,18 @@ class CourseActivityService:
                 }
                 failed.append(issue)
                 _emit(self._telemetry, "activity_snapshot_sync_failed", issue)
+                _emit(
+                    self._telemetry,
+                    "activity_snapshot_course_decision",
+                    {
+                        **fields,
+                        "outcome": "failed_retained_previous",
+                        "force": self._force,
+                        "duration_ms": round((monotonic() - course_started) * 1_000, 3),
+                        "reason": reason,
+                        "consumer": "discipline_activity_view_and_offline_snapshot",
+                    },
+                )
         if pending_snapshots:
             payload_bytes = sum(
                 len(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode())
@@ -396,6 +425,7 @@ class CourseActivityService:
                 "module_bulk_failures": module_bulk_failures,
                 "updates_checked": updates_checked,
                 "updates_changed": updates_changed,
+                "activity_entries_seen": activity_entries_seen,
                 "concurrency": self._max_workers,
                 "duration_ms": round((monotonic() - started) * 1000),
             },

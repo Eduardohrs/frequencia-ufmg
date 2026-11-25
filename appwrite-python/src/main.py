@@ -1392,7 +1392,9 @@ def _moodle_content_discovery(context: Any, origin: str | None) -> Any:
         return _ufmg_session_error(context, origin, "moodle_content_discovery_rejected", 400)
     try:
         result = _moodle_content_discovery_service(
-            context.req.headers, cast(str, user_id)
+            context.req.headers,
+            cast(str, user_id),
+            telemetry=lambda event, fields: _academic_sync_telemetry(context, event, fields),
         ).discover(cast(str, user_id), now=int(time()))
     except UFMGReauthenticationRequired:
         return _ufmg_session_error(context, origin, "ufmg_reauthentication_required", 401)
@@ -2430,7 +2432,7 @@ def _moodle_date_import_service(
 ) -> MoodleDateImportService:
     return MoodleDateImportService(
         _ufmg_session_store(headers),
-        MoodleStructuredDatesClient(),
+        MoodleStructuredDatesClient(telemetry=telemetry),
         _course_repository(headers, user_id),
         AcademicDateRepository(_firestore(headers, user_id)),
         calendar_state=MoodleCalendarState(_firestore(headers, user_id), telemetry=telemetry),
@@ -2461,7 +2463,7 @@ def _course_activity_service(
 ) -> CourseActivityService:
     courses = courses or _course_repository(headers, user_id)
     sessions = sessions or _ufmg_session_store(headers)
-    client = client or MoodleStructuredDatesClient()
+    client = client or MoodleStructuredDatesClient(telemetry=telemetry)
     tokens = _moodle_token_store(headers)
     return CourseActivityService(
         courses,
@@ -2480,7 +2482,7 @@ def _moodle_sync_service(
     headers: dict[str, str], user_id: str, telemetry: Any = None, *, force: bool = False
 ) -> MoodleSyncService:
     sessions = _ufmg_session_store(headers)
-    client = MoodleStructuredDatesClient()
+    client = MoodleStructuredDatesClient(telemetry=telemetry)
     courses = _course_repository(headers, user_id)
     return MoodleSyncService(
         MoodleDateImportService(
@@ -2496,6 +2498,7 @@ def _moodle_sync_service(
             client,
             courses,
             _moodle_material_catalog_repository(headers, user_id),
+            telemetry=telemetry,
         ),
         MoodleMobileCapabilityService(
             sessions,
@@ -2527,8 +2530,8 @@ def _unified_academic_sync_service(
     force: bool = False,
 ) -> UnifiedAcademicSyncService:
     sessions = RequestCachedUFMGSessionStore(_ufmg_session_store(headers))
-    enrollments = UFMGEnrollmentClient()
-    client = MoodleStructuredDatesClient()
+    enrollments = UFMGEnrollmentClient(telemetry=telemetry)
+    client = MoodleStructuredDatesClient(telemetry=telemetry)
     firestore = _firestore(headers, user_id)
     courses = CourseRepository(firestore)
     dates = AcademicDateRepository(firestore)
@@ -2567,6 +2570,7 @@ def _unified_academic_sync_service(
             client,
             courses,
             MoodleMaterialCatalogRepository(firestore),
+            telemetry=telemetry,
         ),
         MoodleMobileCapabilityService(
             sessions,
@@ -2625,13 +2629,14 @@ def _official_calendar_service(
 
 
 def _moodle_content_discovery_service(
-    headers: dict[str, str], user_id: str
+    headers: dict[str, str], user_id: str, telemetry: Any = None
 ) -> MoodleContentDiscoveryService:
     return MoodleContentDiscoveryService(
         _ufmg_session_store(headers),
-        MoodleStructuredDatesClient(),
+        MoodleStructuredDatesClient(telemetry=telemetry),
         _course_repository(headers, user_id),
         _moodle_material_catalog_repository(headers, user_id),
+        telemetry=telemetry,
     )
 
 

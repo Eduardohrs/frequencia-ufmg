@@ -91,7 +91,12 @@ def test_sync_reports_each_moodle_stage_including_optional_failure() -> None:
     ).sync("user-1", now=42)
 
     assert result["capabilities"] is None
-    assert events == [
+    assert [event for event, _ in events[:3]] == [
+        "academic_sync_stage_completed",
+        "academic_sync_stage_completed",
+        "academic_sync_stage_failed",
+    ]
+    assert events[:3] == [
         ("academic_sync_stage_completed", {"stage": "moodle_date_import", "duration_ms": 400}),
         (
             "academic_sync_stage_completed",
@@ -107,6 +112,12 @@ def test_sync_reports_each_moodle_stage_including_optional_failure() -> None:
             },
         ),
     ]
+    assert [event for event, _ in events[3:]] == [
+        "academic_sync_lineage",
+        "academic_sync_lineage",
+    ]
+    assert events[3][1]["source"] == "moodle_calendar"
+    assert events[4][1]["source"] == "moodle_activity_snapshot"
 
 
 @pytest.mark.parametrize("failure", [False, True])

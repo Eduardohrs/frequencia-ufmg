@@ -2,8 +2,10 @@
 
 import re
 from collections import defaultdict
+from functools import partial
 from typing import Any, Protocol
 
+from sync_timing import Telemetry, _emit, timed_stage
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
 
@@ -34,11 +36,14 @@ class MoodleContentDiscoveryService:
         client: _Client,
         courses: _Courses,
         catalog: _Catalog,
+        *,
+        telemetry: Telemetry | None = None,
     ) -> None:
         self._sessions = sessions
         self._client = client
         self._courses = courses
         self._catalog = catalog
+        self._telemetry = telemetry
 
     def discover(self, user_id: str, *, now: int) -> dict[str, object]:
         session = self._sessions.load(user_id, now=now)
@@ -70,7 +75,17 @@ class MoodleContentDiscoveryService:
         try:
             for term in sorted(by_term):
                 codes = sorted(str(course["code"]) for course in by_term[term])
-                for result in self._client.discover(session.token, term=term, course_codes=codes):
+                discovered_for_term = timed_stage(
+                    "moodle_content_discovery_term",
+                    partial(self._client.discover, session.token, term=term, course_codes=codes),
+                    telemetry=self._telemetry,
+                    fields={
+                        "term": term,
+                        "course_count": len(codes),
+                        "consumer": "material_catalog_and_teaching_plan_selection",
+                    },
+                )
+                for result in discovered_for_term:
                     code = result.get("course_code")
                     matched_course = by_code.get(code) if isinstance(code, str) else None
                     if matched_course is None:
@@ -117,11 +132,34 @@ class MoodleContentDiscoveryService:
             )
         if len(courses) != len(local_courses) or candidate_total > 500:
             raise ValueError("invalid discovery result")
+        catalog_result = timed_stage(
+            "moodle_material_catalog_reconcile",
+            lambda: self._catalog.reconcile(courses),
+            telemetry=self._telemetry,
+            fields={
+                "course_count": len(courses),
+                "candidate_count": candidate_total,
+                "consumer": "material_catalog",
+            },
+        )
+        _emit(
+            self._telemetry,
+            "academic_sync_lineage",
+            {
+                "source": "moodle_course_state",
+                "dataset": "resource_candidates",
+                "consumer": "material_catalog_and_teaching_plan_selection",
+                "course_count": len(courses),
+                "candidate_count": candidate_total,
+                "metaturma_candidate_count": metaturma_candidate_total,
+                **counts,
+            },
+        )
         return {
             "courses": courses,
             "course_total": len(courses),
             "candidate_total": candidate_total,
             "metaturma_candidate_total": metaturma_candidate_total,
             **counts,
-            "catalog": self._catalog.reconcile(courses),
+            "catalog": catalog_result,
         }

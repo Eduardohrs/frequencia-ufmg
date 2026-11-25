@@ -5,6 +5,7 @@ from hashlib import md5
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request
 
 import pytest
 
@@ -148,6 +149,41 @@ def test_client_reuses_one_authenticated_moodle_connection_per_term() -> None:
     assert second == first
     assert len(opener.requests) == 2
     assert client.connection_count == 1
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_outcome", "expected_reason"),
+    [
+        (
+            _Response(b"ok", "https://virtual.ufmg.br/20262/my/"),
+            "succeeded",
+            "",
+        ),
+        (OSError("socket reset"), "network_error", "OSError"),
+    ],
+)
+def test_http_dependency_telemetry_captures_success_and_transport_failure(
+    response: _Response | OSError, expected_outcome: str, expected_reason: str
+) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    client = MoodleStructuredDatesClient(
+        opener=_Opener([response]),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    )
+
+    if expected_outcome == "succeeded":
+        client._open(Request("https://virtual.ufmg.br/20262/my/"))
+    else:
+        with pytest.raises(MoodleUnavailable):
+            client._open(Request("https://virtual.ufmg.br/20262/my/"))
+
+    event, fields = events[-1]
+    assert event == "moodle_http_request_completed"
+    assert fields["outcome"] == expected_outcome
+    assert fields["reason"] == expected_reason
+    assert fields["host"] == "virtual.ufmg.br"
+    assert fields["path"] == "/20262/my/"
+    assert isinstance(fields["duration_ms"], float)
 
 
 def test_diario_probe_accepts_a_direct_pdf_redirect_without_exposing_parameters() -> None:

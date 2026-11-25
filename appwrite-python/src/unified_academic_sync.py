@@ -191,6 +191,20 @@ class UnifiedAcademicSyncService:
 
         if len(exceptions) > 50:
             raise ValueError("too many academic sync exceptions")
+        self._emit(
+            "academic_sync_lineage",
+            {
+                "source": "teaching_plan",
+                "dataset": "assessments_and_schedule",
+                "consumer": "course_dates_and_teaching_plan_view",
+                "courses_considered": summary["available"],
+                "plans_imported": summary["imported"],
+                "changes_applied": summary["applied"],
+                "unchanged": summary["unchanged"],
+                "review_required": summary["review_required"],
+                "overlap_policy": "plan_assessments_reconcile_into_course_dates",
+            },
+        )
         return {
             "siga": siga,
             "moodle": {

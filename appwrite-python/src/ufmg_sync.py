@@ -4,7 +4,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-from sync_timing import Telemetry, timed_stage
+from sync_timing import Telemetry, _emit, timed_stage
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
 
@@ -82,6 +82,21 @@ class UFMGSyncService:
         schedule_result = self._timed(
             "siga_schedule_import",
             lambda: self._schedules.import_enrollments(enrollments, user_id=user_id),
+        )
+        _emit(
+            self._telemetry,
+            "academic_sync_lineage",
+            {
+                "source": "siga_enrollment",
+                "dataset": "courses_and_schedule",
+                "consumer": "course_repository_and_schedule_repository",
+                "enrollment_count": len(enrollments),
+                "courses_created": course_result.get("created", 0),
+                "courses_updated": course_result.get("updated", 0),
+                "courses_unchanged": course_result.get("unchanged", 0),
+                "meetings_imported": schedule_result.get("meetings_imported", 0),
+                "schedule_conflicts": schedule_result.get("conflicts", 0),
+            },
         )
         schedule_fields = (
             "total",

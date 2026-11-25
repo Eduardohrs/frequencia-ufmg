@@ -5,7 +5,7 @@ from typing import Protocol
 
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
 from moodle_token_store import MoodleTokenStoreUnavailable
-from sync_timing import Telemetry, timed_stage
+from sync_timing import Telemetry, _emit, timed_stage
 from ufmg_session_store import UFMGSessionStoreUnavailable
 
 
@@ -73,6 +73,39 @@ class MoodleSyncService:
                 )
             except Exception:
                 snapshots["activities"] = {"updated": 0, "failed": 1, "failed_courses": []}
+        _emit(
+            self._telemetry,
+            "academic_sync_lineage",
+            {
+                "source": "moodle_calendar",
+                "dataset": "course_dates_and_deadlines",
+                "consumer": "agenda_and_course_schedule",
+                "extracted": dates.get("total", 0),
+                "matched": dates.get("matched", 0),
+                "unmatched": dates.get("unmatched", 0),
+                "created": dates.get("created", 0),
+                "updated": dates.get("updated", 0),
+                "unchanged": dates.get("unchanged", 0),
+            },
+        )
+        _emit(
+            self._telemetry,
+            "academic_sync_lineage",
+            {
+                "source": "moodle_activity_snapshot",
+                "dataset": "activity_metadata_and_attachments",
+                "consumer": "discipline_activity_view_and_offline_snapshot",
+                "updated_courses": snapshots.get("activities", {}).get("updated", 0)
+                if isinstance(snapshots.get("activities"), dict)
+                else 0,
+                "failed_courses": snapshots.get("activities", {}).get("failed", 0)
+                if isinstance(snapshots.get("activities"), dict)
+                else 0,
+                "deduplication_key": "course_id+source_id+term",
+                "overlaps_calendar_fields": True,
+                "overlap_policy": "calendar_owns_agenda_dates; snapshot_owns_activity_details",
+            },
+        )
         return {
             **snapshots,
             "dates": dates,

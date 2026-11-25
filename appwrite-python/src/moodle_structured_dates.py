@@ -8,11 +8,13 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from hashlib import md5, sha256
 from html.parser import HTMLParser
 from http.cookiejar import Cookie, CookieJar
 from secrets import token_hex
 from threading import Lock
+from time import perf_counter
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
@@ -20,6 +22,7 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 from diario_teaching_plan import TeachingPlanParseError, parse_teaching_plan_html
 from moodle_activities import InvalidActivityPage, parse_activity_page, plain_activity_text
+from sync_timing import Telemetry, _emit, timed_stage
 from ufmg_session_store import UFMGReauthenticationRequired
 
 MAX_RESPONSE_BYTES = 1_048_576
@@ -129,10 +132,12 @@ class MoodleStructuredDatesClient:
         *,
         opener: _Opener | None = None,
         timeout_seconds: float = 12,
+        telemetry: Telemetry | None = None,
     ) -> None:
         if timeout_seconds <= 0 or timeout_seconds > 30:
             raise ValueError("invalid Moodle timeout")
         self._timeout = timeout_seconds
+        self._telemetry = telemetry
         self._jar: CookieJar | None
         if opener is None:
             jar = CookieJar()
@@ -183,10 +188,20 @@ class MoodleStructuredDatesClient:
                 }
                 for index, (year, month) in enumerate(chunk)
             ]
-            for event in _parse_calendar(
-                self._ajax(root, ajax_path, sesskey, calls),
-                len(calls),
-            ):
+            payload = self._ajax(root, ajax_path, sesskey, calls)
+            parsed = timed_stage(
+                "moodle_calendar_batch_parse",
+                partial(_parse_calendar, payload, len(calls)),
+                telemetry=self._telemetry,
+                fields={
+                    "term": term,
+                    "month_start": list(chunk[0]),
+                    "month_count": len(chunk),
+                    "response_bytes": len(payload),
+                    "consumer": "academic_dates_and_agenda",
+                },
+            )
+            for event in parsed:
                 previous = events.get(event["source_id"])
                 if previous is not None and previous != event:
                     raise InvalidMoodleResponse("calendar_event_conflict")
@@ -217,7 +232,18 @@ class MoodleStructuredDatesClient:
                 },
             }
         ]
-        courses = _parse_course_list(self._ajax(root, ajax_path, sesskey, course_call))
+        course_payload = self._ajax(root, ajax_path, sesskey, course_call)
+        courses = timed_stage(
+            "moodle_course_list_parse",
+            lambda: _parse_course_list(course_payload),
+            telemetry=self._telemetry,
+            fields={
+                "term": term,
+                "course_count": len(codes),
+                "response_bytes": len(course_payload),
+                "consumer": "course_linking_and_material_catalog",
+            },
+        )
         matched: list[tuple[str, dict[str, object], str]] = []
         results: dict[str, dict[str, object]] = {}
         for code in codes:
@@ -251,11 +277,23 @@ class MoodleStructuredDatesClient:
                 }
                 for index, (_, course, _) in enumerate(matched)
             ]
-            states = _parse_course_states(
-                self._ajax(root, ajax_path, sesskey, state_calls),
-                root,
-                len(matched),
-                activities=activities,
+            state_payload = self._ajax(root, ajax_path, sesskey, state_calls)
+            states = timed_stage(
+                "moodle_course_state_parse",
+                lambda: _parse_course_states(
+                    state_payload,
+                    root,
+                    len(matched),
+                    activities=activities,
+                ),
+                telemetry=self._telemetry,
+                fields={
+                    "term": term,
+                    "course_count": len(matched),
+                    "response_bytes": len(state_payload),
+                    "include_activities": activities,
+                    "consumer": "material_catalog_and_activity_index",
+                },
             )
             total = 0
             grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
@@ -299,9 +337,20 @@ class MoodleStructuredDatesClient:
                 "args": {"courseid": course_id},
             }
         ]
-        return _parse_course_states(
-            self._ajax(root, ajax_path, sesskey, calls), root, 1, activities=True
-        )[0]
+        payload = self._ajax(root, ajax_path, sesskey, calls)
+        parsed = timed_stage(
+            "moodle_course_state_parse",
+            lambda: _parse_course_states(payload, root, 1, activities=True),
+            telemetry=self._telemetry,
+            fields={
+                "term": term,
+                "course_count": 1,
+                "response_bytes": len(payload),
+                "include_activities": True,
+                "consumer": "activity_snapshot_index",
+            },
+        )
+        return parsed[0]
 
     def activity_updates_since(
         self,
@@ -331,7 +380,18 @@ class MoodleStructuredDatesClient:
                 "args": {"courseid": course_id, "since": since, "filter": []},
             }
         ]
-        return _parse_activity_updates(self._ajax(root, ajax_path, sesskey, calls))
+        payload = self._ajax(root, ajax_path, sesskey, calls)
+        return timed_stage(
+            "moodle_activity_updates_parse",
+            lambda: _parse_activity_updates(payload),
+            telemetry=self._telemetry,
+            fields={
+                "term": term,
+                "moodle_course_id": course_id,
+                "response_bytes": len(payload),
+                "consumer": "activity_snapshot_change_detection",
+            },
+        )
 
     def fetch_course_activity_bulk(
         self,
@@ -374,7 +434,17 @@ class MoodleStructuredDatesClient:
             )
         )
         _require_json_endpoint(final_url, content_type, path)
-        return _parse_course_activity_contents(payload, root=root)
+        return timed_stage(
+            "moodle_activity_bulk_parse",
+            lambda: _parse_course_activity_contents(payload, root=root),
+            telemetry=self._telemetry,
+            fields={
+                "term": term,
+                "moodle_course_id": course_id,
+                "response_bytes": len(payload),
+                "consumer": "activity_snapshot_details",
+            },
+        )
 
     def fetch_course_activity_module_bulk(
         self,
@@ -527,11 +597,22 @@ class MoodleStructuredDatesClient:
             )
         )
         _require_json_endpoint(final_url, content_type, path)
-        return _parse_module_files(
-            payload,
-            root=root,
-            source_id=source_id,
-            private_token=private_token,
+        return timed_stage(
+            "moodle_activity_module_bulk_parse",
+            lambda: _parse_module_files(
+                payload,
+                root=root,
+                source_id=source_id,
+                private_token=private_token,
+            ),
+            telemetry=self._telemetry,
+            fields={
+                "term": term,
+                "moodle_course_id": course_id,
+                "kind": "module",
+                "response_bytes": len(payload),
+                "consumer": "activity_snapshot_attachments",
+            },
         )
 
     def probe_diario_plan(
@@ -561,8 +642,18 @@ class MoodleStructuredDatesClient:
         if document_format != "html":
             raise InvalidMoodleResponse("diario_plan_pdf_unstructured")
         try:
-            result = parse_teaching_plan_html(
-                _decode_diario_html(body, reason="diario_response_encoding")
+            result = timed_stage(
+                "teaching_plan_parse",
+                lambda: parse_teaching_plan_html(
+                    _decode_diario_html(body, reason="diario_response_encoding")
+                ),
+                telemetry=self._telemetry,
+                fields={
+                    "term": term,
+                    "source_id": source_id,
+                    "response_bytes": len(body),
+                    "consumer": "teaching_plan_and_assessment_dates",
+                },
             )
         except TeachingPlanParseError as error:
             raise InvalidMoodleResponse(
@@ -694,6 +785,11 @@ class MoodleStructuredDatesClient:
         if token_digest == self._connection_token_digest:
             cached = self._connections.get(term)
             if cached is not None:
+                _emit(
+                    self._telemetry,
+                    "moodle_session_connection_reused",
+                    {"term": term, "outcome": "reused", "connection_count": self._connection_count},
+                )
                 return cached
         with self._connection_lock:
             if token_digest != self._connection_token_digest:
@@ -701,6 +797,11 @@ class MoodleStructuredDatesClient:
                 self._connection_token_digest = token_digest
             cached = self._connections.get(term)
             if cached is not None:
+                _emit(
+                    self._telemetry,
+                    "moodle_session_connection_reused",
+                    {"term": term, "outcome": "reused", "connection_count": self._connection_count},
+                )
                 return cached
             root = _moodle_root(term)
             sso_url = f"{MOODLE_ORIGIN}{root}/auth/shibboleth/index.php"
@@ -737,6 +838,11 @@ class MoodleStructuredDatesClient:
             connection = (root, ajax_path, match.group(1).decode())
             self._connections[term] = connection
             self._connection_count += 1
+            _emit(
+                self._telemetry,
+                "moodle_session_connection_created",
+                {"term": term, "outcome": "created", "connection_count": self._connection_count},
+            )
             return connection
 
     def _ajax(
@@ -761,28 +867,89 @@ class MoodleStructuredDatesClient:
             )
         )
         _require_ajax(final_url, content_type, ajax_path)
+        _emit(
+            self._telemetry,
+            "moodle_ajax_batch_completed",
+            {
+                "term_path": root,
+                "call_count": len(calls),
+                "method_names": sorted({str(call.get("methodname", "unknown")) for call in calls}),
+                "request_bytes": len(json.dumps(calls, separators=(",", ":")).encode()),
+                "response_bytes": len(payload),
+                "consumer": "moodle_sync",
+            },
+        )
         return payload
 
     def _open(self, request: Request) -> tuple[bytes, str, str]:
         return self._open_bounded(request, limit=MAX_RESPONSE_BYTES)
 
     def _open_bounded(self, request: Request, *, limit: int) -> tuple[bytes, str, str]:
+        started = perf_counter()
+        status: int | None = None
+        response_body = b""
+        outcome = "failed"
+        reason: str | None = None
+        response_content_type: str | None = None
+        request_url = request.full_url
         try:
-            with self._opener.open(request, timeout=self._timeout) as response:
-                body = response.read(limit + 1)
-                url = response.geturl()
-                content_type = response.headers.get_content_type()
-        except HTTPError as error:
-            # HTTPError is an OSError subclass: classify it before the generic branch.
-            raise MoodleUnavailable("Moodle is unavailable", upstream_status=error.code) from None
-        except TimeoutError:
-            raise MoodleUnavailable("Moodle is unavailable", timed_out=True) from None
-        except OSError as error:
-            timed_out = isinstance(error, URLError) and isinstance(error.reason, TimeoutError)
-            raise MoodleUnavailable("Moodle is unavailable", timed_out=timed_out) from None
-        if len(body) > limit:
-            raise InvalidMoodleResponse("response_oversized")
-        return body, url, content_type
+            try:
+                with self._opener.open(request, timeout=self._timeout) as response:
+                    status = getattr(response, "status", None) or getattr(response, "code", None)
+                    body = response.read(limit + 1)
+                    response_body = body
+                    url = response.geturl()
+                    content_type = response.headers.get_content_type()
+                    response_content_type = content_type
+            except HTTPError as error:
+                # HTTPError is an OSError subclass: classify it before the generic branch.
+                status = error.code
+                reason = "http_error"
+                outcome = "upstream_error"
+                raise MoodleUnavailable(
+                    "Moodle is unavailable", upstream_status=error.code
+                ) from None
+            except TimeoutError:
+                reason = "timeout"
+                outcome = "timeout"
+                raise MoodleUnavailable("Moodle is unavailable", timed_out=True) from None
+            except OSError as error:
+                timed_out = isinstance(error, URLError) and isinstance(error.reason, TimeoutError)
+                reason = "timeout" if timed_out else type(error).__name__
+                outcome = "timeout" if timed_out else "network_error"
+                raise MoodleUnavailable("Moodle is unavailable", timed_out=timed_out) from None
+            if len(body) > limit:
+                reason = "response_oversized"
+                outcome = "response_oversized"
+                raise InvalidMoodleResponse("response_oversized")
+            outcome = "succeeded"
+            return body, url, content_type
+        finally:
+            parsed = urlsplit(request_url)
+            _emit(
+                self._telemetry,
+                "moodle_http_request_completed",
+                {
+                    "host": parsed.hostname or "unknown",
+                    "path": parsed.path or "/",
+                    "method": request.get_method() or "GET",
+                    "status_code": status,
+                    "status_class": f"{status // 100}xx" if status is not None else "network",
+                    "outcome": outcome,
+                    "reason": reason or "",
+                    "duration_ms": round((perf_counter() - started) * 1_000, 3),
+                    "timeout_seconds": self._timeout,
+                    "request_bytes": _request_size(request.data),
+                    "response_bytes": len(response_body),
+                    "response_content_type": response_content_type or "",
+                    "retry_count": 0,
+                    "attempt": 1,
+                },
+            )
+
+
+def _request_size(data: object) -> int:
+    return len(data) if isinstance(data, (bytes, bytearray)) else 0
 
 
 class _SAMLFormParser(HTMLParser):

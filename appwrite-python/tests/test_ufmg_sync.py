@@ -206,7 +206,7 @@ def test_siga_sync_reports_the_duration_of_each_internal_stage() -> None:
 
     service.sync_siga("user", now=10)
 
-    assert events == [
+    assert events[:4] == [
         ("academic_sync_stage_completed", {"stage": "ufmg_session_load", "duration_ms": 100}),
         (
             "academic_sync_stage_completed",
@@ -218,6 +218,18 @@ def test_siga_sync_reports_the_duration_of_each_internal_stage() -> None:
             {"stage": "siga_schedule_import", "duration_ms": 300},
         ),
     ]
+    assert events[4][0] == "academic_sync_lineage"
+    assert events[4][1] == {
+        "source": "siga_enrollment",
+        "dataset": "courses_and_schedule",
+        "consumer": "course_repository_and_schedule_repository",
+        "enrollment_count": 1,
+        "courses_created": 1,
+        "courses_updated": 0,
+        "courses_unchanged": 0,
+        "meetings_imported": 1,
+        "schedule_conflicts": 0,
+    }
 
 
 @pytest.mark.parametrize(
