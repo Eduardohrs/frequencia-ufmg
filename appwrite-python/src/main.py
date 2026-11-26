@@ -2537,6 +2537,7 @@ def _course_activity_service(
     user_id: str,
     *,
     courses: Any = None,
+    catalog: Any = None,
     sessions: Any = None,
     client: Any = None,
     telemetry: Any = None,
@@ -2544,6 +2545,7 @@ def _course_activity_service(
     force: bool = False,
 ) -> CourseActivityService:
     courses = courses or _course_repository(headers, user_id)
+    catalog = catalog or _moodle_material_catalog_repository(headers, user_id)
     sessions = sessions or _ufmg_session_store(headers)
     client = client or MoodleStructuredDatesClient(
         telemetry=telemetry, calendar_workers=_moodle_calendar_workers()
@@ -2551,7 +2553,7 @@ def _course_activity_service(
     tokens = _moodle_token_store(headers)
     return CourseActivityService(
         courses,
-        _moodle_material_catalog_repository(headers, user_id),
+        catalog,
         sessions,
         client,
         tokens,
@@ -2580,14 +2582,33 @@ def _moodle_sync_service(
     client = MoodleStructuredDatesClient(
         telemetry=telemetry, calendar_workers=_moodle_calendar_workers()
     )
+    # Build all Firestore-backed snapshot dependencies on the request thread.
+    # ContextVars do not propagate into ThreadPoolExecutor workers, so creating
+    # them inside snapshot_sync would silently drop request-level dependency
+    # telemetry and under-count the critical path.
+    firestore = _firestore(headers, user_id)
     courses = _course_repository(headers, user_id)
+    activity_catalog = _moodle_material_catalog_repository(headers, user_id)
+    activity_policy = CourseSyncPolicy(firestore, telemetry=telemetry)
+    activity_snapshots = ActivitySnapshotRepository(firestore)
+    activity_service = _course_activity_service(
+        headers,
+        user_id,
+        courses=courses,
+        catalog=activity_catalog,
+        sessions=sessions,
+        client=client,
+        telemetry=telemetry,
+        policy=activity_policy,
+        force=force,
+    )
     return MoodleSyncService(
         MoodleDateImportService(
             sessions,
             client,
             courses,
-            AcademicDateRepository(_firestore(headers, user_id)),
-            calendar_state=MoodleCalendarState(_firestore(headers, user_id), telemetry=telemetry),
+            AcademicDateRepository(firestore),
+            calendar_state=MoodleCalendarState(firestore, telemetry=telemetry),
             persistence_workers=_moodle_date_persistence_workers(),
             telemetry=telemetry,
         ),
@@ -2595,7 +2616,7 @@ def _moodle_sync_service(
             sessions,
             client,
             courses,
-            _moodle_material_catalog_repository(headers, user_id),
+            activity_catalog,
             telemetry=telemetry,
         ),
         MoodleMobileCapabilityService(
@@ -2603,19 +2624,10 @@ def _moodle_sync_service(
             client,
             _moodle_token_store(headers),
         ),
-        snapshot_sync=lambda uid, now, content=None: _course_activity_service(
-            headers,
-            user_id,
-            courses=courses,
-            sessions=sessions,
-            client=client,
-            telemetry=telemetry,
-            policy=CourseSyncPolicy(_firestore(headers, user_id), telemetry=telemetry),
-            force=force,
-        ).sync_snapshots(
+        snapshot_sync=lambda uid, now, content=None: activity_service.sync_snapshots(
             uid,
             now=now,
-            snapshots=ActivitySnapshotRepository(_firestore(headers, user_id)),
+            snapshots=activity_snapshots,
             discovered=_discovered_courses(content),
         ),
         connection_count=lambda: client.connection_count,
@@ -2638,6 +2650,20 @@ def _unified_academic_sync_service(
     )
     firestore = _firestore(headers, user_id)
     courses = CourseRepository(firestore)
+    activity_catalog = MoodleMaterialCatalogRepository(firestore)
+    activity_policy = CourseSyncPolicy(firestore, telemetry=telemetry)
+    activity_snapshots = ActivitySnapshotRepository(firestore)
+    activity_service = _course_activity_service(
+        headers,
+        user_id,
+        courses=courses,
+        catalog=activity_catalog,
+        sessions=sessions,
+        client=client,
+        telemetry=telemetry,
+        policy=activity_policy,
+        force=force,
+    )
     dates = AcademicDateRepository(firestore)
     siga = UFMGSyncService(
         sessions,
@@ -2675,7 +2701,7 @@ def _unified_academic_sync_service(
             sessions,
             client,
             courses,
-            MoodleMaterialCatalogRepository(firestore),
+            activity_catalog,
             telemetry=telemetry,
         ),
         MoodleMobileCapabilityService(
@@ -2683,19 +2709,10 @@ def _unified_academic_sync_service(
             client,
             _moodle_token_store(headers),
         ),
-        snapshot_sync=lambda uid, now, content=None: _course_activity_service(
-            headers,
-            user_id,
-            courses=courses,
-            sessions=sessions,
-            client=client,
-            telemetry=telemetry,
-            policy=CourseSyncPolicy(_firestore(headers, user_id), telemetry=telemetry),
-            force=force,
-        ).sync_snapshots(
+        snapshot_sync=lambda uid, now, content=None: activity_service.sync_snapshots(
             uid,
             now=now,
-            snapshots=ActivitySnapshotRepository(_firestore(headers, user_id)),
+            snapshots=activity_snapshots,
             discovered=_discovered_courses(content),
         ),
         connection_count=lambda: client.connection_count,

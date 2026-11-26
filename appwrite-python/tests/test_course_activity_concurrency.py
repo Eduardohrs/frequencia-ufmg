@@ -317,6 +317,61 @@ def test_empty_module_bulk_fields_skip_html_n_plus_one_when_all_ids_are_present(
     assert any(event == "moodle_activity_html_fallback_skipped" for event, _ in logs)
 
 
+def test_partial_module_bulk_fields_are_preserved_when_html_has_no_enrichment():
+    class PartialModuleBulkClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "Descrição estruturada",
+                    "dates_text": "Vencimento: 2026-12-01",
+                    "has_due_date": True,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": True,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: {
+            "description": "",
+            "dates_text": "",
+            "has_due_date": False,
+            "attachments": [],
+        },
+        client_class=PartialModuleBulkClient,
+    )
+    snapshots = _Snapshots()
+
+    assert service.sync_snapshots("owner", now=1, snapshots=snapshots)["failed"] == 0
+    saved = snapshots.saved["poo"]["activities"][0]
+    assert saved["description"] == "Descrição estruturada"
+    assert saved["dates_text"] == "Vencimento: 2026-12-01"
+    assert saved["has_due_date"] is True
+    assert client.fetch_calls == [1]
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["html_activities"] == 1
+    assert summary["html_skipped_count"] == 0
+
+
 def test_module_bulk_capability_failure_is_cached_for_later_courses():
     class ProbeClient(_IncrementalClient):
         def __init__(self, index, fetch):

@@ -76,6 +76,10 @@ class MoodleSyncService:
                     now,
                 )
                 content = content_future.result()
+                # Credential probing may provision the current-term mobile
+                # token.  Snapshots must start only after that write is done;
+                # calendar/content discovery can remain concurrent.
+                capabilities = capabilities_future.result()
                 snapshot_future: Future[dict[str, object]] | None = None
                 if snapshot_sync is not None:
                     snapshot_future = pool.submit(
@@ -84,7 +88,6 @@ class MoodleSyncService:
                         lambda: snapshot_sync(user_id, now, content),
                     )
                 dates = dates_future.result()
-                capabilities = capabilities_future.result()
                 snapshots = self._snapshot_result(snapshot_future)
         else:
             dates = self._timed(

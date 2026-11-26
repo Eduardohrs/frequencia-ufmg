@@ -233,6 +233,37 @@ def _empty_activity_detail(entry: dict[str, Any], term: str) -> dict[str, Any]:
     }
 
 
+def _module_detail_is_empty(detail: dict[str, Any]) -> bool:
+    """Return whether a bulk detail has no useful optional payload at all."""
+
+    description = detail.get("description")
+    dates_text = detail.get("dates_text")
+    return not (
+        isinstance(description, str)
+        and description.strip()
+        or isinstance(dates_text, str)
+        and dates_text.strip()
+        or detail.get("has_due_date") is True
+        or bool(detail.get("attachments"))
+        or bool(detail.get("files"))
+    )
+
+
+def _merge_activity_details(
+    structured: dict[str, Any], html: dict[str, Any]
+) -> dict[str, Any]:
+    """Fill structured bulk gaps from HTML without erasing known values."""
+
+    merged = {**structured, **html}
+    for key in ("description", "dates_text", "attachments"):
+        if not html.get(key) and structured.get(key):
+            merged[key] = structured[key]
+    merged["has_due_date"] = bool(structured.get("has_due_date")) or bool(
+        html.get("has_due_date")
+    )
+    return merged
+
+
 def _clean_activity_detail(detail: dict[str, Any]) -> dict[str, Any]:
     """Remove bulk and HTML diagnostic fields before persisting a snapshot."""
 
@@ -1026,6 +1057,7 @@ class CourseActivityService:
                         continue
                     module_bulk_successes = 0
                     module_bulk_fallback_reasons: list[str] = []
+                    module_bulk_partial_details: dict[int, dict[str, Any]] = {}
                     for position in positions:
                         entry = entries[position]
                         detail = module_details.get(str(entry["source_id"]))
@@ -1037,6 +1069,16 @@ class CourseActivityService:
                             )
                             html_fallback_reasons[position] = reason
                             module_bulk_fallback_reasons.append(reason)
+                            if isinstance(detail, dict):
+                                # Keep fields that the structured response did
+                                # provide while the HTML request fills gaps.
+                                activities[position] = {
+                                    **entry,
+                                    **_clean_bulk_detail(detail),
+                                    "files": [],
+                                    "term": course["term"],
+                                }
+                                module_bulk_partial_details[position] = detail
                             _count_fallback(fallback_by_kind, fallback_reasons, str(kind), reason)
                             _emit(
                                 self._telemetry,
@@ -1077,6 +1119,12 @@ class CourseActivityService:
                             reason == "missing_module_bulk_fields"
                             for reason in module_bulk_fallback_reasons
                         )
+                        and all(
+                            _module_detail_is_empty(module_bulk_partial_details[position])
+                            for position in positions
+                            if position in module_bulk_partial_details
+                        )
+                        and len(module_bulk_partial_details) == len(positions)
                     ):
                         for position in positions:
                             activities[position] = _empty_activity_detail(
@@ -1141,7 +1189,9 @@ class CourseActivityService:
                 )
                 activities[position] = {
                     **entry,
-                    **_clean_activity_detail(detail),
+                    **_merge_activity_details(
+                        activities[position] or {}, _clean_activity_detail(detail)
+                    ),
                     "files": [],
                     "term": course["term"],
                 }
