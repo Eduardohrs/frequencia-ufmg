@@ -76,8 +76,9 @@ class MoodleMaterialCatalogRepository:
         totals = {"created": 0, "updated": 0, "unchanged": 0, "removed": 0, "writes": 0}
         now = _timestamp(self._now())
         pending_updates: list[tuple[tuple[str, ...], Mapping[str, Any]]] = []
+        existing_by_course = self._load_many([course["course_id"] for course in validated])
         for course in validated:
-            existing = self._load(course["course_id"])
+            existing = existing_by_course[course["course_id"]]
             previous_candidates = (
                 {candidate["source_id"]: candidate for candidate in existing["candidates"]}
                 if existing is not None
@@ -144,6 +145,8 @@ class MoodleMaterialCatalogRepository:
 
     def list_catalog(self, courses: list[dict[str, Any]]) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
+        identifiers: list[str] = []
+        metadata: list[tuple[str, str, str]] = []
         for course in courses:
             try:
                 course_id = validate_course_id(course["id"])
@@ -160,7 +163,11 @@ class MoodleMaterialCatalogRepository:
                 or re.fullmatch(r"20[2-9][0-9]-[12]", term) is None
             ):
                 raise InvalidMoodleMaterialCatalog("invalid Moodle material catalogue")
-            catalog = self._load(course_id)
+            identifiers.append(course_id)
+            metadata.append((course_id, code, term))
+        loaded = self._load_many(identifiers)
+        for course_id, code, term in metadata:
+            catalog = loaded[course_id]
             if catalog is None:
                 continue
             if catalog["term"] != term:
@@ -176,6 +183,28 @@ class MoodleMaterialCatalogRepository:
                 }
             )
         return sorted(result, key=lambda item: (str(item["course_code"]), str(item["course_id"])))
+
+    def _load_many(self, course_ids: list[str]) -> dict[str, dict[str, Any] | None]:
+        """Load known ``current`` docs in one request when the store supports it."""
+
+        if not course_ids:
+            return {}
+        paths = [
+            ("courses", course_id, "materialCatalog", "current")
+            for course_id in course_ids
+        ]
+        batch_get = getattr(self._firestore, "batch_get_user_documents", None)
+        if callable(batch_get):
+            documents = batch_get(paths)
+            if not isinstance(documents, dict) or set(documents) != set(paths):
+                raise InvalidMoodleMaterialCatalog("invalid Moodle material catalogue")
+            return {
+                course_id: None
+                if documents[path] is None
+                else _decode(documents[path])
+                for course_id, path in zip(course_ids, paths, strict=True)
+            }
+        return {course_id: self._load(course_id) for course_id in course_ids}
 
     def _load(self, course_id: str) -> dict[str, Any] | None:
         documents = self._firestore.list_user_documents(

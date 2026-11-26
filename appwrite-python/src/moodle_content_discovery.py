@@ -21,6 +21,10 @@ class _Client(Protocol):
         self, token: str, *, term: str, course_codes: list[str]
     ) -> list[dict[str, object]]: ...
 
+    def discover_with_activities(
+        self, token: str, *, term: str, course_codes: list[str]
+    ) -> list[dict[str, object]]: ...
+
 
 class _Courses(Protocol):
     def list_courses(self) -> list[dict[str, Any]]: ...
@@ -76,9 +80,15 @@ class MoodleContentDiscoveryService:
         try:
             for term in sorted(by_term):
                 codes = sorted(str(course["code"]) for course in by_term[term])
+                discover_with_activities = getattr(self._client, "discover_with_activities", None)
+                discover = (
+                    discover_with_activities
+                    if callable(discover_with_activities)
+                    else self._client.discover
+                )
                 discovered_for_term = timed_stage(
                     "moodle_content_discovery_term",
-                    partial(self._client.discover, session.token, term=term, course_codes=codes),
+                    partial(discover, session.token, term=term, course_codes=codes),
                     telemetry=self._telemetry,
                     fields={
                         "term": term,
@@ -91,16 +101,30 @@ class MoodleContentDiscoveryService:
                     matched_course = by_code.get(code) if isinstance(code, str) else None
                     if matched_course is None:
                         raise ValueError("unknown discovered course")
-                    discovered.append(
-                        {
-                            "course_id": matched_course["id"],
-                            "course_code": code,
-                            "term": matched_course["term"],
-                            "moodle_course_id": result["moodle_course_id"],
-                            "status": result["status"],
-                            "candidates": result["candidates"],
-                        }
-                    )
+                    discovered_entry: dict[str, object] = {
+                        "course_id": matched_course["id"],
+                        "course_code": code,
+                        "term": matched_course["term"],
+                        "moodle_course_id": result["moodle_course_id"],
+                        "status": result["status"],
+                        "candidates": result["candidates"],
+                    }
+                    # The structured course-state response contains both the
+                    # material and activity indexes.  Keep the activity view
+                    # in the in-memory discovery result so the later snapshot
+                    # stage can reuse it without another per-course discovery
+                    # call.  It is deliberately not persisted in the material
+                    # catalogue: activity snapshots have their own contract.
+                    activity_candidates = result.get("activity_candidates")
+                    if activity_candidates is not None:
+                        if (
+                            not isinstance(activity_candidates, list)
+                            or len(activity_candidates) > 500
+                            or any(not isinstance(item, dict) for item in activity_candidates)
+                        ):
+                            raise ValueError("invalid discovered activity candidates")
+                        discovered_entry["activity_candidates"] = activity_candidates
+                    discovered.append(discovered_entry)
         except UFMGReauthenticationRequired:
             self._sessions.delete(user_id)
             raise
@@ -133,9 +157,27 @@ class MoodleContentDiscoveryService:
             )
         if len(courses) != len(local_courses) or candidate_total > 500:
             raise ValueError("invalid discovery result")
+        # Keep the activity index in memory for the snapshot consumer, but do
+        # not pass it into the material-catalog persistence contract.  The
+        # catalog intentionally stores only Moodle modules that are material
+        # candidates; activity details are persisted separately as snapshots.
+        catalog_courses = [
+            {
+                key: course[key]
+                for key in (
+                    "course_id",
+                    "course_code",
+                    "term",
+                    "moodle_course_id",
+                    "status",
+                    "candidates",
+                )
+            }
+            for course in courses
+        ]
         catalog_result = timed_stage(
             "moodle_material_catalog_reconcile",
-            lambda: self._catalog.reconcile(courses),
+            lambda: self._catalog.reconcile(catalog_courses),
             telemetry=self._telemetry,
             fields={
                 "course_count": len(courses),

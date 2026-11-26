@@ -50,6 +50,44 @@ class CourseSyncPolicy:
 
         self._save(course_id, source, state)
 
+    def persist_success_batch(self, items: list[tuple[str, str, dict[str, Any]]]) -> None:
+        """Persist deferred successes in one atomic commit when supported.
+
+        The per-course ``syncState`` documents are small, so a single sync run
+        fits in one commit; embedders without a commit-capable store keep the
+        per-document patch path.  Failure semantics match ``persist_success``:
+        a rejected batch falls back to individual saves, which emit telemetry
+        and raise on the first real persistence failure.
+        """
+
+        if not items:
+            return
+        latest: dict[tuple[str, str], dict[str, Any]] = {}
+        for course_id, source, state in items:
+            if source not in {"plan", "activities", "planPreference"}:
+                raise ValueError("invalid sync source")
+            latest[(course_id, source)] = state
+        updates = [
+            (
+                ("courses", course_id, "syncState", source),
+                {"stateJson": {"stringValue": json.dumps(state, separators=(",", ":"))}},
+            )
+            for (course_id, source), state in latest.items()
+        ]
+        commit = getattr(self.store, "commit_user_documents", None)
+        if callable(commit):
+            try:
+                commit(updates=updates, deletes=[])
+                return
+            except Exception as error:
+                _emit(
+                    self.telemetry,
+                    "course_sync_policy_batch_failed",
+                    {"reason": type(error).__name__, "update_count": len(updates)},
+                )
+        for (course_id, source), state in latest.items():
+            self._save(course_id, source, state)
+
     def confirm_plan(
         self, course_id: str, *, now: int, term: str = "", paused: bool = True
     ) -> None:
@@ -79,8 +117,11 @@ class CourseSyncPolicy:
         force: bool = False,
         created_at: int | None = None,
         defer_success: Callable[[str, str, dict[str, Any]], None] | None = None,
+        state: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], bool]:
-        state = self.state(course_id, source)
+        # Callers inside one sync run may pass the already-loaded state so the
+        # same document is not read twice per course.
+        state = dict(state) if state is not None else self.state(course_id, source)
         paused = self.manual_paused(course_id, key.split(":")[0]) if source == "plan" else False
         old_key = state.get("source_key")
         if old_key != key:

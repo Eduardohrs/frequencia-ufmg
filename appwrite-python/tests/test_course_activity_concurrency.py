@@ -160,6 +160,36 @@ def test_incomplete_course_bulk_uses_module_bulk_before_html_fallback():
     assert summary["html_activities"] == 0
 
 
+def test_snapshot_reuses_activity_index_shared_by_content_discovery():
+    class SharedIndexClient(_IncrementalClient):
+        def list_activities(self, *args, **kwargs):
+            raise AssertionError("shared discovery should avoid a second index request")
+
+    entry = _entry(1)
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [entry]},
+        lambda *, source_id, kind: {"description": "HTML", "attachments": []},
+        client_class=SharedIndexClient,
+    )
+    result = service.sync_snapshots(
+        "owner",
+        now=1,
+        snapshots=_Snapshots(),
+        discovered=[
+            {
+                "course_id": "poo",
+                "status": "found",
+                "moodle_course_id": "77",
+                "activity_candidates": [entry],
+            }
+        ],
+    )
+
+    assert result == {"updated": 1, "failed": 0, "failed_courses": []}
+    assert any(event == "moodle_activity_index_reused" for event, _ in logs)
+
+
 def test_module_bulk_ignores_activity_kinds_without_a_supported_service():
     class ModuleBulkClient(_IncrementalClient):
         def fetch_course_activity_bulk(self, **kwargs):
@@ -236,6 +266,71 @@ def test_module_bulk_failures_keep_the_html_fallback(mode):
     ) if mode == "missing" else any(
         event == "moodle_activity_module_bulk_unavailable" for event, _ in logs
     )
+
+
+def test_module_bulk_capability_failure_is_cached_for_later_courses():
+    class ProbeClient(_IncrementalClient):
+        def __init__(self, index, fetch):
+            super().__init__(index, fetch)
+            self.module_calls: list[tuple[int, str]] = []
+
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                    "_bulk_submission_complete": False,
+                }
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            self.module_calls.append((kwargs["course_id"], kwargs["kind"]))
+            return {}
+
+    courses = [_course("poo"), _course("mat")]
+    service, client, logs = _build(
+        courses,
+        {"ELEpoo": [_entry(1)], "ELEmat": [_entry(1)]},
+        lambda *, source_id, kind: {"description": "HTML", "attachments": []},
+        client_class=ProbeClient,
+    )
+    result = service.sync_snapshots(
+        "owner",
+        now=1,
+        snapshots=_Snapshots(),
+        discovered=[
+            {
+                "course_id": "poo",
+                "course_code": "ELEpoo",
+                "term": "2026-2",
+                "moodle_course_id": "77",
+                "status": "found",
+                "candidates": [],
+                "activity_candidates": [_entry(1)],
+            },
+            {
+                "course_id": "mat",
+                "course_code": "ELEmat",
+                "term": "2026-2",
+                "moodle_course_id": "78",
+                "status": "found",
+                "candidates": [],
+                "activity_candidates": [_entry(1)],
+            },
+        ],
+    )
+
+    assert result["failed"] == 0
+    assert client.module_calls == [(77, "assign")]
+    skipped = [fields for event, fields in logs if event == "moodle_activity_module_bulk_skipped"]
+    assert skipped and skipped[-1]["moodle_course_id"] == 78
 
 
 def test_module_bulk_skips_when_tokens_are_not_usable():
@@ -997,7 +1092,7 @@ def test_constructor_clamps_max_workers_into_bounds(max_workers, expected):
 
 
 def test_default_max_workers_is_the_conservative_default():
-    assert _bare_service()._max_workers == DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY == 4
+    assert _bare_service()._max_workers == DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY == 8
 
 
 @pytest.mark.parametrize(

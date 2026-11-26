@@ -2154,7 +2154,12 @@ def test_discovery_enforces_the_global_candidate_limit(monkeypatch: pytest.Monke
     )
     candidate = {"source_id": "1", "kind": "text", "title": "X", "url": None, "relevance": "other"}
     monkeypatch.setattr(
-        module, "_parse_course_states", lambda *_, **_kwargs: [[candidate] * 500, [candidate]]
+        module,
+        "_parse_course_states_full",
+        lambda *_, **_kwargs: [
+            {"materials": [candidate] * 500, "activities": []},
+            {"materials": [candidate], "activities": []},
+        ],
     )
     with pytest.raises(InvalidMoodleResponse) as error:
         MoodleStructuredDatesClient(opener=opener).discover(
