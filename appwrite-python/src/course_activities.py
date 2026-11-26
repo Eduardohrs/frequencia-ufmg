@@ -216,9 +216,10 @@ def _module_detail_is_empty(detail: dict[str, Any]) -> bool:
 
     Calendar fields are intentionally excluded here.  The module bulk response
     already owns due dates; requesting an HTML page only to rediscover those
-    dates is the N+1 path this service is trying to avoid.  The helper is used
-    for quiz responses, whose HTML page in the UFMG installation has been
-    observed to return no description or attachments.
+    dates is the N+1 path this service is trying to avoid.  UFMG's type-specific
+    endpoints can legitimately omit optional descriptions and attachments for
+    both assignments and quizzes.  In that case the structured fields already
+    represent the activity snapshot and an HTML request adds no information.
     """
 
     description = detail.get("description")
@@ -1102,7 +1103,7 @@ class CourseActivityService:
                         module_bulk_successes == 0
                         and len(module_bulk_fallback_reasons) == len(positions)
                         and module_bulk_fallback_reasons
-                        and kind == "quiz"
+                        and kind in {"assign", "quiz"}
                         and all(
                             reason == "missing_module_bulk_fields"
                             for reason in module_bulk_fallback_reasons
