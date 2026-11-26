@@ -763,7 +763,9 @@ def test_html_fallback_failure_is_distinguished_from_empty_html_fields():
             }
 
     def failing_fetch(*, source_id, kind):
-        raise InvalidMoodleResponse("activity_page_shape")
+        raise InvalidMoodleResponse(
+            "activity_page_shape", details={"response_status": 200, "response_bytes": 3}
+        )
 
     service, _client, logs = _build(
         [_course("poo")],
@@ -780,6 +782,8 @@ def test_html_fallback_failure_is_distinguished_from_empty_html_fields():
     )
     assert html_result["outcome"] == "failed"
     assert html_result["error_reason"] == "activity_page_shape"
+    assert html_result["response_status"] == 200
+    assert html_result["response_bytes"] == 3
 
 
 def test_incomplete_bulk_capability_skips_the_extra_request():

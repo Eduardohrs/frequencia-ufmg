@@ -1071,13 +1071,22 @@ class CourseActivityService:
                 if upstream_status is not None:
                     failure["upstream_status"] = upstream_status
                 _emit(self._telemetry, "activity_snapshot_activity_failed", failure)
+                response_details = (
+                    error.details if isinstance(error, InvalidMoodleResponse) else {}
+                )
+                response_status = response_details.get("response_status")
+                if type(response_status) is not int or not 100 <= response_status <= 599:
+                    response_status = upstream_status
+                response_bytes = response_details.get("response_bytes")
+                if type(response_bytes) is not int or response_bytes < 0:
+                    response_bytes = 0
                 quality = {
                     **fields,
                     "source_id": entry["source_id"],
                     "kind": entry["kind"],
                     "fallback_reason": fallback_reason,
-                    "response_status": upstream_status,
-                    "response_bytes": 0,
+                    "response_status": response_status,
+                    "response_bytes": response_bytes,
                     "description_chars": 0,
                     "attachment_count": 0,
                     "empty_fields": [],

@@ -658,7 +658,10 @@ class MoodleStructuredDatesClient:
         try:
             detail = parse_activity_page(payload, term=term, kind=kind)
         except InvalidActivityPage as error:
-            raise InvalidMoodleResponse(error.reason) from None
+            raise InvalidMoodleResponse(
+                error.reason,
+                details={"response_status": 200, "response_bytes": len(payload)},
+            ) from None
         # Keep response-quality evidence with the in-memory detail only.  The
         # snapshot service strips these private fields before persistence, but
         # can use them to distinguish a valid page with no optional content
