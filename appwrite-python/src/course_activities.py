@@ -59,9 +59,16 @@ class CourseMoodleNotLinked(ValueError):
 class ActivitySnapshotCaptureFailed(Exception):
     """Some activity detail pages failed; the previous valid snapshot is retained."""
 
-    def __init__(self, failed_count: int, first_reason: str) -> None:
+    def __init__(
+        self,
+        failed_count: int,
+        first_reason: str,
+        *,
+        metrics: dict[str, object] | None = None,
+    ) -> None:
         self.failed_count = failed_count
         self.first_reason = first_reason
+        self.metrics = metrics or {}
         super().__init__(f"{failed_count} activity detail page(s) failed ({first_reason})")
 
 
@@ -508,6 +515,12 @@ class CourseActivityService:
                 if isinstance(error, ActivitySnapshotCaptureFailed):
                     reason = error.first_reason
                     failed_activities += error.failed_count
+                    _merge_metric_map(
+                        html_quality_counts, error.metrics, "html_quality_counts"
+                    )
+                    _merge_metric_map(
+                        html_empty_field_counts, error.metrics, "html_empty_field_counts"
+                    )
                 elif isinstance(error, InvalidMoodleResponse):
                     reason = error.reason
                 else:
@@ -1117,7 +1130,12 @@ class CourseActivityService:
                 html_empty_field_counts[field] = html_empty_field_counts.get(field, 0) + 1
         if failures:
             raise ActivitySnapshotCaptureFailed(
-                failed_count=len(failures), first_reason=str(failures[0]["reason"])
+                failed_count=len(failures),
+                first_reason=str(failures[0]["reason"]),
+                metrics={
+                    "html_quality_counts": html_quality_counts,
+                    "html_empty_field_counts": html_empty_field_counts,
+                },
             )
         snapshot = {
             "course_id": course_id,

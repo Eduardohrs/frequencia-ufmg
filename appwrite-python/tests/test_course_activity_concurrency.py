@@ -1144,6 +1144,8 @@ def test_partial_failure_attempts_every_activity_and_preserves_the_previous_snap
     summary = next(f for e, f in logs if e == "activity_snapshots_synced")
     assert summary["failed"] == 1 and summary["failed_activities"] == 2
     assert summary["concurrency"] == 2 and summary["total_courses"] == 1
+    assert summary["html_quality_counts"] == {"partial": 1, "failed": 2}
+    assert summary["html_empty_field_counts"] == {"attachments": 1}
 
 
 def test_capture_raises_one_course_level_failure_with_count_and_first_reason():
