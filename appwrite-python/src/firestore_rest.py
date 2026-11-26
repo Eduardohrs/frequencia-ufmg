@@ -405,9 +405,30 @@ def _error_code(response_body: bytes) -> str:
 
 
 def _decode_streamed_json(response_body: bytes) -> list[dict[str, Any]]:
-    """Decode Firestore's newline/concatenated JSON batch response safely."""
+    """Decode Firestore's array or newline/concatenated JSON batch response.
+
+    The REST endpoint normally streams one object per line, but compatible
+    Firestore transports (including the official Firebase client) can return
+    the same batch as one JSON array.  Accept both wire formats while keeping
+    the strict object-only validation used by the batch reconciliation code.
+    """
 
     text = response_body.decode("utf-8")
+    first_non_whitespace = next(
+        (index for index, char in enumerate(text) if not char.isspace()), None
+    )
+    if first_non_whitespace is None:
+        return []
+    if text[first_non_whitespace] == "[":
+        decoded = json.loads(text)
+        if not isinstance(decoded, list) or any(
+            not isinstance(item, dict) for item in decoded
+        ):
+            raise json.JSONDecodeError(
+                "Firestore batch items must be objects", text, first_non_whitespace
+            )
+        return decoded
+
     decoder = json.JSONDecoder()
     values: list[dict[str, Any]] = []
     offset = 0

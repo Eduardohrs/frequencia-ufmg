@@ -175,6 +175,35 @@ def test_batch_get_user_documents_reads_known_paths_and_preserves_missing_docs()
     assert json.loads(calls[0].data)["documents"] == [first, second]
 
 
+def test_batch_get_user_documents_reads_a_json_array_response() -> None:
+    path = ("courses", "course-a", "materialCatalog", "current")
+    client = FirestoreRestClient(
+        "project",
+        "user",
+        "token",
+        transport=lambda *_: (
+            200,
+            json.dumps(
+                [
+                    {
+                        "found": {
+                            "name": "projects/project/databases/(default)/documents/"
+                            "users/user/courses/course-a/materialCatalog/current",
+                            "fields": {"status": {"stringValue": "found"}},
+                        }
+                    }
+                ]
+            ).encode(),
+        ),
+    )
+
+    assert client.batch_get_user_documents([path])[path] == {
+        "name": "projects/project/databases/(default)/documents/"
+        "users/user/courses/course-a/materialCatalog/current",
+        "fields": {"status": {"stringValue": "found"}},
+    }
+
+
 @pytest.mark.parametrize(
     "paths",
     [
@@ -250,9 +279,24 @@ def test_batch_get_stream_decoder_accepts_whitespace_only_suffix() -> None:
     assert firestore_module._decode_streamed_json(b' {"ok":true}\n\t') == [{"ok": True}]
 
 
-def test_batch_get_stream_decoder_rejects_a_json_array_item() -> None:
+def test_batch_get_stream_decoder_accepts_whitespace_only_response() -> None:
+    assert firestore_module._decode_streamed_json(b" \n\t") == []
+
+
+def test_batch_get_stream_decoder_rejects_a_non_object_stream_item() -> None:
     with pytest.raises(json.JSONDecodeError):
-        firestore_module._decode_streamed_json(b"[]")
+        firestore_module._decode_streamed_json(b"1")
+
+
+def test_batch_get_stream_decoder_accepts_a_json_array_response() -> None:
+    assert firestore_module._decode_streamed_json(
+        b'[{"found":{"name":"known"}},{"missing":"other"}]'
+    ) == [{"found": {"name": "known"}}, {"missing": "other"}]
+
+
+def test_batch_get_stream_decoder_rejects_non_object_items_in_a_json_array() -> None:
+    with pytest.raises(json.JSONDecodeError):
+        firestore_module._decode_streamed_json(b'[{"ok":true},1]')
 
 
 def test_request_rejects_a_streamed_response_in_a_regular_document_call() -> None:
