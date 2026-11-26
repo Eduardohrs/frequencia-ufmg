@@ -128,9 +128,9 @@ class MoodleStructuredDatesClient:
     # It includes the activity description, dates and module files.  It does
     # not include the current student's submission state, so that field is
     # deliberately persisted as ``unknown`` until an explicit activity detail
-    # read is requested.  A missing submission status must not turn a bulk
-    # response into an N+1 HTML crawl: the live Moodle calendar/course pages
-    # are server-rendered and provide no equivalent batch submission endpoint.
+    # read is requested.  Submission state is read through the assignment
+    # submissions service when the module response omits it, so a missing
+    # optional description or attachment never forces an HTML crawl.
     bulk_activity_details_complete = True
 
     def __init__(
@@ -638,6 +638,114 @@ class MoodleStructuredDatesClient:
         )
         _require_json_endpoint(final_url, content_type, path)
         return _parse_activity_module_bulk(payload, root=root, kind=kind)
+
+    def fetch_assignment_submissions_bulk(
+        self,
+        *,
+        webservice_token: str,
+        term: str,
+        assignment_ids: list[int],
+    ) -> dict[str, object]:
+        """Read current-student assignment states through Moodle's student API.
+
+        ``mod_assign_get_submissions`` is a bulk endpoint, but it is a grader
+        endpoint in Moodle and therefore returns a permission error for a
+        normal student account.  ``mod_assign_get_submission_status`` is the
+        official student-facing endpoint.  Moodle accepts one assignment id
+        per call, so we issue those bounded calls concurrently and keep the
+        result shape compatible with the former bulk helper.  Failed individual
+        calls are exposed in an internal metadata key; successful assignments
+        can still skip HTML while only failed ones use the existing fallback.
+        """
+
+        _validate_mobile_service_token(webservice_token)
+        if not assignment_ids or len(assignment_ids) > 500:
+            raise InvalidMoodleResponse("assignment_submission_ids")
+        if any(
+            type(value) is not int or not 1 <= value <= 2_147_483_647
+            for value in assignment_ids
+        ):
+            raise InvalidMoodleResponse("assignment_submission_id")
+        root = _moodle_root(term)
+        path = f"{root}/webservice/rest/server.php"
+        unique_ids = sorted(set(assignment_ids))
+
+        def fetch_one(assignment_id: int) -> tuple[str, dict[str, str | bool]]:
+            parameters: dict[str, str] = {
+                "moodlewsrestformat": "json",
+                "moodlewssettingfileurl": "1",
+                "moodlewssettingfilter": "1",
+                "wsfunction": "mod_assign_get_submission_status",
+                "wstoken": webservice_token,
+                "assignid": str(assignment_id),
+            }
+            payload, final_url, content_type = self._open(
+                Request(
+                    f"{MOODLE_ORIGIN}{path}",
+                    data=urlencode(parameters).encode(),
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Accept": "application/json",
+                    },
+                    method="POST",
+                )
+            )
+            _require_json_endpoint(final_url, content_type, path)
+            detail = timed_stage(
+                "moodle_assignment_submission_status_parse",
+                lambda: _parse_assignment_submission_status(payload),
+                telemetry=self._telemetry,
+                fields={
+                    "term": term,
+                    "assignment_id": assignment_id,
+                    "response_bytes": len(payload),
+                    "consumer": "activity_snapshot_submission_state",
+                },
+            )
+            return str(assignment_id), detail
+
+        statuses: dict[str, object] = {}
+        failed_ids: list[int] = []
+        worker_count = min(8, len(unique_ids))
+        with ThreadPoolExecutor(
+            max_workers=worker_count, thread_name_prefix="moodle-submission-status"
+        ) as pool:
+            futures = [pool.submit(fetch_one, assignment_id) for assignment_id in unique_ids]
+            for assignment_id, future in zip(unique_ids, futures, strict=True):
+                try:
+                    key, detail = future.result()
+                except Exception as error:
+                    failed_ids.append(assignment_id)
+                    _emit(
+                        self._telemetry,
+                        "moodle_assignment_submission_status_unavailable",
+                        {
+                            "term": term,
+                            "assignment_id": assignment_id,
+                            "reason": type(error).__name__,
+                            "upstream_class": (
+                                "moodle_response"
+                                if isinstance(error, InvalidMoodleResponse)
+                                else type(error).__name__.lower()
+                            ),
+                            "consumer": "activity_snapshot_submission_state",
+                        },
+                    )
+                else:
+                    statuses[key] = detail
+        statuses["_bulk_failed_assignment_ids"] = failed_ids
+        _emit(
+            self._telemetry,
+            "moodle_assignment_submission_status_bulk_completed",
+            {
+                "term": term,
+                "assignment_count": len(unique_ids),
+                "completed_count": len(unique_ids) - len(failed_ids),
+                "failed_count": len(failed_ids),
+                "consumer": "activity_snapshot_submission_state",
+            },
+        )
+        return statuses
 
     def fetch_activity(
         self, token: str, *, term: str, source_id: int, kind: str
@@ -1719,8 +1827,9 @@ def _parse_course_activity_contents(
                     "submission_state": "unknown",
                     "submission_text": "",
                     # The course-wide service has no student-specific
-                    # submission status.  Force the activity-page fallback
-                    # until a module-specific status endpoint is available.
+                    # submission status.  The snapshot stage enriches this
+                    # with Moodle's student-facing status endpoint before it
+                    # decides whether an HTML fallback is necessary.
                     "_bulk_submission_complete": False,
                     "attachments": attachments,
                 }
@@ -1735,6 +1844,119 @@ def _parse_course_activity_contents(
             str(error)
             if error.args and re.fullmatch(r"[a-z_]{1,64}", str(error))
             else "course_contents_shape"
+        )
+        raise InvalidMoodleResponse(reason) from None
+
+
+def _parse_assignment_submission_status(payload: bytes) -> dict[str, str | bool]:
+    """Normalize one student-facing ``mod_assign_get_submission_status`` reply."""
+
+    try:
+        decoded = json.loads(payload)
+        if not isinstance(decoded, dict) or "exception" in decoded:
+            raise ValueError("assignment_submission_status_upstream_error")
+        last_attempt = decoded.get("lastattempt")
+        if last_attempt is None:
+            state, text = "not_submitted", "Nenhum envio"
+        else:
+            if not isinstance(last_attempt, dict):
+                raise ValueError("assignment_submission_status_last_attempt")
+            # Individual assignments use ``submission``; team assignments
+            # expose the same status under ``teamsubmission`` instead.
+            submission = last_attempt.get("submission")
+            if submission is None and "teamsubmission" in last_attempt:
+                submission = last_attempt["teamsubmission"]
+            if submission is None:
+                state, text = "not_submitted", "Nenhum envio"
+            else:
+                if not isinstance(submission, dict):
+                    raise ValueError("assignment_submission_status_submission")
+                raw_status = submission.get("status", "")
+                if not isinstance(raw_status, str) or len(raw_status) > 200:
+                    raise ValueError("assignment_submission_status_value")
+                text = raw_status.strip()
+                normalized = text.lower()
+                if not normalized or normalized == "new":
+                    state, text = "not_submitted", "Nenhum envio"
+                elif normalized == "draft":
+                    state = "draft"
+                elif normalized == "reopened":
+                    # Moodle reopened attempts still require a new submission.
+                    state, text = "not_submitted", "Envio reaberto"
+                elif normalized in {"submitted", "graded", "returned"}:
+                    state = "submitted"
+                else:
+                    state = "unknown"
+        return {
+            "submission_state": state,
+            "submission_text": text[:200],
+            "_bulk_submission_complete": True,
+        }
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        reason = (
+            str(error)
+            if error.args and re.fullmatch(r"[a-z_]{1,64}", str(error))
+            else "assignment_submission_status_shape"
+        )
+        raise InvalidMoodleResponse(reason) from None
+
+
+def _parse_assignment_submissions_bulk(payload: bytes) -> dict[str, dict[str, str | bool]]:
+    """Normalize ``mod_assign_get_submissions`` for the current student."""
+
+    try:
+        decoded = json.loads(payload)
+        if not isinstance(decoded, dict) or "exception" in decoded:
+            raise ValueError("assignment_submission_upstream_error")
+        raw_assignments = decoded.get("assignments")
+        if not isinstance(raw_assignments, list) or len(raw_assignments) > 500:
+            raise ValueError("assignment_submission_assignments")
+        result: dict[str, dict[str, str | bool]] = {}
+        for raw_assignment in raw_assignments:
+            if not isinstance(raw_assignment, dict):
+                raise ValueError("assignment_submission_assignment")
+            assignment_id = raw_assignment.get("assignmentid", raw_assignment.get("id"))
+            if (
+                type(assignment_id) is not int
+                or not 1 <= assignment_id <= 2_147_483_647
+            ):
+                raise ValueError("assignment_submission_id")
+            submissions = raw_assignment.get("submissions", [])
+            if not isinstance(submissions, list) or len(submissions) > 100:
+                raise ValueError("assignment_submission_items")
+            status = ""
+            if submissions:
+                current = submissions[0]
+                if not isinstance(current, dict):
+                    raise ValueError("assignment_submission_item")
+                raw_status = current.get("status", "")
+                if not isinstance(raw_status, str) or len(raw_status) > 200:
+                    raise ValueError("assignment_submission_status")
+                status = raw_status.strip()
+            normalized = status.lower()
+            if not submissions or normalized in {"new", "not_submitted"}:
+                state, text = "not_submitted", "Nenhum envio"
+            elif normalized == "draft":
+                state, text = "draft", status
+            elif normalized in {"submitted", "graded", "reopened", "returned"}:
+                state, text = "submitted", status
+            else:
+                state, text = "unknown", status
+            item: dict[str, str | bool] = {
+                "submission_state": state,
+                "submission_text": text[:200],
+                "_bulk_submission_complete": True,
+            }
+            previous = result.get(str(assignment_id))
+            if previous is not None and previous != item:
+                raise ValueError("assignment_submission_conflict")
+            result[str(assignment_id)] = item
+        return result
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        reason = (
+            str(error)
+            if error.args and re.fullmatch(r"[a-z_]{1,64}", str(error))
+            else "assignment_submission_shape"
         )
         raise InvalidMoodleResponse(reason) from None
 
@@ -1772,6 +1994,12 @@ def _parse_activity_module_bulk(
                 title = raw.get("name")
                 if not isinstance(title, str) or not title.strip() or len(title) > 1_024:
                     raise ValueError("activity_module_title")
+                assignment_id = raw.get("id") if kind == "assign" else None
+                if assignment_id is not None and (
+                    type(assignment_id) is not int
+                    or not 1 <= assignment_id <= 2_147_483_647
+                ):
+                    raise ValueError("activity_module_assignment_id")
                 attachments = _module_activity_attachments(raw, root=root)
                 dates = _module_activity_dates(raw, kind=kind)
                 candidate: dict[str, object] = {
@@ -1785,6 +2013,8 @@ def _parse_activity_module_bulk(
                     "_bulk_submission_complete": False,
                     "attachments": attachments,
                 }
+                if assignment_id is not None:
+                    candidate["_bulk_assignment_id"] = assignment_id
                 identifier = str(source_id)
                 previous = activities.get(identifier)
                 if previous is not None and previous != candidate:
@@ -2066,6 +2296,11 @@ def _validate_mobile_tokens(webservice_token: str, private_token: str, course_id
         or not 1 <= course_id <= 2_147_483_647
     ):
         raise ValueError("invalid Moodle file request")
+
+
+def _validate_mobile_service_token(webservice_token: str) -> None:
+    if _MOBILE_TOKEN.fullmatch(webservice_token) is None:
+        raise ValueError("invalid Moodle webservice token")
 
 
 def _validate_mobile_file_request(

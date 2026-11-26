@@ -143,6 +143,9 @@ def test_incomplete_course_bulk_uses_module_bulk_before_html_fallback():
                 }
             }
 
+        def fetch_assignment_submissions_bulk(self, **kwargs):
+            return {}
+
     service, client, logs = _build(
         [_course("poo")],
         {"ELEpoo": [_entry(1)]},
@@ -316,6 +319,228 @@ def test_empty_module_bulk_fields_skip_html_n_plus_one_when_all_ids_are_present(
     assert summary["html_activities"] == 0
     assert summary["html_skipped_count"] == 2
     assert any(event == "moodle_activity_html_fallback_skipped" for event, _ in logs)
+
+
+def test_empty_assignment_module_bulk_fields_skip_html_n_plus_one_when_all_ids_are_present():
+    class EmptyModuleBulkClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                str(source_id): {
+                    "description": "",
+                    "dates_text": "Vencimento: 2026-12-01",
+                    "has_due_date": True,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+                for source_id in (1, 2)
+            }
+
+        def fetch_assignment_submissions_bulk(self, **kwargs):
+            return {
+                str(assignment_id): {
+                    "submission_state": "not_submitted",
+                    "submission_text": "Nenhum envio",
+                    "_bulk_submission_complete": True,
+                }
+                for assignment_id in kwargs["assignment_ids"]
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            return {
+                str(source_id): {
+                    "description": "",
+                    "dates_text": "Vencimento: 2026-12-01",
+                    "has_due_date": True,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                    "_bulk_assignment_id": 10_000 + source_id,
+                }
+                for source_id in (1, 2)
+            }
+
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1, "assign"), _entry(2, "assign")]},
+        lambda *, source_id, kind: {
+            "description": "should not be fetched",
+            "attachments": [],
+        },
+        client_class=EmptyModuleBulkClient,
+    )
+    snapshots = _Snapshots()
+
+    assert service.sync_snapshots("owner", now=1, snapshots=snapshots)["failed"] == 0
+    assert client.fetch_calls == []
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["html_activities"] == 0
+    assert summary["html_skipped_count"] == 2
+
+
+def test_assignment_submission_bulk_keeps_html_for_missing_statuses() -> None:
+    class PartialSubmissionClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            return {
+                str(source_id): {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+                for source_id in (1, 2)
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                    "_bulk_assignment_id": 10_001,
+                },
+                "2": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                    "_bulk_assignment_id": 10_002,
+                },
+                "unexpected": None,
+            }
+
+        def fetch_assignment_submissions_bulk(self, **kwargs):
+            assert kwargs["assignment_ids"] == [10_001, 10_002]
+            return {
+                "10001": {
+                    "submission_state": "submitted",
+                    "submission_text": "submitted",
+                    "_bulk_submission_complete": True,
+                }
+            }
+
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1, "assign"), _entry(2, "assign")]},
+        lambda *, source_id, kind: {"description": "HTML", "attachments": []},
+        client_class=PartialSubmissionClient,
+    )
+    summary = service.sync_snapshots("owner", now=1, snapshots=_Snapshots())
+    assert summary["failed"] == 0
+    assert client.fetch_calls == [2]
+    fields = [item for event, item in logs if event == "activity_snapshots_synced"][-1]
+    assert fields["submission_bulk_calls"] == 1
+    assert fields["submission_bulk_statuses"] == 1
+
+
+def test_assignment_submission_bulk_failure_keeps_the_html_fallback() -> None:
+    class FailingSubmissionClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                    "_bulk_assignment_id": 10_001,
+                }
+            }
+
+        def fetch_assignment_submissions_bulk(self, **kwargs):
+            return []
+
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1, "assign")]},
+        lambda *, source_id, kind: {"description": "HTML", "attachments": []},
+        client_class=FailingSubmissionClient,
+    )
+    assert service.sync_snapshots("owner", now=1, snapshots=_Snapshots())["failed"] == 0
+    fields = [item for event, item in logs if event == "activity_snapshots_synced"][-1]
+    assert fields["submission_bulk_failures"] == 1
+    assert client.fetch_calls == [1]
+
+
+def test_assignment_submission_bulk_failure_metadata_shape_keeps_html_fallback() -> None:
+    class MalformedSubmissionClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                    "_bulk_assignment_id": 10_001,
+                }
+            }
+
+        def fetch_assignment_submissions_bulk(self, **kwargs):
+            return {"_bulk_failed_assignment_ids": ["bad"]}
+
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1, "assign")]},
+        lambda *, source_id, kind: {"description": "HTML", "attachments": []},
+        client_class=MalformedSubmissionClient,
+    )
+    assert service.sync_snapshots("owner", now=1, snapshots=_Snapshots())["failed"] == 0
+    fields = [item for event, item in logs if event == "activity_snapshots_synced"][-1]
+    assert fields["submission_bulk_failures"] == 1
+    assert client.fetch_calls == [1]
 
 
 def test_partial_module_bulk_fields_are_preserved_when_html_has_no_enrichment():

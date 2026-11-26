@@ -216,9 +216,10 @@ def _module_detail_is_empty(detail: dict[str, Any]) -> bool:
 
     Calendar fields are intentionally excluded here.  The module bulk response
     already owns due dates; requesting an HTML page only to rediscover those
-    dates is the N+1 path this service is trying to avoid.  The helper is used
-    for quiz responses, whose HTML page in the UFMG installation has been
-    observed to return no description or attachments.
+    dates is the N+1 path this service is trying to avoid.  UFMG's type-specific
+    endpoints can legitimately omit optional descriptions and attachments for
+    both assignments and quizzes.  In that case the structured fields already
+    represent the activity snapshot and an HTML request adds no information.
     """
 
     description = detail.get("description")
@@ -421,6 +422,9 @@ class CourseActivityService:
         module_bulk_activities = 0
         module_bulk_calls = 0
         module_bulk_failures = 0
+        submission_bulk_calls = 0
+        submission_bulk_failures = 0
+        submission_bulk_statuses = 0
         html_skipped = 0
         updates_checked = 0
         updates_changed = 0
@@ -527,6 +531,13 @@ class CourseActivityService:
                         module_bulk_activities += _metric(capture_result, "module_bulk_count")
                         module_bulk_calls += _metric(capture_result, "module_bulk_calls")
                         module_bulk_failures += _metric(capture_result, "module_bulk_failures")
+                        submission_bulk_calls += _metric(capture_result, "submission_bulk_calls")
+                        submission_bulk_failures += _metric(
+                            capture_result, "submission_bulk_failures"
+                        )
+                        submission_bulk_statuses += _metric(
+                            capture_result, "submission_bulk_statuses"
+                        )
                         updates_checked += _metric(capture_result, "updates_checked")
                         updates_changed += _metric(capture_result, "updates_changed")
                         _merge_metric_map(fallback_by_kind, capture_result, "fallback_by_kind")
@@ -672,6 +683,9 @@ class CourseActivityService:
                 "module_bulk_activities": module_bulk_activities,
                 "module_bulk_calls": module_bulk_calls,
                 "module_bulk_failures": module_bulk_failures,
+                "submission_bulk_calls": submission_bulk_calls,
+                "submission_bulk_failures": submission_bulk_failures,
+                "submission_bulk_statuses": submission_bulk_statuses,
                 "updates_checked": updates_checked,
                 "updates_changed": updates_changed,
                 "activity_entries_seen": activity_entries_seen,
@@ -827,6 +841,9 @@ class CourseActivityService:
         module_bulk_count = 0
         module_bulk_calls = 0
         module_bulk_failures = 0
+        submission_bulk_calls = 0
+        submission_bulk_failures = 0
+        submission_bulk_statuses = 0
         html_skipped = 0
         html_positions = set(changed_positions)
         html_fallback_reasons: dict[int, str] = {
@@ -1025,6 +1042,86 @@ class CourseActivityService:
                         )
                         if not isinstance(module_details, dict):
                             raise InvalidMoodleResponse("activity_module_bulk_shape")
+                        submission_method = getattr(
+                            self._client, "fetch_assignment_submissions_bulk", None
+                        )
+                        if kind == "assign" and callable(submission_method):
+                            assignment_ids: list[int] = []
+                            for position in positions:
+                                indexed_entry = entries[position]
+                                detail = module_details.get(str(indexed_entry["source_id"]))
+                                if (
+                                    isinstance(detail, dict)
+                                    and type(detail.get("_bulk_assignment_id")) is int
+                                    and _module_detail_is_empty(detail)
+                                ):
+                                    assignment_ids.append(int(detail["_bulk_assignment_id"]))
+                            assignment_ids = sorted(set(assignment_ids))
+                            if assignment_ids:
+                                submission_bulk_calls += 1
+                                try:
+                                    submission_details = timed_stage(
+                                        "activity_snapshot_submission_bulk_capture",
+                                        partial(
+                                            submission_method,
+                                            webservice_token=webservice_token,
+                                            term=course["term"],
+                                            assignment_ids=assignment_ids,
+                                        ),
+                                        telemetry=self._telemetry,
+                                        fields={
+                                            **fields,
+                                            "moodle_course_id": moodle_course_id,
+                                            "assignment_count": len(assignment_ids),
+                                        },
+                                    )
+                                    if not isinstance(submission_details, dict):
+                                        raise InvalidMoodleResponse(
+                                            "assignment_submission_shape"
+                                        )
+                                    failed_assignment_ids = submission_details.get(
+                                        "_bulk_failed_assignment_ids", []
+                                    )
+                                    if not isinstance(failed_assignment_ids, list) or any(
+                                        type(value) is not int for value in failed_assignment_ids
+                                    ):
+                                        raise InvalidMoodleResponse(
+                                            "assignment_submission_failure_shape"
+                                        )
+                                    submission_bulk_failures += len(failed_assignment_ids)
+                                    for source_id, detail in list(module_details.items()):
+                                        if not isinstance(detail, dict):
+                                            continue
+                                        assignment_id = detail.get("_bulk_assignment_id")
+                                        status = submission_details.get(str(assignment_id))
+                                        if isinstance(status, dict):
+                                            module_details[source_id] = {**detail, **status}
+                                            submission_bulk_statuses += 1
+                                    _emit(
+                                        self._telemetry,
+                                        "moodle_activity_submission_bulk_completed",
+                                        {
+                                            **fields,
+                                            "moodle_course_id": moodle_course_id,
+                                            "assignment_count": len(assignment_ids),
+                                            "status_count": len(submission_details)
+                                            - 1,
+                                            "failed_count": len(failed_assignment_ids),
+                                        },
+                                    )
+                                except Exception as error:
+                                    submission_bulk_failures += 1
+                                    _emit(
+                                        self._telemetry,
+                                        "moodle_activity_submission_bulk_unavailable",
+                                        {
+                                            **fields,
+                                            "moodle_course_id": moodle_course_id,
+                                            "assignment_count": len(assignment_ids),
+                                            "reason": type(error).__name__,
+                                            "upstream_class": _classify_upstream(error)[0],
+                                        },
+                                    )
                     except Exception as error:
                         module_bulk_failures += 1
                         for position in positions:
@@ -1048,6 +1145,30 @@ class CourseActivityService:
                     for position in positions:
                         entry = entries[position]
                         detail = module_details.get(str(entry["source_id"]))
+                        if (
+                            isinstance(detail, dict)
+                            and _bulk_detail_needs_html_fallback(detail)
+                            and kind == "assign"
+                            and detail.get("_bulk_submission_complete") is True
+                            and _module_detail_is_empty(detail)
+                        ):
+                            # The student-status endpoint supplied the only
+                            # field missing from the type-specific response.
+                            # Preserve that status and avoid an HTML request.
+                            activities[position] = {
+                                **entry,
+                                **_clean_bulk_detail(detail),
+                                "files": [],
+                                "term": course["term"],
+                            }
+                            html_positions.discard(position)
+                            module_bulk_count += 1
+                            module_bulk_successes += 1
+                            html_skipped += 1
+                            bulk_submission_unknown += int(
+                                detail.get("submission_state") == "unknown"
+                            )
+                            continue
                         if not isinstance(detail, dict) or _bulk_detail_needs_html_fallback(detail):
                             reason = (
                                 "activity_missing_from_module_bulk_response"
@@ -1102,7 +1223,18 @@ class CourseActivityService:
                         module_bulk_successes == 0
                         and len(module_bulk_fallback_reasons) == len(positions)
                         and module_bulk_fallback_reasons
-                        and kind == "quiz"
+                        and kind in {"assign", "quiz"}
+                        and (
+                            kind == "quiz"
+                            or all(
+                                module_bulk_partial_details[position].get(
+                                    "_bulk_submission_complete"
+                                )
+                                is True
+                                for position in positions
+                                if position in module_bulk_partial_details
+                            )
+                        )
                         and all(
                             reason == "missing_module_bulk_fields"
                             for reason in module_bulk_fallback_reasons
@@ -1307,6 +1439,9 @@ class CourseActivityService:
                 "bulk_fallbacks": bulk_fallbacks,
                 "html_count": len(html_positions),
                 "html_skipped_count": html_skipped,
+                "submission_bulk_calls": submission_bulk_calls,
+                "submission_bulk_failures": submission_bulk_failures,
+                "submission_bulk_statuses": submission_bulk_statuses,
                 "updates_checked": updates_checked,
                 "updates_changed": updates_changed,
             },
@@ -1323,6 +1458,9 @@ class CourseActivityService:
             "module_bulk_count": module_bulk_count,
             "module_bulk_calls": module_bulk_calls,
             "module_bulk_failures": module_bulk_failures,
+            "submission_bulk_calls": submission_bulk_calls,
+            "submission_bulk_failures": submission_bulk_failures,
+            "submission_bulk_statuses": submission_bulk_statuses,
             "updates_checked": updates_checked,
             "updates_changed": updates_changed,
             "fallback_by_kind": fallback_by_kind,
