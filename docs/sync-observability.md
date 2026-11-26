@@ -149,6 +149,15 @@ corpo de resposta ou identificador do usuário:
   atividade memoizada por `(termo, source_id, kind)` dentro da mesma sync —
   um mesmo módulo indexado por curso canônico e metaturma baixa a página uma
   única vez;
+- `moodle_activity_html_detail_result`: uma linha por tentativa de fallback
+  HTML, com `course_id`, `course_code`, `source_id`, `kind`,
+  `fallback_reason`, `response_status`, `response_bytes`,
+  `description_chars`, `attachment_count`, `empty_fields`, `outcome` e
+  `duration_ms`. `outcome` é `complete` quando os dois campos têm conteúdo,
+  `partial` quando apenas um tem, `empty_fields` quando a página foi válida mas
+  ambos estão vazios e `failed` quando a requisição ou o parser falhou. Os
+  campos `_html_*` usados internamente para essa classificação nunca são
+  gravados no snapshot offline;
 - `sync_read_cache`: por sync, `snapshot_reads`, `policy_state_reads`,
   `catalog_reads`, `discovery_shared_courses` e os flags de escrita em lote
   (`policy_write_batch`, `snapshot_write_batch`);
@@ -164,7 +173,8 @@ corpo de resposta ou identificador do usuário:
 - `activity_snapshots_synced`: resumo do estágio com `fallback_by_kind` e
   `fallback_reasons` (ex.: `missing_bulk_fields` para entradas de quiz cujo
   bulk omite `description`/`attachments`), além de `reused_activities`,
-  `bulk_fallbacks` e `html_activities`;
+  `bulk_fallbacks`, `html_activities`, `html_quality_counts` e
+  `html_empty_field_counts`;
 - `academic_sync_lineage`: relação origem→dataset→consumidor, contagens
   (`extracted`, `matched`, `created`, `updated`, `unchanged`, falhas, etc.) e a
   matriz de campos (`endpoints`, `response_fields_used`, `field_mapping`,
@@ -188,6 +198,12 @@ agrupar por operation, path, outcome e status_code
 
 filtrar event = activity_snapshot_course_decision
 agrupar por course_code e outcome
+
+filtrar event = moodle_activity_html_detail_result
+agrupar por course_code, source_id, kind, fallback_reason e outcome
+
+filtrar event = moodle_activity_html_detail_result e outcome != complete
+inspecionar empty_fields antes de classificar a execução como falha
 
 filtrar event = academic_sync_lineage
 comparar dataset, consumer, endpoint e field_mapping
