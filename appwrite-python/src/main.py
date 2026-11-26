@@ -2481,10 +2481,13 @@ def _moodle_date_import_service(
 ) -> MoodleDateImportService:
     return MoodleDateImportService(
         _ufmg_session_store(headers),
-        MoodleStructuredDatesClient(telemetry=telemetry),
+        MoodleStructuredDatesClient(
+            telemetry=telemetry, calendar_workers=_moodle_calendar_workers()
+        ),
         _course_repository(headers, user_id),
         AcademicDateRepository(_firestore(headers, user_id)),
         calendar_state=MoodleCalendarState(_firestore(headers, user_id), telemetry=telemetry),
+        persistence_workers=_moodle_date_persistence_workers(),
         telemetry=telemetry,
     )
 
@@ -2497,6 +2500,36 @@ def _activity_snapshot_max_workers() -> int:
     except ValueError:
         return DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY
     return min(max(value, MIN_ACTIVITY_SNAPSHOT_CONCURRENCY), MAX_ACTIVITY_SNAPSHOT_CONCURRENCY)
+
+
+def _moodle_calendar_workers() -> int:
+    """Bound calendar AJAX batches without unbounded upstream fan-out."""
+    raw = environ.get("MOODLE_CALENDAR_CONCURRENCY", "3").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 3
+    return min(max(value, 1), 4)
+
+
+def _moodle_date_persistence_workers() -> int:
+    """Bound independent Firestore date reconciliations per sync run."""
+    raw = environ.get("MOODLE_DATE_PERSISTENCE_CONCURRENCY", "4").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 4
+    return min(max(value, 1), 8)
+
+
+def _moodle_activity_update_workers() -> int:
+    """Bound per-course change probes; one probe per Moodle course is enough."""
+    raw = environ.get("MOODLE_ACTIVITY_UPDATE_CONCURRENCY", "4").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 4
+    return min(max(value, 1), 8)
 
 
 def _course_activity_service(
@@ -2512,7 +2545,9 @@ def _course_activity_service(
 ) -> CourseActivityService:
     courses = courses or _course_repository(headers, user_id)
     sessions = sessions or _ufmg_session_store(headers)
-    client = client or MoodleStructuredDatesClient(telemetry=telemetry)
+    client = client or MoodleStructuredDatesClient(
+        telemetry=telemetry, calendar_workers=_moodle_calendar_workers()
+    )
     tokens = _moodle_token_store(headers)
     return CourseActivityService(
         courses,
@@ -2524,6 +2559,7 @@ def _course_activity_service(
         policy=policy,
         force=force,
         max_workers=_activity_snapshot_max_workers(),
+        update_workers=_moodle_activity_update_workers(),
     )
 
 
@@ -2541,7 +2577,9 @@ def _moodle_sync_service(
     headers: dict[str, str], user_id: str, telemetry: Any = None, *, force: bool = False
 ) -> MoodleSyncService:
     sessions = RequestCachedUFMGSessionStore(_ufmg_session_store(headers))
-    client = MoodleStructuredDatesClient(telemetry=telemetry)
+    client = MoodleStructuredDatesClient(
+        telemetry=telemetry, calendar_workers=_moodle_calendar_workers()
+    )
     courses = _course_repository(headers, user_id)
     return MoodleSyncService(
         MoodleDateImportService(
@@ -2550,6 +2588,7 @@ def _moodle_sync_service(
             courses,
             AcademicDateRepository(_firestore(headers, user_id)),
             calendar_state=MoodleCalendarState(_firestore(headers, user_id), telemetry=telemetry),
+            persistence_workers=_moodle_date_persistence_workers(),
             telemetry=telemetry,
         ),
         MoodleContentDiscoveryService(
@@ -2581,6 +2620,7 @@ def _moodle_sync_service(
         ),
         connection_count=lambda: client.connection_count,
         telemetry=telemetry,
+        parallel_stages=True,
     )
 
 
@@ -2593,7 +2633,9 @@ def _unified_academic_sync_service(
 ) -> UnifiedAcademicSyncService:
     sessions = RequestCachedUFMGSessionStore(_ufmg_session_store(headers))
     enrollments = UFMGEnrollmentClient(telemetry=telemetry)
-    client = MoodleStructuredDatesClient(telemetry=telemetry)
+    client = MoodleStructuredDatesClient(
+        telemetry=telemetry, calendar_workers=_moodle_calendar_workers()
+    )
     firestore = _firestore(headers, user_id)
     courses = CourseRepository(firestore)
     dates = AcademicDateRepository(firestore)
@@ -2614,6 +2656,7 @@ def _unified_academic_sync_service(
             courses,
             dates,
             calendar_state=MoodleCalendarState(firestore, telemetry=telemetry),
+            persistence_workers=_moodle_date_persistence_workers(),
             telemetry=telemetry,
         ),
         telemetry=telemetry,
@@ -2625,6 +2668,7 @@ def _unified_academic_sync_service(
             courses,
             dates,
             calendar_state=MoodleCalendarState(firestore, telemetry=telemetry),
+            persistence_workers=_moodle_date_persistence_workers(),
             telemetry=telemetry,
         ),
         MoodleContentDiscoveryService(
@@ -2656,6 +2700,7 @@ def _unified_academic_sync_service(
         ),
         connection_count=lambda: client.connection_count,
         telemetry=telemetry,
+        parallel_stages=True,
     )
     plans = MoodleTeachingPlanImportService(
         sessions,
@@ -2676,6 +2721,7 @@ def _unified_academic_sync_service(
         ),
         TeachingPlanReconciliationRepository(firestore, courses=courses, telemetry=telemetry),
         telemetry=telemetry,
+        plan_workers=4,
     )
 
 

@@ -147,3 +147,40 @@ def test_sync_saves_activity_snapshots_and_reports_failure_without_losing_other_
         fields["stage"] == "moodle_activity_snapshots" and "duration_ms" in fields
         for _, fields in logs
     )
+
+
+def test_parallel_sync_runs_independent_stages_and_emits_dependency_graph() -> None:
+    logs: list[tuple[str, dict[str, object]]] = []
+    seen_content: list[dict[str, object] | None] = []
+
+    def capture(user: str, now: int, content: dict[str, object] | None = None) -> dict[str, object]:
+        assert (user, now) == ("owner", 42)
+        seen_content.append(content)
+        return {"updated": 2, "failed": 0, "failed_courses": []}
+
+    result = MoodleSyncService(
+        _Stage({"created": 1}),
+        _Stage({"candidate_total": 2}),
+        _Stage({"direct_download_supported": True}),
+        snapshot_sync=capture,
+        telemetry=lambda event, fields: logs.append((event, dict(fields))),
+        parallel_stages=True,
+    ).sync("owner", now=42)
+
+    assert result["activities"] == {"updated": 2, "failed": 0, "failed_courses": []}
+    assert seen_content == [{"candidate_total": 2}]
+    graph = [fields for event, fields in logs if event == "sync_span_graph"]
+    assert graph and graph[0]["root"] == "moodle"
+    assert any(
+        node["name"] == "moodle_activity_snapshots"
+        and node["depends_on"] == ["moodle_content_discovery"]
+        for node in graph[0]["nodes"]
+    )
+
+    no_snapshot = MoodleSyncService(
+        _Stage({"created": 1}),
+        _Stage({"candidate_total": 2}),
+        _Stage({}),
+        parallel_stages=True,
+    ).sync("owner", now=42)
+    assert "activities" not in no_snapshot

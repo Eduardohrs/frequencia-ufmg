@@ -139,6 +139,35 @@ def test_import_matches_local_courses_and_reports_unmatched_events() -> None:
     }
 
 
+def test_import_persists_independent_course_dates_with_bounded_workers() -> None:
+    dates = _Dates()
+    service = MoodleDateImportService(
+        _Sessions(),
+        _Client(
+            [
+                _event(),
+                _event(source_id="911", course_shortname="Alemão LA631", kind="event"),
+            ]
+        ),
+        _Courses(),
+        dates,
+        persistence_workers=2,
+    )
+
+    result = service.import_dates("user", now=123)
+
+    assert result["matched"] == 2
+    assert result["created"] == 2
+    assert {course_id for course_id, _ in dates.imports} == {"dcc203", "la631"}
+
+
+def test_import_rejects_invalid_persistence_worker_count() -> None:
+    with pytest.raises(ValueError, match="date persistence concurrency"):
+        MoodleDateImportService(
+            _Sessions(), _Client([]), _Courses(), _Dates(), persistence_workers=0
+        )
+
+
 def test_import_does_not_guess_when_two_codes_match() -> None:
     dates = _Dates()
     service = MoodleDateImportService(

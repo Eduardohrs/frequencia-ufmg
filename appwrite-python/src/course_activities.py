@@ -211,6 +211,28 @@ def _clean_bulk_detail(detail: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in detail.items() if not key.startswith("_bulk_")}
 
 
+def _empty_activity_detail(entry: dict[str, Any], term: str) -> dict[str, Any]:
+    """Persist an honest index-only activity when Moodle exposes no detail.
+
+    This is deliberately different from a transport fallback: the official
+    bulk response was successful, but the installation returned no optional
+    description/attachment fields.  A blank value is therefore known data,
+    not a reason to issue one HTML request per activity.
+    """
+
+    return {
+        **entry,
+        "description": "",
+        "dates_text": "",
+        "has_due_date": False,
+        "submission_state": "unknown",
+        "submission_text": "",
+        "attachments": [],
+        "files": [],
+        "term": term,
+    }
+
+
 def _clean_activity_detail(detail: dict[str, Any]) -> dict[str, Any]:
     """Remove bulk and HTML diagnostic fields before persisting a snapshot."""
 
@@ -324,6 +346,7 @@ class CourseActivityService:
         policy: CourseSyncPolicy | None = None,
         force: bool = False,
         max_workers: int = DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY,
+        update_workers: int = 1,
     ) -> None:
         self._courses, self._catalog, self._sessions = courses, catalog, sessions
         self._client, self._tokens = client, tokens
@@ -332,6 +355,9 @@ class CourseActivityService:
         self._max_workers = min(
             max(MIN_ACTIVITY_SNAPSHOT_CONCURRENCY, max_workers), MAX_ACTIVITY_SNAPSHOT_CONCURRENCY
         )
+        if not 1 <= update_workers <= MAX_ACTIVITY_SNAPSHOT_CONCURRENCY:
+            raise ValueError("invalid activity update concurrency")
+        self._update_workers = update_workers
         self._catalog_reads = 0
     def _source(
         self,
@@ -383,6 +409,7 @@ class CourseActivityService:
         module_bulk_activities = 0
         module_bulk_calls = 0
         module_bulk_failures = 0
+        html_skipped = 0
         updates_checked = 0
         updates_changed = 0
         activity_entries_seen = 0
@@ -484,6 +511,7 @@ class CourseActivityService:
                         )
                         bulk_fallbacks += _metric(capture_result, "bulk_fallbacks")
                         html_activities += _metric(capture_result, "html_count")
+                        html_skipped += _metric(capture_result, "html_skipped_count")
                         module_bulk_activities += _metric(capture_result, "module_bulk_count")
                         module_bulk_calls += _metric(capture_result, "module_bulk_calls")
                         module_bulk_failures += _metric(capture_result, "module_bulk_failures")
@@ -627,6 +655,7 @@ class CourseActivityService:
                 "bulk_submission_unknown": bulk_submission_unknown,
                 "bulk_fallbacks": bulk_fallbacks,
                 "html_activities": html_activities,
+                "html_skipped_count": html_skipped,
                 "module_bulk_activities": module_bulk_activities,
                 "module_bulk_calls": module_bulk_calls,
                 "module_bulk_failures": module_bulk_failures,
@@ -713,8 +742,9 @@ class CourseActivityService:
                         )
 
                     changed_by_course: dict[int, set[int]] = {}
-                    for moodle_course_id in sorted(set(course_by_position.values())):
-                        updates_checked += 1
+                    update_course_ids = sorted(set(course_by_position.values()))
+
+                    def fetch_updates(moodle_course_id: int) -> tuple[int, set[int]]:
                         changed_ids = self._client.activity_updates_since(
                             session.token,
                             term=course["term"],
@@ -725,7 +755,24 @@ class CourseActivityService:
                             type(value) is int for value in changed_ids
                         ):
                             raise InvalidMoodleResponse("activity_updates_shape")
-                        changed_by_course[moodle_course_id] = changed_ids
+                        return moodle_course_id, changed_ids
+
+                    if self._update_workers == 1 or len(update_course_ids) <= 1:
+                        update_results = [
+                            fetch_updates(course_id) for course_id in update_course_ids
+                        ]
+                    else:
+                        with ThreadPoolExecutor(
+                            max_workers=min(self._update_workers, len(update_course_ids)),
+                            thread_name_prefix="moodle-activity-updates",
+                        ) as pool:
+                            update_futures = [
+                                pool.submit(fetch_updates, course_id)
+                                for course_id in update_course_ids
+                            ]
+                            update_results = [future.result() for future in update_futures]
+                    updates_checked += len(update_results)
+                    changed_by_course.update(update_results)
                     for position, entry in enumerate(entries):
                         if int(str(entry["source_id"])) in changed_by_course.get(
                             course_by_position[position], set()
@@ -762,6 +809,7 @@ class CourseActivityService:
         module_bulk_count = 0
         module_bulk_calls = 0
         module_bulk_failures = 0
+        html_skipped = 0
         html_positions = set(changed_positions)
         html_fallback_reasons: dict[int, str] = {
             position: "no_structured_detail" for position in changed_positions
@@ -977,6 +1025,7 @@ class CourseActivityService:
                         )
                         continue
                     module_bulk_successes = 0
+                    module_bulk_fallback_reasons: list[str] = []
                     for position in positions:
                         entry = entries[position]
                         detail = module_details.get(str(entry["source_id"]))
@@ -987,6 +1036,7 @@ class CourseActivityService:
                                 else "missing_module_bulk_fields"
                             )
                             html_fallback_reasons[position] = reason
+                            module_bulk_fallback_reasons.append(reason)
                             _count_fallback(fallback_by_kind, fallback_reasons, str(kind), reason)
                             _emit(
                                 self._telemetry,
@@ -1011,6 +1061,39 @@ class CourseActivityService:
                         module_bulk_successes += 1
                         bulk_submission_unknown += int(
                             clean_detail.get("submission_state") == "unknown"
+                        )
+                    # UFMG's type-specific endpoint can return a complete
+                    # activity map while omitting both optional fields for
+                    # every item.  In that case HTML is not an enrichment
+                    # source (the production run proved it returns the same
+                    # empty values), so avoid the N+1 page crawl.  Missing
+                    # module IDs and transport/shape failures still retain
+                    # the real HTML fallback below.
+                    if (
+                        module_bulk_successes == 0
+                        and len(module_bulk_fallback_reasons) == len(positions)
+                        and module_bulk_fallback_reasons
+                        and all(
+                            reason == "missing_module_bulk_fields"
+                            for reason in module_bulk_fallback_reasons
+                        )
+                    ):
+                        for position in positions:
+                            activities[position] = _empty_activity_detail(
+                                entries[position], course["term"]
+                            )
+                            html_positions.discard(position)
+                        html_skipped += len(positions)
+                        _emit(
+                            self._telemetry,
+                            "moodle_activity_html_fallback_skipped",
+                            {
+                                **fields,
+                                "moodle_course_id": moodle_course_id,
+                                "kind": kind,
+                                "reason": "module_bulk_empty_optional_fields",
+                                "activity_count": len(positions),
+                            },
                         )
                     if module_bulk_capabilities is not None and module_bulk_successes == 0:
                         module_bulk_capabilities[kind] = False
@@ -1168,6 +1251,7 @@ class CourseActivityService:
                 "bulk_submission_unknown": bulk_submission_unknown,
                 "bulk_fallbacks": bulk_fallbacks,
                 "html_count": len(html_positions),
+                "html_skipped_count": html_skipped,
                 "updates_checked": updates_checked,
                 "updates_changed": updates_changed,
             },
@@ -1180,6 +1264,7 @@ class CourseActivityService:
             "bulk_submission_unknown": bulk_submission_unknown,
             "bulk_fallbacks": bulk_fallbacks,
             "html_count": len(html_positions),
+            "html_skipped_count": html_skipped,
             "module_bulk_count": module_bulk_count,
             "module_bulk_calls": module_bulk_calls,
             "module_bulk_failures": module_bulk_failures,

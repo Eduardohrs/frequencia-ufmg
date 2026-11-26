@@ -1,6 +1,7 @@
 """Orchestrate one bounded academic sync and surface only reviewable exceptions."""
 
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from time import monotonic
 from typing import Protocol, cast
@@ -61,6 +62,7 @@ class UnifiedAcademicSyncService:
         *,
         telemetry: Telemetry | None = None,
         monotonic: Callable[[], float] = monotonic,
+        plan_workers: int = 1,
     ) -> None:
         self._siga = siga
         self._moodle = moodle
@@ -68,6 +70,9 @@ class UnifiedAcademicSyncService:
         self._reconciler = reconciler
         self._telemetry = telemetry
         self._monotonic = monotonic
+        if not 1 <= plan_workers <= 8:
+            raise ValueError("invalid teaching plan concurrency")
+        self._plan_workers = plan_workers
 
     def sync(self, user_id: str, *, now: int) -> dict[str, object]:
         siga = self._timed("siga", lambda: self._siga.sync_siga(user_id, now=now))
@@ -83,6 +88,7 @@ class UnifiedAcademicSyncService:
             "review_required": 0,
         }
         exceptions: list[dict[str, object]] = []
+        pending: list[tuple[dict[str, object], int]] = []
         for course in courses:
             candidates = _canonical_teaching_plans(course)
             if not candidates:
@@ -92,103 +98,24 @@ class UnifiedAcademicSyncService:
                 summary["review_required"] += 1
                 exceptions.append(_exception(course, "ambiguous_teaching_plan", len(candidates)))
                 continue
+            pending.append((course, int(cast(str, candidates[0]["source_id"]))))
 
-            source_id = int(cast(str, candidates[0]["source_id"]))
-            course_id = cast(str, course["course_id"])
-            term = cast(str, course["term"])
-            try:
-                imported_plan = self._timed(
-                    "teaching_plan_import",
-                    partial(
-                        self._plans.import_plan,
-                        user_id,
-                        course_id=course_id,
-                        term=term,
-                        source_id=source_id,
-                        now=now,
-                    ),
-                    course=course,
-                )
-            except _FATAL_FAILURES:
-                raise
-            except Exception as error:
-                summary["review_required"] += 1
-                exceptions.append(_unavailable_exception(course))
-                self._record_course_failure(
-                    course,
-                    source_id=source_id,
-                    stage="teaching_plan_import",
-                    error=error,
-                )
-                continue
-            if imported_plan.get("plan") == "unavailable":
-                summary["review_required"] += 1
-                exceptions.append(_unavailable_exception(course))
-                continue
-            if imported_plan.get("plan") == "deferred":
-                summary["unchanged"] += 1
-                continue
-            if imported_plan.get("plan") == "not_published":
-                summary["review_required"] += 1
-                exceptions.append(_exception(course, "teaching_plan_not_published", 1))
-                self._emit(
-                    "academic_sync_plan_not_published",
-                    {
-                        "course_id": course_id,
-                        "course_code": course["course_code"],
-                        "term": term,
-                        "source_id": source_id,
-                        "reason": "explicitly_not_published",
-                        "preserved_existing_data": True,
-                    },
-                )
-                continue
-            summary["imported"] += 1
-            try:
-                preview = self._timed(
-                    "teaching_plan_reconciliation",
-                    partial(self._reconciler.reconcile, course_id, apply=False),
-                    course=course,
-                )
-            except _FATAL_FAILURES:
-                raise
-            except Exception as error:
-                summary["review_required"] += 1
-                exceptions.append(_unavailable_exception(course))
-                self._record_course_failure(
-                    course,
-                    source_id=source_id,
-                    stage="teaching_plan_reconciliation",
-                    error=error,
-                )
-                continue
-            if _requires_review(preview):
-                summary["review_required"] += 1
-                exceptions.append(_reconciliation_exception(course, preview))
-                continue
-            changes = cast(list[object], preview["changes"])
-            if not changes:
-                summary["unchanged"] += 1
-                continue
-            try:
-                applied = self._timed(
-                    "teaching_plan_apply",
-                    partial(self._reconciler.reconcile, course_id, apply=True),
-                    course=course,
-                )
-            except _FATAL_FAILURES:
-                raise
-            except Exception as error:
-                summary["review_required"] += 1
-                exceptions.append(_unavailable_exception(course))
-                self._record_course_failure(
-                    course,
-                    source_id=source_id,
-                    stage="teaching_plan_apply",
-                    error=error,
-                )
-                continue
-            summary["applied"] += cast(int, applied["applied"])
+        # Plans are independent after content discovery.  Keep the default
+        # serial mode for embedders/tests, while production opts into a small
+        # bounded pool so one slow Diário report cannot hold every other plan.
+        with ThreadPoolExecutor(
+            max_workers=self._plan_workers, thread_name_prefix="plan-sync"
+        ) as pool:
+            futures = [
+                pool.submit(self._sync_one_plan, user_id, course, source_id, now)
+                for course, source_id in pending
+            ]
+            for future in futures:
+                outcome = future.result()
+                outcome_summary = cast(dict[str, int], outcome["summary"])
+                for key in ("available", "imported", "applied", "unchanged", "review_required"):
+                    summary[key] += outcome_summary[key]
+                exceptions.extend(cast(list[dict[str, object]], outcome["exceptions"]))
 
         if len(exceptions) > 50:
             raise ValueError("too many academic sync exceptions")
@@ -207,6 +134,33 @@ class UnifiedAcademicSyncService:
                 "overlap_policy": "plan_assessments_reconcile_into_course_dates",
             },
         )
+        if self._plan_workers > 1:
+            self._emit(
+                "sync_span_graph",
+                {
+                    "root": "academic_sync",
+                    "nodes": [
+                        {"name": "siga", "depends_on": [], "parallel_group": None},
+                        {"name": "moodle", "depends_on": ["siga"], "parallel_group": None},
+                        {
+                            "name": "teaching_plan_import",
+                            "depends_on": ["moodle"],
+                            "parallel_group": "teaching_plans",
+                        },
+                        {
+                            "name": "teaching_plan_reconciliation",
+                            "depends_on": ["teaching_plan_import"],
+                            "parallel_group": "teaching_plans",
+                        },
+                        {
+                            "name": "teaching_plan_apply",
+                            "depends_on": ["teaching_plan_reconciliation"],
+                            "parallel_group": "teaching_plans",
+                        },
+                    ],
+                    "join": "academic_sync_result",
+                },
+            )
         return {
             "siga": siga,
             "moodle": {
@@ -222,6 +176,108 @@ class UnifiedAcademicSyncService:
             "teaching_plans": summary,
             "exceptions": exceptions,
         }
+
+    def _sync_one_plan(
+        self,
+        user_id: str,
+        course: dict[str, object],
+        source_id: int,
+        now: int,
+    ) -> dict[str, object]:
+        summary = {
+            "available": 0,
+            "imported": 0,
+            "applied": 0,
+            "unchanged": 0,
+            "review_required": 0,
+        }
+        exceptions: list[dict[str, object]] = []
+        course_id = cast(str, course["course_id"])
+        term = cast(str, course["term"])
+        try:
+            imported_plan = self._timed(
+                "teaching_plan_import",
+                partial(
+                    self._plans.import_plan,
+                    user_id,
+                    course_id=course_id,
+                    term=term,
+                    source_id=source_id,
+                    now=now,
+                ),
+                course=course,
+            )
+        except _FATAL_FAILURES:
+            raise
+        except Exception as error:
+            summary["review_required"] += 1
+            exceptions.append(_unavailable_exception(course))
+            self._record_course_failure(
+                course, source_id=source_id, stage="teaching_plan_import", error=error
+            )
+            return {"summary": summary, "exceptions": exceptions}
+        if imported_plan.get("plan") == "unavailable":
+            summary["review_required"] += 1
+            exceptions.append(_unavailable_exception(course))
+            return {"summary": summary, "exceptions": exceptions}
+        if imported_plan.get("plan") == "deferred":
+            summary["unchanged"] += 1
+            return {"summary": summary, "exceptions": exceptions}
+        if imported_plan.get("plan") == "not_published":
+            summary["review_required"] += 1
+            exceptions.append(_exception(course, "teaching_plan_not_published", 1))
+            self._emit(
+                "academic_sync_plan_not_published",
+                {
+                    "course_id": course_id,
+                    "course_code": course["course_code"],
+                    "term": term,
+                    "source_id": source_id,
+                    "reason": "explicitly_not_published",
+                    "preserved_existing_data": True,
+                },
+            )
+            return {"summary": summary, "exceptions": exceptions}
+        summary["imported"] += 1
+        try:
+            preview = self._timed(
+                "teaching_plan_reconciliation",
+                partial(self._reconciler.reconcile, course_id, apply=False),
+                course=course,
+            )
+        except _FATAL_FAILURES:
+            raise
+        except Exception as error:
+            summary["review_required"] += 1
+            exceptions.append(_unavailable_exception(course))
+            self._record_course_failure(
+                course, source_id=source_id, stage="teaching_plan_reconciliation", error=error
+            )
+            return {"summary": summary, "exceptions": exceptions}
+        if _requires_review(preview):
+            summary["review_required"] += 1
+            exceptions.append(_reconciliation_exception(course, preview))
+            return {"summary": summary, "exceptions": exceptions}
+        if not cast(list[object], preview["changes"]):
+            summary["unchanged"] += 1
+            return {"summary": summary, "exceptions": exceptions}
+        try:
+            applied = self._timed(
+                "teaching_plan_apply",
+                partial(self._reconciler.reconcile, course_id, apply=True),
+                course=course,
+            )
+        except _FATAL_FAILURES:
+            raise
+        except Exception as error:
+            summary["review_required"] += 1
+            exceptions.append(_unavailable_exception(course))
+            self._record_course_failure(
+                course, source_id=source_id, stage="teaching_plan_apply", error=error
+            )
+            return {"summary": summary, "exceptions": exceptions}
+        summary["applied"] += cast(int, applied["applied"])
+        return {"summary": summary, "exceptions": exceptions}
 
     def _timed(
         self,

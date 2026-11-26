@@ -123,15 +123,35 @@ def parse_teaching_plan_html(markup: str) -> dict[str, object]:
             ):
                 section = "schedule"
                 continue
-            if section == "assessments" and len(row) == 7:
-                assessments.append(_assessment(row))
+            if section == "assessments" and len(row) == 6:
+                # Empty ``Data/Hora`` cells are omitted by the HTML parser;
+                # Jasper therefore leaves a compact six-cell positional row.
+                _required(row[0])
+                _required(row[1])
+                _required(row[2])
+                _optional(row[3])
+                _decimal(row[4])
+                _decimal(row[5])
+                undated_assessment_total += 1
+            elif section == "assessments" and len(row) == 7:
+                # Jasper emits two valid layouts.  Some reports repeat the
+                # labels (``Data/Hora:``, ``Valor:``, ...) in a data row and
+                # leave the date blank.  Do not feed that label row into the
+                # positional parser; the labeled pass below handles it.
+                if not _looks_like_labeled_assessment_row(row):
+                    assessments.append(_assessment(row))
             elif section == "criteria" and len(row) == 2:
                 criteria.append({"description": _required(row[0]), "value": _decimal(row[1])})
             elif section == "schedule" and len(row) == 7:
                 schedule.append(_schedule_entry(row))
 
         if not assessments:
-            assessments, undated_assessment_total = _parse_labeled_assessments(rows)
+            labeled_assessments, labeled_undated = _parse_labeled_assessments(rows)
+            if labeled_assessments:
+                assessments = labeled_assessments
+                undated_assessment_total = labeled_undated
+            else:
+                undated_assessment_total += labeled_undated
     except ValueError:
         raise TeachingPlanParseError(
             "section_values",
@@ -200,6 +220,18 @@ def _header_token(value: str) -> str:
     }:
         return "num aula"
     return token
+
+
+def _looks_like_labeled_assessment_row(row: list[str]) -> bool:
+    labels = {"cod", "cod avl", "tipo", "nome", "data/hora", "local", "valor", "peso"}
+    normalized = [_normalized(cell) for cell in row]
+    # A normal positional row can legitimately contain values such as
+    # ``Local`` or ``Tipo``.  Treat it as the Jasper label/value layout only
+    # when at least two label cells are present and one is explicitly marked
+    # with a colon (the observed report format: ``Data/Hora:``, ``Valor:``).
+    label_count = sum(_header_token(value) in labels for value in normalized)
+    explicit_label = any(":" in value and _header_token(value) in labels for value in normalized)
+    return label_count >= 2 and explicit_label
 
 
 def _assessment(row: list[str]) -> dict[str, object]:

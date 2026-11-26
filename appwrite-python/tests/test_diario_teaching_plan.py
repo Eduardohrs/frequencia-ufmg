@@ -347,6 +347,52 @@ def test_accepts_observed_plan_with_only_a_schedule() -> None:
     assert len(result["schedule"]) == 1
 
 
+def test_counts_positional_undated_assessment_without_html_labels() -> None:
+    html = """
+      <table>
+        <tr><td>Período:</td><td>2026/2</td><td>Atividade:</td>
+          <td>DIG ELE065 ANALISE DE CIRCUITOS ELETRICOS II</td></tr>
+        <tr><td>Turma:</td><td>TTEC</td></tr>
+        <tr><th>Cód.</th><th>Tipo</th><th>Nome</th><th>Data/Hora</th>
+          <th>Local</th><th>Valor</th><th>Peso</th></tr>
+        <tr><td>AV1</td><td>PROVA</td><td>Prova</td><td></td>
+          <td>Local</td><td>35,00</td><td>1,00</td></tr>
+        <tr><td>Aula</td><td>Data</td><td>Dia</td><td>Horas Aula</td>
+          <td>Horário</td><td>Tipo</td><td>Assunto</td></tr>
+        <tr><td>1</td><td>07/08/2026</td><td>Sex</td><td>2</td>
+          <td>19:00 - 20:40</td><td>Teórica</td><td>Introdução</td></tr>
+      </table>
+    """
+
+    result = parse_teaching_plan_html(html)
+
+    assert result["assessments"] == []
+    assert result["undated_assessment_total"] == 1
+
+
+def test_skips_repeated_label_row_inside_positional_assessment_section() -> None:
+    html = """
+      <table>
+        <tr><td>Período:</td><td>2026/2</td><td>Atividade:</td>
+          <td>DIG ELE065 ANALISE DE CIRCUITOS ELETRICOS II</td></tr>
+        <tr><td>Turma:</td><td>TTEC</td></tr>
+        <tr><th>Cód.</th><th>Tipo</th><th>Nome</th><th>Data/Hora</th>
+          <th>Local</th><th>Valor</th><th>Peso</th></tr>
+        <tr><td>Código da avaliação:</td><td>Tipo:</td><td>Nome:</td><td>Data/Hora:</td>
+          <td>Local:</td><td>Valor:</td><td>Peso:</td></tr>
+        <tr><td>Aula</td><td>Data</td><td>Dia</td><td>Horas Aula</td>
+          <td>Horário</td><td>Tipo</td><td>Assunto</td></tr>
+        <tr><td>1</td><td>07/08/2026</td><td>Sex</td><td>2</td>
+          <td>19:00 - 20:40</td><td>Teórica</td><td>Introdução</td></tr>
+      </table>
+    """
+
+    result = parse_teaching_plan_html(html)
+
+    assert result["assessments"] == []
+    assert len(result["schedule"]) == 1
+
+
 def test_labeled_assessment_rejects_incomplete_records() -> None:
     with pytest.raises(ValueError):
         _labeled_assessments([["Cód. Avl:", "AV1"], ["Cód. Avl:", "AV2"]])
