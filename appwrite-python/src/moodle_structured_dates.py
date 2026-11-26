@@ -6,6 +6,7 @@ import unicodedata
 from base64 import b64decode
 from collections import defaultdict
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
@@ -138,11 +139,15 @@ class MoodleStructuredDatesClient:
         opener: _Opener | None = None,
         timeout_seconds: float = 12,
         telemetry: Telemetry | None = None,
+        calendar_workers: int = 1,
     ) -> None:
         if timeout_seconds <= 0 or timeout_seconds > 30:
             raise ValueError("invalid Moodle timeout")
+        if not 1 <= calendar_workers <= 4:
+            raise ValueError("invalid calendar concurrency")
         self._timeout = timeout_seconds
         self._telemetry = telemetry
+        self._calendar_workers = calendar_workers
         self._jar: CookieJar | None
         if opener is None:
             jar = CookieJar()
@@ -184,8 +189,12 @@ class MoodleStructuredDatesClient:
         # One ajax call per small batch keeps each response below
         # MAX_RESPONSE_BYTES instead of failing the whole term at once.
         events: dict[str, dict[str, str]] = {}
-        for start in range(0, len(months), CALENDAR_BATCH_MONTHS):
-            chunk = months[start : start + CALENDAR_BATCH_MONTHS]
+        chunks = [
+            months[start : start + CALENDAR_BATCH_MONTHS]
+            for start in range(0, len(months), CALENDAR_BATCH_MONTHS)
+        ]
+
+        def fetch_chunk(chunk: list[tuple[int, int]]) -> list[dict[str, str]]:
             calls = [
                 {
                     "index": index,
@@ -203,7 +212,7 @@ class MoodleStructuredDatesClient:
                 for index, (year, month) in enumerate(chunk)
             ]
             payload = self._ajax(root, ajax_path, sesskey, calls)
-            parsed = timed_stage(
+            return timed_stage(
                 "moodle_calendar_batch_parse",
                 partial(_parse_calendar, payload, len(calls)),
                 telemetry=self._telemetry,
@@ -215,6 +224,20 @@ class MoodleStructuredDatesClient:
                     "consumer": "academic_dates_and_agenda",
                 },
             )
+
+        if self._calendar_workers == 1 or len(chunks) <= 1:
+            parsed_batches = [fetch_chunk(chunk) for chunk in chunks]
+        else:
+            worker_count = min(self._calendar_workers, len(chunks))
+            with ThreadPoolExecutor(
+                max_workers=worker_count, thread_name_prefix="moodle-calendar"
+            ) as pool:
+                futures = [pool.submit(fetch_chunk, chunk) for chunk in chunks]
+                # Preserve deterministic conflict handling and event ordering
+                # even though the HTTP batches complete independently.
+                parsed_batches = [future.result() for future in futures]
+
+        for parsed in parsed_batches:
             for event in parsed:
                 previous = events.get(event["source_id"])
                 if previous is not None and previous != event:

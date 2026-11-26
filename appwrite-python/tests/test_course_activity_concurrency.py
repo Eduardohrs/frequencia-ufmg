@@ -268,6 +268,110 @@ def test_module_bulk_failures_keep_the_html_fallback(mode):
     )
 
 
+def test_empty_module_bulk_fields_skip_html_n_plus_one_when_all_ids_are_present():
+    class EmptyModuleBulkClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                str(source_id): {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+                for source_id in (1, 2)
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            return {
+                str(source_id): {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+                for source_id in (1, 2)
+            }
+
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1), _entry(2)]},
+        lambda *, source_id, kind: {"description": "should not be fetched", "attachments": []},
+        client_class=EmptyModuleBulkClient,
+    )
+    snapshots = _Snapshots()
+
+    assert service.sync_snapshots("owner", now=1, snapshots=snapshots)["failed"] == 0
+    assert client.fetch_calls == []
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["html_activities"] == 0
+    assert summary["html_skipped_count"] == 2
+    assert any(event == "moodle_activity_html_fallback_skipped" for event, _ in logs)
+
+
+def test_partial_module_bulk_fields_are_preserved_when_html_has_no_enrichment():
+    class PartialModuleBulkClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "Descrição estruturada",
+                    "dates_text": "Vencimento: 2026-12-01",
+                    "has_due_date": True,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": True,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+    service, client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: {
+            "description": "",
+            "dates_text": "",
+            "has_due_date": False,
+            "attachments": [],
+        },
+        client_class=PartialModuleBulkClient,
+    )
+    snapshots = _Snapshots()
+
+    assert service.sync_snapshots("owner", now=1, snapshots=snapshots)["failed"] == 0
+    saved = snapshots.saved["poo"]["activities"][0]
+    assert saved["description"] == "Descrição estruturada"
+    assert saved["dates_text"] == "Vencimento: 2026-12-01"
+    assert saved["has_due_date"] is True
+    assert client.fetch_calls == [1]
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["html_activities"] == 1
+    assert summary["html_skipped_count"] == 0
+
+
 def test_module_bulk_capability_failure_is_cached_for_later_courses():
     class ProbeClient(_IncrementalClient):
         def __init__(self, index, fetch):
@@ -364,6 +468,7 @@ def _build(
     fetch,
     *,
     max_workers=DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY,
+    update_workers=1,
     logs=None,
     client_class=_Client,
 ):
@@ -387,12 +492,15 @@ def _build(
         ),
         telemetry=lambda event, fields: logs.append((event, dict(fields))),
         max_workers=max_workers,
+        update_workers=update_workers,
     )
     return service, client, logs
 
 
-def _bare_service(max_workers=None) -> CourseActivityService:
+def _bare_service(max_workers=None, update_workers=None) -> CourseActivityService:
     kwargs = {} if max_workers is None else {"max_workers": max_workers}
+    if update_workers is not None:
+        kwargs["update_workers"] = update_workers
     return CourseActivityService(
         SimpleNamespace(
             get_course=lambda _course_id: _course("poo"),
@@ -534,6 +642,7 @@ def test_incremental_sync_checks_each_metaturma_course():
         index,
         lambda *, source_id, kind: {"description": "html", "attachments": []},
         client_class=MetaturmaClient,
+        update_workers=2,
     )
     snapshots = _Snapshots()
     service.sync_snapshots("owner", now=1_793_188_800, snapshots=snapshots)
@@ -1282,6 +1391,11 @@ def test_constructor_clamps_max_workers_into_bounds(max_workers, expected):
 
 def test_default_max_workers_is_the_conservative_default():
     assert _bare_service()._max_workers == DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY == 8
+
+
+def test_constructor_rejects_invalid_update_worker_count():
+    with pytest.raises(ValueError, match="invalid activity update concurrency"):
+        _bare_service(update_workers=0)
 
 
 @pytest.mark.parametrize(

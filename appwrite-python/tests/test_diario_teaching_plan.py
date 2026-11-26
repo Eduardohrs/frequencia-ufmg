@@ -295,6 +295,31 @@ def test_parses_observed_jasper_label_value_assessments_with_blank_location() ->
     ]
 
 
+def test_label_value_assessment_row_with_six_cells_is_not_positional() -> None:
+    html = """
+      <table>
+        <tr><td>Período:</td><td>2026/2</td><td>Atividade:</td>
+          <td>DIG MAT002 CÁLCULO DIFERENCIAL II</td></tr>
+        <tr><td>Turma:</td><td>T1</td></tr>
+        <tr><th>Cód.</th><th>Tipo</th><th>Nome</th><th>Data/Hora</th>
+          <th>Local</th><th>Valor</th><th>Peso</th></tr>
+        <tr><td>Cód. Avl:</td><td>AV1</td><td>Tipo:</td><td>PROVA</td>
+          <td>Nome:</td><td>Prova sem data</td></tr>
+        <tr><td>Data/Hora:</td><td>09/09/2026 20:50</td><td>Local:</td>
+          <td>Valor:</td><td>35,00</td><td>Peso:</td><td>1,00</td></tr>
+        <tr><td>Aula</td><td>Data</td><td>Dia</td><td>Num. Aula</td>
+          <td>Horário</td><td>Tipo</td><td>Assunto</td></tr>
+        <tr><td>1</td><td>05/08/2026</td><td>Qua</td><td>2</td>
+          <td>20:55 - 22:35</td><td>Teórica</td><td>Integrais</td></tr>
+      </table>
+    """
+
+    result = parse_teaching_plan_html(html)
+
+    assert len(result["assessments"]) == 1
+    assert result["assessments"][0]["code"] == "AV1"
+
+
 def test_accepts_observed_plan_with_undated_assessments_and_horas_aula() -> None:
     html = """
       <table>
@@ -344,6 +369,52 @@ def test_accepts_observed_plan_with_only_a_schedule() -> None:
     assert result["assessments"] == []
     assert result["undated_assessment_total"] == 0
     assert result["criteria"] == []
+    assert len(result["schedule"]) == 1
+
+
+def test_counts_positional_undated_assessment_without_html_labels() -> None:
+    html = """
+      <table>
+        <tr><td>Período:</td><td>2026/2</td><td>Atividade:</td>
+          <td>DIG ELE065 ANALISE DE CIRCUITOS ELETRICOS II</td></tr>
+        <tr><td>Turma:</td><td>TTEC</td></tr>
+        <tr><th>Cód.</th><th>Tipo</th><th>Nome</th><th>Data/Hora</th>
+          <th>Local</th><th>Valor</th><th>Peso</th></tr>
+        <tr><td>AV1</td><td>PROVA</td><td>Prova</td><td></td>
+          <td>Local</td><td>35,00</td><td>1,00</td></tr>
+        <tr><td>Aula</td><td>Data</td><td>Dia</td><td>Horas Aula</td>
+          <td>Horário</td><td>Tipo</td><td>Assunto</td></tr>
+        <tr><td>1</td><td>07/08/2026</td><td>Sex</td><td>2</td>
+          <td>19:00 - 20:40</td><td>Teórica</td><td>Introdução</td></tr>
+      </table>
+    """
+
+    result = parse_teaching_plan_html(html)
+
+    assert result["assessments"] == []
+    assert result["undated_assessment_total"] == 1
+
+
+def test_skips_repeated_label_row_inside_positional_assessment_section() -> None:
+    html = """
+      <table>
+        <tr><td>Período:</td><td>2026/2</td><td>Atividade:</td>
+          <td>DIG ELE065 ANALISE DE CIRCUITOS ELETRICOS II</td></tr>
+        <tr><td>Turma:</td><td>TTEC</td></tr>
+        <tr><th>Cód.</th><th>Tipo</th><th>Nome</th><th>Data/Hora</th>
+          <th>Local</th><th>Valor</th><th>Peso</th></tr>
+        <tr><td>Código da avaliação:</td><td>Tipo:</td><td>Nome:</td><td>Data/Hora:</td>
+          <td>Local:</td><td>Valor:</td><td>Peso:</td></tr>
+        <tr><td>Aula</td><td>Data</td><td>Dia</td><td>Horas Aula</td>
+          <td>Horário</td><td>Tipo</td><td>Assunto</td></tr>
+        <tr><td>1</td><td>07/08/2026</td><td>Sex</td><td>2</td>
+          <td>19:00 - 20:40</td><td>Teórica</td><td>Introdução</td></tr>
+      </table>
+    """
+
+    result = parse_teaching_plan_html(html)
+
+    assert result["assessments"] == []
     assert len(result["schedule"]) == 1
 
 

@@ -41,6 +41,18 @@ from ufmg_session_store import (
 )
 
 
+def test_sync_concurrency_environment_falls_back_to_safe_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MOODLE_CALENDAR_CONCURRENCY", "not-an-int")
+    monkeypatch.setenv("MOODLE_DATE_PERSISTENCE_CONCURRENCY", "not-an-int")
+    monkeypatch.setenv("MOODLE_ACTIVITY_UPDATE_CONCURRENCY", "not-an-int")
+
+    assert function._moodle_calendar_workers() == 3
+    assert function._moodle_date_persistence_workers() == 4
+    assert function._moodle_activity_update_workers() == 4
+
+
 @dataclass
 class FakeRequest:
     method: str
@@ -2264,6 +2276,7 @@ def test_moodle_date_import_factory_composes_only_server_side_dependencies(
             *dependencies: object,
             calendar_state: object = None,
             telemetry: object = None,
+                persistence_workers: int = 1,
         ) -> None:
             nonlocal captured
             captured = dependencies

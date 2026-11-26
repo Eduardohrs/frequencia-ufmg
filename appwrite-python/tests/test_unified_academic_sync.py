@@ -439,6 +439,34 @@ def test_sync_does_not_hide_global_dependency_failures() -> None:
             service.sync("user", now=42)
 
 
+def test_parallel_plan_workers_emit_dependency_graph() -> None:
+    telemetry: list[tuple[str, dict[str, object]]] = []
+    service = UnifiedAcademicSyncService(
+        _Siga(),
+        _Moodle([_course(), _course("MAT001")]),
+        _Plans(),
+        _Reconciler({"ele028": _preview(), "mat001": _preview()}),
+        telemetry=lambda event, fields: telemetry.append((event, dict(fields))),
+        plan_workers=2,
+    )
+
+    result = service.sync("user", now=42)
+
+    assert result["teaching_plans"]["available"] == 2
+    graph = [fields for event, fields in telemetry if event == "sync_span_graph"]
+    assert graph and graph[0]["root"] == "academic_sync"
+    assert any(
+        node["name"] == "teaching_plan_import"
+        and node["parallel_group"] == "teaching_plans"
+        for node in graph[0]["nodes"]
+    )
+
+
+def test_teaching_plan_worker_count_is_bounded() -> None:
+    with pytest.raises(ValueError, match="invalid teaching plan concurrency"):
+        UnifiedAcademicSyncService(_Siga(), _Moodle([]), _Plans(), _Reconciler({}), plan_workers=0)
+
+
 def test_sync_reports_duration_and_progress_for_each_slow_stage() -> None:
     ticks = iter([0.0, 0.4, 0.4, 1.1, 1.1, 2.0, 2.0, 2.3])
     telemetry: list[tuple[str, dict[str, object]]] = []

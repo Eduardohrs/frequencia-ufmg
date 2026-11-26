@@ -3,10 +3,11 @@
 import re
 from collections import defaultdict
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from functools import partial
 from time import monotonic
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from academic_sync_lineage import MOODLE_CALENDAR
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
@@ -59,13 +60,17 @@ class MoodleDateImportService:
         *,
         calendar_state: _CalendarState | None = None,
         telemetry: Telemetry | None = None,
+        persistence_workers: int = 1,
     ) -> None:
+        if not 1 <= persistence_workers <= 8:
+            raise ValueError("invalid date persistence concurrency")
         self._sessions = sessions
         self._client = client
         self._courses = courses
         self._dates = dates
         self._calendar_state = calendar_state
         self._telemetry = telemetry
+        self._persistence_workers = persistence_workers
 
     def _last_fetched_at(self, term: str) -> int | None:
         if self._calendar_state is None:
@@ -202,7 +207,9 @@ class MoodleDateImportService:
             for course in courses
             if str(course["id"]) not in unsafe_courses and course["term"] in completed_terms
         }
-        for course_id in sorted(set(grouped) | set(eligible)):
+        course_ids = sorted(set(grouped) | set(eligible))
+
+        def persist_course(course_id: str) -> dict[str, object]:
             values = grouped.get(course_id, [])
             course = course_by_id[course_id]
             fields: Mapping[str, object] = {
@@ -226,21 +233,42 @@ class MoodleDateImportService:
                     fields=fields,
                 )
             except Exception as error:
-                result["failed"] = result.get("failed", 0) + len(values)
-                failed_courses.append(
-                    {
+                return {
+                    "failed": len(values),
+                    "failed_course": {
                         "course_id": course_id,
                         "course_code": fields["course_code"],
                         "stage": "dates_persistence",
                         "reason": type(error).__name__,
                         "event_count": len(values),
-                    }
-                )
+                    },
+                }
+            return {"imported": imported}
+
+        if self._persistence_workers == 1 or len(course_ids) <= 1:
+            outcomes = [persist_course(course_id) for course_id in course_ids]
+        else:
+            with ThreadPoolExecutor(
+                max_workers=min(self._persistence_workers, len(course_ids)),
+                thread_name_prefix="moodle-date-persistence",
+            ) as pool:
+                futures = [pool.submit(persist_course, course_id) for course_id in course_ids]
+                # Consume in course-id order so summaries and failure lists stay
+                # deterministic even when Firestore calls finish out of order.
+                outcomes = [future.result() for future in futures]
+
+        for outcome in outcomes:
+            result["failed"] = result.get("failed", 0) + int(cast(int, outcome.get("failed", 0)))
+            failed_course = outcome.get("failed_course")
+            if isinstance(failed_course, dict):
+                failed_courses.append(failed_course)
+            imported = outcome.get("imported")
+            if not isinstance(imported, dict):
                 continue
             for field in ("created", "updated", "unchanged"):
-                result[field] += imported[field]
+                result[field] += int(imported[field])
             if imported.get("removed", 0):
-                result["removed"] = result.get("removed", 0) + imported["removed"]
+                result["removed"] = result.get("removed", 0) + int(imported["removed"])
         if failed_courses:
             result["failed_courses"] = failed_courses
         _emit(

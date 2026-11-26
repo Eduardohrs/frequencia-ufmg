@@ -122,7 +122,15 @@ class CourseSyncPolicy:
         # Callers inside one sync run may pass the already-loaded state so the
         # same document is not read twice per course.
         state = dict(state) if state is not None else self.state(course_id, source)
-        paused = self.manual_paused(course_id, key.split(":")[0]) if source == "plan" else False
+        # A force sync is an explicit request to refresh the source now.  Do
+        # not spend another Firestore round trip reading a manual pause that
+        # cannot affect this run; the preference remains intact for normal
+        # background syncs.
+        paused = (
+            self.manual_paused(course_id, key.split(":")[0])
+            if source == "plan" and not force
+            else False
+        )
         old_key = state.get("source_key")
         if old_key != key:
             state = {}

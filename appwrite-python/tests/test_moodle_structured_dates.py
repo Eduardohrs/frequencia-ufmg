@@ -2744,6 +2744,43 @@ def test_client_declares_each_method_in_a_multi_month_ajax_batch() -> None:
     ]
 
 
+def test_client_can_fetch_calendar_batches_in_parallel() -> None:
+    empty_batch = json.dumps(
+        [
+            {"error": False, "data": {"weeks": []}},
+            {"error": False, "data": {"weeks": []}},
+        ]
+    ).encode()
+    opener = _Opener(
+        [
+            _Response(
+                _saml_page(),
+                "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO",
+            ),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(
+                empty_batch,
+                "https://virtual.ufmg.br/20262/lib/ajax/service.php",
+                content_type="application/json",
+            ),
+            _Response(
+                empty_batch,
+                "https://virtual.ufmg.br/20262/lib/ajax/service.php",
+                content_type="application/json",
+            ),
+        ]
+    )
+
+    assert MoodleStructuredDatesClient(opener=opener, calendar_workers=2).fetch(
+        "private-ltpa-token",
+        term="2026-2",
+        months=[(2026, 1), (2026, 2), (2026, 3), (2026, 4)],
+    ) == []
+    assert len(opener.requests) == 4
+    with pytest.raises(ValueError, match="invalid calendar concurrency"):
+        MoodleStructuredDatesClient(opener=_Opener([]), calendar_workers=0)
+
+
 @pytest.mark.parametrize(
     "responses,exception",
     [
