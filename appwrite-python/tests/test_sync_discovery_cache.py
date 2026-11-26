@@ -148,6 +148,43 @@ def test_combined_discovery_limits_the_shared_activity_index(monkeypatch):
     assert error.value.reason == "activity_candidate_limit"
 
 
+def test_combined_discovery_limits_activities_per_course(monkeypatch):
+    monkeypatch.setattr(msd, "MAX_CANDIDATES", 2)
+    states = {
+        3701: [
+            _DCC203_CMS[0],
+            _DCC203_CMS[1],
+            {
+                **_DCC203_CMS[1],
+                "id": 105,
+                "name": "Trabalho 2",
+                "url": "https://virtual.ufmg.br/20262/mod/assign/view.php?id=105",
+            },
+        ],
+        4953: [
+            {
+                **_DCC203_CMS[1],
+                "id": 201,
+                "name": "Lista 1",
+                "url": "https://virtual.ufmg.br/20262/mod/assign/view.php?id=201",
+            },
+            {
+                **_DCC203_CMS[1],
+                "id": 202,
+                "name": "Lista 2",
+                "url": "https://virtual.ufmg.br/20262/mod/assign/view.php?id=202",
+            },
+        ],
+    }
+    client = _DiscoveryClient([], states_by_course=states)
+
+    result = client.discover_with_activities(
+        "token-a", term="2026-2", course_codes=["DCC203", "MAT001"]
+    )
+
+    assert [len(item["activity_candidates"]) for item in result] == [2, 2]
+
+
 def test_discovery_cache_keys_are_scoped_to_token_and_term():
     client = _DiscoveryClient([])
     client.discover("token-a", term="2026-2", course_codes=["DCC203"])

@@ -10,6 +10,7 @@ import firestore_rest as firestore_module
 from firestore_rest import (
     FirestoreAccessDenied,
     FirestoreNotFound,
+    FirestorePayloadTooLarge,
     FirestoreRequestRejected,
     FirestoreRestClient,
     FirestoreUnavailable,
@@ -202,6 +203,16 @@ def test_batch_get_user_documents_reads_a_json_array_response() -> None:
         "users/user/courses/course-a/materialCatalog/current",
         "fields": {"status": {"stringValue": "found"}},
     }
+
+
+def test_batch_get_reports_an_oversized_streamed_response(monkeypatch) -> None:
+    monkeypatch.setattr(firestore_module, "MAX_PAYLOAD_BYTES", 2_000)
+    client = FirestoreRestClient(
+        "project", "user", "token", transport=lambda *_: (200, b"{}" * 2_000)
+    )
+
+    with pytest.raises(FirestorePayloadTooLarge):
+        client.batch_get_user_documents([("courses", "known")])
 
 
 @pytest.mark.parametrize(

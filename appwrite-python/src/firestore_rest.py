@@ -59,6 +59,10 @@ class FirestoreUnavailable(FirestoreRestError):
     """Firestore could not provide a usable response."""
 
 
+class FirestorePayloadTooLarge(FirestoreUnavailable):
+    """A streamed response exceeded the bounded transport payload."""
+
+
 class FirestoreRestClient:
     """Read and write only below ``users/{verified uid}`` with a Firebase ID token."""
 
@@ -315,7 +319,11 @@ class FirestoreRestClient:
                     status_code=429,
                     error_code=_error_code(response_body),
                 )
-            if not 200 <= status < 300 or len(response_body) > MAX_PAYLOAD_BYTES:
+            if not 200 <= status < 300:
+                raise FirestoreUnavailable("Firestore is unavailable")
+            if len(response_body) > MAX_PAYLOAD_BYTES:
+                if streamed_json:
+                    raise FirestorePayloadTooLarge("Firestore response is too large")
                 raise FirestoreUnavailable("Firestore is unavailable")
             if not response_body and allow_empty:
                 outcome = "succeeded"

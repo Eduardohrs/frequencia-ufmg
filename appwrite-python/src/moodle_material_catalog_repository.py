@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from course_repository import validate_course_id
 from course_service import InvalidCourse
+from firestore_rest import FirestorePayloadTooLarge
 
 MAX_CANDIDATES = 500
 MAX_CATALOG_BYTES = 750_000
@@ -195,15 +196,27 @@ class MoodleMaterialCatalogRepository:
         ]
         batch_get = getattr(self._firestore, "batch_get_user_documents", None)
         if callable(batch_get):
-            documents = batch_get(paths)
-            if not isinstance(documents, dict) or set(documents) != set(paths):
-                raise InvalidMoodleMaterialCatalog("invalid Moodle material catalogue")
-            return {
-                course_id: None
-                if documents[path] is None
-                else _decode(documents[path])
-                for course_id, path in zip(course_ids, paths, strict=True)
-            }
+            documents: dict[tuple[str, ...], dict[str, Any] | None] = {}
+            pending_batches = [paths]
+            while pending_batches:
+                batch = pending_batches.pop()
+                try:
+                    loaded = batch_get(batch)
+                except FirestorePayloadTooLarge:
+                    if len(batch) == 1:
+                        documents[batch[0]] = self._load(batch[0][1])
+                        continue
+                    midpoint = len(batch) // 2
+                    pending_batches.extend((batch[:midpoint], batch[midpoint:]))
+                    continue
+                if not isinstance(loaded, dict) or set(loaded) != set(batch):
+                    raise InvalidMoodleMaterialCatalog("invalid Moodle material catalogue")
+                documents.update(loaded)
+            result: dict[str, dict[str, Any] | None] = {}
+            for course_id, path in zip(course_ids, paths, strict=True):
+                document = documents[path]
+                result[course_id] = None if document is None else _decode(document)
+            return result
         return {course_id: self._load(course_id) for course_id in course_ids}
 
     def _load(self, course_id: str) -> dict[str, Any] | None:

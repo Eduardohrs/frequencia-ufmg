@@ -286,7 +286,7 @@ class MoodleStructuredDatesClient:
                 },
             )
             total = 0
-            activity_total = 0
+            activity_totals: dict[str, int] = defaultdict(int)
             grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
             grouped_activities: dict[str, list[dict[str, object]]] = defaultdict(list)
             for (code, course, origin), state in zip(matched, states, strict=True):
@@ -300,8 +300,8 @@ class MoodleStructuredDatesClient:
                 )
                 if include_activities and not activities:
                     activity_candidates = state["activities"]
-                    activity_total += len(activity_candidates)
-                    if activity_total > MAX_CANDIDATES:
+                    activity_totals[code] += len(activity_candidates)
+                    if activity_totals[code] > MAX_CANDIDATES:
                         raise InvalidMoodleResponse("activity_candidate_limit")
                     grouped_activities[code].extend(
                         candidate | {"origin": origin, "moodle_course_id": str(course["id"])}

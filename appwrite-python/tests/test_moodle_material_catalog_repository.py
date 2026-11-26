@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 import moodle_material_catalog_repository as catalog_module
+from firestore_rest import FirestorePayloadTooLarge
 from moodle_material_catalog_repository import (
     MAX_CATALOG_BYTES,
     InvalidMoodleMaterialCatalog,
@@ -69,6 +70,20 @@ class _BatchReadFirestore(_BatchFirestore):
             )
             for path in paths
         }
+
+
+class _OversizedBatchReadFirestore(_BatchReadFirestore):
+    def batch_get_user_documents(self, paths):
+        if len(paths) > 1:
+            self.batch_reads.append(list(paths))
+            raise FirestorePayloadTooLarge()
+        return super().batch_get_user_documents(paths)
+
+
+class _AlwaysOversizedBatchReadFirestore(_BatchReadFirestore):
+    def batch_get_user_documents(self, paths):
+        self.batch_reads.append(list(paths))
+        raise FirestorePayloadTooLarge()
 
 
 def _candidate(**changes: object) -> dict[str, object]:
@@ -171,6 +186,35 @@ def test_reconcile_and_list_use_one_batch_read_for_known_current_documents() -> 
          {"id": "course-b", "code": "MAT001", "term": "2026-2"}]
     )
     assert len(firestore.batch_reads) == 2
+
+
+def test_load_many_splits_an_oversized_batch_before_individual_reads() -> None:
+    firestore = _OversizedBatchReadFirestore()
+    repository = MoodleMaterialCatalogRepository(firestore, now=lambda: NOW)
+    courses = [_course(), _course(course_id="course-b", course_code="MAT001")]
+
+    repository.reconcile(courses)
+
+    assert firestore.batch_reads == [
+        [
+            ("courses", "course-a", "materialCatalog", "current"),
+            ("courses", "course-b", "materialCatalog", "current"),
+        ],
+        [("courses", "course-b", "materialCatalog", "current")],
+        [("courses", "course-a", "materialCatalog", "current")],
+    ]
+
+
+def test_load_many_falls_back_to_a_single_document_read() -> None:
+    firestore = _AlwaysOversizedBatchReadFirestore()
+    repository = MoodleMaterialCatalogRepository(firestore, now=lambda: NOW)
+
+    result = repository.reconcile([_course()])
+
+    assert result["created"] == 1
+    assert firestore.batch_reads == [
+        [("courses", "course-a", "materialCatalog", "current")]
+    ]
 
 
 def test_reconcile_rejects_an_incomplete_batch_read() -> None:
