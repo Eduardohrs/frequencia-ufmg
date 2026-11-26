@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f1f5f6">
+    <link rel="icon" href="data:,">
+    <title>Frequência UFMG</title>
+    <link rel="stylesheet" href="/app.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark" aria-hidden="true">F</span><span>Frequência <b>UFMG</b></span></div>
+        <nav class="top-nav" aria-label="Principal">
+          <button type="button" class="nav-button active" data-view="disciplinas">Disciplinas</button>
+          <button type="button" class="nav-button" data-view="agenda">Agenda</button>
+          <button type="button" class="nav-button" data-view="ajustes">Ajustes</button>
+        </nav>
+        <button type="button" class="primary top-create" data-action="criar">Nova disciplina</button>
+      </header>
+
+      <main class="content">
+        <div id="load-error" class="surface load-error" role="alert" hidden>
+          <strong id="load-error-title">Não foi possível carregar a demo</strong>
+          <p id="load-error-message"></p>
+          <button type="button" class="secondary" data-action="retry-load">Tentar novamente</button>
+        </div>
+        <section id="view-disciplinas" class="view">
+          <div class="page-heading">
+            <div><p class="eyebrow">CONTROLE PESSOAL</p><h1>Suas disciplinas</h1></div>
+            <button type="button" class="primary mobile-create" data-action="criar">Nova disciplina</button>
+          </div>
+          <label id="mobile-course-picker" class="mobile-course-picker" hidden>Disciplina
+            <select id="mobile-course-select"></select>
+          </label>
+          <div class="course-layout">
+            <aside class="course-sidebar" aria-label="Lista de disciplinas">
+              <div class="panel-heading"><h2>Disciplinas</h2><span id="course-count" class="count">0</span></div>
+              <div id="course-list" class="course-list"></div>
+            </aside>
+            <div id="course-detail" class="course-detail"></div>
+          </div>
+        </section>
+
+        <section id="view-agenda" class="view" hidden>
+          <div class="page-heading">
+            <div><p class="eyebrow">PROVAS E TRABALHOS</p><h1>Agenda</h1></div>
+            <button type="button" class="primary" data-action="atividade">Adicionar atividade</button>
+          </div>
+          <div class="surface agenda-surface"><div id="agenda-list"></div></div>
+        </section>
+
+        <section id="view-ajustes" class="view" hidden>
+          <div class="page-heading"><div><p class="eyebrow">DEMO ACADÊMICA</p><h1>Ajustes</h1></div></div>
+          <div class="surface settings-surface">
+            <div><h2>Começar de novo</h2><p>Apaga disciplinas, presenças e atividades desta demo local.</p></div>
+            <button type="button" class="danger-outline" data-action="reset">Apagar dados da demo</button>
+          </div>
+          <div class="surface settings-surface">
+            <div><h2>Verificar funcionamento</h2><p>Executa os testes com dados temporários, sem alterar esta demo.</p>
+              <div id="test-result" class="test-result" hidden><strong id="test-summary"></strong>
+                <details><summary>Ver detalhes</summary><pre id="test-details"></pre></details></div>
+            </div>
+            <button type="button" class="secondary" data-action="testes">Executar testes</button>
+          </div>
+        </section>
+      </main>
+
+      <nav class="bottom-nav" aria-label="Navegação principal em tela estreita">
+        <button type="button" class="nav-button active" data-view="disciplinas"><span aria-hidden="true">▦</span>Disciplinas</button>
+        <button type="button" class="nav-button" data-view="agenda"><span aria-hidden="true">▣</span>Agenda</button>
+        <button type="button" class="nav-button" data-view="ajustes"><span aria-hidden="true">⚙</span>Ajustes</button>
+      </nav>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <dialog id="course-dialog" class="modal">
+      <form id="course-form" class="form-card">
+        <div class="modal-header"><div><p class="eyebrow">DISCIPLINA</p><h2>Nova disciplina</h2></div><button type="button" class="icon-button" data-close aria-label="Fechar">×</button></div>
+        <div class="form-grid">
+          <label>Nome <input name="nome" autocomplete="off" required placeholder="Ex.: Circuitos 2"></label>
+          <label>Código <input name="codigo" autocomplete="off" required placeholder="Ex.: ELE065"></label>
+          <label>Chamadas por encontro <select name="chamadas"><option value="1">Uma chamada</option><option value="2">Duas chamadas</option></select></label>
+          <label>Aulas de 50 min por encontro <select name="aulas"><option value="1">1 aula</option><option value="2" selected>2 aulas</option><option value="4">4 aulas</option></select></label>
+        </div>
+        <p id="course-rule-hint" class="form-hint" hidden>Um encontro de uma aula aceita apenas uma chamada.</p>
+        <label class="date-label">Datas dos encontros</label>
+        <div class="date-entry"><input id="course-date" type="date" aria-label="Data do encontro"><button id="add-date" type="button" class="secondary">Adicionar data</button></div>
+        <div id="date-list" class="date-list"></div>
+        <p class="field-error" data-error hidden></p>
+        <div class="form-actions"><button type="button" class="quiet-button" data-close>Cancelar</button><button type="submit" class="primary">Criar disciplina</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="activity-dialog" class="modal">
+      <form id="activity-form" class="form-card">
+        <div class="modal-header"><div><p class="eyebrow">AGENDA</p><h2>Adicionar atividade</h2></div><button type="button" class="icon-button" data-close aria-label="Fechar">×</button></div>
+        <label>Disciplina <select name="codigo" id="activity-course" required></select></label>
+        <div class="form-grid"><label>Tipo <select name="tipo"><option value="prova">Prova</option><option value="trabalho">Trabalho</option></select></label><label>Data <input name="dia" type="date" required></label></div>
+        <label>Título <input name="titulo" required placeholder="Ex.: Primeira prova"></label>
+        <p class="field-error" data-error hidden></p>
+        <div class="form-actions"><button type="button" class="quiet-button" data-close>Cancelar</button><button type="submit" class="primary">Salvar atividade</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="rename-dialog" class="modal small-modal">
+      <form id="rename-form" class="form-card">
+        <div class="modal-header"><div><p class="eyebrow">DISCIPLINA</p><h2>Renomear</h2></div><button type="button" class="icon-button" data-close aria-label="Fechar">×</button></div>
+        <p id="rename-context" class="modal-context"></p>
+        <label>Novo nome <input name="nome" required></label>
+        <p class="field-error" data-error hidden></p>
+        <div class="form-actions"><button type="button" class="quiet-button" data-close>Cancelar</button><button type="submit" class="primary">Salvar nome</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="reset-dialog" class="modal small-modal">
+      <form id="reset-form" class="form-card">
+        <div class="modal-header"><div><p class="eyebrow danger-text">AÇÃO PERMANENTE</p><h2>Apagar dados da demo?</h2></div><button type="button" class="icon-button" data-close aria-label="Fechar">×</button></div>
+        <p class="modal-context">Todas as disciplinas, presenças e atividades locais serão removidas. Para confirmar, digite <strong>APAGAR</strong>.</p>
+        <label>Confirmação <input name="confirmacao" autocomplete="off" required placeholder="APAGAR"></label>
+        <p class="field-error" data-error hidden></p>
+        <div class="form-actions"><button type="button" class="quiet-button" data-close>Cancelar</button><button type="submit" class="danger-button">Apagar dados</button></div>
+      </form>
+    </dialog>
+  </body>
+</html>
