@@ -1880,7 +1880,10 @@ def _parse_assignment_submission_status(payload: bytes) -> dict[str, str | bool]
                     state, text = "not_submitted", "Nenhum envio"
                 elif normalized == "draft":
                     state = "draft"
-                elif normalized in {"submitted", "graded", "reopened", "returned"}:
+                elif normalized == "reopened":
+                    # Moodle reopened attempts still require a new submission.
+                    state, text = "not_submitted", "Envio reaberto"
+                elif normalized in {"submitted", "graded", "returned"}:
                     state = "submitted"
                 else:
                     state = "unknown"

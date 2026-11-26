@@ -1595,6 +1595,14 @@ def test_assignment_submission_status_parser_accepts_student_contract(
     assert result["_bulk_submission_complete"] is True
 
 
+def test_assignment_submission_status_parser_keeps_reopened_attempt_pending() -> None:
+    result = module._parse_assignment_submission_status(
+        b'{"lastattempt":{"submission":{"status":"reopened"}}}'
+    )
+    assert result["submission_state"] == "not_submitted"
+    assert result["submission_text"] == "Envio reaberto"
+
+
 @pytest.mark.parametrize(
     "payload",
     [
