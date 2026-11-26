@@ -2527,10 +2527,20 @@ def _course_activity_service(
     )
 
 
+def _discovered_courses(content: Any) -> list[dict[str, object]] | None:
+    """Extract the per-sync discovery result shared with the snapshot stage."""
+    if not isinstance(content, dict):
+        return None
+    courses = content.get("courses")
+    if not isinstance(courses, list) or any(not isinstance(course, dict) for course in courses):
+        return None
+    return courses
+
+
 def _moodle_sync_service(
     headers: dict[str, str], user_id: str, telemetry: Any = None, *, force: bool = False
 ) -> MoodleSyncService:
-    sessions = _ufmg_session_store(headers)
+    sessions = RequestCachedUFMGSessionStore(_ufmg_session_store(headers))
     client = MoodleStructuredDatesClient(telemetry=telemetry)
     courses = _course_repository(headers, user_id)
     return MoodleSyncService(
@@ -2554,7 +2564,7 @@ def _moodle_sync_service(
             client,
             _moodle_token_store(headers),
         ),
-        snapshot_sync=lambda uid, now: _course_activity_service(
+        snapshot_sync=lambda uid, now, content=None: _course_activity_service(
             headers,
             user_id,
             courses=courses,
@@ -2564,7 +2574,10 @@ def _moodle_sync_service(
             policy=CourseSyncPolicy(_firestore(headers, user_id), telemetry=telemetry),
             force=force,
         ).sync_snapshots(
-            uid, now=now, snapshots=ActivitySnapshotRepository(_firestore(headers, user_id))
+            uid,
+            now=now,
+            snapshots=ActivitySnapshotRepository(_firestore(headers, user_id)),
+            discovered=_discovered_courses(content),
         ),
         connection_count=lambda: client.connection_count,
         telemetry=telemetry,
@@ -2626,7 +2639,7 @@ def _unified_academic_sync_service(
             client,
             _moodle_token_store(headers),
         ),
-        snapshot_sync=lambda uid, now: _course_activity_service(
+        snapshot_sync=lambda uid, now, content=None: _course_activity_service(
             headers,
             user_id,
             courses=courses,
@@ -2636,7 +2649,10 @@ def _unified_academic_sync_service(
             policy=CourseSyncPolicy(_firestore(headers, user_id), telemetry=telemetry),
             force=force,
         ).sync_snapshots(
-            uid, now=now, snapshots=ActivitySnapshotRepository(_firestore(headers, user_id))
+            uid,
+            now=now,
+            snapshots=ActivitySnapshotRepository(_firestore(headers, user_id)),
+            discovered=_discovered_courses(content),
         ),
         connection_count=lambda: client.connection_count,
         telemetry=telemetry,

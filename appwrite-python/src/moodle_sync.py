@@ -22,6 +22,15 @@ class _Capabilities(Protocol):
     def probe(self, user_id: str, *, now: int) -> dict[str, bool | str]: ...
 
 
+class _SnapshotSync(Protocol):
+    def __call__(
+        self,
+        user_id: str,
+        now: int,
+        content: dict[str, object] | None = None,
+    ) -> dict[str, object]: ...
+
+
 class MoodleSyncService:
     """Run Moodle stages together so their client can reuse the SAML session."""
 
@@ -32,7 +41,7 @@ class MoodleSyncService:
         capabilities: _Capabilities,
         *,
         connection_count: Callable[[], int] = lambda: 0,
-        snapshot_sync: Callable[[str, int], dict[str, object]] | None = None,
+        snapshot_sync: _SnapshotSync | None = None,
         telemetry: Telemetry | None = None,
         monotonic: Callable[[], float] | None = None,
     ) -> None:
@@ -69,8 +78,12 @@ class MoodleSyncService:
         snapshot_sync = self._snapshot_sync
         if snapshot_sync is not None:
             try:
+                # The content stage already discovered and reconciled every
+                # course link in this run; hand it to the snapshot stage so it
+                # does not repeat discovery or catalog reads.
                 snapshots["activities"] = self._timed(
-                    "moodle_activity_snapshots", lambda: snapshot_sync(user_id, now)
+                    "moodle_activity_snapshots",
+                    lambda: snapshot_sync(user_id, now, content),
                 )
             except Exception:
                 snapshots["activities"] = {"updated": 0, "failed": 1, "failed_courses": []}

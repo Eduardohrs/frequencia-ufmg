@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from course_repository import validate_course_id
 from course_service import InvalidCourse
+from firestore_rest import FirestorePayloadTooLarge
 
 MAX_CANDIDATES = 500
 MAX_CATALOG_BYTES = 750_000
@@ -76,8 +77,9 @@ class MoodleMaterialCatalogRepository:
         totals = {"created": 0, "updated": 0, "unchanged": 0, "removed": 0, "writes": 0}
         now = _timestamp(self._now())
         pending_updates: list[tuple[tuple[str, ...], Mapping[str, Any]]] = []
+        existing_by_course = self._load_many([course["course_id"] for course in validated])
         for course in validated:
-            existing = self._load(course["course_id"])
+            existing = existing_by_course[course["course_id"]]
             previous_candidates = (
                 {candidate["source_id"]: candidate for candidate in existing["candidates"]}
                 if existing is not None
@@ -144,6 +146,8 @@ class MoodleMaterialCatalogRepository:
 
     def list_catalog(self, courses: list[dict[str, Any]]) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
+        identifiers: list[str] = []
+        metadata: list[tuple[str, str, str]] = []
         for course in courses:
             try:
                 course_id = validate_course_id(course["id"])
@@ -160,7 +164,11 @@ class MoodleMaterialCatalogRepository:
                 or re.fullmatch(r"20[2-9][0-9]-[12]", term) is None
             ):
                 raise InvalidMoodleMaterialCatalog("invalid Moodle material catalogue")
-            catalog = self._load(course_id)
+            identifiers.append(course_id)
+            metadata.append((course_id, code, term))
+        loaded = self._load_many(identifiers)
+        for course_id, code, term in metadata:
+            catalog = loaded[course_id]
             if catalog is None:
                 continue
             if catalog["term"] != term:
@@ -176,6 +184,40 @@ class MoodleMaterialCatalogRepository:
                 }
             )
         return sorted(result, key=lambda item: (str(item["course_code"]), str(item["course_id"])))
+
+    def _load_many(self, course_ids: list[str]) -> dict[str, dict[str, Any] | None]:
+        """Load known ``current`` docs in one request when the store supports it."""
+
+        if not course_ids:
+            return {}
+        paths = [
+            ("courses", course_id, "materialCatalog", "current")
+            for course_id in course_ids
+        ]
+        batch_get = getattr(self._firestore, "batch_get_user_documents", None)
+        if callable(batch_get):
+            documents: dict[tuple[str, ...], dict[str, Any] | None] = {}
+            pending_batches = [paths]
+            while pending_batches:
+                batch = pending_batches.pop()
+                try:
+                    loaded = batch_get(batch)
+                except FirestorePayloadTooLarge:
+                    if len(batch) == 1:
+                        documents[batch[0]] = self._load(batch[0][1])
+                        continue
+                    midpoint = len(batch) // 2
+                    pending_batches.extend((batch[:midpoint], batch[midpoint:]))
+                    continue
+                if not isinstance(loaded, dict) or set(loaded) != set(batch):
+                    raise InvalidMoodleMaterialCatalog("invalid Moodle material catalogue")
+                documents.update(loaded)
+            result: dict[str, dict[str, Any] | None] = {}
+            for course_id, path in zip(course_ids, paths, strict=True):
+                document = documents[path]
+                result[course_id] = None if document is None else _decode(document)
+            return result
+        return {course_id: self._load(course_id) for course_id in course_ids}
 
     def _load(self, course_id: str) -> dict[str, Any] | None:
         documents = self._firestore.list_user_documents(

@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 import moodle_material_catalog_repository as catalog_module
+from firestore_rest import FirestorePayloadTooLarge
 from moodle_material_catalog_repository import (
     MAX_CATALOG_BYTES,
     InvalidMoodleMaterialCatalog,
@@ -49,6 +50,40 @@ class _BatchFirestore(_Firestore):
         self.commits.append(list(updates))
         for path, fields in updates:
             self.documents[path] = fields
+
+
+class _BatchReadFirestore(_BatchFirestore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.batch_reads: list[list[tuple[str, ...]]] = []
+
+    def batch_get_user_documents(self, paths):
+        self.batch_reads.append(list(paths))
+        return {
+            tuple(path): (
+                {
+                    "name": "/".join(path),
+                    "fields": self.documents[tuple(path)],
+                }
+                if tuple(path) in self.documents
+                else None
+            )
+            for path in paths
+        }
+
+
+class _OversizedBatchReadFirestore(_BatchReadFirestore):
+    def batch_get_user_documents(self, paths):
+        if len(paths) > 1:
+            self.batch_reads.append(list(paths))
+            raise FirestorePayloadTooLarge()
+        return super().batch_get_user_documents(paths)
+
+
+class _AlwaysOversizedBatchReadFirestore(_BatchReadFirestore):
+    def batch_get_user_documents(self, paths):
+        self.batch_reads.append(list(paths))
+        raise FirestorePayloadTooLarge()
 
 
 def _candidate(**changes: object) -> dict[str, object]:
@@ -135,6 +170,63 @@ def test_reconcile_batches_changed_catalog_documents() -> None:
     assert result["writes"] == 2
     assert len(firestore.commits) == 1
     assert len(firestore.commits[0]) == 2
+
+
+def test_reconcile_and_list_use_one_batch_read_for_known_current_documents() -> None:
+    firestore = _BatchReadFirestore()
+    repository = MoodleMaterialCatalogRepository(firestore, now=lambda: NOW)
+    courses = [_course(), _course(course_id="course-b", course_code="MAT001")]
+
+    repository.reconcile(courses)
+    assert len(firestore.batch_reads) == 1
+    assert len(firestore.batch_reads[0]) == 2
+
+    repository.list_catalog(
+        [{"id": "course-a", "code": "DCC203", "term": "2026-2"},
+         {"id": "course-b", "code": "MAT001", "term": "2026-2"}]
+    )
+    assert len(firestore.batch_reads) == 2
+
+
+def test_load_many_splits_an_oversized_batch_before_individual_reads() -> None:
+    firestore = _OversizedBatchReadFirestore()
+    repository = MoodleMaterialCatalogRepository(firestore, now=lambda: NOW)
+    courses = [_course(), _course(course_id="course-b", course_code="MAT001")]
+
+    repository.reconcile(courses)
+
+    assert firestore.batch_reads == [
+        [
+            ("courses", "course-a", "materialCatalog", "current"),
+            ("courses", "course-b", "materialCatalog", "current"),
+        ],
+        [("courses", "course-b", "materialCatalog", "current")],
+        [("courses", "course-a", "materialCatalog", "current")],
+    ]
+
+
+def test_load_many_falls_back_to_a_single_document_read() -> None:
+    firestore = _AlwaysOversizedBatchReadFirestore()
+    repository = MoodleMaterialCatalogRepository(firestore, now=lambda: NOW)
+
+    result = repository.reconcile([_course()])
+
+    assert result["created"] == 1
+    assert firestore.batch_reads == [
+        [("courses", "course-a", "materialCatalog", "current")]
+    ]
+
+
+def test_reconcile_rejects_an_incomplete_batch_read() -> None:
+    class InvalidBatchReadFirestore(_BatchReadFirestore):
+        def batch_get_user_documents(self, paths):
+            return {}
+
+    repository = MoodleMaterialCatalogRepository(
+        InvalidBatchReadFirestore(), now=lambda: NOW
+    )
+    with pytest.raises(InvalidMoodleMaterialCatalog):
+        repository.reconcile([_course()])
 
 
 def test_reconcile_splits_batches_at_the_security_rules_parent_limit() -> None:

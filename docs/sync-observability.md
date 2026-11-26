@@ -81,13 +81,21 @@ continua dono das datas de agenda; o snapshot continua dono dos detalhes da
 atividade. Assim, o mesmo prazo pode ser exibido uma vez na agenda sem perder o
 link e os anexos da atividade.
 
-Há uma redundância real, agora medida e explicitamente documentada: a descoberta
-de conteúdo chama `discover(..., activities=False)` por termo, enquanto o índice
-de atividades chama `discover(..., activities=True)` por disciplina. A primeira
-é necessária para catalogar materiais e escolher o plano; a segunda é necessária
-para o índice incremental. O código não remove essa chamada especulativamente:
-os eventos de consumidor e quantidade de chamadas permitem comparar uma futura
-cache compartilhada com evidência.
+A descoberta de conteúdo chama `discover_with_activities` quando disponível:
+uma resposta de `core_courseformat_get_state` é parseada uma vez e entrega, em
+memória, tanto materiais quanto o índice de atividades. O snapshot consome esse
+índice compartilhado e não chama `discover(..., activities=True)`/`list_activities`
+por disciplina de novo. O índice é transitório e não é escrito no catálogo de
+materiais; o snapshot continua sendo o destino dos detalhes de atividades. A
+chave do memo é `(digest do token da sessão, termo)` para a lista de matrículas
+e `(digest, termo, course_id)` para cada estado de curso. O memo é tampado
+(`MAX_DISCOVERY_CACHE_ENTRIES`), é descartado
+quando o digest do token muda e nunca cruza execuções. Os eventos
+`moodle_discovery_cache` (por consumidor, com `enrolled_hit`/`state_hits`/
+`state_misses`) e `sync_read_cache` (com `catalog_reads` e
+`discovery_shared_courses`) mantêm essa comparação evidenciada: na baseline
+medida havia 10 chamadas de matrículas e 10 de estado; com o memo, uma de cada
+por termo.
 
 ## Como ler os tempos sem somar duas vezes
 
@@ -130,8 +138,33 @@ corpo de resposta ou identificador do usuário:
   `teaching_plan_parse`: custo de cada parser e seu consumidor;
 - `moodle_event_unmatched`: evento de calendário que não pôde ser atribuído a
   exatamente uma disciplina;
+- `moodle_calendar_event_kinds`: histograma por execução da quantidade de
+  eventos de calendário por `kind` (`assignment`, `quiz`, `event`), com
+  `total`, `matched`, `unmatched` e `unique_source_ids` (ids de evento Moodle
+  distintos processados), para tornar mudanças futuras evidenciadas;
+- `moodle_discovery_cache`: por consumidor (`material_catalog`,
+  `activity_index`, `activity_snapshot_index`), informa `enrolled_hit`,
+  `state_hits`, `state_misses` e `course_count` do memo por sync;
+- `moodle_activity_page_cache`: `outcome` (`hit`/`miss`) de cada página HTML de
+  atividade memoizada por `(termo, source_id, kind)` dentro da mesma sync —
+  um mesmo módulo indexado por curso canônico e metaturma baixa a página uma
+  única vez;
+- `sync_read_cache`: por sync, `snapshot_reads`, `policy_state_reads`,
+  `catalog_reads`, `discovery_shared_courses` e os flags de escrita em lote
+  (`policy_write_batch`, `snapshot_write_batch`);
+- `firestore_request_completed` para `POST .../documents:batchGet` marca o lote
+  de documentos conhecidos (por exemplo, `materialCatalog/current`) como uma
+  leitura única, mantendo `missing` explícito e sem expor IDs no recurso
+  telemétrico;
+- `course_sync_policy_batch_failed`: motivo e quantidade de updates quando o
+  commit em lote do `syncState` é rejeitado (com fallback para patches
+  individuais);
 - `activity_snapshot_course_decision`: por disciplina, informa `reused`,
   `refreshed` ou `failed_retained_previous`, quantidade e duração;
+- `activity_snapshots_synced`: resumo do estágio com `fallback_by_kind` e
+  `fallback_reasons` (ex.: `missing_bulk_fields` para entradas de quiz cujo
+  bulk omite `description`/`attachments`), além de `reused_activities`,
+  `bulk_fallbacks` e `html_activities`;
 - `academic_sync_lineage`: relação origem→dataset→consumidor, contagens
   (`extracted`, `matched`, `created`, `updated`, `unchanged`, falhas, etc.) e a
   matriz de campos (`endpoints`, `response_fields_used`, `field_mapping`,

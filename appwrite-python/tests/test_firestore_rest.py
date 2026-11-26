@@ -10,6 +10,7 @@ import firestore_rest as firestore_module
 from firestore_rest import (
     FirestoreAccessDenied,
     FirestoreNotFound,
+    FirestorePayloadTooLarge,
     FirestoreRequestRejected,
     FirestoreRestClient,
     FirestoreUnavailable,
@@ -138,6 +139,182 @@ def test_list_user_documents_rejects_malformed_pages(payload: bytes) -> None:
 
     with pytest.raises(FirestoreUnavailable):
         client.list_user_documents("courses")
+
+
+def test_batch_get_user_documents_reads_known_paths_and_preserves_missing_docs() -> None:
+    calls: list[Any] = []
+    first = (
+        "projects/project/databases/(default)/documents/users/user/courses/course-a/"
+        "materialCatalog/current"
+    )
+    second = (
+        "projects/project/databases/(default)/documents/users/user/courses/course-b/"
+        "materialCatalog/current"
+    )
+
+    def transport(request: Any, _timeout: float) -> tuple[int, bytes]:
+        calls.append(request)
+        payload = [
+            {"found": {"name": first, "fields": {"status": {"stringValue": "found"}}}},
+            {"missing": second},
+        ]
+        return 200, b"\n".join(json.dumps(item).encode() for item in payload)
+
+    client = FirestoreRestClient("project", "user", "token", transport=transport)
+    paths = [
+        ("courses", "course-a", "materialCatalog", "current"),
+        ("courses", "course-b", "materialCatalog", "current"),
+    ]
+
+    result = client.batch_get_user_documents(paths)
+
+    assert result[paths[0]] == {"name": first, "fields": {"status": {"stringValue": "found"}}}
+    assert result[paths[1]] is None
+    assert len(calls) == 1
+    assert calls[0].method == "POST"
+    assert calls[0].full_url.endswith("/databases/(default)/documents:batchGet")
+    assert json.loads(calls[0].data)["documents"] == [first, second]
+
+
+def test_batch_get_user_documents_reads_a_json_array_response() -> None:
+    path = ("courses", "course-a", "materialCatalog", "current")
+    client = FirestoreRestClient(
+        "project",
+        "user",
+        "token",
+        transport=lambda *_: (
+            200,
+            json.dumps(
+                [
+                    {
+                        "found": {
+                            "name": "projects/project/databases/(default)/documents/"
+                            "users/user/courses/course-a/materialCatalog/current",
+                            "fields": {"status": {"stringValue": "found"}},
+                        }
+                    }
+                ]
+            ).encode(),
+        ),
+    )
+
+    assert client.batch_get_user_documents([path])[path] == {
+        "name": "projects/project/databases/(default)/documents/"
+        "users/user/courses/course-a/materialCatalog/current",
+        "fields": {"status": {"stringValue": "found"}},
+    }
+
+
+def test_batch_get_reports_an_oversized_streamed_response(monkeypatch) -> None:
+    monkeypatch.setattr(firestore_module, "MAX_PAYLOAD_BYTES", 2_000)
+    client = FirestoreRestClient(
+        "project", "user", "token", transport=lambda *_: (200, b"{}" * 2_000)
+    )
+
+    with pytest.raises(FirestorePayloadTooLarge):
+        client.batch_get_user_documents([("courses", "known")])
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        [],
+        [("courses", "a")] * 2,
+        [("courses",)],
+        [("courses", "a")] * 101,
+    ],
+)
+def test_batch_get_user_documents_rejects_invalid_path_batches(paths) -> None:
+    client = FirestoreRestClient("project", "user", "token", transport=lambda *_: (200, b"[]"))
+    with pytest.raises(ValueError, match="invalid Firestore batch get"):
+        client.batch_get_user_documents(paths)
+
+
+def test_batch_get_user_documents_rejects_oversized_payload(monkeypatch) -> None:
+    monkeypatch.setattr(firestore_module, "MAX_PAYLOAD_BYTES", 1)
+    client = FirestoreRestClient("project", "user", "token", transport=lambda *_: (200, b"[]"))
+    with pytest.raises(ValueError, match="Firestore payload is too large"):
+        client.batch_get_user_documents([("courses", "course-a")])
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"unexpected": True},
+        [1],
+        [{"found": {"name": "unknown"}}],
+        [{"found": {"name": "known"}}, {"found": {"name": "known"}}],
+        [{"missing": "unknown"}],
+        [{"missing": "known"}, {"missing": "known"}],
+        [{"transaction": "header"}],
+        [],
+    ],
+)
+def test_batch_get_user_documents_rejects_malformed_results(response) -> None:
+    client = FirestoreRestClient("project", "user", "token", transport=lambda *_: (200, b"[]"))
+    client._send = lambda *args, **kwargs: response  # type: ignore[method-assign]
+    with pytest.raises(FirestoreUnavailable):
+        client.batch_get_user_documents([("courses", "known")])
+
+
+def test_batch_get_user_documents_rejects_duplicate_found_document() -> None:
+    client = FirestoreRestClient("project", "user", "token", transport=lambda *_: (200, b"[]"))
+    name = client._document_name(("courses", "known"))
+    client._send = lambda *args, **kwargs: [  # type: ignore[method-assign]
+        {"found": {"name": name}},
+        {"found": {"name": name}},
+    ]
+    with pytest.raises(FirestoreUnavailable):
+        client.batch_get_user_documents([("courses", "known")])
+
+
+def test_batch_get_user_documents_rejects_duplicate_missing_document() -> None:
+    client = FirestoreRestClient("project", "user", "token", transport=lambda *_: (200, b"[]"))
+    name = client._document_name(("courses", "known"))
+    client._send = lambda *args, **kwargs: [  # type: ignore[method-assign]
+        {"missing": name},
+        {"missing": name},
+    ]
+    with pytest.raises(FirestoreUnavailable):
+        client.batch_get_user_documents([("courses", "known")])
+
+
+def test_batch_get_stream_decoder_rejects_non_object_items(monkeypatch) -> None:
+    client = FirestoreRestClient("project", "user", "token", transport=lambda *_: (200, b"[]"))
+    monkeypatch.setattr(firestore_module, "_decode_streamed_json", lambda _body: [1])
+    with pytest.raises(FirestoreUnavailable):
+        client.batch_get_user_documents([("courses", "known")])
+
+
+def test_batch_get_stream_decoder_accepts_whitespace_only_suffix() -> None:
+    assert firestore_module._decode_streamed_json(b' {"ok":true}\n\t') == [{"ok": True}]
+
+
+def test_batch_get_stream_decoder_accepts_whitespace_only_response() -> None:
+    assert firestore_module._decode_streamed_json(b" \n\t") == []
+
+
+def test_batch_get_stream_decoder_rejects_a_non_object_stream_item() -> None:
+    with pytest.raises(json.JSONDecodeError):
+        firestore_module._decode_streamed_json(b"1")
+
+
+def test_batch_get_stream_decoder_accepts_a_json_array_response() -> None:
+    assert firestore_module._decode_streamed_json(
+        b'[{"found":{"name":"known"}},{"missing":"other"}]'
+    ) == [{"found": {"name": "known"}}, {"missing": "other"}]
+
+
+def test_batch_get_stream_decoder_rejects_non_object_items_in_a_json_array() -> None:
+    with pytest.raises(json.JSONDecodeError):
+        firestore_module._decode_streamed_json(b'[{"ok":true},1]')
+
+
+def test_request_rejects_a_streamed_response_in_a_regular_document_call() -> None:
+    client = FirestoreRestClient("project", "user", "token", transport=lambda *_: (200, b"{}"))
+    client._send = lambda *args, **kwargs: []  # type: ignore[method-assign]
+    with pytest.raises(FirestoreUnavailable):
+        client.get_user_document("courses", "known")
 
 
 def test_delete_user_document_accepts_empty_success() -> None:

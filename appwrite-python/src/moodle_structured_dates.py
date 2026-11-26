@@ -15,7 +15,7 @@ from http.cookiejar import Cookie, CookieJar
 from secrets import token_hex
 from threading import Lock
 from time import perf_counter
-from typing import Any, Protocol
+from typing import Any, Final, Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
@@ -33,6 +33,11 @@ MAX_COURSES = 50
 MAX_CANDIDATES = 500
 MAX_DIARIO_BYTES = 20 * 1_048_576
 MOODLE_ORIGIN = "https://virtual.ufmg.br"
+# Per-sync in-memory memo bounds.  One client instance serves one authenticated
+# sync request, and every key includes the session-token digest and term, so a
+# cached entry can never leak across users, sessions or terms.
+MAX_DISCOVERY_CACHE_ENTRIES = 4_096
+MAX_ACTIVITY_PAGE_CACHE = 500
 _SESSKEY = re.compile(rb'"sesskey"\s*:\s*"([A-Za-z0-9_-]{8,128})"')
 _MOBILE_TOKEN = re.compile(r"[A-Za-z0-9]{16,256}")
 _REDIRECT_CODES = {301, 302, 303, 307, 308}
@@ -153,6 +158,13 @@ class MoodleStructuredDatesClient:
         self._connection_lock = Lock()
         self._request_sequence = 0
         self._request_lock = Lock()
+        # Per-sync memo tables keyed by (token digest, term[, course id]).  They
+        # let the material catalog and the activity index share one enrolled
+        # course list and one course-state batch inside a single sync run.
+        self._discovery_lock = Lock()
+        self._enrolled_cache: dict[tuple[bytes, str], list[dict[str, object]]] = {}
+        self._state_cache: dict[tuple[bytes, str, int], dict[str, list[dict[str, object]]]] = {}
+        self._activity_page_cache: dict[tuple[bytes, str, int, str], dict[str, object]] = {}
 
     @property
     def connection_count(self) -> int:
@@ -217,34 +229,20 @@ class MoodleStructuredDatesClient:
         term: str,
         course_codes: list[str],
         activities: bool = False,
+        include_activities: bool = False,
     ) -> list[dict[str, object]]:
-        """Discover bounded visible course resources without downloading content."""
+        """Discover bounded visible course resources without downloading content.
+
+        ``include_activities`` lets the full academic sync reuse the activity
+        index that was already parsed for the material catalog.  The default
+        remains unchanged for callers that only need material candidates.
+        """
 
         codes = _validate_course_codes(token, course_codes)
         root, ajax_path, sesskey = self._connect(token, term)
-        course_call = [
-            {
-                "index": 0,
-                "methodname": "core_course_get_enrolled_courses_by_timeline_classification",
-                "args": {
-                    "classification": "all",
-                    "limit": 100,
-                    "offset": 0,
-                    "sort": "fullname ASC",
-                },
-            }
-        ]
-        course_payload = self._ajax(root, ajax_path, sesskey, course_call)
-        courses = timed_stage(
-            "moodle_course_list_parse",
-            lambda: _parse_course_list(course_payload),
-            telemetry=self._telemetry,
-            fields={
-                "term": term,
-                "course_count": len(codes),
-                "response_bytes": len(course_payload),
-                "consumer": "course_linking_and_material_catalog",
-            },
+        digest = _token_digest(token)
+        courses, enrolled_hit = self._enrolled_courses(
+            digest, term, root, ajax_path, sesskey, requested=len(codes)
         )
         matched: list[tuple[str, dict[str, object], str]] = []
         results: dict[str, dict[str, object]] = {}
@@ -271,35 +269,28 @@ class MoodleStructuredDatesClient:
                 }
 
         if matched:
-            state_calls = [
+            course_ids = [int(str(course["id"])) for _, course, _ in matched]
+            states, hits, misses = self._course_states(
+                digest, term, root, ajax_path, sesskey, course_ids
+            )
+            _emit(
+                self._telemetry,
+                "moodle_discovery_cache",
                 {
-                    "index": index,
-                    "methodname": "core_courseformat_get_state",
-                    "args": {"courseid": course["id"]},
-                }
-                for index, (_, course, _) in enumerate(matched)
-            ]
-            state_payload = self._ajax(root, ajax_path, sesskey, state_calls)
-            states = timed_stage(
-                "moodle_course_state_parse",
-                lambda: _parse_course_states(
-                    state_payload,
-                    root,
-                    len(matched),
-                    activities=activities,
-                ),
-                telemetry=self._telemetry,
-                fields={
                     "term": term,
-                    "course_count": len(matched),
-                    "response_bytes": len(state_payload),
-                    "include_activities": activities,
-                    "consumer": "material_catalog_and_activity_index",
+                    "consumer": "activity_index" if activities else "material_catalog",
+                    "enrolled_hit": enrolled_hit,
+                    "state_hits": hits,
+                    "state_misses": misses,
+                    "course_count": len(codes),
                 },
             )
             total = 0
+            activity_totals: dict[str, int] = defaultdict(int)
             grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
-            for (code, course, origin), candidates in zip(matched, states, strict=True):
+            grouped_activities: dict[str, list[dict[str, object]]] = defaultdict(list)
+            for (code, course, origin), state in zip(matched, states, strict=True):
+                candidates = state["activities" if activities else "materials"]
                 total += len(candidates)
                 if total > MAX_CANDIDATES:
                     raise InvalidMoodleResponse("candidate_limit")
@@ -307,14 +298,146 @@ class MoodleStructuredDatesClient:
                     candidate | {"origin": origin, "moodle_course_id": str(course["id"])}
                     for candidate in candidates
                 )
+                if include_activities and not activities:
+                    activity_candidates = state["activities"]
+                    activity_totals[code] += len(activity_candidates)
+                    if activity_totals[code] > MAX_CANDIDATES:
+                        raise InvalidMoodleResponse("activity_candidate_limit")
+                    grouped_activities[code].extend(
+                        candidate | {"origin": origin, "moodle_course_id": str(course["id"])}
+                        for candidate in activity_candidates
+                    )
             for code, candidates in grouped.items():
-                results[code] = {
+                result: dict[str, object] = {
                     "course_code": code,
                     "moodle_course_id": results[code]["moodle_course_id"],
                     "status": "found" if candidates else "empty",
                     "candidates": candidates,
                 }
+                if include_activities and not activities:
+                    result["activity_candidates"] = grouped_activities.get(code, [])
+                results[code] = result
         return [results[code] for code in codes]
+
+    def discover_with_activities(
+        self, token: str, *, term: str, course_codes: list[str]
+    ) -> list[dict[str, object]]:
+        """Discover material and activity indexes in the same state response."""
+
+        return self.discover(
+            token,
+            term=term,
+            course_codes=course_codes,
+            include_activities=True,
+        )
+
+    def _enrolled_courses(
+        self,
+        digest: bytes,
+        term: str,
+        root: str,
+        ajax_path: str,
+        sesskey: str,
+        *,
+        requested: int,
+    ) -> tuple[list[dict[str, object]], bool]:
+        """Return the term's enrolled course list, memoized for this sync run."""
+        key = (digest, term)
+        with self._discovery_lock:
+            cached = self._enrolled_cache.get(key)
+        if cached is not None:
+            return cached, True
+        course_call = [
+            {
+                "index": 0,
+                "methodname": "core_course_get_enrolled_courses_by_timeline_classification",
+                "args": {
+                    "classification": "all",
+                    "limit": 100,
+                    "offset": 0,
+                    "sort": "fullname ASC",
+                },
+            }
+        ]
+        course_payload = self._ajax(root, ajax_path, sesskey, course_call)
+        courses = timed_stage(
+            "moodle_course_list_parse",
+            lambda: _parse_course_list(course_payload),
+            telemetry=self._telemetry,
+            fields={
+                "term": term,
+                "course_count": requested,
+                "response_bytes": len(course_payload),
+                "consumer": "course_linking_and_material_catalog",
+            },
+        )
+        with self._discovery_lock:
+            if len(self._enrolled_cache) < MAX_DISCOVERY_CACHE_ENTRIES:
+                self._enrolled_cache[key] = courses
+        return courses, False
+
+    def _course_states(
+        self,
+        digest: bytes,
+        term: str,
+        root: str,
+        ajax_path: str,
+        sesskey: str,
+        course_ids: list[int],
+    ) -> tuple[list[dict[str, list[dict[str, object]]]], int, int]:
+        """Return per-course states (both material and activity views).
+
+        Only uncached course ids are requested, in one batched AJAX call, so
+        the material catalog and the activity index share a single
+        ``core_courseformat_get_state`` batch per Moodle course per sync run.
+        """
+        states: list[dict[str, list[dict[str, object]]] | None] = [None] * len(course_ids)
+        hits = 0
+        missing: list[tuple[int, int]] = []
+        with self._discovery_lock:
+            for position, course_id in enumerate(course_ids):
+                cached = self._state_cache.get((digest, term, course_id))
+                if cached is not None:
+                    states[position] = cached
+                    hits += 1
+                else:
+                    missing.append((position, course_id))
+        if missing:
+            state_calls = [
+                {
+                    "index": index,
+                    "methodname": "core_courseformat_get_state",
+                    "args": {"courseid": course_id},
+                }
+                for index, (_, course_id) in enumerate(missing)
+            ]
+            state_payload = self._ajax(root, ajax_path, sesskey, state_calls)
+            parsed = timed_stage(
+                "moodle_course_state_parse",
+                lambda: _parse_course_states_full(state_payload, root, len(missing)),
+                telemetry=self._telemetry,
+                fields={
+                    "term": term,
+                    "course_count": len(missing),
+                    "response_bytes": len(state_payload),
+                    "include_activities": True,
+                    "consumer": "material_catalog_and_activity_index",
+                    "cache_hits": hits,
+                },
+            )
+            with self._discovery_lock:
+                for (position, course_id), state in zip(missing, parsed, strict=True):
+                    states[position] = state
+                    if len(self._state_cache) < MAX_DISCOVERY_CACHE_ENTRIES:
+                        self._state_cache[(digest, term, course_id)] = state
+        return cast(list[dict[str, list[dict[str, object]]]], states), hits, len(missing)
+
+    def _clear_discovery_caches(self) -> None:
+        """Drop per-sync memos when the session token changes."""
+        with self._discovery_lock:
+            self._enrolled_cache.clear()
+            self._state_cache.clear()
+            self._activity_page_cache.clear()
 
     def list_activities(
         self, token: str, *, term: str, course_id: int, course_code: str | None = None
@@ -332,27 +455,23 @@ class MoodleStructuredDatesClient:
                 raise InvalidMoodleResponse("course_activity_index_shape")
             return candidates
         root, ajax_path, sesskey = self._connect(token, term)
-        calls = [
+        digest = _token_digest(token)
+        states, hits, misses = self._course_states(
+            digest, term, root, ajax_path, sesskey, [course_id]
+        )
+        _emit(
+            self._telemetry,
+            "moodle_discovery_cache",
             {
-                "index": 0,
-                "methodname": "core_courseformat_get_state",
-                "args": {"courseid": course_id},
-            }
-        ]
-        payload = self._ajax(root, ajax_path, sesskey, calls)
-        parsed = timed_stage(
-            "moodle_course_state_parse",
-            lambda: _parse_course_states(payload, root, 1, activities=True),
-            telemetry=self._telemetry,
-            fields={
                 "term": term,
-                "course_count": 1,
-                "response_bytes": len(payload),
-                "include_activities": True,
                 "consumer": "activity_snapshot_index",
+                "enrolled_hit": False,
+                "state_hits": hits,
+                "state_misses": misses,
+                "course_count": 1,
             },
         )
-        return parsed[0]
+        return states[0]["activities"]
 
     def activity_updates_since(
         self,
@@ -506,6 +625,20 @@ class MoodleStructuredDatesClient:
             or kind not in {"assign", "quiz"}
         ):
             raise InvalidMoodleResponse("activity_source_id")
+        _validate_token(token)
+        digest = _token_digest(token)
+        page_key = (digest, term, source_id, kind)
+        with self._discovery_lock:
+            cached_page = self._activity_page_cache.get(page_key)
+        if cached_page is not None:
+            # The same activity can be indexed by both the canonical course and a
+            # metaturma; one bounded HTML page per (term, source_id, kind) is enough.
+            _emit(
+                self._telemetry,
+                "moodle_activity_page_cache",
+                {"term": term, "source_id": source_id, "kind": kind, "outcome": "hit"},
+            )
+            return dict(cached_page)
         root, _, _ = self._connect(token, term)
         path = f"{root}/mod/{kind}/view.php"
         payload, final_url, content_type = self._open(
@@ -523,9 +656,19 @@ class MoodleStructuredDatesClient:
         ):
             raise InvalidMoodleResponse("activity_page_endpoint")
         try:
-            return parse_activity_page(payload, term=term, kind=kind)
+            detail = parse_activity_page(payload, term=term, kind=kind)
         except InvalidActivityPage as error:
             raise InvalidMoodleResponse(error.reason) from None
+        with self._discovery_lock:
+            if len(self._activity_page_cache) < MAX_ACTIVITY_PAGE_CACHE:
+                # Store a copy: the caller owns the returned dict and may mutate it.
+                self._activity_page_cache[page_key] = dict(detail)
+        _emit(
+            self._telemetry,
+            "moodle_activity_page_cache",
+            {"term": term, "source_id": source_id, "kind": kind, "outcome": "miss"},
+        )
+        return detail
 
     def authorize_mobile_download(
         self,
@@ -781,7 +924,7 @@ class MoodleStructuredDatesClient:
 
     def _connect(self, token: str, term: str) -> tuple[str, str, str]:
         _validate_token(token)
-        token_digest = sha256(token.encode()).digest()
+        token_digest = _token_digest(token)
         # Double-checked locking: concurrent callers share ONE SAML connection per
         # token/term, so the cookie jar and connection cache stay consistent.
         if token_digest == self._connection_token_digest:
@@ -796,6 +939,9 @@ class MoodleStructuredDatesClient:
         with self._connection_lock:
             if token_digest != self._connection_token_digest:
                 self._connections.clear()
+                # A new session token invalidates every per-sync memo: keys are
+                # derived from the token digest, so they cannot be reused.
+                self._clear_discovery_caches()
                 self._connection_token_digest = token_digest
             cached = self._connections.get(term)
             if cached is not None:
@@ -1302,6 +1448,17 @@ def _is_metaturma(course: dict[str, object]) -> bool:
     )
 
 
+_MATERIAL_MODULE_KINDS: Final = {
+    "page": "page",
+    "book": "page",
+    "resource": "file",
+    "folder": "file",
+    "label": "text",
+    "url": "link",
+}
+_ACTIVITY_MODULE_KINDS: Final = {"assign": "assign", "quiz": "quiz"}
+
+
 def _parse_course_states(
     payload: bytes,
     root: str,
@@ -1309,6 +1466,22 @@ def _parse_course_states(
     *,
     activities: bool = False,
 ) -> list[list[dict[str, object]]]:
+    """Return one candidate list per course for the requested view only."""
+    full = _parse_course_states_full(payload, root, expected_calls)
+    return [state["activities" if activities else "materials"] for state in full]
+
+
+def _parse_course_states_full(
+    payload: bytes,
+    root: str,
+    expected_calls: int,
+) -> list[dict[str, list[dict[str, object]]]]:
+    """Parse one course-state batch into both material and activity views.
+
+    One ``core_courseformat_get_state`` response is parsed once and cached per
+    course, so the material catalog consumer and the activity index consumer
+    share the same Moodle request inside a single sync run.
+    """
     try:
         decoded = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1317,7 +1490,7 @@ def _parse_course_states(
         raise InvalidMoodleResponse("course_state_batch_type")
     if len(decoded) != expected_calls:
         raise InvalidMoodleResponse("course_state_call_count")
-    states: list[list[dict[str, object]]] = []
+    states: list[dict[str, list[dict[str, object]]]] = []
     try:
         for item in decoded:
             if not isinstance(item, dict):
@@ -1336,26 +1509,17 @@ def _parse_course_states(
             raw_modules = data.get("cm")
             if not isinstance(raw_modules, list) or len(raw_modules) > 500:
                 raise ValueError("course_modules")
-            candidates: dict[str, dict[str, object]] = {}
+            materials: dict[str, dict[str, object]] = {}
+            activity_modules: dict[str, dict[str, object]] = {}
             for raw in raw_modules:
                 if not isinstance(raw, dict):
                     raise ValueError("course_module_shape")
                 if raw.get("uservisible") is not True:
                     continue
                 module = str(raw.get("module"))
-                kind = (
-                    {"assign": "assign", "quiz": "quiz"}
-                    if activities
-                    else {
-                        "page": "page",
-                        "book": "page",
-                        "resource": "file",
-                        "folder": "file",
-                        "label": "text",
-                        "url": "link",
-                    }
-                ).get(module)
-                if kind is None:
+                material_kind = _MATERIAL_MODULE_KINDS.get(module)
+                activity_kind = _ACTIVITY_MODULE_KINDS.get(module)
+                if material_kind is None and activity_kind is None:
                     continue
                 raw_source_id = raw.get("id")
                 raw_title = raw.get("name")
@@ -1376,27 +1540,34 @@ def _parse_course_states(
                     raise ValueError("course_module_title_empty")
                 if len(title) > 1_024:
                     raise ValueError("course_module_title_length")
-                candidate: dict[str, object] = {
+                base: dict[str, object] = {
                     "source_id": str(source_id),
-                    "kind": kind,
                     "title": title,
                     "url": None
                     if module == "label"
                     else _candidate_url(raw.get("url"), root, str(module), source_id),
                     "relevance": _candidate_relevance(title),
                 }
-                previous = candidates.get(str(source_id))
-                if previous is not None and previous != candidate:
-                    raise ValueError("course_module_conflict")
-                candidates[str(source_id)] = candidate
+                if material_kind is not None:
+                    candidate = base | {"kind": material_kind}
+                    previous = materials.get(str(source_id))
+                    if previous is not None and previous != candidate:
+                        raise ValueError("course_module_conflict")
+                    materials[str(source_id)] = candidate
+                if activity_kind is not None:
+                    candidate = base | {"kind": activity_kind}
+                    previous = activity_modules.get(str(source_id))
+                    if previous is not None and previous != candidate:
+                        raise ValueError("course_module_conflict")
+                    activity_modules[str(source_id)] = candidate
+            def sort_key(candidate: dict[str, object]) -> tuple[int, str]:
+                return int(str(candidate["source_id"])), str(candidate["title"])
+
             states.append(
-                sorted(
-                    candidates.values(),
-                    key=lambda candidate: (
-                        int(str(candidate["source_id"])),
-                        str(candidate["title"]),
-                    ),
-                )
+                {
+                    "materials": sorted(materials.values(), key=sort_key),
+                    "activities": sorted(activity_modules.values(), key=sort_key),
+                }
             )
     except (KeyError, TypeError, ValueError) as error:
         reason = str(error) if error.args else "course_state_shape"
@@ -2137,6 +2308,11 @@ def _moodle_root(term: str) -> str:
     if re.fullmatch(r"20[2-9][0-9]-[12]", term) is None:
         raise ValueError("invalid Moodle term")
     return f"/{term.replace('-', '')}"
+
+
+def _token_digest(token: str) -> bytes:
+    """Session-scoped cache key component; never logged or persisted."""
+    return sha256(token.encode()).digest()
 
 
 def _ltpa_cookie(token: str) -> Cookie:

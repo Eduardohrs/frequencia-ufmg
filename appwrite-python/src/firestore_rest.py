@@ -59,6 +59,10 @@ class FirestoreUnavailable(FirestoreRestError):
     """Firestore could not provide a usable response."""
 
 
+class FirestorePayloadTooLarge(FirestoreUnavailable):
+    """A streamed response exceeded the bounded transport payload."""
+
+
 class FirestoreRestClient:
     """Read and write only below ``users/{verified uid}`` with a Firebase ID token."""
 
@@ -155,6 +159,65 @@ class FirestoreRestClient:
                 raise FirestoreUnavailable("Firestore is unavailable")
             page_token = next_token
 
+    def batch_get_user_documents(
+        self, paths: list[tuple[str, ...]]
+    ) -> dict[tuple[str, ...], dict[str, Any] | None]:
+        """Read up to 100 known documents with one Firestore batch request.
+
+        Firestore's ``batchGet`` response is streamed as one JSON object per
+        document, so the transport keeps the response bounded and the parser
+        below validates every requested name before returning it.  Missing
+        documents are represented by ``None`` instead of raising, matching the
+        useful behavior of a collection listing for repositories that reconcile
+        optional ``current`` documents.
+        """
+
+        if (
+            not paths
+            or len(paths) > 100
+            or len({tuple(path) for path in paths}) != len(paths)
+            or any(len(path) == 0 or len(path) % 2 != 0 for path in paths)
+        ):
+            raise ValueError("invalid Firestore batch get")
+        names = [self._document_name(tuple(path)) for path in paths]
+        body = json.dumps({"documents": names}, separators=(",", ":")).encode()
+        if len(body) > MAX_PAYLOAD_BYTES:
+            raise ValueError("Firestore payload is too large")
+        project = quote(self._project_id, safe="")
+        url = f"{self.base_url}/projects/{project}/databases/(default)/documents:batchGet"
+        raw = self._send("POST", url, body, streamed_json=True)
+        if not isinstance(raw, list):
+            raise FirestoreUnavailable("Firestore is unavailable")
+        requested = {name: tuple(path) for name, path in zip(names, paths, strict=True)}
+        result: dict[tuple[str, ...], dict[str, Any] | None] = {}
+        for item in raw:
+            if not isinstance(item, dict):
+                raise FirestoreUnavailable("Firestore is unavailable")
+            found = item.get("found")
+            missing = item.get("missing")
+            if isinstance(found, dict) and missing is None:
+                name = found.get("name")
+                if not isinstance(name, str) or name not in requested:
+                    raise FirestoreUnavailable("Firestore is unavailable")
+                path = requested[name]
+                if path in result:
+                    raise FirestoreUnavailable("Firestore is unavailable")
+                result[path] = found
+            elif isinstance(missing, str) and found is None:
+                if missing not in requested:
+                    raise FirestoreUnavailable("Firestore is unavailable")
+                path = requested[missing]
+                if path in result:
+                    raise FirestoreUnavailable("Firestore is unavailable")
+                result[path] = None
+            else:
+                # A transaction header or malformed union is not a usable
+                # document result for this non-transactional request.
+                raise FirestoreUnavailable("Firestore is unavailable")
+        if set(result) != set(tuple(path) for path in paths):
+            raise FirestoreUnavailable("Firestore is unavailable")
+        return result
+
     def delete_user_document(self, *segments: str) -> None:
         """Delete a document owned by the verified user."""
 
@@ -211,7 +274,10 @@ class FirestoreRestClient:
         url = self._resource_url(segments, collection=collection)
         if query:
             url = f"{url}?{urlencode(query)}"
-        return self._send(method, url, body, allow_empty=allow_empty)
+        response = self._send(method, url, body, allow_empty=allow_empty)
+        if not isinstance(response, dict):
+            raise FirestoreUnavailable("Firestore is unavailable")
+        return response
 
     def _send(
         self,
@@ -220,7 +286,8 @@ class FirestoreRestClient:
         body: bytes | None = None,
         *,
         allow_empty: bool = False,
-    ) -> dict[str, Any]:
+        streamed_json: bool = False,
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         started = perf_counter()
         status: int | None = None
         response_body = b""
@@ -252,25 +319,40 @@ class FirestoreRestClient:
                     status_code=429,
                     error_code=_error_code(response_body),
                 )
-            if not 200 <= status < 300 or len(response_body) > MAX_PAYLOAD_BYTES:
+            if not 200 <= status < 300:
+                raise FirestoreUnavailable("Firestore is unavailable")
+            if len(response_body) > MAX_PAYLOAD_BYTES:
+                if streamed_json:
+                    raise FirestorePayloadTooLarge("Firestore response is too large")
                 raise FirestoreUnavailable("Firestore is unavailable")
             if not response_body and allow_empty:
                 outcome = "succeeded"
                 return {}
             try:
-                decoded = json.loads(response_body)
+                decoded: object
+                if streamed_json:
+                    decoded = _decode_streamed_json(response_body)
+                else:
+                    decoded = json.loads(response_body)
             except (UnicodeDecodeError, json.JSONDecodeError):
                 raise FirestoreUnavailable("Firestore is unavailable") from None
-            if not isinstance(decoded, dict):
+            if streamed_json:
+                if not isinstance(decoded, list) or any(
+                    not isinstance(item, dict) for item in decoded
+                ):
+                    raise FirestoreUnavailable("Firestore is unavailable")
+            elif not isinstance(decoded, dict):
                 raise FirestoreUnavailable("Firestore is unavailable")
             outcome = "succeeded"
-            return decoded
+            return cast(dict[str, Any] | list[dict[str, Any]], decoded)
         finally:
             self._emit_telemetry(
                 "firestore_request_completed",
                 {
                     "duration_ms": round((perf_counter() - started) * 1_000, 3),
-                    "kind": "read" if method == "GET" else "write",
+                    "kind": "read"
+                    if method == "GET" or url.endswith(":batchGet")
+                    else "write",
                     "method": method,
                     "outcome": outcome,
                     "status_class": f"{status // 100}xx" if status is not None else "network",
@@ -328,6 +410,46 @@ def _error_code(response_body: bytes) -> str:
     if isinstance(error, dict) and isinstance(error.get("status"), str) and error["status"]:
         return cast(str, error["status"])
     return "RESOURCE_EXHAUSTED"
+
+
+def _decode_streamed_json(response_body: bytes) -> list[dict[str, Any]]:
+    """Decode Firestore's array or newline/concatenated JSON batch response.
+
+    The REST endpoint normally streams one object per line, but compatible
+    Firestore transports (including the official Firebase client) can return
+    the same batch as one JSON array.  Accept both wire formats while keeping
+    the strict object-only validation used by the batch reconciliation code.
+    """
+
+    text = response_body.decode("utf-8")
+    first_non_whitespace = next(
+        (index for index, char in enumerate(text) if not char.isspace()), None
+    )
+    if first_non_whitespace is None:
+        return []
+    if text[first_non_whitespace] == "[":
+        decoded = json.loads(text)
+        if not isinstance(decoded, list) or any(
+            not isinstance(item, dict) for item in decoded
+        ):
+            raise json.JSONDecodeError(
+                "Firestore batch items must be objects", text, first_non_whitespace
+            )
+        return decoded
+
+    decoder = json.JSONDecoder()
+    values: list[dict[str, Any]] = []
+    offset = 0
+    while offset < len(text):
+        while offset < len(text) and text[offset].isspace():
+            offset += 1
+        if offset >= len(text):
+            break
+        value, offset = decoder.raw_decode(text, offset)
+        if not isinstance(value, dict):
+            raise json.JSONDecodeError("Firestore batch item must be an object", text, offset)
+        values.append(value)
+    return values
 
 
 def _telemetry_resource(url: str) -> str:
