@@ -1052,6 +1052,7 @@ class CourseActivityService:
                                     for detail in module_details.values()
                                     if isinstance(detail, dict)
                                     and type(detail.get("_bulk_assignment_id")) is int
+                                    and _module_detail_is_empty(detail)
                                 }
                             )
                             if assignment_ids:
@@ -1076,6 +1077,16 @@ class CourseActivityService:
                                         raise InvalidMoodleResponse(
                                             "assignment_submission_shape"
                                         )
+                                    failed_assignment_ids = submission_details.get(
+                                        "_bulk_failed_assignment_ids", []
+                                    )
+                                    if not isinstance(failed_assignment_ids, list) or any(
+                                        type(value) is not int for value in failed_assignment_ids
+                                    ):
+                                        raise InvalidMoodleResponse(
+                                            "assignment_submission_failure_shape"
+                                        )
+                                    submission_bulk_failures += len(failed_assignment_ids)
                                     for source_id, detail in list(module_details.items()):
                                         if not isinstance(detail, dict):
                                             continue
@@ -1091,7 +1102,9 @@ class CourseActivityService:
                                             **fields,
                                             "moodle_course_id": moodle_course_id,
                                             "assignment_count": len(assignment_ids),
-                                            "status_count": len(submission_details),
+                                            "status_count": len(submission_details)
+                                            - 1,
+                                            "failed_count": len(failed_assignment_ids),
                                         },
                                     )
                                 except Exception as error:
@@ -1130,6 +1143,30 @@ class CourseActivityService:
                     for position in positions:
                         entry = entries[position]
                         detail = module_details.get(str(entry["source_id"]))
+                        if (
+                            isinstance(detail, dict)
+                            and _bulk_detail_needs_html_fallback(detail)
+                            and kind == "assign"
+                            and detail.get("_bulk_submission_complete") is True
+                            and _module_detail_is_empty(detail)
+                        ):
+                            # The student-status endpoint supplied the only
+                            # field missing from the type-specific response.
+                            # Preserve that status and avoid an HTML request.
+                            activities[position] = {
+                                **entry,
+                                **_clean_bulk_detail(detail),
+                                "files": [],
+                                "term": course["term"],
+                            }
+                            html_positions.discard(position)
+                            module_bulk_count += 1
+                            module_bulk_successes += 1
+                            html_skipped += 1
+                            bulk_submission_unknown += int(
+                                detail.get("submission_state") == "unknown"
+                            )
+                            continue
                         if not isinstance(detail, dict) or _bulk_detail_needs_html_fallback(detail):
                             reason = (
                                 "activity_missing_from_module_bulk_response"

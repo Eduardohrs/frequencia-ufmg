@@ -1482,23 +1482,24 @@ def test_activity_module_bulk_uses_the_official_assignment_service() -> None:
     assert details["701"]["attachments"][0]["name"] == "lista.pdf"
 
 
-def test_assignment_submission_bulk_uses_one_official_request_and_normalizes_states() -> None:
-    payload = {
-        "assignments": [
-            {"assignmentid": 9001, "submissions": [{"status": "submitted"}]},
-            {"assignmentid": 9002, "submissions": [{"status": "draft"}]},
-            {"assignmentid": 9003, "submissions": []},
-            {"assignmentid": 9004, "submissions": [{"status": "reviewed"}]},
-        ]
+def test_assignment_submission_bulk_uses_student_status_requests_and_normalizes_states() -> None:
+    payloads = {
+        9001: {"lastattempt": {"submission": {"status": "submitted"}}},
+        9002: {"lastattempt": {"submission": {"status": "draft"}}},
+        9003: {},
+        9004: {"lastattempt": {"submission": {"status": "reviewed"}}},
     }
 
     class Client(MoodleStructuredDatesClient):
         def _open(self, request):
             assert request.full_url == "https://virtual.ufmg.br/20262/webservice/rest/server.php"
-            assert b"wsfunction=mod_assign_get_submissions" in request.data
-            assert b"assignmentids%5B0%5D=9001" in request.data
-            assert b"assignmentids%5B3%5D=9004" in request.data
-            return json.dumps(payload).encode(), request.full_url, "application/json"
+            assert b"wsfunction=mod_assign_get_submission_status" in request.data
+            assignment_id = int(parse_qs(request.data.decode())["assignid"][0])
+            return (
+                json.dumps(payloads[assignment_id]).encode(),
+                request.full_url,
+                "application/json",
+            )
 
     result = Client().fetch_assignment_submissions_bulk(
         webservice_token="b" * 16,
@@ -1509,6 +1510,28 @@ def test_assignment_submission_bulk_uses_one_official_request_and_normalizes_sta
     assert result["9002"]["submission_state"] == "draft"
     assert result["9003"]["submission_state"] == "not_submitted"
     assert result["9004"]["submission_state"] == "unknown"
+    assert result["_bulk_failed_assignment_ids"] == []
+
+
+def test_legacy_assignment_submission_parser_normalizes_all_statuses() -> None:
+    result = module._parse_assignment_submissions_bulk(
+        json.dumps(
+            {
+                "assignments": [
+                    {"assignmentid": 1, "submissions": []},
+                    {"assignmentid": 2, "submissions": [{"status": "new"}]},
+                    {"assignmentid": 3, "submissions": [{"status": "draft"}]},
+                    {"assignmentid": 4, "submissions": [{"status": "submitted"}]},
+                    {"assignmentid": 5, "submissions": [{"status": "reviewed"}]},
+                ]
+            }
+        ).encode()
+    )
+    assert result["1"]["submission_state"] == "not_submitted"
+    assert result["2"]["submission_state"] == "not_submitted"
+    assert result["3"]["submission_state"] == "draft"
+    assert result["4"]["submission_state"] == "submitted"
+    assert result["5"]["submission_state"] == "unknown"
 
 
 def test_assignment_submission_bulk_validates_token_and_ids() -> None:
@@ -1527,6 +1550,63 @@ def test_assignment_submission_bulk_validates_token_and_ids() -> None:
             webservice_token="b" * 16, term="2026-2", assignment_ids=[0]
         )
     assert caught.value.reason == "assignment_submission_id"
+
+
+def test_assignment_submission_bulk_keeps_partial_results_when_student_status_fails() -> None:
+    class Client(MoodleStructuredDatesClient):
+        def _open(self, request):
+            assignment_id = int(parse_qs(request.data.decode())["assignid"][0])
+            if assignment_id == 9001:
+                raise InvalidMoodleResponse("student_status_forbidden")
+            if assignment_id == 9002:
+                raise RuntimeError("temporary Moodle failure")
+            return (
+                b'{"lastattempt":{"submission":{"status":"submitted"}}}',
+                request.full_url,
+                "application/json",
+            )
+
+    result = Client().fetch_assignment_submissions_bulk(
+        webservice_token="b" * 16,
+        term="2026-2",
+        assignment_ids=[9001, 9002, 9003],
+    )
+    assert result["9003"]["submission_state"] == "submitted"
+    assert result["_bulk_failed_assignment_ids"] == [9001, 9002]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"lastattempt": {}},
+        {"lastattempt": {"submission": {"status": ""}}},
+        {"lastattempt": {"submission": {"status": "new"}}},
+        {"lastattempt": {"submission": {"status": "draft"}}},
+        {"lastattempt": {"submission": {"status": "submitted"}}},
+        {"lastattempt": {"submission": {"status": "reviewed"}}},
+    ],
+)
+def test_assignment_submission_status_parser_accepts_student_contract(
+    payload: dict[str, object],
+) -> None:
+    result = module._parse_assignment_submission_status(json.dumps(payload).encode())
+    assert result["_bulk_submission_complete"] is True
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'{"exception":"forbidden"}',
+        b'{"lastattempt":[]}',
+        b'{"lastattempt":{"submission":[]}}',
+        b'{"lastattempt":{"submission":{"status":1}}}',
+        b"not-json",
+    ],
+)
+def test_assignment_submission_status_parser_rejects_unsafe_shapes(payload: bytes) -> None:
+    with pytest.raises(InvalidMoodleResponse):
+        module._parse_assignment_submission_status(payload)
 
 
 def test_assignment_submission_parser_rejects_conflicting_duplicate() -> None:
