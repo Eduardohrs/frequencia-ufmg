@@ -658,6 +658,7 @@ class CourseActivityService:
             "activity_snapshots_synced",
             {
                 "total_courses": len(courses),
+                "force": self._force,
                 "updated": updated,
                 "failed": len(failed),
                 **({"reused": reused_total} if self._policy is not None else {}),
@@ -717,7 +718,12 @@ class CourseActivityService:
         fallback_by_kind: dict[str, int] = {}
         fallback_reasons: dict[str, int] = {}
         incremental_supported = callable(getattr(self._client, "activity_updates_since", None))
-        reuse_allowed = incremental_supported and previous is not None
+        # A force sync is an explicit request to refresh activity details. It
+        # must not spend the activity stage probing every Moodle course with
+        # ``updates_since`` only to reuse the same snapshot afterwards.
+        # Incremental probes remain the fast path for ordinary refreshes;
+        # force runs go directly through the structured bulk path.
+        reuse_allowed = incremental_supported and previous is not None and not self._force
         changed_positions = set(range(len(entries)))
         reused_count = 0
         updates_checked = 0

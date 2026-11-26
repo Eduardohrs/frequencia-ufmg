@@ -687,6 +687,34 @@ def test_incremental_sync_reuses_snapshot_when_moodle_reports_no_changes():
     assert client.fetch_calls == []
 
 
+def test_force_sync_skips_change_probes_and_refreshes_through_bulk_path():
+    courses = [_course("poo")]
+    index = {"ELEpoo": [_entry(1), _entry(2)]}
+    service, client, logs = _build(
+        courses,
+        index,
+        lambda *, source_id, kind: {"description": "html", "attachments": []},
+        client_class=_IncrementalClient,
+    )
+    snapshots = _Snapshots()
+    service.sync_snapshots("owner", now=1_793_188_800, snapshots=snapshots)
+    client.update_calls.clear()
+    client.bulk_calls.clear()
+    client.fetch_calls.clear()
+    service._force = True
+
+    result = service.sync_snapshots("owner", now=1_793_188_900, snapshots=snapshots)
+
+    assert result["failed"] == 0
+    assert client.update_calls == []
+    assert client.bulk_calls == [77]
+    assert client.fetch_calls == []
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["force"] is True
+    assert summary["updates_checked"] == 0
+    assert summary["bulk_activities"] == 2
+
+
 def test_incremental_sync_bulk_reads_only_modules_reported_as_changed():
     courses = [_course("poo")]
     index = {"ELEpoo": [_entry(1), _entry(2), _entry(3)]}
