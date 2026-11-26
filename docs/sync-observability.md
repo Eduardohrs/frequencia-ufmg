@@ -81,14 +81,15 @@ continua dono das datas de agenda; o snapshot continua dono dos detalhes da
 atividade. Assim, o mesmo prazo pode ser exibido uma vez na agenda sem perder o
 link e os anexos da atividade.
 
-A descoberta de conteúdo (`discover(..., activities=False)`) e o índice de
-atividades (`discover(..., activities=True)` por disciplina, mais
-`list_activities` por curso) compartilham um memo por execução de sincronização,
-com chave `(digest do token da sessão, termo)` para a lista de matrículas e
-`(digest, termo, course_id)` para cada estado de curso. Uma única resposta de
-`core_courseformat_get_state` é parseada nos dois pontos de vista (materiais e
-atividades), portanto uma única chamada em lote por termo cobre os dois
-consumidores. O memo é tampado (`MAX_DISCOVERY_CACHE_ENTRIES`), é descartado
+A descoberta de conteúdo chama `discover_with_activities` quando disponível:
+uma resposta de `core_courseformat_get_state` é parseada uma vez e entrega, em
+memória, tanto materiais quanto o índice de atividades. O snapshot consome esse
+índice compartilhado e não chama `discover(..., activities=True)`/`list_activities`
+por disciplina de novo. O índice é transitório e não é escrito no catálogo de
+materiais; o snapshot continua sendo o destino dos detalhes de atividades. A
+chave do memo é `(digest do token da sessão, termo)` para a lista de matrículas
+e `(digest, termo, course_id)` para cada estado de curso. O memo é tampado
+(`MAX_DISCOVERY_CACHE_ENTRIES`), é descartado
 quando o digest do token muda e nunca cruza execuções. Os eventos
 `moodle_discovery_cache` (por consumidor, com `enrolled_hit`/`state_hits`/
 `state_misses`) e `sync_read_cache` (com `catalog_reads` e
@@ -151,6 +152,10 @@ corpo de resposta ou identificador do usuário:
 - `sync_read_cache`: por sync, `snapshot_reads`, `policy_state_reads`,
   `catalog_reads`, `discovery_shared_courses` e os flags de escrita em lote
   (`policy_write_batch`, `snapshot_write_batch`);
+- `firestore_request_completed` para `POST .../documents:batchGet` marca o lote
+  de documentos conhecidos (por exemplo, `materialCatalog/current`) como uma
+  leitura única, mantendo `missing` explícito e sem expor IDs no recurso
+  telemétrico;
 - `course_sync_policy_batch_failed`: motivo e quantidade de updates quando o
   commit em lote do `syncState` é rejeitado (com fallback para patches
   individuais);

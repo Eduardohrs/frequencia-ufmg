@@ -134,6 +134,52 @@ def test_discovery_links_candidates_to_local_courses_and_returns_counts() -> Non
     assert catalog.courses == result["courses"]
 
 
+def test_discovery_keeps_shared_activity_index_out_of_material_catalog() -> None:
+    class Client(_Client):
+        def discover_with_activities(
+            self, token: str, *, term: str, course_codes: list[str]
+        ) -> list[dict[str, object]]:
+            values = self.discover(token, term=term, course_codes=course_codes)
+            values[0]["activity_candidates"] = [
+                {
+                    "source_id": "104",
+                    "kind": "assign",
+                    "title": "Trabalho 1",
+                    "url": "https://virtual.ufmg.br/20262/mod/assign/view.php?id=104",
+                    "relevance": "other",
+                    "origin": "canonical",
+                    "moodle_course_id": "3701",
+                }
+            ]
+            return values
+
+    catalog = _Catalog()
+    result = MoodleContentDiscoveryService(
+        _Sessions(), Client(), _Courses(), catalog
+    ).discover("user", now=123)
+
+    first = result["courses"][0]
+    assert isinstance(first, dict)
+    assert first["activity_candidates"][0]["source_id"] == "104"
+    assert catalog.courses is not None
+    assert "activity_candidates" not in catalog.courses[0]
+
+
+def test_discovery_rejects_invalid_shared_activity_index() -> None:
+    class Client(_Client):
+        def discover_with_activities(
+            self, token: str, *, term: str, course_codes: list[str]
+        ) -> list[dict[str, object]]:
+            values = self.discover(token, term=term, course_codes=course_codes)
+            values[0]["activity_candidates"] = "not-a-list"
+            return values
+
+    with pytest.raises(ValueError, match="invalid discovered activity candidates"):
+        MoodleContentDiscoveryService(
+            _Sessions(), Client(), _Courses(), _Catalog()
+        ).discover("user", now=123)
+
+
 def test_discovery_requires_session_and_removes_rejected_session() -> None:
     with pytest.raises(UFMGReauthenticationRequired):
         MoodleContentDiscoveryService(_Sessions(None), _Client(), _Courses(), _Catalog()).discover(

@@ -107,6 +107,47 @@ def test_discovery_shares_one_enrolled_and_one_state_batch_across_consumers():
     ]
 
 
+def test_combined_discovery_exposes_material_and_activity_views_from_same_states():
+    client = _DiscoveryClient([])
+
+    result = client.discover_with_activities(
+        "token-a", term="2026-2", course_codes=["DCC203", "MAT001"]
+    )
+
+    assert [item["kind"] for item in result[0]["candidates"]] == ["page"]
+    assert [item["kind"] for item in result[0]["activity_candidates"]] == ["assign"]
+    assert result[1]["activity_candidates"] == []
+    assert client.enrolled_calls == 1
+    assert client.ajax_calls == [
+        ["core_course_get_enrolled_courses_by_timeline_classification"],
+        ["core_courseformat_get_state", "core_courseformat_get_state"],
+    ]
+
+
+def test_combined_discovery_limits_the_shared_activity_index(monkeypatch):
+    monkeypatch.setattr(msd, "MAX_CANDIDATES", 1)
+    states = {
+        3701: [
+            _DCC203_CMS[0],
+            _DCC203_CMS[1],
+            {
+                **_DCC203_CMS[1],
+                "id": 105,
+                "name": "Trabalho 2",
+                "url": "https://virtual.ufmg.br/20262/mod/assign/view.php?id=105",
+            },
+        ],
+        4953: [],
+    }
+    client = _DiscoveryClient([], states_by_course=states)
+
+    with pytest.raises(InvalidMoodleResponse) as error:
+        client.discover_with_activities(
+            "token-a", term="2026-2", course_codes=["DCC203", "MAT001"]
+        )
+    assert error.value.reason == "activity_candidate_limit"
+
+
 def test_discovery_cache_keys_are_scoped_to_token_and_term():
     client = _DiscoveryClient([])
     client.discover("token-a", term="2026-2", course_codes=["DCC203"])

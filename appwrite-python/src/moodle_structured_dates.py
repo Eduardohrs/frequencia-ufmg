@@ -229,8 +229,14 @@ class MoodleStructuredDatesClient:
         term: str,
         course_codes: list[str],
         activities: bool = False,
+        include_activities: bool = False,
     ) -> list[dict[str, object]]:
-        """Discover bounded visible course resources without downloading content."""
+        """Discover bounded visible course resources without downloading content.
+
+        ``include_activities`` lets the full academic sync reuse the activity
+        index that was already parsed for the material catalog.  The default
+        remains unchanged for callers that only need material candidates.
+        """
 
         codes = _validate_course_codes(token, course_codes)
         root, ajax_path, sesskey = self._connect(token, term)
@@ -280,7 +286,9 @@ class MoodleStructuredDatesClient:
                 },
             )
             total = 0
+            activity_total = 0
             grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
+            grouped_activities: dict[str, list[dict[str, object]]] = defaultdict(list)
             for (code, course, origin), state in zip(matched, states, strict=True):
                 candidates = state["activities" if activities else "materials"]
                 total += len(candidates)
@@ -290,14 +298,38 @@ class MoodleStructuredDatesClient:
                     candidate | {"origin": origin, "moodle_course_id": str(course["id"])}
                     for candidate in candidates
                 )
+                if include_activities and not activities:
+                    activity_candidates = state["activities"]
+                    activity_total += len(activity_candidates)
+                    if activity_total > MAX_CANDIDATES:
+                        raise InvalidMoodleResponse("activity_candidate_limit")
+                    grouped_activities[code].extend(
+                        candidate | {"origin": origin, "moodle_course_id": str(course["id"])}
+                        for candidate in activity_candidates
+                    )
             for code, candidates in grouped.items():
-                results[code] = {
+                result: dict[str, object] = {
                     "course_code": code,
                     "moodle_course_id": results[code]["moodle_course_id"],
                     "status": "found" if candidates else "empty",
                     "candidates": candidates,
                 }
+                if include_activities and not activities:
+                    result["activity_candidates"] = grouped_activities.get(code, [])
+                results[code] = result
         return [results[code] for code in codes]
+
+    def discover_with_activities(
+        self, token: str, *, term: str, course_codes: list[str]
+    ) -> list[dict[str, object]]:
+        """Discover material and activity indexes in the same state response."""
+
+        return self.discover(
+            token,
+            term=term,
+            course_codes=course_codes,
+            include_activities=True,
+        )
 
     def _enrolled_courses(
         self,

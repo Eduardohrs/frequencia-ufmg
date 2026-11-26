@@ -33,7 +33,11 @@ from ufmg_session_store import (
     UFMGSession,
 )
 
-DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY = 4
+# HTML enrichment is the measured slow path for quiz snapshots.  Eight is the
+# existing hard cap and keeps the pool bounded while halving the number of
+# waves for the observed 11-page fallback; deployments can lower it through
+# ``MOODLE_ACTIVITY_SNAPSHOT_CONCURRENCY`` if Moodle rate-limits the account.
+DEFAULT_ACTIVITY_SNAPSHOT_CONCURRENCY = 8
 MIN_ACTIVITY_SNAPSHOT_CONCURRENCY = 1
 MAX_ACTIVITY_SNAPSHOT_CONCURRENCY = 8
 MAX_REPORTED_FAILED_COURSES = 20
@@ -322,6 +326,7 @@ class CourseActivityService:
         failed: list[dict[str, object]] = []
         pending_snapshots: list[tuple[str, dict[str, Any]]] = []
         pending_policy_updates: list[tuple[str, str, dict[str, Any]]] = []
+        module_bulk_capabilities: dict[str, bool] = {}
         courses = self._courses.list_courses()
         discovered_map = (
             {
@@ -372,6 +377,7 @@ class CourseActivityService:
                     now,
                     snapshots,
                     mobile_tokens=mobile_tokens,
+                    module_bulk_capabilities=module_bulk_capabilities,
                     pending_saves=pending_snapshots,
                     previous_snapshot=previous_snapshot,
                     discovered=discovered_map,
@@ -569,6 +575,7 @@ class CourseActivityService:
         snapshots: ActivitySnapshotRepository,
         *,
         mobile_tokens: object | None = None,
+        module_bulk_capabilities: dict[str, bool] | None = None,
         pending_saves: list[tuple[str, dict[str, Any]]] | None = None,
         previous_snapshot: Any = _PREVIOUS_UNSET,
         discovered: dict[str, dict[str, object]] | None = None,
@@ -576,7 +583,8 @@ class CourseActivityService:
         course_id = course["id"]
         fields = {"course_id": course_id, "course_code": course["code"], "term": course["term"]}
         course, session, moodle_id = self._source(user_id, course_id, now, discovered=discovered)
-        index = self._activity_index(course, session, moodle_id)
+        discovered_entry = discovered.get(course_id) if discovered is not None else None
+        index = self._activity_index(course, session, moodle_id, discovered_entry)
         entries = cast(list[dict[str, Any]], index["activities"])
         activities: list[dict[str, Any] | None] = [None] * len(entries)
         if previous_snapshot is _PREVIOUS_UNSET:
@@ -818,6 +826,23 @@ class CourseActivityService:
                 for (moodle_course_id, kind), positions in sorted(positions_by_module.items()):
                     if kind not in {"assign", "quiz"}:
                         continue
+                    capability_known_unsupported = (
+                        module_bulk_capabilities is not None
+                        and module_bulk_capabilities.get(kind) is False
+                    )
+                    if capability_known_unsupported:
+                        _emit(
+                            self._telemetry,
+                            "moodle_activity_module_bulk_skipped",
+                            {
+                                **fields,
+                                "moodle_course_id": moodle_course_id,
+                                "kind": kind,
+                                "reason": "unsupported_for_sync",
+                                "activity_count": len(positions),
+                            },
+                        )
+                        continue
                     module_bulk_calls += 1
                     try:
                         module_details = timed_stage(
@@ -855,6 +880,7 @@ class CourseActivityService:
                             },
                         )
                         continue
+                    module_bulk_successes = 0
                     for position in positions:
                         entry = entries[position]
                         detail = module_details.get(str(entry["source_id"]))
@@ -885,9 +911,12 @@ class CourseActivityService:
                         }
                         html_positions.discard(position)
                         module_bulk_count += 1
+                        module_bulk_successes += 1
                         bulk_submission_unknown += int(
                             clean_detail.get("submission_state") == "unknown"
                         )
+                    if module_bulk_capabilities is not None and module_bulk_successes == 0:
+                        module_bulk_capabilities[kind] = False
 
         def capture_activity(position: int, entry: dict[str, Any]) -> dict[str, object] | None:
             """Fetch one activity detail; return a bounded failure record or None."""
@@ -1038,9 +1067,53 @@ class CourseActivityService:
         return self._activity_index(course, session, moodle_id)
 
     def _activity_index(
-        self, course: dict[str, Any], session: UFMGSession, moodle_id: int
+        self,
+        course: dict[str, Any],
+        session: UFMGSession,
+        moodle_id: int,
+        discovered_entry: dict[str, object] | None = None,
     ) -> dict[str, object]:
         course_id = course["id"]
+
+        shared_candidates = (
+            discovered_entry.get("activity_candidates")
+            if isinstance(discovered_entry, dict)
+            else None
+        )
+        if isinstance(shared_candidates, list) and all(
+            isinstance(candidate, dict) for candidate in shared_candidates
+        ):
+            entries = cast(list[dict[str, object]], shared_candidates)
+            _emit(
+                self._telemetry,
+                "moodle_activity_index_reused",
+                {
+                    "course_id": course_id,
+                    "course_code": course["code"],
+                    "moodle_course_id": moodle_id,
+                    "activity_count": len(entries),
+                    "source": "shared_course_discovery",
+                },
+            )
+            timed_stage(
+                "course_activity_index",
+                lambda: None,
+                telemetry=self._telemetry,
+                fields={
+                    "course_id": course_id,
+                    "course_code": course["code"],
+                    "moodle_course_id": moodle_id,
+                    "cache_hit": True,
+                    "activity_count": len(entries),
+                },
+            )
+            return {
+                "activities": entries,
+                "course_id": course_id,
+                "term": course["term"],
+                "moodle_course_id": str(moodle_id),
+            }
+
         entries = timed_stage(
             "course_activity_index",
             lambda: self._client.list_activities(

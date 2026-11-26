@@ -51,6 +51,26 @@ class _BatchFirestore(_Firestore):
             self.documents[path] = fields
 
 
+class _BatchReadFirestore(_BatchFirestore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.batch_reads: list[list[tuple[str, ...]]] = []
+
+    def batch_get_user_documents(self, paths):
+        self.batch_reads.append(list(paths))
+        return {
+            tuple(path): (
+                {
+                    "name": "/".join(path),
+                    "fields": self.documents[tuple(path)],
+                }
+                if tuple(path) in self.documents
+                else None
+            )
+            for path in paths
+        }
+
+
 def _candidate(**changes: object) -> dict[str, object]:
     candidate = {
         "source_id": "101",
@@ -135,6 +155,34 @@ def test_reconcile_batches_changed_catalog_documents() -> None:
     assert result["writes"] == 2
     assert len(firestore.commits) == 1
     assert len(firestore.commits[0]) == 2
+
+
+def test_reconcile_and_list_use_one_batch_read_for_known_current_documents() -> None:
+    firestore = _BatchReadFirestore()
+    repository = MoodleMaterialCatalogRepository(firestore, now=lambda: NOW)
+    courses = [_course(), _course(course_id="course-b", course_code="MAT001")]
+
+    repository.reconcile(courses)
+    assert len(firestore.batch_reads) == 1
+    assert len(firestore.batch_reads[0]) == 2
+
+    repository.list_catalog(
+        [{"id": "course-a", "code": "DCC203", "term": "2026-2"},
+         {"id": "course-b", "code": "MAT001", "term": "2026-2"}]
+    )
+    assert len(firestore.batch_reads) == 2
+
+
+def test_reconcile_rejects_an_incomplete_batch_read() -> None:
+    class InvalidBatchReadFirestore(_BatchReadFirestore):
+        def batch_get_user_documents(self, paths):
+            return {}
+
+    repository = MoodleMaterialCatalogRepository(
+        InvalidBatchReadFirestore(), now=lambda: NOW
+    )
+    with pytest.raises(InvalidMoodleMaterialCatalog):
+        repository.reconcile([_course()])
 
 
 def test_reconcile_splits_batches_at_the_security_rules_parent_limit() -> None:

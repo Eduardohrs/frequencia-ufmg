@@ -141,14 +141,13 @@ def test_replay_discovery_makes_one_enrolled_and_one_state_batch_for_ten_courses
     events = []
     client = _ReplayDiscoveryClient(events)
 
-    # Same call sequence as one sync: material catalog per term, activity index
-    # per course, then the snapshot stage's per-course index reads.
-    client.discover("token", term=TERM, course_codes=COURSE_CODES)
-    client.discover("token", term=TERM, course_codes=COURSE_CODES, activities=True)
-    indexed = [
-        client.list_activities("token", term=TERM, course_id=COURSE_IDS[code], course_code=code)
-        for code in COURSE_CODES
-    ]
+    # Same call sequence as the optimized sync: one combined material/activity
+    # discovery parses each course state once, and the snapshot stage consumes
+    # the in-memory activity index instead of re-discovering it per course.
+    combined = client.discover_with_activities(
+        "token", term=TERM, course_codes=COURSE_CODES
+    )
+    indexed = [item["activity_candidates"] for item in combined]
 
     assert client.enrolled_calls == 1
     assert len(client.state_batches) == 10
@@ -173,8 +172,7 @@ class _ReplayActivityClient:
         self.pages = []
 
     def list_activities(self, token, *, term, course_id, course_code=None):
-        code = next(c for c in COURSE_CODES if COURSE_IDS[c] == course_id)
-        return ENTRIES[code]
+        raise AssertionError("the combined discovery index should be reused")
 
     def activity_updates_since(self, token, *, term, course_id, since):
         self.updates_calls.append(course_id)
@@ -275,7 +273,12 @@ def test_replay_activity_stage_preserves_entries_and_bounds_the_quiz_fallback():
     )
     snapshots = _ReplaySnapshots()
     discovered = [
-        {"course_id": code.lower(), "status": "found", "moodle_course_id": str(COURSE_IDS[code])}
+        {
+            "course_id": code.lower(),
+            "status": "found",
+            "moodle_course_id": str(COURSE_IDS[code]),
+            "activity_candidates": ENTRIES[code],
+        }
         for code in COURSE_CODES
     ]
 

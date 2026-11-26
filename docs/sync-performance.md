@@ -1,7 +1,7 @@
 # Ledger de performance da sincronização Moodle
 
 Baseline medida de uma execução real autenticada em 2026-11-25
-(`operation_id=sync-hoi5z6p8qg-7rtfsx`): **51.495 ms de parede**, HTTP 200.
+(`operation_id=sync-hoi5z6p8qg-7rtfsx`): **51,495 ms (51.495 s) de parede**, HTTP 200.
 
 | Estágio | Baseline (ms) | Detalhe medido |
 | --- | --- | --- |
@@ -33,6 +33,8 @@ volta a ser medida em uma execução real autenticada após o deploy.
 | C | Calendário: nenhuma chamada removida (os 2 `monthly_view` continuam necessários para eventos gerais); histograma `moodle_calendar_event_kinds` (kind, matched/unmatched, ids únicos) | `tests/test_moodle_date_import.py`, replay do calendário (43/43) | 43 eventos preservados; histograma evidenciado | keep + observabilidade |
 | D | Firestore: snapshot por disciplina carregado 1x e passado à captura; estado do `syncState` lido no máximo 1x por disciplina e reutilizado em `run(state=...)`; `persist_success_batch` grava os sucessos adiados em 1 commit (fallback para patch individual); contadores em `sync_read_cache` | `tests/test_sync_discovery_cache.py` | no replay: `catalog_reads=0`, `snapshot_reads=10`, 1 commit de política | keep |
 | E | Replay/benchmark a partir da forma da run gravada + este ledger | `tests/test_sync_replay_benchmark.py` | contagens de chamadas e dados preservados asserted; tempo de parede não afirmado | keep |
+| F | Descoberta combinada: o estado de cada curso já parseado para o catálogo também entrega o índice de atividades em memória; a captura não repete `discover/list_activities` por disciplina. A lista de atividades é transitória e não entra no catálogo persistido. | `tests/test_moodle_content_discovery.py`, `tests/test_sync_replay_benchmark.py` | replay preserva 115 entradas sem uma segunda leitura do índice; contrato do catálogo continua somente com materiais | keep |
+| G | `batchGet` para documentos `materialCatalog/current` conhecidos e pool HTML padrão 8 (limite 8 já existente). O lote reduz requests REST de documentos conhecidos; o pool reduz ondas do fallback quiz sem descartar descrição/anexos. | `tests/test_firestore_rest.py`, `tests/test_moodle_material_catalog_repository.py`, `tests/test_course_activity_concurrency.py` | fakes verificam nomes/missing e os detalhes do fallback continuam preservados; a parede real ainda exige uma nova execução autenticada | keep + medir |
 
 ## Critérios de reversão
 
