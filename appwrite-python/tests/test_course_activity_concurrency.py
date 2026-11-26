@@ -597,6 +597,193 @@ def test_bulk_omissions_fall_back_to_html_without_persisting_private_flags():
     )
     assert fallback["source_id"] == "1"
     assert fallback["missing_fields"] == ["description", "attachments"]
+    html_result = next(
+        fields for event, fields in logs if event == "moodle_activity_html_detail_result"
+    )
+    assert html_result["outcome"] == "complete"
+    assert html_result["fallback_reason"] == "missing_bulk_fields"
+    assert html_result["description_chars"] == len("HTML instructions")
+    assert html_result["attachment_count"] == 1
+    assert snapshots.saved["poo"]["activities"][0].get("_html_response_bytes") is None
+
+
+def test_html_detail_quality_normalizes_invalid_metadata_and_allowlisted_empty_fields():
+    quality = activities_module._html_detail_quality(
+        {
+            "description": "text",
+            "attachments": [{"name": "file"}],
+            "_html_description_chars": -1,
+            "_html_attachment_count": "invalid",
+            "_html_empty_fields": ["attachments", "ignored"],
+            "_html_response_status": 700,
+            "_html_response_bytes": -1,
+        }
+    )
+
+    assert quality == {
+        "response_status": 200,
+        "response_bytes": None,
+        "description_chars": 4,
+        "attachment_count": 1,
+        "empty_fields": ["attachments"],
+        "outcome": "partial",
+        "metadata_source": "client",
+    }
+    complete = activities_module._html_detail_quality(
+        {
+            "description": "text",
+            "attachments": [{"name": "file"}],
+            "_html_description_chars": 4,
+            "_html_attachment_count": 1,
+            "_html_empty_fields": [],
+            "_html_response_status": 200,
+            "_html_response_bytes": 42,
+        }
+    )
+    assert complete["outcome"] == "complete"
+    assert complete["metadata_source"] == "client"
+
+
+def test_bulk_failure_records_reason_for_the_following_html_fallback():
+    class BrokenBulkClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            raise InvalidMoodleResponse("course_activity_bulk_shape")
+
+    service, _client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: {"description": "HTML", "attachments": []},
+        client_class=BrokenBulkClient,
+    )
+
+    result = service.sync_snapshots("owner", now=1, snapshots=_Snapshots())
+
+    assert result["failed"] == 0
+    html_result = next(
+        fields for event, fields in logs if event == "moodle_activity_html_detail_result"
+    )
+    assert html_result["fallback_reason"] == "bulk_unavailable"
+
+
+def test_non_mapping_html_detail_is_reported_as_a_failed_fallback():
+    class IncompleteBulkClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+    service, _client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: [],
+        client_class=IncompleteBulkClient,
+    )
+
+    result = service.sync_snapshots("owner", now=1, snapshots=_Snapshots())
+
+    assert result["failed"] == 1
+    html_result = next(
+        fields for event, fields in logs if event == "moodle_activity_html_detail_result"
+    )
+    assert html_result["outcome"] == "failed"
+    assert html_result["error_reason"] == "activity_page_shape"
+
+
+@pytest.mark.parametrize(
+    ("detail", "expected_outcome", "expected_empty"),
+    [
+        ({"description": "", "attachments": []}, "empty_fields", ["description", "attachments"]),
+        ({"description": "Only text", "attachments": []}, "partial", ["attachments"]),
+    ],
+)
+def test_html_fallback_reports_empty_fields_as_quality_not_failure(
+    detail, expected_outcome, expected_empty
+):
+    class IncompleteBulkClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+    service, _client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: detail,
+        client_class=IncompleteBulkClient,
+    )
+
+    result = service.sync_snapshots("owner", now=1, snapshots=_Snapshots())
+
+    assert result["failed"] == 0
+    html_result = next(
+        fields for event, fields in logs if event == "moodle_activity_html_detail_result"
+    )
+    assert html_result["outcome"] == expected_outcome
+    assert html_result["empty_fields"] == expected_empty
+    summary = next(fields for event, fields in logs if event == "activity_snapshots_synced")
+    assert summary["html_quality_counts"][expected_outcome] == 1
+
+
+def test_html_fallback_failure_is_distinguished_from_empty_html_fields():
+    class IncompleteBulkClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+    def failing_fetch(*, source_id, kind):
+        raise InvalidMoodleResponse(
+            "activity_page_shape", details={"response_status": 200, "response_bytes": 3}
+        )
+
+    service, _client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        failing_fetch,
+        client_class=IncompleteBulkClient,
+    )
+
+    result = service.sync_snapshots("owner", now=1, snapshots=_Snapshots())
+
+    assert result["failed"] == 1
+    html_result = next(
+        fields for event, fields in logs if event == "moodle_activity_html_detail_result"
+    )
+    assert html_result["outcome"] == "failed"
+    assert html_result["error_reason"] == "activity_page_shape"
+    assert html_result["response_status"] == 200
+    assert html_result["response_bytes"] == 3
 
 
 def test_incomplete_bulk_capability_skips_the_extra_request():
@@ -957,6 +1144,8 @@ def test_partial_failure_attempts_every_activity_and_preserves_the_previous_snap
     summary = next(f for e, f in logs if e == "activity_snapshots_synced")
     assert summary["failed"] == 1 and summary["failed_activities"] == 2
     assert summary["concurrency"] == 2 and summary["total_courses"] == 1
+    assert summary["html_quality_counts"] == {"partial": 1, "failed": 2}
+    assert summary["html_empty_field_counts"] == {"attachments": 1}
 
 
 def test_capture_raises_one_course_level_failure_with_count_and_first_reason():

@@ -290,6 +290,62 @@ def test_fetch_activity_memoizes_one_page_per_activity_and_returns_copies():
     assert _cache_outcomes(events) == ["miss", "hit", "hit", "miss", "miss", "miss"]
 
 
+def test_fetch_activity_records_html_field_quality_without_changing_parser_contract():
+    events = []
+    client = _ActivityPageClient(events)
+    detail = client.fetch_activity("token-a", term="2026-2", source_id=20, kind="assign")
+
+    assert detail["description"] == "Task"
+    assert detail["attachments"] == []
+    assert detail["_html_response_status"] == 200
+    assert detail["_html_response_bytes"] == len(_ACTIVITY_PAGE)
+    assert detail["_html_description_chars"] == 4
+    assert detail["_html_attachment_count"] == 0
+    assert detail["_html_empty_fields"] == ["attachments"]
+
+
+def test_fetch_activity_records_both_empty_optional_fields_as_valid_html():
+    events = []
+    client = _ActivityPageClient(events)
+    empty_page = b'<section id="region-main"><div class="quizinfo">Quiz</div></section>'
+    client._open = lambda request: (
+        empty_page,
+        request.full_url,
+        "text/html",
+    )
+
+    detail = client.fetch_activity("token-a", term="2026-2", source_id=20, kind="quiz")
+
+    assert detail["description"] == ""
+    assert detail["attachments"] == []
+    assert detail["_html_description_chars"] == 0
+    assert detail["_html_attachment_count"] == 0
+    assert detail["_html_empty_fields"] == ["description", "attachments"]
+
+
+def test_fetch_activity_records_nonempty_attachment_quality(monkeypatch):
+    events = []
+    client = _ActivityPageClient(events)
+    monkeypatch.setattr(
+        msd,
+        "parse_activity_page",
+        lambda payload, *, term, kind: {
+            "description": "Instructions",
+            "dates_text": "",
+            "has_due_date": False,
+            "submission_state": "unknown",
+            "submission_text": "",
+            "attachments": [{"name": "file.pdf", "url": "https://moodle/file"}],
+        },
+    )
+
+    detail = client.fetch_activity("token-a", term="2026-2", source_id=20, kind="assign")
+
+    assert detail["_html_description_chars"] == len("Instructions")
+    assert detail["_html_attachment_count"] == 1
+    assert detail["_html_empty_fields"] == []
+
+
 def test_fetch_activity_page_cache_cap_bounds_the_memo(monkeypatch):
     monkeypatch.setattr(msd, "MAX_ACTIVITY_PAGE_CACHE", 0)
     events = []

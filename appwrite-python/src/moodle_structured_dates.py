@@ -658,7 +658,31 @@ class MoodleStructuredDatesClient:
         try:
             detail = parse_activity_page(payload, term=term, kind=kind)
         except InvalidActivityPage as error:
-            raise InvalidMoodleResponse(error.reason) from None
+            raise InvalidMoodleResponse(
+                error.reason,
+                details={"response_status": 200, "response_bytes": len(payload)},
+            ) from None
+        # Keep response-quality evidence with the in-memory detail only.  The
+        # snapshot service strips these private fields before persistence, but
+        # can use them to distinguish a valid page with no optional content
+        # from a failed or incomplete HTML fallback.
+        description = detail.get("description")
+        attachments = detail.get("attachments")
+        description_chars = len(description.strip()) if isinstance(description, str) else 0
+        attachment_count = len(attachments) if isinstance(attachments, list) else 0
+        empty_fields = []
+        if description_chars == 0:
+            empty_fields.append("description")
+        if attachment_count == 0:
+            empty_fields.append("attachments")
+        detail = {
+            **detail,
+            "_html_response_status": 200,
+            "_html_response_bytes": len(payload),
+            "_html_description_chars": description_chars,
+            "_html_attachment_count": attachment_count,
+            "_html_empty_fields": empty_fields,
+        }
         with self._discovery_lock:
             if len(self._activity_page_cache) < MAX_ACTIVITY_PAGE_CACHE:
                 # Store a copy: the caller owns the returned dict and may mutate it.

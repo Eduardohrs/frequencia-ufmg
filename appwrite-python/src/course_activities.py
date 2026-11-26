@@ -59,9 +59,16 @@ class CourseMoodleNotLinked(ValueError):
 class ActivitySnapshotCaptureFailed(Exception):
     """Some activity detail pages failed; the previous valid snapshot is retained."""
 
-    def __init__(self, failed_count: int, first_reason: str) -> None:
+    def __init__(
+        self,
+        failed_count: int,
+        first_reason: str,
+        *,
+        metrics: dict[str, object] | None = None,
+    ) -> None:
         self.failed_count = failed_count
         self.first_reason = first_reason
+        self.metrics = metrics or {}
         super().__init__(f"{failed_count} activity detail page(s) failed ({first_reason})")
 
 
@@ -204,6 +211,64 @@ def _clean_bulk_detail(detail: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in detail.items() if not key.startswith("_bulk_")}
 
 
+def _clean_activity_detail(detail: dict[str, Any]) -> dict[str, Any]:
+    """Remove bulk and HTML diagnostic fields before persisting a snapshot."""
+
+    return {
+        key: value
+        for key, value in detail.items()
+        if not key.startswith("_bulk_") and not key.startswith("_html_")
+    }
+
+
+def _html_detail_quality(detail: dict[str, Any]) -> dict[str, object]:
+    """Classify what an HTML fallback actually returned.
+
+    Empty optional content is evidence about the page, not a transport failure.
+    The distinction is kept in telemetry and never changes the snapshot schema.
+    """
+
+    description = detail.get("description")
+    attachments = detail.get("attachments")
+    description_chars = detail.get("_html_description_chars")
+    if type(description_chars) is not int or description_chars < 0:
+        description_chars = len(description.strip()) if isinstance(description, str) else 0
+    attachment_count = detail.get("_html_attachment_count")
+    if type(attachment_count) is not int or attachment_count < 0:
+        attachment_count = len(attachments) if isinstance(attachments, list) else 0
+    raw_empty = detail.get("_html_empty_fields")
+    if isinstance(raw_empty, list) and all(isinstance(item, str) for item in raw_empty):
+        empty_fields = [item for item in ("description", "attachments") if item in raw_empty]
+        metadata_source = "client"
+    else:
+        empty_fields = []
+        if description_chars == 0:
+            empty_fields.append("description")
+        if attachment_count == 0:
+            empty_fields.append("attachments")
+        metadata_source = "derived"
+    outcome = "complete"
+    if len(empty_fields) == 2:
+        outcome = "empty_fields"
+    elif empty_fields:
+        outcome = "partial"
+    response_status = detail.get("_html_response_status")
+    if type(response_status) is not int or not 100 <= response_status <= 599:
+        response_status = 200
+    response_bytes = detail.get("_html_response_bytes")
+    if type(response_bytes) is not int or response_bytes < 0:
+        response_bytes = None
+    return {
+        "response_status": response_status,
+        "response_bytes": response_bytes,
+        "description_chars": description_chars,
+        "attachment_count": attachment_count,
+        "empty_fields": empty_fields,
+        "outcome": outcome,
+        "metadata_source": metadata_source,
+    }
+
+
 def _entry_moodle_course_id(entry: dict[str, Any], default: object) -> int:
     """Return the Moodle course that owns an indexed activity."""
 
@@ -323,6 +388,8 @@ class CourseActivityService:
         activity_entries_seen = 0
         fallback_by_kind: dict[str, int] = {}
         fallback_reasons: dict[str, int] = {}
+        html_quality_counts: dict[str, int] = {}
+        html_empty_field_counts: dict[str, int] = {}
         failed: list[dict[str, object]] = []
         pending_snapshots: list[tuple[str, dict[str, Any]]] = []
         pending_policy_updates: list[tuple[str, str, dict[str, Any]]] = []
@@ -424,6 +491,12 @@ class CourseActivityService:
                         updates_changed += _metric(capture_result, "updates_changed")
                         _merge_metric_map(fallback_by_kind, capture_result, "fallback_by_kind")
                         _merge_metric_map(fallback_reasons, capture_result, "fallback_reasons")
+                        _merge_metric_map(
+                            html_quality_counts, capture_result, "html_quality_counts"
+                        )
+                        _merge_metric_map(
+                            html_empty_field_counts, capture_result, "html_empty_field_counts"
+                        )
                 _emit(
                     self._telemetry,
                     "activity_snapshot_course_decision",
@@ -442,6 +515,12 @@ class CourseActivityService:
                 if isinstance(error, ActivitySnapshotCaptureFailed):
                     reason = error.first_reason
                     failed_activities += error.failed_count
+                    _merge_metric_map(
+                        html_quality_counts, error.metrics, "html_quality_counts"
+                    )
+                    _merge_metric_map(
+                        html_empty_field_counts, error.metrics, "html_empty_field_counts"
+                    )
                 elif isinstance(error, InvalidMoodleResponse):
                     reason = error.reason
                 else:
@@ -556,6 +635,8 @@ class CourseActivityService:
                 "activity_entries_seen": activity_entries_seen,
                 "fallback_by_kind": fallback_by_kind,
                 "fallback_reasons": fallback_reasons,
+                "html_quality_counts": html_quality_counts,
+                "html_empty_field_counts": html_empty_field_counts,
                 "concurrency": self._max_workers,
                 "duration_ms": round((monotonic() - started) * 1000),
             },
@@ -682,6 +763,11 @@ class CourseActivityService:
         module_bulk_calls = 0
         module_bulk_failures = 0
         html_positions = set(changed_positions)
+        html_fallback_reasons: dict[int, str] = {
+            position: "no_structured_detail" for position in changed_positions
+        }
+        html_quality_counts: dict[str, int] = {}
+        html_empty_field_counts: dict[str, int] = {}
         bulk_method = getattr(self._client, "fetch_course_activity_bulk", None)
         bulk_details_complete = getattr(self._client, "bulk_activity_details_complete", True)
         if (
@@ -730,6 +816,7 @@ class CourseActivityService:
                             if not isinstance(detail, dict):
                                 bulk_fallbacks += 1
                                 reason = "activity_missing_from_bulk_response"
+                                html_fallback_reasons[position] = reason
                                 _count_fallback(
                                     fallback_by_kind, fallback_reasons, str(entry["kind"]), reason
                                 )
@@ -748,6 +835,7 @@ class CourseActivityService:
                             if _bulk_detail_needs_html_fallback(detail):
                                 bulk_fallbacks += 1
                                 reason = "missing_bulk_fields"
+                                html_fallback_reasons[position] = reason
                                 _count_fallback(
                                     fallback_by_kind, fallback_reasons, str(entry["kind"]), reason
                                 )
@@ -784,6 +872,8 @@ class CourseActivityService:
                                 clean_detail.get("submission_state") == "unknown"
                             )
                 except Exception as error:
+                    for position in html_positions:
+                        html_fallback_reasons[position] = "bulk_unavailable"
                     _emit(
                         self._telemetry,
                         "moodle_activity_bulk_unavailable",
@@ -795,6 +885,8 @@ class CourseActivityService:
                         },
                     )
         elif changed_positions and callable(bulk_method) and bulk_details_complete is False:
+            for position in changed_positions:
+                html_fallback_reasons[position] = "bulk_skipped_incomplete"
             _emit(
                 self._telemetry,
                 "moodle_activity_bulk_skipped",
@@ -831,6 +923,8 @@ class CourseActivityService:
                         and module_bulk_capabilities.get(kind) is False
                     )
                     if capability_known_unsupported:
+                        for position in positions:
+                            html_fallback_reasons[position] = "module_bulk_unsupported"
                         _emit(
                             self._telemetry,
                             "moodle_activity_module_bulk_skipped",
@@ -867,6 +961,8 @@ class CourseActivityService:
                             raise InvalidMoodleResponse("activity_module_bulk_shape")
                     except Exception as error:
                         module_bulk_failures += 1
+                        for position in positions:
+                            html_fallback_reasons[position] = "module_bulk_unavailable"
                         _emit(
                             self._telemetry,
                             "moodle_activity_module_bulk_unavailable",
@@ -890,6 +986,7 @@ class CourseActivityService:
                                 if not isinstance(detail, dict)
                                 else "missing_module_bulk_fields"
                             )
+                            html_fallback_reasons[position] = reason
                             _count_fallback(fallback_by_kind, fallback_reasons, str(kind), reason)
                             _emit(
                                 self._telemetry,
@@ -918,9 +1015,13 @@ class CourseActivityService:
                     if module_bulk_capabilities is not None and module_bulk_successes == 0:
                         module_bulk_capabilities[kind] = False
 
-        def capture_activity(position: int, entry: dict[str, Any]) -> dict[str, object] | None:
-            """Fetch one activity detail; return a bounded failure record or None."""
+        def capture_activity(
+            position: int, entry: dict[str, Any]
+        ) -> tuple[dict[str, object] | None, dict[str, object]]:
+            """Fetch one HTML detail and return failure plus quality evidence."""
+
             started = monotonic()
+            fallback_reason = html_fallback_reasons.get(position, "no_structured_detail")
             try:
                 detail = timed_stage(
                     "activity_snapshot_capture",
@@ -939,28 +1040,79 @@ class CourseActivityService:
                         "title": entry["title"],
                     },
                 )
+                if not isinstance(detail, dict):
+                    raise InvalidMoodleResponse("activity_page_shape")
+                quality = _html_detail_quality(detail)
+                quality.update(
+                    {
+                        "source_id": entry["source_id"],
+                        "kind": entry["kind"],
+                        "fallback_reason": fallback_reason,
+                        "duration_ms": round((monotonic() - started) * 1000),
+                    }
+                )
+                _emit(
+                    self._telemetry,
+                    "moodle_activity_html_detail_result",
+                    {**fields, **quality},
+                )
+                activities[position] = {
+                    **entry,
+                    **_clean_activity_detail(detail),
+                    "files": [],
+                    "term": course["term"],
+                }
+                return None, quality
             except Exception as error:
                 upstream_class, upstream_status = _classify_upstream(error)
+                reason = (
+                    error.reason
+                    if isinstance(error, InvalidMoodleResponse)
+                    else type(error).__name__
+                )
+                duration_ms = round((monotonic() - started) * 1000)
                 failure: dict[str, object] = {
                     **fields,
                     "source_id": entry["source_id"],
                     "kind": entry["kind"],
-                    "reason": error.reason
-                    if isinstance(error, InvalidMoodleResponse)
-                    else type(error).__name__,
+                    "reason": reason,
                     "exception_type": type(error).__name__,
                     "upstream_class": upstream_class,
-                    "duration_ms": round((monotonic() - started) * 1000),
+                    "duration_ms": duration_ms,
                     "attempt": 1,
                 }
                 if upstream_status is not None:
                     failure["upstream_status"] = upstream_status
                 _emit(self._telemetry, "activity_snapshot_activity_failed", failure)
-                return failure
-            activities[position] = {**entry, **detail, "files": [], "term": course["term"]}
-            return None
+                response_details = (
+                    error.details if isinstance(error, InvalidMoodleResponse) else {}
+                )
+                response_status = response_details.get("response_status")
+                if type(response_status) is not int or not 100 <= response_status <= 599:
+                    response_status = upstream_status
+                response_bytes = response_details.get("response_bytes")
+                if type(response_bytes) is not int or response_bytes < 0:
+                    response_bytes = 0
+                quality = {
+                    **fields,
+                    "source_id": entry["source_id"],
+                    "kind": entry["kind"],
+                    "fallback_reason": fallback_reason,
+                    "response_status": response_status,
+                    "response_bytes": response_bytes,
+                    "description_chars": 0,
+                    "attachment_count": 0,
+                    "empty_fields": [],
+                    "outcome": "failed",
+                    "metadata_source": "error",
+                    "duration_ms": duration_ms,
+                    "error_reason": reason,
+                    "upstream_class": upstream_class,
+                }
+                _emit(self._telemetry, "moodle_activity_html_detail_result", quality)
+                return failure, quality
 
-        outcomes: list[dict[str, object] | None] = []
+        outcomes: list[tuple[dict[str, object] | None, dict[str, object]]] = []
         if html_positions:
             # Bounded pool: every unresolved activity is attempted even when
             # another one fails, while the final snapshot remains index-ordered.
@@ -970,10 +1122,20 @@ class CourseActivityService:
                     for position in sorted(html_positions)
                 ]
                 outcomes = [future.result() for future in futures]
-        failures = [outcome for outcome in outcomes if outcome is not None]
+        failures = [failure for failure, _quality in outcomes if failure is not None]
+        for _failure, quality in outcomes:
+            outcome = str(quality.get("outcome", "failed"))
+            html_quality_counts[outcome] = html_quality_counts.get(outcome, 0) + 1
+            for field in cast(list[str], quality["empty_fields"]):
+                html_empty_field_counts[field] = html_empty_field_counts.get(field, 0) + 1
         if failures:
             raise ActivitySnapshotCaptureFailed(
-                failed_count=len(failures), first_reason=str(failures[0]["reason"])
+                failed_count=len(failures),
+                first_reason=str(failures[0]["reason"]),
+                metrics={
+                    "html_quality_counts": html_quality_counts,
+                    "html_empty_field_counts": html_empty_field_counts,
+                },
             )
         snapshot = {
             "course_id": course_id,
@@ -1025,6 +1187,8 @@ class CourseActivityService:
             "updates_changed": updates_changed,
             "fallback_by_kind": fallback_by_kind,
             "fallback_reasons": fallback_reasons,
+            "html_quality_counts": html_quality_counts,
+            "html_empty_field_counts": html_empty_field_counts,
         }
 
     def authorize_saved(
