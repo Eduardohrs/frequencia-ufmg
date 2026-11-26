@@ -475,3 +475,30 @@ def test_import_skips_the_fetch_when_the_window_is_empty_but_keeps_the_term() ->
     assert state.saved == []
     assert dates.covered == [[], []]
     assert result["total"] == 0
+
+
+def test_import_emits_calendar_kind_histogram_with_deduped_source_ids() -> None:
+    logs: list[tuple[str, dict[str, object]]] = []
+    client = _Client(
+        [
+            _event(),
+            _event(source_id="911", course_shortname="Alemão LA631", kind="event"),
+            _event(source_id="912", kind="quiz", course_shortname="Curso sem código"),
+            _event(source_id="912", kind="quiz", course_shortname="Curso sem código"),
+        ]
+    )
+    service = MoodleDateImportService(
+        _Sessions(), client, _Courses(), _Dates(), telemetry=lambda e, f: logs.append((e, dict(f)))
+    )
+
+    result = service.import_dates("user", now=123)
+
+    kinds = next(fields for event, fields in logs if event == "moodle_calendar_event_kinds")
+    assert kinds["kinds"] == {"assignment": 1, "quiz": 2, "event": 1}
+    assert kinds["total"] == 4
+    assert kinds["matched"] == 2
+    assert kinds["unmatched"] == 2
+    assert kinds["unique_source_ids"] == 3
+    assert kinds["term_count"] == 1
+    assert kinds["consumer"] == "academic_dates_and_agenda"
+    assert result["unmatched"] == 2

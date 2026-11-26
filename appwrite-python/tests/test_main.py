@@ -325,15 +325,18 @@ def test_moodle_sync_factory_shares_one_client_across_all_remote_stages(
 
     service = function._moodle_sync_service({}, "user-1")
 
-    assert service._dates._sessions is sessions
+    # One request-cached session wrapper around the raw store, shared by every
+    # remote stage of this sync.
+    shared_sessions = service._dates._sessions
+    assert shared_sessions._store is sessions
     assert service._dates._client is client
     assert service._dates._courses is courses
     assert service._dates._dates._firestore is firestore
-    assert service._content._sessions is sessions
+    assert service._content._sessions is shared_sessions
     assert service._content._client is client
     assert service._content._courses is courses
     assert service._content._catalog is catalog
-    assert service._capabilities._sessions is sessions
+    assert service._capabilities._sessions is shared_sessions
     assert service._capabilities._client is client
     assert service._capabilities._tokens is tokens
 

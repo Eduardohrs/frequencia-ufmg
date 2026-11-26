@@ -165,6 +165,26 @@ class MoodleDateImportService:
                 "consumer": "course_date_persistence",
             },
         )
+        # Per-run histogram by stable source identity: how many calendar events
+        # are activity deadlines (assignment/quiz) versus general events, and
+        # how many distinct Moodle event ids the run actually processed.
+        kind_counts: dict[str, int] = {"assignment": 0, "quiz": 0, "event": 0}
+        for event in events:
+            kind = event["kind"]
+            kind_counts[kind] = kind_counts.get(kind, 0) + 1
+        _emit(
+            self._telemetry,
+            "moodle_calendar_event_kinds",
+            {
+                "term_count": len(course_groups),
+                "kinds": kind_counts,
+                "total": len(events),
+                "matched": len(events) - unmatched,
+                "unmatched": unmatched,
+                "unique_source_ids": len({event["source_id"] for event in events}),
+                "consumer": "academic_dates_and_agenda",
+            },
+        )
 
         result: dict[str, Any] = {
             "total": len(events),
