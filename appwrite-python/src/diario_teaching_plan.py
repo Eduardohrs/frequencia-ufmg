@@ -126,13 +126,18 @@ def parse_teaching_plan_html(markup: str) -> dict[str, object]:
             if section == "assessments" and len(row) == 6:
                 # Empty ``Data/Hora`` cells are omitted by the HTML parser;
                 # Jasper therefore leaves a compact six-cell positional row.
-                _required(row[0])
-                _required(row[1])
-                _required(row[2])
-                _optional(row[3])
-                _decimal(row[4])
-                _decimal(row[5])
-                undated_assessment_total += 1
+                # A label/value row can also have six cells (for example
+                # ``Cód. Avl: | AV1 | Tipo: | PROVA | Nome: | Prova``).
+                # Leave those rows for the labeled pass below instead of
+                # interpreting ``Nome:`` as a numeric value.
+                if not _looks_like_labeled_assessment_row(row):
+                    _required(row[0])
+                    _required(row[1])
+                    _required(row[2])
+                    _optional(row[3])
+                    _decimal(row[4])
+                    _decimal(row[5])
+                    undated_assessment_total += 1
             elif section == "assessments" and len(row) == 7:
                 # Jasper emits two valid layouts.  Some reports repeat the
                 # labels (``Data/Hora:``, ``Valor:``, ...) in a data row and
