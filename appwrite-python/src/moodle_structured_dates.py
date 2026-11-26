@@ -128,9 +128,9 @@ class MoodleStructuredDatesClient:
     # It includes the activity description, dates and module files.  It does
     # not include the current student's submission state, so that field is
     # deliberately persisted as ``unknown`` until an explicit activity detail
-    # read is requested.  A missing submission status must not turn a bulk
-    # response into an N+1 HTML crawl: the live Moodle calendar/course pages
-    # are server-rendered and provide no equivalent batch submission endpoint.
+    # read is requested.  Submission state is read through the assignment
+    # submissions service when the module response omits it, so a missing
+    # optional description or attachment never forces an HTML crawl.
     bulk_activity_details_complete = True
 
     def __init__(
@@ -638,6 +638,62 @@ class MoodleStructuredDatesClient:
         )
         _require_json_endpoint(final_url, content_type, path)
         return _parse_activity_module_bulk(payload, root=root, kind=kind)
+
+    def fetch_assignment_submissions_bulk(
+        self,
+        *,
+        webservice_token: str,
+        term: str,
+        assignment_ids: list[int],
+    ) -> dict[str, dict[str, str | bool]]:
+        """Read current-student assignment states through one Moodle call."""
+
+        _validate_mobile_service_token(webservice_token)
+        if not assignment_ids or len(assignment_ids) > 500:
+            raise InvalidMoodleResponse("assignment_submission_ids")
+        if any(
+            type(value) is not int or not 1 <= value <= 2_147_483_647
+            for value in assignment_ids
+        ):
+            raise InvalidMoodleResponse("assignment_submission_id")
+        root = _moodle_root(term)
+        path = f"{root}/webservice/rest/server.php"
+        parameters: dict[str, str] = {
+            "moodlewsrestformat": "json",
+            "moodlewssettingfileurl": "1",
+            "moodlewssettingfilter": "1",
+            "wsfunction": "mod_assign_get_submissions",
+            "wstoken": webservice_token,
+        }
+        parameters.update(
+            {
+                f"assignmentids[{index}]": str(assignment_id)
+                for index, assignment_id in enumerate(sorted(set(assignment_ids)))
+            }
+        )
+        payload, final_url, content_type = self._open(
+            Request(
+                f"{MOODLE_ORIGIN}{path}",
+                data=urlencode(parameters).encode(),
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                method="POST",
+            )
+        )
+        _require_json_endpoint(final_url, content_type, path)
+        return timed_stage(
+            "moodle_assignment_submission_bulk_parse",
+            lambda: _parse_assignment_submissions_bulk(payload),
+            telemetry=self._telemetry,
+            fields={
+                "term": term,
+                "assignment_count": len(set(assignment_ids)),
+                "response_bytes": len(payload),
+                "consumer": "activity_snapshot_submission_state",
+            },
+        )
 
     def fetch_activity(
         self, token: str, *, term: str, source_id: int, kind: str
@@ -1739,6 +1795,66 @@ def _parse_course_activity_contents(
         raise InvalidMoodleResponse(reason) from None
 
 
+def _parse_assignment_submissions_bulk(payload: bytes) -> dict[str, dict[str, str | bool]]:
+    """Normalize ``mod_assign_get_submissions`` for the current student."""
+
+    try:
+        decoded = json.loads(payload)
+        if not isinstance(decoded, dict) or "exception" in decoded:
+            raise ValueError("assignment_submission_upstream_error")
+        raw_assignments = decoded.get("assignments")
+        if not isinstance(raw_assignments, list) or len(raw_assignments) > 500:
+            raise ValueError("assignment_submission_assignments")
+        result: dict[str, dict[str, str | bool]] = {}
+        for raw_assignment in raw_assignments:
+            if not isinstance(raw_assignment, dict):
+                raise ValueError("assignment_submission_assignment")
+            assignment_id = raw_assignment.get("assignmentid", raw_assignment.get("id"))
+            if (
+                type(assignment_id) is not int
+                or not 1 <= assignment_id <= 2_147_483_647
+            ):
+                raise ValueError("assignment_submission_id")
+            submissions = raw_assignment.get("submissions", [])
+            if not isinstance(submissions, list) or len(submissions) > 100:
+                raise ValueError("assignment_submission_items")
+            status = ""
+            if submissions:
+                current = submissions[0]
+                if not isinstance(current, dict):
+                    raise ValueError("assignment_submission_item")
+                raw_status = current.get("status", "")
+                if not isinstance(raw_status, str) or len(raw_status) > 200:
+                    raise ValueError("assignment_submission_status")
+                status = raw_status.strip()
+            normalized = status.lower()
+            if not submissions or normalized in {"new", "not_submitted"}:
+                state, text = "not_submitted", "Nenhum envio"
+            elif normalized == "draft":
+                state, text = "draft", status
+            elif normalized in {"submitted", "graded", "reopened", "returned"}:
+                state, text = "submitted", status
+            else:
+                state, text = "unknown", status
+            item: dict[str, str | bool] = {
+                "submission_state": state,
+                "submission_text": text[:200],
+                "_bulk_submission_complete": True,
+            }
+            previous = result.get(str(assignment_id))
+            if previous is not None and previous != item:
+                raise ValueError("assignment_submission_conflict")
+            result[str(assignment_id)] = item
+        return result
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        reason = (
+            str(error)
+            if error.args and re.fullmatch(r"[a-z_]{1,64}", str(error))
+            else "assignment_submission_shape"
+        )
+        raise InvalidMoodleResponse(reason) from None
+
+
 def _parse_activity_module_bulk(
     payload: bytes, *, root: str, kind: str
 ) -> dict[str, dict[str, object]]:
@@ -1772,6 +1888,12 @@ def _parse_activity_module_bulk(
                 title = raw.get("name")
                 if not isinstance(title, str) or not title.strip() or len(title) > 1_024:
                     raise ValueError("activity_module_title")
+                assignment_id = raw.get("id") if kind == "assign" else None
+                if assignment_id is not None and (
+                    type(assignment_id) is not int
+                    or not 1 <= assignment_id <= 2_147_483_647
+                ):
+                    raise ValueError("activity_module_assignment_id")
                 attachments = _module_activity_attachments(raw, root=root)
                 dates = _module_activity_dates(raw, kind=kind)
                 candidate: dict[str, object] = {
@@ -1785,6 +1907,8 @@ def _parse_activity_module_bulk(
                     "_bulk_submission_complete": False,
                     "attachments": attachments,
                 }
+                if assignment_id is not None:
+                    candidate["_bulk_assignment_id"] = assignment_id
                 identifier = str(source_id)
                 previous = activities.get(identifier)
                 if previous is not None and previous != candidate:
@@ -2066,6 +2190,11 @@ def _validate_mobile_tokens(webservice_token: str, private_token: str, course_id
         or not 1 <= course_id <= 2_147_483_647
     ):
         raise ValueError("invalid Moodle file request")
+
+
+def _validate_mobile_service_token(webservice_token: str) -> None:
+    if _MOBILE_TOKEN.fullmatch(webservice_token) is None:
+        raise ValueError("invalid Moodle webservice token")
 
 
 def _validate_mobile_file_request(

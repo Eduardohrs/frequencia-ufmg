@@ -27,6 +27,7 @@ from moodle_structured_dates import (
     _is_metaturma,
     _is_moodle_module,
     _mobile_tokens,
+    _parse_assignment_submissions_bulk,
     _parse_activity_module_bulk,
     _parse_activity_updates,
     _parse_calendar,
@@ -1437,6 +1438,7 @@ def test_activity_module_bulk_uses_the_official_assignment_service() -> None:
                 "id": 3701,
                 "assignments": [
                     {
+                        "id": 9001,
                         "cmid": 701,
                         "name": "Lista 1",
                         "intro": "<p>Requisitos da lista</p>",
@@ -1476,7 +1478,102 @@ def test_activity_module_bulk_uses_the_official_assignment_service() -> None:
     assert details["701"]["description"] == "Requisitos da lista\n\nResolver exercícios"
     assert details["701"]["_bulk_description_present"] is True
     assert details["701"]["_bulk_attachments_present"] is True
+    assert details["701"]["_bulk_assignment_id"] == 9001
     assert details["701"]["attachments"][0]["name"] == "lista.pdf"
+
+
+def test_assignment_submission_bulk_uses_one_official_request_and_normalizes_states() -> None:
+    payload = {
+        "assignments": [
+            {"assignmentid": 9001, "submissions": [{"status": "submitted"}]},
+            {"assignmentid": 9002, "submissions": [{"status": "draft"}]},
+            {"assignmentid": 9003, "submissions": []},
+            {"assignmentid": 9004, "submissions": [{"status": "reviewed"}]},
+        ]
+    }
+
+    class Client(MoodleStructuredDatesClient):
+        def _open(self, request):
+            assert request.full_url == "https://virtual.ufmg.br/20262/webservice/rest/server.php"
+            assert b"wsfunction=mod_assign_get_submissions" in request.data
+            assert b"assignmentids%5B0%5D=9001" in request.data
+            assert b"assignmentids%5B3%5D=9004" in request.data
+            return json.dumps(payload).encode(), request.full_url, "application/json"
+
+    result = Client().fetch_assignment_submissions_bulk(
+        webservice_token="b" * 16,
+        term="2026-2",
+        assignment_ids=[9004, 9001, 9002, 9003],
+    )
+    assert result["9001"]["submission_state"] == "submitted"
+    assert result["9002"]["submission_state"] == "draft"
+    assert result["9003"]["submission_state"] == "not_submitted"
+    assert result["9004"]["submission_state"] == "unknown"
+
+
+def test_assignment_submission_bulk_validates_token_and_ids() -> None:
+    client = MoodleStructuredDatesClient(opener=_Opener([]))
+    with pytest.raises(ValueError, match="invalid Moodle webservice token"):
+        client.fetch_assignment_submissions_bulk(
+            webservice_token="short", term="2026-2", assignment_ids=[1]
+        )
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        client.fetch_assignment_submissions_bulk(
+            webservice_token="b" * 16, term="2026-2", assignment_ids=[]
+        )
+    assert caught.value.reason == "assignment_submission_ids"
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        client.fetch_assignment_submissions_bulk(
+            webservice_token="b" * 16, term="2026-2", assignment_ids=[0]
+        )
+    assert caught.value.reason == "assignment_submission_id"
+
+
+def test_assignment_submission_parser_rejects_conflicting_duplicate() -> None:
+    payload = {
+        "assignments": [
+            {"assignmentid": 1, "submissions": [{"status": "draft"}]},
+            {"assignmentid": 1, "submissions": [{"status": "submitted"}]},
+        ]
+    }
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_assignment_submissions_bulk(json.dumps(payload).encode())
+    assert caught.value.reason == "assignment_submission_conflict"
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (b"not-json", "assignment_submission_shape"),
+        (json.dumps({"exception": "forbidden"}).encode(), "assignment_submission_upstream_error"),
+        (json.dumps({"assignments": "bad"}).encode(), "assignment_submission_assignments"),
+        (json.dumps({"assignments": [None]}).encode(), "assignment_submission_assignment"),
+        (
+            json.dumps({"assignments": [{"assignmentid": 0}]}).encode(),
+            "assignment_submission_id",
+        ),
+        (
+            json.dumps({"assignments": [{"assignmentid": 1, "submissions": "bad"}]}).encode(),
+            "assignment_submission_items",
+        ),
+        (
+            json.dumps({"assignments": [{"assignmentid": 1, "submissions": [None]}]}).encode(),
+            "assignment_submission_item",
+        ),
+        (
+            json.dumps(
+                {"assignments": [{"assignmentid": 1, "submissions": [{"status": 1}]}]}
+            ).encode(),
+            "assignment_submission_status",
+        ),
+    ],
+)
+def test_assignment_submission_bulk_parser_rejects_unsafe_shapes(
+    payload: bytes, reason: str
+) -> None:
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_assignment_submissions_bulk(payload)
+    assert caught.value.reason == reason
 
 
 def test_activity_module_bulk_rejects_unsupported_kind_before_network() -> None:
@@ -1538,6 +1635,14 @@ def test_activity_module_bulk_covers_quiz_dates_and_optional_files() -> None:
         ({"courses": [None]}, "activity_module_course"),
         ({"courses": [{"assignments": [None]}]}, "activity_module_item"),
         ({"courses": [{"assignments": [{"cmid": 1}]}]}, "activity_module_title"),
+        (
+            {
+                "courses": [
+                    {"assignments": [{"cmid": 1, "name": "A", "id": "bad"}]}
+                ]
+            },
+            "activity_module_assignment_id",
+        ),
         (
             {
                 "courses": [

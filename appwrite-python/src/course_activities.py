@@ -422,6 +422,9 @@ class CourseActivityService:
         module_bulk_activities = 0
         module_bulk_calls = 0
         module_bulk_failures = 0
+        submission_bulk_calls = 0
+        submission_bulk_failures = 0
+        submission_bulk_statuses = 0
         html_skipped = 0
         updates_checked = 0
         updates_changed = 0
@@ -528,6 +531,13 @@ class CourseActivityService:
                         module_bulk_activities += _metric(capture_result, "module_bulk_count")
                         module_bulk_calls += _metric(capture_result, "module_bulk_calls")
                         module_bulk_failures += _metric(capture_result, "module_bulk_failures")
+                        submission_bulk_calls += _metric(capture_result, "submission_bulk_calls")
+                        submission_bulk_failures += _metric(
+                            capture_result, "submission_bulk_failures"
+                        )
+                        submission_bulk_statuses += _metric(
+                            capture_result, "submission_bulk_statuses"
+                        )
                         updates_checked += _metric(capture_result, "updates_checked")
                         updates_changed += _metric(capture_result, "updates_changed")
                         _merge_metric_map(fallback_by_kind, capture_result, "fallback_by_kind")
@@ -673,6 +683,9 @@ class CourseActivityService:
                 "module_bulk_activities": module_bulk_activities,
                 "module_bulk_calls": module_bulk_calls,
                 "module_bulk_failures": module_bulk_failures,
+                "submission_bulk_calls": submission_bulk_calls,
+                "submission_bulk_failures": submission_bulk_failures,
+                "submission_bulk_statuses": submission_bulk_statuses,
                 "updates_checked": updates_checked,
                 "updates_changed": updates_changed,
                 "activity_entries_seen": activity_entries_seen,
@@ -828,6 +841,9 @@ class CourseActivityService:
         module_bulk_count = 0
         module_bulk_calls = 0
         module_bulk_failures = 0
+        submission_bulk_calls = 0
+        submission_bulk_failures = 0
+        submission_bulk_statuses = 0
         html_skipped = 0
         html_positions = set(changed_positions)
         html_fallback_reasons: dict[int, str] = {
@@ -1026,6 +1042,71 @@ class CourseActivityService:
                         )
                         if not isinstance(module_details, dict):
                             raise InvalidMoodleResponse("activity_module_bulk_shape")
+                        submission_method = getattr(
+                            self._client, "fetch_assignment_submissions_bulk", None
+                        )
+                        if kind == "assign" and callable(submission_method):
+                            assignment_ids = sorted(
+                                {
+                                    int(detail["_bulk_assignment_id"])
+                                    for detail in module_details.values()
+                                    if isinstance(detail, dict)
+                                    and type(detail.get("_bulk_assignment_id")) is int
+                                }
+                            )
+                            if assignment_ids:
+                                submission_bulk_calls += 1
+                                try:
+                                    submission_details = timed_stage(
+                                        "activity_snapshot_submission_bulk_capture",
+                                        partial(
+                                            submission_method,
+                                            webservice_token=webservice_token,
+                                            term=course["term"],
+                                            assignment_ids=assignment_ids,
+                                        ),
+                                        telemetry=self._telemetry,
+                                        fields={
+                                            **fields,
+                                            "moodle_course_id": moodle_course_id,
+                                            "assignment_count": len(assignment_ids),
+                                        },
+                                    )
+                                    if not isinstance(submission_details, dict):
+                                        raise InvalidMoodleResponse(
+                                            "assignment_submission_shape"
+                                        )
+                                    for source_id, detail in list(module_details.items()):
+                                        if not isinstance(detail, dict):
+                                            continue
+                                        assignment_id = detail.get("_bulk_assignment_id")
+                                        status = submission_details.get(str(assignment_id))
+                                        if isinstance(status, dict):
+                                            module_details[source_id] = {**detail, **status}
+                                            submission_bulk_statuses += 1
+                                    _emit(
+                                        self._telemetry,
+                                        "moodle_activity_submission_bulk_completed",
+                                        {
+                                            **fields,
+                                            "moodle_course_id": moodle_course_id,
+                                            "assignment_count": len(assignment_ids),
+                                            "status_count": len(submission_details),
+                                        },
+                                    )
+                                except Exception as error:
+                                    submission_bulk_failures += 1
+                                    _emit(
+                                        self._telemetry,
+                                        "moodle_activity_submission_bulk_unavailable",
+                                        {
+                                            **fields,
+                                            "moodle_course_id": moodle_course_id,
+                                            "assignment_count": len(assignment_ids),
+                                            "reason": type(error).__name__,
+                                            "upstream_class": _classify_upstream(error)[0],
+                                        },
+                                    )
                     except Exception as error:
                         module_bulk_failures += 1
                         for position in positions:
@@ -1104,6 +1185,17 @@ class CourseActivityService:
                         and len(module_bulk_fallback_reasons) == len(positions)
                         and module_bulk_fallback_reasons
                         and kind in {"assign", "quiz"}
+                        and (
+                            kind == "quiz"
+                            or all(
+                                module_bulk_partial_details[position].get(
+                                    "_bulk_submission_complete"
+                                )
+                                is True
+                                for position in positions
+                                if position in module_bulk_partial_details
+                            )
+                        )
                         and all(
                             reason == "missing_module_bulk_fields"
                             for reason in module_bulk_fallback_reasons
@@ -1308,6 +1400,9 @@ class CourseActivityService:
                 "bulk_fallbacks": bulk_fallbacks,
                 "html_count": len(html_positions),
                 "html_skipped_count": html_skipped,
+                "submission_bulk_calls": submission_bulk_calls,
+                "submission_bulk_failures": submission_bulk_failures,
+                "submission_bulk_statuses": submission_bulk_statuses,
                 "updates_checked": updates_checked,
                 "updates_changed": updates_changed,
             },
@@ -1324,6 +1419,9 @@ class CourseActivityService:
             "module_bulk_count": module_bulk_count,
             "module_bulk_calls": module_bulk_calls,
             "module_bulk_failures": module_bulk_failures,
+            "submission_bulk_calls": submission_bulk_calls,
+            "submission_bulk_failures": submission_bulk_failures,
+            "submission_bulk_statuses": submission_bulk_statuses,
             "updates_checked": updates_checked,
             "updates_changed": updates_changed,
             "fallback_by_kind": fallback_by_kind,
