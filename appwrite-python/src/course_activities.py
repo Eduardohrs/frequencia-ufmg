@@ -211,28 +211,6 @@ def _clean_bulk_detail(detail: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in detail.items() if not key.startswith("_bulk_")}
 
 
-def _empty_activity_detail(entry: dict[str, Any], term: str) -> dict[str, Any]:
-    """Persist an honest index-only activity when Moodle exposes no detail.
-
-    This is deliberately different from a transport fallback: the official
-    bulk response was successful, but the installation returned no optional
-    description/attachment fields.  A blank value is therefore known data,
-    not a reason to issue one HTML request per activity.
-    """
-
-    return {
-        **entry,
-        "description": "",
-        "dates_text": "",
-        "has_due_date": False,
-        "submission_state": "unknown",
-        "submission_text": "",
-        "attachments": [],
-        "files": [],
-        "term": term,
-    }
-
-
 def _module_detail_is_empty(detail: dict[str, Any]) -> bool:
     """Return whether a bulk detail has no useful HTML enrichment payload.
 
