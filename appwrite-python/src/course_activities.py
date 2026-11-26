@@ -211,39 +211,20 @@ def _clean_bulk_detail(detail: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in detail.items() if not key.startswith("_bulk_")}
 
 
-def _empty_activity_detail(entry: dict[str, Any], term: str) -> dict[str, Any]:
-    """Persist an honest index-only activity when Moodle exposes no detail.
+def _module_detail_is_empty(detail: dict[str, Any]) -> bool:
+    """Return whether a bulk detail has no useful HTML enrichment payload.
 
-    This is deliberately different from a transport fallback: the official
-    bulk response was successful, but the installation returned no optional
-    description/attachment fields.  A blank value is therefore known data,
-    not a reason to issue one HTML request per activity.
+    Calendar fields are intentionally excluded here.  The module bulk response
+    already owns due dates; requesting an HTML page only to rediscover those
+    dates is the N+1 path this service is trying to avoid.  The helper is used
+    for quiz responses, whose HTML page in the UFMG installation has been
+    observed to return no description or attachments.
     """
 
-    return {
-        **entry,
-        "description": "",
-        "dates_text": "",
-        "has_due_date": False,
-        "submission_state": "unknown",
-        "submission_text": "",
-        "attachments": [],
-        "files": [],
-        "term": term,
-    }
-
-
-def _module_detail_is_empty(detail: dict[str, Any]) -> bool:
-    """Return whether a bulk detail has no useful optional payload at all."""
-
     description = detail.get("description")
-    dates_text = detail.get("dates_text")
     return not (
         isinstance(description, str)
         and description.strip()
-        or isinstance(dates_text, str)
-        and dates_text.strip()
-        or detail.get("has_due_date") is True
         or bool(detail.get("attachments"))
         or bool(detail.get("files"))
     )
@@ -1115,6 +1096,7 @@ class CourseActivityService:
                         module_bulk_successes == 0
                         and len(module_bulk_fallback_reasons) == len(positions)
                         and module_bulk_fallback_reasons
+                        and kind == "quiz"
                         and all(
                             reason == "missing_module_bulk_fields"
                             for reason in module_bulk_fallback_reasons
@@ -1127,9 +1109,10 @@ class CourseActivityService:
                         and len(module_bulk_partial_details) == len(positions)
                     ):
                         for position in positions:
-                            activities[position] = _empty_activity_detail(
-                                entries[position], course["term"]
-                            )
+                            # The structured response was already copied into
+                            # ``activities`` above. Keep it intact: quiz dates
+                            # remain useful when optional HTML enrichment is
+                            # empty, and must not be reset to index-only data.
                             html_positions.discard(position)
                         html_skipped += len(positions)
                         _emit(
@@ -1143,7 +1126,23 @@ class CourseActivityService:
                                 "activity_count": len(positions),
                             },
                         )
-                    if module_bulk_capabilities is not None and module_bulk_successes == 0:
+                    # An empty optional payload is a valid response for this
+                    # course, not evidence that the endpoint is unsupported
+                    # for every other course.  Cache only a transport/shape
+                    # failure; otherwise one empty course would force HTML
+                    # fallbacks for every later course.
+                    if (
+                        module_bulk_capabilities is not None
+                        and module_bulk_successes == 0
+                        and any(
+                            reason
+                            in {
+                                "activity_missing_from_module_bulk_response",
+                                "module_bulk_unavailable",
+                            }
+                            for reason in module_bulk_fallback_reasons
+                        )
+                    ):
                         module_bulk_capabilities[kind] = False
 
         def capture_activity(

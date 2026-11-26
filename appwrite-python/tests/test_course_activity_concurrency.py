@@ -172,10 +172,11 @@ def test_snapshot_reuses_activity_index_shared_by_content_discovery():
         lambda *, source_id, kind: {"description": "HTML", "attachments": []},
         client_class=SharedIndexClient,
     )
+    snapshots = _Snapshots()
     result = service.sync_snapshots(
         "owner",
         now=1,
-        snapshots=_Snapshots(),
+        snapshots=snapshots,
         discovered=[
             {
                 "course_id": "poo",
@@ -303,7 +304,7 @@ def test_empty_module_bulk_fields_skip_html_n_plus_one_when_all_ids_are_present(
 
     service, client, logs = _build(
         [_course("poo")],
-        {"ELEpoo": [_entry(1), _entry(2)]},
+        {"ELEpoo": [_entry(1, "quiz"), _entry(2, "quiz")]},
         lambda *, source_id, kind: {"description": "should not be fetched", "attachments": []},
         client_class=EmptyModuleBulkClient,
     )
@@ -405,10 +406,11 @@ def test_module_bulk_capability_failure_is_cached_for_later_courses():
         lambda *, source_id, kind: {"description": "HTML", "attachments": []},
         client_class=ProbeClient,
     )
+    snapshots = _Snapshots()
     result = service.sync_snapshots(
         "owner",
         now=1,
-        snapshots=_Snapshots(),
+        snapshots=snapshots,
         discovered=[
             {
                 "course_id": "poo",
@@ -435,6 +437,91 @@ def test_module_bulk_capability_failure_is_cached_for_later_courses():
     assert client.module_calls == [(77, "assign")]
     skipped = [fields for event, fields in logs if event == "moodle_activity_module_bulk_skipped"]
     assert skipped and skipped[-1]["moodle_course_id"] == 78
+
+
+def test_empty_module_bulk_payload_is_scoped_to_each_course():
+    class EmptyPayloadClient(_IncrementalClient):
+        def __init__(self, index, fetch):
+            super().__init__(index, fetch)
+            self.module_calls: list[tuple[int, str]] = []
+
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.bulk_calls.append(kwargs["course_id"])
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": True,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            self.module_calls.append((kwargs["course_id"], kwargs["kind"]))
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "Vencimento: 2026-12-01",
+                    "has_due_date": True,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+    courses = [_course("poo"), _course("mat")]
+    service, client, logs = _build(
+        courses,
+        {"ELEpoo": [_entry(1, "quiz")], "ELEmat": [_entry(1, "quiz")]},
+        lambda *, source_id, kind: {"description": "HTML", "attachments": []},
+        client_class=EmptyPayloadClient,
+    )
+    snapshots = _Snapshots()
+    result = service.sync_snapshots(
+        "owner",
+        now=1,
+        snapshots=snapshots,
+        discovered=[
+            {
+                "course_id": "poo",
+                "course_code": "ELEpoo",
+                "term": "2026-2",
+                "moodle_course_id": "77",
+                "status": "found",
+                "candidates": [],
+                "activity_candidates": [_entry(1, "quiz")],
+            },
+            {
+                "course_id": "mat",
+                "course_code": "ELEmat",
+                "term": "2026-2",
+                "moodle_course_id": "78",
+                "status": "found",
+                "candidates": [],
+                "activity_candidates": [_entry(1, "quiz")],
+            },
+        ],
+    )
+
+    assert result["failed"] == 0
+    assert client.module_calls == [(77, "quiz"), (78, "quiz")]
+    summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
+    assert summary["html_activities"] == 0
+    assert summary["html_skipped_count"] == 2
+    for course_id in ("poo", "mat"):
+        saved = next(
+            activity
+            for activity in snapshots.saved[course_id]["activities"]
+            if activity["source_id"] == "1"
+        )
+        assert saved["dates_text"] == "Vencimento: 2026-12-01"
+        assert saved["has_due_date"] is True
 
 
 def test_module_bulk_skips_when_tokens_are_not_usable():
