@@ -1131,9 +1131,10 @@ class CourseActivityService:
                         and len(module_bulk_partial_details) == len(positions)
                     ):
                         for position in positions:
-                            activities[position] = _empty_activity_detail(
-                                entries[position], course["term"]
-                            )
+                            # The structured response was already copied into
+                            # ``activities`` above. Keep it intact: quiz dates
+                            # remain useful when optional HTML enrichment is
+                            # empty, and must not be reset to index-only data.
                             html_positions.discard(position)
                         html_skipped += len(positions)
                         _emit(

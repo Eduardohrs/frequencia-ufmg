@@ -172,10 +172,11 @@ def test_snapshot_reuses_activity_index_shared_by_content_discovery():
         lambda *, source_id, kind: {"description": "HTML", "attachments": []},
         client_class=SharedIndexClient,
     )
+    snapshots = _Snapshots()
     result = service.sync_snapshots(
         "owner",
         now=1,
-        snapshots=_Snapshots(),
+        snapshots=snapshots,
         discovered=[
             {
                 "course_id": "poo",
@@ -405,10 +406,11 @@ def test_module_bulk_capability_failure_is_cached_for_later_courses():
         lambda *, source_id, kind: {"description": "HTML", "attachments": []},
         client_class=ProbeClient,
     )
+    snapshots = _Snapshots()
     result = service.sync_snapshots(
         "owner",
         now=1,
-        snapshots=_Snapshots(),
+        snapshots=snapshots,
         discovered=[
             {
                 "course_id": "poo",
@@ -480,10 +482,11 @@ def test_empty_module_bulk_payload_is_scoped_to_each_course():
         lambda *, source_id, kind: {"description": "HTML", "attachments": []},
         client_class=EmptyPayloadClient,
     )
+    snapshots = _Snapshots()
     result = service.sync_snapshots(
         "owner",
         now=1,
-        snapshots=_Snapshots(),
+        snapshots=snapshots,
         discovered=[
             {
                 "course_id": "poo",
@@ -511,6 +514,14 @@ def test_empty_module_bulk_payload_is_scoped_to_each_course():
     summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
     assert summary["html_activities"] == 0
     assert summary["html_skipped_count"] == 2
+    for course_id in ("poo", "mat"):
+        saved = next(
+            activity
+            for activity in snapshots.saved[course_id]["activities"]
+            if activity["source_id"] == "1"
+        )
+        assert saved["dates_text"] == "Vencimento: 2026-12-01"
+        assert saved["has_due_date"] is True
 
 
 def test_module_bulk_skips_when_tokens_are_not_usable():
