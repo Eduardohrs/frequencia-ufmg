@@ -1584,6 +1584,7 @@ def test_assignment_submission_bulk_keeps_partial_results_when_student_status_fa
         {"lastattempt": {"submission": {"status": "new"}}},
         {"lastattempt": {"submission": {"status": "draft"}}},
         {"lastattempt": {"submission": {"status": "submitted"}}},
+        {"lastattempt": {"teamsubmission": {"status": "submitted"}}},
         {"lastattempt": {"submission": {"status": "reviewed"}}},
     ],
 )

@@ -1861,7 +1861,11 @@ def _parse_assignment_submission_status(payload: bytes) -> dict[str, str | bool]
         else:
             if not isinstance(last_attempt, dict):
                 raise ValueError("assignment_submission_status_last_attempt")
+            # Individual assignments use ``submission``; team assignments
+            # expose the same status under ``teamsubmission`` instead.
             submission = last_attempt.get("submission")
+            if submission is None and "teamsubmission" in last_attempt:
+                submission = last_attempt["teamsubmission"]
             if submission is None:
                 state, text = "not_submitted", "Nenhum envio"
             else:

@@ -1046,15 +1046,17 @@ class CourseActivityService:
                             self._client, "fetch_assignment_submissions_bulk", None
                         )
                         if kind == "assign" and callable(submission_method):
-                            assignment_ids = sorted(
-                                {
-                                    int(detail["_bulk_assignment_id"])
-                                    for detail in module_details.values()
-                                    if isinstance(detail, dict)
+                            assignment_ids: list[int] = []
+                            for position in positions:
+                                indexed_entry = entries[position]
+                                detail = module_details.get(str(indexed_entry["source_id"]))
+                                if (
+                                    isinstance(detail, dict)
                                     and type(detail.get("_bulk_assignment_id")) is int
                                     and _module_detail_is_empty(detail)
-                                }
-                            )
+                                ):
+                                    assignment_ids.append(int(detail["_bulk_assignment_id"]))
+                            assignment_ids = sorted(set(assignment_ids))
                             if assignment_ids:
                                 submission_bulk_calls += 1
                                 try:
