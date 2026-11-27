@@ -23,11 +23,7 @@ class Store:
         return self.documents[segments]
 
     def list_user_documents(self, *segments: str) -> list[dict[str, Any]]:
-        return [
-            value
-            for path, value in self.documents.items()
-            if path[:-1] == segments
-        ]
+        return [value for path, value in self.documents.items() if path[:-1] == segments]
 
     def commit_user_documents(self, *, updates: list[Any], deletes: list[Any]) -> None:
         self.commits.append(updates)
@@ -47,17 +43,19 @@ def _plan() -> dict[str, object]:
         "assessments": [],
         "undated_assessment_total": 0,
         "criteria": [],
-        "schedule": [{
-            "sequence": 1,
-            "occurrence_key": "2026-08-10T19:00-20:40",
-            "date": "2026-08-10",
-            "weekday": "Seg",
-            "lesson_count": 2,
-            "starts_at": "19:00",
-            "ends_at": "20:40",
-            "kind": "Teórica",
-            "subject": "Polimorfismo",
-        }],
+        "schedule": [
+            {
+                "sequence": 1,
+                "occurrence_key": "2026-08-10T19:00-20:40",
+                "date": "2026-08-10",
+                "weekday": "Seg",
+                "lesson_count": 2,
+                "starts_at": "19:00",
+                "ends_at": "20:40",
+                "kind": "Teórica",
+                "subject": "Polimorfismo",
+            }
+        ],
         "source": "ufmg_diario",
         "confidence": "authoritative",
     }
@@ -83,21 +81,21 @@ def test_preview_never_writes_and_apply_is_idempotent() -> None:
         "name": "courses/poo",
         "fields": course_to_firestore(_course()),
     }
-    TeachingPlanRepository(store, now=lambda: NOW).save(
-        "poo", source_id="1", plan=_plan()
-    )
+    TeachingPlanRepository(store, now=lambda: NOW).save("poo", source_id="1", plan=_plan())
     store.documents[("courses", "poo", "meetings", "monday-1900")] = {
         "name": "courses/poo/meetings/monday-1900",
-        "fields": _meeting_to_firestore({
-            "id": "monday-1900",
-            "weekday": 1,
-            "start_minutes": 1140,
-            "end_minutes": 1240,
-            "lesson_count": 2,
-            "call_count": 1,
-            "created_at": "2026-08-01T12:00:00Z",
-            "updated_at": "2026-08-01T12:00:00Z",
-        }),
+        "fields": _meeting_to_firestore(
+            {
+                "id": "monday-1900",
+                "weekday": 1,
+                "start_minutes": 1140,
+                "end_minutes": 1240,
+                "lesson_count": 2,
+                "call_count": 1,
+                "created_at": "2026-08-01T12:00:00Z",
+                "updated_at": "2026-08-01T12:00:00Z",
+            }
+        ),
     }
     repository = TeachingPlanReconciliationRepository(store, now=lambda: NOW)
 
@@ -112,14 +110,16 @@ def test_preview_never_writes_and_apply_is_idempotent() -> None:
         "assessment_conflicts": 0,
         "outside_schedule": 0,
         "applied": 0,
-        "changes": [{
-            "action": "create_session",
-            "occurrence_key": "2026-08-10T19:00-20:40",
-            "date": "2026-08-10",
-            "starts_at": "19:00",
-            "ends_at": "20:40",
-            "subject": "Polimorfismo",
-        }],
+        "changes": [
+            {
+                "action": "create_session",
+                "occurrence_key": "2026-08-10T19:00-20:40",
+                "date": "2026-08-10",
+                "starts_at": "19:00",
+                "ends_at": "20:40",
+                "subject": "Polimorfismo",
+            }
+        ],
         "excluded": [],
         "conflicts": [],
         "workload_validation": {
@@ -152,9 +152,7 @@ def test_apply_removes_an_untouched_import_outside_the_saved_grade() -> None:
         "name": "courses/poo",
         "fields": course_to_firestore(_course()),
     }
-    TeachingPlanRepository(store, now=lambda: NOW).save(
-        "poo", source_id="1", plan=_plan()
-    )
+    TeachingPlanRepository(store, now=lambda: NOW).save("poo", source_id="1", plan=_plan())
     store.documents[("courses", "poo", "sessions", "2026-08-10--diario-1900-2040")] = {
         "name": "courses/poo/sessions/2026-08-10--diario-1900-2040",
         "fields": {
@@ -178,9 +176,7 @@ def test_apply_removes_an_untouched_import_outside_the_saved_grade() -> None:
 
     assert result["applied"] == 1
     assert result["changes"][0]["action"] == "remove_session"
-    assert store.deletes[-1] == [
-        ("courses", "poo", "sessions", "2026-08-10--diario-1900-2040")
-    ]
+    assert store.deletes[-1] == [("courses", "poo", "sessions", "2026-08-10--diario-1900-2040")]
     repeated = repository.reconcile("poo", apply=True)
     assert repeated["applied"] == 0
     assert repeated["outside_schedule"] == 1
@@ -193,9 +189,7 @@ def test_legacy_placeholder_workload_is_not_reported_as_one_hour() -> None:
         "name": "courses/poo",
         "fields": course_to_firestore({**_course(), "workload": 1}),
     }
-    TeachingPlanRepository(store, now=lambda: NOW).save(
-        "poo", source_id="1", plan=_plan()
-    )
+    TeachingPlanRepository(store, now=lambda: NOW).save("poo", source_id="1", plan=_plan())
 
     result = TeachingPlanReconciliationRepository(store, now=lambda: NOW).reconcile(
         "poo", apply=False
@@ -204,18 +198,50 @@ def test_legacy_placeholder_workload_is_not_reported_as_one_hour() -> None:
     assert result["workload_validation"] is None
 
 
+def test_reconcile_reuses_supplied_plan_and_meetings_without_reloading_them() -> None:
+    class CountingStore(Store):
+        listed: list[tuple[str, ...]]
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.listed = []
+
+        def list_user_documents(self, *segments: str) -> list[dict[str, Any]]:
+            self.listed.append(segments)
+            return super().list_user_documents(*segments)
+
+    store = CountingStore()
+    store.documents[("courses", "poo")] = {
+        "name": "courses/poo",
+        "fields": course_to_firestore(_course()),
+    }
+    repository = TeachingPlanReconciliationRepository(store, now=lambda: NOW)
+    result = repository.reconcile("poo", apply=False, plan_data=_plan(), meetings_data=[])
+
+    assert "missing" in result
+    assert ("courses", "poo", "meetings") not in store.listed
+    assert ("courses", "poo", "sessions") in store.listed
+
+
 def test_online_reconciliation_preserves_history_without_creating_class_sessions() -> None:
     store = Store()
     store.documents[("courses", "poo")] = {
-        "name": "courses/poo", "fields": course_to_firestore({
-            **_course(), "modality": "online", "attendance_policy": "no_call",
-        }),
+        "name": "courses/poo",
+        "fields": course_to_firestore(
+            {
+                **_course(),
+                "modality": "online",
+                "attendance_policy": "no_call",
+            }
+        ),
     }
     TeachingPlanRepository(store, now=lambda: NOW).save("poo", source_id="1", plan=_plan())
     before = dict(store.documents)
     events: list[tuple[str, object]] = []
     repository = TeachingPlanReconciliationRepository(
-        store, now=lambda: NOW, telemetry=lambda event, fields: events.append((event, fields)),
+        store,
+        now=lambda: NOW,
+        telemetry=lambda event, fields: events.append((event, fields)),
     )
     result = repository.reconcile("poo", apply=True)
     repository.reconcile("poo", apply=False)
@@ -223,8 +249,16 @@ def test_online_reconciliation_preserves_history_without_creating_class_sessions
     assert result["changes"] == []
     assert store.commits == []
     assert store.documents == before
-    assert events[0] == ("teaching_plan_course_policy_preserved", {
-        "course_id": "poo", "course_code": "DCC203", "modality": "online",
-        "attendance_policy": "no_call", "existing_sessions": 0, "applied": 0,
-        "mode": "apply", "attendance_records_preserved": True,
-    })
+    assert events[0] == (
+        "teaching_plan_course_policy_preserved",
+        {
+            "course_id": "poo",
+            "course_code": "DCC203",
+            "modality": "online",
+            "attendance_policy": "no_call",
+            "existing_sessions": 0,
+            "applied": 0,
+            "mode": "apply",
+            "attendance_records_preserved": True,
+        },
+    )

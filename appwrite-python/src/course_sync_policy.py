@@ -247,22 +247,45 @@ class AdaptiveTeachingPlanImporter:
         self.created_at = created_at
 
     def import_plan(
-        self, user_id: str, *, course_id: str, term: str, source_id: int, now: int
+        self,
+        user_id: str,
+        *,
+        course_id: str,
+        term: str,
+        source_id: int,
+        now: int,
+        include_plan_data: bool = False,
     ) -> dict[str, object]:
         created = self.created_at(course_id) if self.created_at is not None else None
         created_at = int(datetime.fromisoformat(created).timestamp()) if created else None
+        imported_plan: dict[str, object] = {}
+
+        def fetch() -> dict[str, object]:
+            result = self.importer.import_plan(
+                user_id,
+                course_id=course_id,
+                term=term,
+                source_id=source_id,
+                now=now,
+                include_plan_data=include_plan_data,
+            )
+            result = dict(result)
+            if include_plan_data and "plan_data" in result:
+                imported_plan["plan_data"] = result.pop("plan_data")
+            return result
+
         try:
             result, _ = self.policy.run(
                 course_id,
                 "plan",
                 f"{term}:{source_id}",
                 now=now,
-                fetch=lambda: self.importer.import_plan(
-                    user_id, course_id=course_id, term=term, source_id=source_id, now=now
-                ),
+                fetch=fetch,
                 force=self.force,
                 created_at=created_at,
             )
+            if include_plan_data and "plan_data" in imported_plan:
+                result["plan_data"] = imported_plan["plan_data"]
             return result
         except SyncDeferred as error:
             return {"plan": "deferred" if str(error) == "manual_confirmed" else "unavailable"}

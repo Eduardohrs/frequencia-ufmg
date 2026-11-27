@@ -35,6 +35,7 @@ class _SigaSync(Protocol):
         *,
         now: int,
         on_courses_imported: Callable[[], None] | None = None,
+        on_schedules_imported: Callable[[dict[str, list[dict[str, object]]]], None] | None = None,
     ) -> dict[str, object]: ...
 
 
@@ -57,11 +58,19 @@ class _PlanImporter(Protocol):
         term: str,
         source_id: int,
         now: int,
+        include_plan_data: bool = False,
     ) -> dict[str, object]: ...
 
 
 class _PlanReconciler(Protocol):
-    def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]: ...
+    def reconcile(
+        self,
+        course_id: str,
+        *,
+        apply: bool,
+        plan_data: dict[str, object] | None = None,
+        meetings_data: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]: ...
 
 
 class UnifiedAcademicSyncService:
@@ -102,6 +111,7 @@ class UnifiedAcademicSyncService:
         moodle_future: Future[dict[str, object]] | None = None
         siga_sync_finished = Event()
         siga_schedules_succeeded = Event()
+        siga_meetings_by_course: dict[str, list[dict[str, object]]] = {}
 
         def start_plans(content: dict[str, object], pool: ThreadPoolExecutor) -> None:
             nonlocal plans_started
@@ -144,6 +154,7 @@ class UnifiedAcademicSyncService:
                     now,
                     siga_sync_finished,
                     siga_schedules_succeeded,
+                    siga_meetings_by_course,
                 )
                 for course, source_id in pending
             )
@@ -154,6 +165,7 @@ class UnifiedAcademicSyncService:
             with ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="moodle-sync-root"
             ) as moodle_pool:
+
                 def start_moodle() -> None:
                     nonlocal moodle_future
                     if moodle_future is not None:
@@ -180,7 +192,12 @@ class UnifiedAcademicSyncService:
                     siga = self._timed(
                         "siga",
                         lambda: self._siga.sync_siga(
-                            user_id, now=now, on_courses_imported=start_moodle
+                            user_id,
+                            now=now,
+                            on_courses_imported=start_moodle,
+                            on_schedules_imported=lambda meetings: siga_meetings_by_course.update(
+                                meetings
+                            ),
                         ),
                     )
                     siga_schedules_succeeded.set()
@@ -305,6 +322,7 @@ class UnifiedAcademicSyncService:
         now: int,
         siga_sync_finished: Event,
         siga_schedules_succeeded: Event,
+        siga_meetings_by_course: dict[str, list[dict[str, object]]],
     ) -> dict[str, object]:
         summary = {
             "available": 0,
@@ -326,6 +344,7 @@ class UnifiedAcademicSyncService:
                     term=term,
                     source_id=source_id,
                     now=now,
+                    include_plan_data=True,
                 ),
                 course=course,
             )
@@ -395,10 +414,18 @@ class UnifiedAcademicSyncService:
                 },
             )
             return {"summary": summary, "exceptions": exceptions}
+        plan_data = imported_plan.get("plan_data")
+        meetings_data = siga_meetings_by_course.get(course_id)
         try:
             preview = self._timed(
                 "teaching_plan_reconciliation",
-                partial(self._reconciler.reconcile, course_id, apply=False),
+                partial(
+                    self._reconciler.reconcile,
+                    course_id,
+                    apply=False,
+                    plan_data=cast(dict[str, object] | None, plan_data),
+                    meetings_data=meetings_data,
+                ),
                 course=course,
             )
         except _FATAL_FAILURES:
@@ -434,7 +461,13 @@ class UnifiedAcademicSyncService:
         try:
             applied = self._timed(
                 "teaching_plan_apply",
-                partial(self._reconciler.reconcile, course_id, apply=True),
+                partial(
+                    self._reconciler.reconcile,
+                    course_id,
+                    apply=True,
+                    plan_data=cast(dict[str, object] | None, plan_data),
+                    meetings_data=meetings_data,
+                ),
                 course=course,
             )
         except _FATAL_FAILURES:

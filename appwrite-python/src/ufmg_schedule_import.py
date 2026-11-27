@@ -1,6 +1,6 @@
 """Safely reconcile trusted SIGA timetable data with a user's local schedule."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol, cast
 
 from frequencia_ufmg.models import PendenciaHorario
@@ -90,7 +90,10 @@ class UFMGScheduleImportService:
         return self.import_enrollments(remote, user_id=user_id)
 
     def import_enrollments(
-        self, remote: list[dict[str, object]], user_id: str = ""
+        self,
+        remote: list[dict[str, object]],
+        user_id: str = "",
+        on_schedules_imported: Callable[[dict[str, list[dict[str, object]]]], None] | None = None,
     ) -> dict[str, int]:
         """Reconcile one already validated enrollment snapshot."""
 
@@ -127,6 +130,13 @@ class UFMGScheduleImportService:
             summary["meetings_imported"] += count
             for name, value in diagnostics.items():
                 summary[name] += value
+        if on_schedules_imported is not None:
+            on_schedules_imported(
+                {
+                    course_id: cast(list[dict[str, object]], state["meetings"])
+                    for course_id, state in schedules.items()
+                }
+            )
         return summary
 
     def _reconcile(
