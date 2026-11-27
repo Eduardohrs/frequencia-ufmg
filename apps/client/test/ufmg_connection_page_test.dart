@@ -2020,6 +2020,17 @@ void main() {
           ..reconciliationConflicting = 1
           ..reconciliationAssessmentsLinked = 1
           ..reconciliationOutsideSchedule = 1
+          ..reconciliationExcluded = [
+            PythonTeachingPlanChange(
+              action: 'excluded',
+              date: DateTime.utc(2026, 8, 12),
+              startsAt: '19:00',
+              endsAt: '20:40',
+              subject: 'Reposição especial',
+              reason: 'unsupported_lesson_count',
+              lessonCount: 3,
+            ),
+          ]
           ..materialCatalog = PythonMoodleContentDiscovery(
             candidateTotal: 1,
             metaturmaCandidateTotal: 0,
@@ -2071,6 +2082,11 @@ void main() {
     expect(find.textContaining('Adicionar aula'), findsWidgets);
     expect(find.textContaining('Aula 1'), findsOneWidget);
     expect(find.textContaining('Aula 2'), findsOneWidget);
+    expect(find.textContaining('Reposição especial'), findsOneWidget);
+    expect(
+      find.textContaining('quantidade de aulas não reconhecida'),
+      findsOneWidget,
+    );
     expect(
       find.textContaining('58 de 60 horas-aula de 50 minutos'),
       findsOneWidget,
@@ -2135,6 +2151,17 @@ void main() {
             )
             ..reconciliationOutsideSchedule = 18
             ..reconciliationConflicting = 1
+            ..reconciliationExcluded = [
+              PythonTeachingPlanChange(
+                action: 'excluded',
+                date: DateTime.utc(2026, 8, 12),
+                startsAt: '19:00',
+                endsAt: '20:40',
+                subject: 'Reposição especial',
+                reason: 'unsupported_lesson_count',
+                lessonCount: 3,
+              ),
+            ]
             ..materialCatalog = PythonMoodleContentDiscovery(
               candidateTotal: 1,
               metaturmaCandidateTotal: 0,
@@ -2197,6 +2224,11 @@ void main() {
       );
       expect(
         find.textContaining('1 conflito precisa de revisão manual'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Reposição especial'), findsOneWidget);
+      expect(
+        find.textContaining('quantidade de aulas não reconhecida'),
         findsOneWidget,
       );
       expect(gateway.reconciliationRequests, [('dcc203', false)]);
@@ -4444,6 +4476,7 @@ class _Gateway
   int reconciliationConflicting = 0;
   int reconciliationAssessmentsLinked = 0;
   int reconciliationOutsideSchedule = 0;
+  List<PythonTeachingPlanChange> reconciliationExcluded = const [];
   String reconciliationWorkloadStatus = 'below_expected';
   PythonMoodleContentDiscovery materialCatalog =
       const PythonMoodleContentDiscovery(
@@ -4574,7 +4607,7 @@ class _Gateway
           subject: 'Aula ${index + 1}',
         ),
       ),
-      excluded: const [],
+      excluded: reconciliationExcluded,
       workloadValidation: PythonWorkloadValidation(
         status: reconciliationWorkloadStatus,
         expectedLessonUnits: 60,

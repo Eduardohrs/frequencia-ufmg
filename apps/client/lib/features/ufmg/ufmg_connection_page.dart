@@ -725,6 +725,18 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                           ],
                         ),
                       ),
+                    if (reconciliation.excluded.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Aulas que não serão importadas automaticamente:',
+                      ),
+                      const SizedBox(height: 6),
+                      for (final occurrence in reconciliation.excluded)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(_excludedOccurrenceLabel(occurrence)),
+                        ),
+                    ],
                     if (reconciliation.conflicting > 0)
                       Text(
                         '${reconciliation.conflicting} conflitos não serão alterados automaticamente.',
@@ -818,11 +830,15 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
 
   bool _hasTeachingPlanNotice(PythonTeachingPlanReconciliation reconciliation) {
     final hasOutsideSchedule = reconciliation.outsideSchedule > 0;
+    final hasExcludedOccurrences = reconciliation.excluded.isNotEmpty;
     final hasConflicts = reconciliation.conflicting > 0;
     final workloadStatus = reconciliation.workloadValidation?.status;
     final hasWorkloadDifference =
         workloadStatus != null && workloadStatus != 'aligned';
-    return hasOutsideSchedule || hasConflicts || hasWorkloadDifference;
+    return hasOutsideSchedule ||
+        hasExcludedOccurrences ||
+        hasConflicts ||
+        hasWorkloadDifference;
   }
 
   String _teachingPlanNotice(PythonTeachingPlanReconciliation reconciliation) {
@@ -834,6 +850,12 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         'fora da grade e não '
         '${reconciliation.outsideSchedule == 1 ? 'virou' : 'viraram'} '
         'aula de frequência.',
+      );
+    }
+    if (reconciliation.excluded.isNotEmpty) {
+      details.add(
+        'Aulas não importadas automaticamente: '
+        '${reconciliation.excluded.map(_excludedOccurrenceLabel).join('; ')}.',
       );
     }
     if (reconciliation.conflicting > 0) {
@@ -852,6 +874,20 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
     return '${reconciliation.matched} aulas já conferem com o plano. '
         'Nenhuma mudança foi aplicada automaticamente. ${details.join(' ')}';
+  }
+
+  String _excludedOccurrenceLabel(PythonTeachingPlanChange occurrence) {
+    final date = MaterialLocalizations.of(
+      context,
+    ).formatMediumDate(occurrence.date);
+    final lessonCount = occurrence.lessonCount == null
+        ? ''
+        : ' · ${occurrence.lessonCount} unidades';
+    final reason = occurrence.reason == null
+        ? 'precisa de revisão'
+        : _excludedOccurrenceReason(occurrence.reason!);
+    return '$date · ${occurrence.startsAt}–${occurrence.endsAt} · '
+        '${occurrence.subject}$lessonCount · $reason';
   }
 
   String _materialOperationId(
