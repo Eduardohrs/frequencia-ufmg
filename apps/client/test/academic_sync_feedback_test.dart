@@ -202,6 +202,7 @@ void main() {
             changes: const [],
             conflicting: 0,
             assessmentConflicts: 0,
+            applyError: 'ValueError',
             excluded: [
               PythonTeachingPlanChange(
                 action: 'excluded',
@@ -223,6 +224,7 @@ void main() {
       expect(issue.reason, 'teaching_plan_occurrences_not_representable');
       expect(issue.excluded.single.subject, 'Reposição especial');
       expect(issue.excluded.single.lessonCount, 3);
+      expect(issue.applyError, 'ValueError');
     },
   );
 }

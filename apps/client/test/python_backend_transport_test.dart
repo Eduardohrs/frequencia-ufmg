@@ -2499,9 +2499,19 @@ void main() {
                   'course_code': 'ELE065',
                   'reason': 'teaching_plan_occurrences_not_representable',
                   'candidate_count': 1,
-                  'changes': [],
+                  'changes': [
+                    {
+                      'action': 'create_session',
+                      'occurrence_key': '2026-11-23T19:00-20:40',
+                      'date': '2026-11-23',
+                      'starts_at': '19:00',
+                      'ends_at': '20:40',
+                      'subject': 'Aula válida',
+                    },
+                  ],
                   'conflicting': 0,
                   'assessment_conflicts': 0,
+                  'apply_error': 'ValueError',
                   'excluded': [
                     {
                       'action': 'excluded',
@@ -2512,6 +2522,15 @@ void main() {
                       'lesson_count': 3,
                       'subject': 'Reposição especial',
                       'reason': 'unsupported_lesson_count',
+                    },
+                    {
+                      'action': 'excluded',
+                      'occurrence_key': '2026-11-23T19:00-20:40',
+                      'date': '2026-11-23',
+                      'starts_at': '19:00',
+                      'ends_at': '20:40',
+                      'subject': 'Atividade nova',
+                      'reason': 'new_server_reason',
                     },
                   ],
                 },
@@ -2535,7 +2554,10 @@ void main() {
       expect(result.exceptions[2].courseCode, 'ESA019');
       expect(result.exceptions[2].reason, 'teaching_plan_unavailable');
       expect(result.exceptions[2].excluded, isEmpty);
-      expect(result.exceptions[3].excluded.single.lessonCount, 3);
+      expect(result.exceptions[3].excluded.first.lessonCount, 3);
+      expect(result.exceptions[3].excluded[1].reason, 'new_server_reason');
+      expect(result.exceptions[3].changes.single.subject, 'Aula válida');
+      expect(result.exceptions[3].applyError, 'ValueError');
       expect(
         result.exceptions[3].reason,
         'teaching_plan_occurrences_not_representable',

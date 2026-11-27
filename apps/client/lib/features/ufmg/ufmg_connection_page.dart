@@ -1684,14 +1684,21 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         context,
       )?.course(id: issue.courseId, code: issue.courseCode)?.displayName ??
       (issue.courseCode.isEmpty ? 'Dados acadêmicos' : issue.courseCode);
-  String _syncIssueMessage(AcademicSyncIssue issue) => switch (issue.reason) {
-    'ambiguous_teaching_plan' => 'Escolha o plano de ensino na disciplina.',
-    'teaching_plan_occurrences_not_representable' =>
-      'Algumas aulas do plano não puderam ser incluídas automaticamente. Confira os itens abaixo.',
-    'schedule_review' => 'Confira os horários das disciplinas.',
-    'unmatched_dates' => 'Algumas datas não têm uma disciplina correspondente.',
-    _ => 'Não foi possível atualizar ${_syncCourseLabel(issue)}.',
-  };
+  String _syncIssueMessage(AcademicSyncIssue issue) {
+    if (issue.applyError != null) {
+      return 'As alterações seguras não foram salvas. Confira os itens abaixo e tente sincronizar novamente.';
+    }
+    return switch (issue.reason) {
+      'ambiguous_teaching_plan' => 'Escolha o plano de ensino na disciplina.',
+      'teaching_plan_occurrences_not_representable' =>
+        'Algumas aulas do plano não puderam ser incluídas automaticamente. Confira os itens abaixo.',
+      'schedule_review' => 'Confira os horários das disciplinas.',
+      'unmatched_dates' =>
+        'Algumas datas não têm uma disciplina correspondente.',
+      _ => 'Não foi possível atualizar ${_syncCourseLabel(issue)}.',
+    };
+  }
+
   String? _syncIssueSummary(List<AcademicSyncIssue> issues) {
     final messages = issues.map(_syncIssueMessage).toSet().toList();
     if (messages.isEmpty) return null;

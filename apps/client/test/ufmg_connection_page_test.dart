@@ -1033,7 +1033,7 @@ void main() {
     expect(find.text('Não foi possível atualizar ESA019.'), findsWidgets);
     expect(
       find.text(
-        'Algumas aulas do plano não puderam ser incluídas automaticamente. Confira os itens abaixo.',
+        'As alterações seguras não foram salvas. Confira os itens abaixo e tente sincronizar novamente.',
       ),
       findsOneWidget,
     );
@@ -1042,6 +1042,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('3 unidades'), findsOneWidget);
+    expect(find.textContaining('precisa de revisão'), findsOneWidget);
     expect(logger.events, contains('academic_sync_succeeded'));
     expect(await schedule.isDue('user-1'), isFalse);
     await tester.tap(find.text('Entendi'));
@@ -4929,6 +4930,7 @@ final class _UnifiedGateway extends _Gateway
             changes: const [],
             conflicting: 0,
             assessmentConflicts: 0,
+            applyError: 'ValueError',
             excluded: [
               PythonTeachingPlanChange(
                 action: 'excluded',
@@ -4938,6 +4940,14 @@ final class _UnifiedGateway extends _Gateway
                 subject: 'Reposição especial',
                 reason: 'unsupported_lesson_count',
                 lessonCount: 3,
+              ),
+              PythonTeachingPlanChange(
+                action: 'excluded',
+                date: DateTime.utc(2026, 11, 23),
+                startsAt: '19:00',
+                endsAt: '20:40',
+                subject: 'Atividade nova',
+                reason: 'new_server_reason',
               ),
             ],
           ),

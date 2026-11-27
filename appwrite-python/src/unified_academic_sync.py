@@ -270,22 +270,21 @@ class UnifiedAcademicSyncService:
             exceptions.append(_reconciliation_exception(course, preview))
             return {"summary": summary, "exceptions": exceptions}
         excluded_occurrences = cast(list[object], preview.get("excluded", []))
+        exclusion_exception: dict[str, object] | None = None
         if excluded_occurrences:
             summary["review_required"] += 1
-            exceptions.append(_reconciliation_exclusion_exception(course, preview))
-            self._emit(
-                "academic_sync_plan_occurrences_excluded",
-                {
-                    "course_id": course_id,
-                    "course_code": course["course_code"],
-                    "excluded_count": len(excluded_occurrences),
-                    "excluded": excluded_occurrences[:20],
-                    "safe_changes_still_applied": True,
-                },
-            )
+            exclusion_exception = _reconciliation_exclusion_exception(course, preview)
+            exceptions.append(exclusion_exception)
         if not cast(list[object], preview["changes"]):
             if not excluded_occurrences:
                 summary["unchanged"] += 1
+            if exclusion_exception is not None:
+                self._emit_exclusion_result(
+                    course,
+                    excluded_occurrences,
+                    safe_changes_count=0,
+                    apply_status="not_needed",
+                )
             return {"summary": summary, "exceptions": exceptions}
         try:
             applied = self._timed(
@@ -296,14 +295,56 @@ class UnifiedAcademicSyncService:
         except _FATAL_FAILURES:
             raise
         except Exception as error:
-            summary["review_required"] += 1
-            exceptions.append(_unavailable_exception(course))
+            if exclusion_exception is not None:
+                # This course already has one review exception. Keep its
+                # exclusions and attach the failed apply outcome instead of
+                # counting the same course twice in the result contract.
+                exclusion_exception["apply_error"] = type(error).__name__
+                self._emit_exclusion_result(
+                    course,
+                    excluded_occurrences,
+                    safe_changes_count=len(cast(list[object], preview["changes"])),
+                    apply_status="failed",
+                    apply_error=type(error).__name__,
+                )
+            else:
+                summary["review_required"] += 1
+                exceptions.append(_unavailable_exception(course))
             self._record_course_failure(
                 course, source_id=source_id, stage="teaching_plan_apply", error=error
             )
             return {"summary": summary, "exceptions": exceptions}
         summary["applied"] += cast(int, applied["applied"])
+        if exclusion_exception is not None:
+            self._emit_exclusion_result(
+                course,
+                excluded_occurrences,
+                safe_changes_count=len(cast(list[object], preview["changes"])),
+                apply_status="applied",
+            )
         return {"summary": summary, "exceptions": exceptions}
+
+    def _emit_exclusion_result(
+        self,
+        course: Mapping[str, object],
+        excluded: list[object],
+        *,
+        safe_changes_count: int,
+        apply_status: str,
+        apply_error: str | None = None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "course_id": course["course_id"],
+            "course_code": course["course_code"],
+            "excluded_count": len(excluded),
+            "excluded": excluded[:20],
+            "safe_changes_count": safe_changes_count,
+            "safe_changes_apply_status": apply_status,
+            "safe_changes_still_applied": apply_status != "failed",
+        }
+        if apply_error is not None:
+            fields["apply_error"] = apply_error
+        self._emit("academic_sync_plan_occurrences_excluded", fields)
 
     def _timed(
         self,

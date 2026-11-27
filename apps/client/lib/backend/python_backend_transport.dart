@@ -490,6 +490,7 @@ final class PythonAcademicSyncException {
     required this.conflicting,
     required this.assessmentConflicts,
     this.excluded = const [],
+    this.applyError,
   });
 
   final String courseId;
@@ -500,6 +501,7 @@ final class PythonAcademicSyncException {
   final int conflicting;
   final int assessmentConflicts;
   final List<PythonTeachingPlanChange> excluded;
+  final String? applyError;
 }
 
 final class PythonUnifiedAcademicSyncResult {
@@ -706,11 +708,7 @@ final class PythonTeachingPlanChange {
         reason != null &&
             (action != 'excluded' ||
                 reason is! String ||
-                !{
-                  'outside_weekly_schedule',
-                  'unsupported_lesson_count',
-                  'duration_does_not_match_lesson_count',
-                }.contains(reason)) ||
+                !RegExp(r'^[a-z][a-z0-9_]{0,63}$').hasMatch(reason)) ||
         lessonCount != null &&
             (action != 'excluded' ||
                 lessonCount is! int ||
@@ -2886,6 +2884,7 @@ final class PythonBackendTransport
             if (item.keys.toSet().difference({
                   ...requiredExceptionKeys,
                   'excluded',
+                  'apply_error',
                 }).isNotEmpty ||
                 requiredExceptionKeys
                     .difference(item.keys.toSet())
@@ -2902,6 +2901,7 @@ final class PythonBackendTransport
             final rawExcluded = item.containsKey('excluded')
                 ? item['excluded']
                 : const <Object?>[];
+            final applyError = item['apply_error'];
             if (courseId is! String ||
                 courseId.isEmpty ||
                 courseCode is! String ||
@@ -2923,6 +2923,11 @@ final class PythonBackendTransport
                 assessmentConflicts is! int ||
                 assessmentConflicts < 0 ||
                 assessmentConflicts > 500 ||
+                (applyError != null &&
+                    (applyError is! String ||
+                        !RegExp(
+                          r'^[A-Za-z][A-Za-z0-9]{0,63}$',
+                        ).hasMatch(applyError))) ||
                 rawChanges is! List ||
                 rawChanges.length > 20 ||
                 rawExcluded is! List ||
@@ -2962,7 +2967,6 @@ final class PythonBackendTransport
                     (candidateCount != 1 ||
                         conflicting != 0 ||
                         assessmentConflicts != 0 ||
-                        changes.isNotEmpty ||
                         excluded.isEmpty)) {
               throw const FormatException();
             }
@@ -2975,6 +2979,7 @@ final class PythonBackendTransport
               conflicting: conflicting,
               assessmentConflicts: assessmentConflicts,
               excluded: excluded,
+              applyError: applyError as String?,
             );
           })
           .toList(growable: false);

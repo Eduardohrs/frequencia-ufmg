@@ -259,7 +259,9 @@ def test_explicitly_unpublished_plan_is_informational_and_never_reconciles_stale
 def test_sync_reports_excluded_plan_rows_and_keeps_other_work_successful() -> None:
     events: list[tuple[str, dict[str, object]]] = []
     excluded = [{"action": "excluded", "reason": "unsupported_lesson_count"}]
-    reconciler = _Reconciler({"ele028": _preview(excluded=excluded)})
+    reconciler = _Reconciler(
+        {"ele028": _preview(changes=[{"action": "create_session"}], excluded=excluded)}
+    )
 
     result = UnifiedAcademicSyncService(
         _Siga(),
@@ -269,11 +271,11 @@ def test_sync_reports_excluded_plan_rows_and_keeps_other_work_successful() -> No
         telemetry=lambda event, fields: events.append((event, dict(fields))),
     ).sync("user", now=42)
 
-    assert reconciler.calls == [("ele028", False)]
+    assert reconciler.calls == [("ele028", False), ("ele028", True)]
     assert result["teaching_plans"] == {
         "available": 1,
         "imported": 1,
-        "applied": 0,
+        "applied": 1,
         "unchanged": 0,
         "review_required": 1,
     }
@@ -283,7 +285,61 @@ def test_sync_reports_excluded_plan_rows_and_keeps_other_work_successful() -> No
         item for item in events if item[0] == "academic_sync_plan_occurrences_excluded"
     )
     assert fields["excluded_count"] == 1
+    assert fields["safe_changes_apply_status"] == "applied"
+    assert fields["safe_changes_count"] == 1
     assert fields["safe_changes_still_applied"] is True
+
+
+def test_apply_failure_merges_with_excluded_occurrence_for_same_course() -> None:
+    class ApplyFails(_Reconciler):
+        def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
+            self.calls.append((course_id, apply))
+            if apply:
+                raise ValueError("firestore failed")
+            return self.previews[course_id]
+
+    telemetry: list[tuple[str, dict[str, object]]] = []
+    excluded = [{"action": "excluded", "reason": "unsupported_lesson_count"}]
+    result = UnifiedAcademicSyncService(
+        _Siga(),
+        _Moodle([_course()]),
+        _Plans(),
+        ApplyFails({"ele028": _preview(changes=[{"action": "create_session"}], excluded=excluded)}),
+        telemetry=lambda event, fields: telemetry.append((event, dict(fields))),
+    ).sync("user", now=42)
+
+    assert result["teaching_plans"]["review_required"] == 1
+    assert len(result["exceptions"]) == 1
+    exception = result["exceptions"][0]
+    assert exception["reason"] == "teaching_plan_occurrences_not_representable"
+    assert exception["excluded"] == excluded
+    assert exception["apply_error"] == "ValueError"
+    event = next(
+        fields for name, fields in telemetry if name == "academic_sync_plan_occurrences_excluded"
+    )
+    assert event["safe_changes_apply_status"] == "failed"
+    assert event["safe_changes_still_applied"] is False
+    assert event["apply_error"] == "ValueError"
+
+
+def test_excluded_only_plan_reports_that_safe_apply_was_not_needed() -> None:
+    telemetry: list[tuple[str, dict[str, object]]] = []
+    excluded = [{"action": "excluded", "reason": "unsupported_lesson_count"}]
+    result = UnifiedAcademicSyncService(
+        _Siga(),
+        _Moodle([_course()]),
+        _Plans(),
+        _Reconciler({"ele028": _preview(excluded=excluded)}),
+        telemetry=lambda event, fields: telemetry.append((event, dict(fields))),
+    ).sync("user", now=42)
+
+    assert result["teaching_plans"]["review_required"] == 1
+    event = next(
+        fields for name, fields in telemetry if name == "academic_sync_plan_occurrences_excluded"
+    )
+    assert event["safe_changes_apply_status"] == "not_needed"
+    assert event["safe_changes_count"] == 0
+    assert event["safe_changes_still_applied"] is True
 
 
 def test_sync_rejects_more_exceptions_than_the_bounded_contract() -> None:
