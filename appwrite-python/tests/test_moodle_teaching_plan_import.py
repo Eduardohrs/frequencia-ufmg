@@ -126,6 +126,31 @@ def test_import_matches_course_and_persists_plan_and_assessments() -> None:
     }
 
 
+def test_import_includes_plan_snapshot_only_for_internal_reconciliation() -> None:
+    service = MoodleTeachingPlanImportService(
+        _Sessions(UFMGSession("private", 1, 999), []),
+        _Client(),
+        _Courses(),
+        _Plans(),
+        _Dates(),
+    )
+
+    public_result = service.import_plan(
+        "user-1", course_id="course-a", term="2026-2", source_id=701, now=123
+    )
+    internal_result = service.import_plan(
+        "user-1",
+        course_id="course-a",
+        term="2026-2",
+        source_id=701,
+        now=123,
+        include_plan_data=True,
+    )
+
+    assert "plan_data" not in public_result
+    assert internal_result["plan_data"]["course_code"] == "ELE631"
+
+
 def test_import_uses_moodle_bulk_link_when_cached_token_is_available() -> None:
     target = (
         "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"

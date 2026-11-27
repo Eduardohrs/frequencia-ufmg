@@ -243,9 +243,14 @@ def test_reconciles_only_managed_meetings_and_preserves_call_count() -> None:
         }
     )
 
-    result = _service([_remote()], [course], schedules).import_schedules("user", now=10)
+    snapshots: list[dict[str, list[dict[str, object]]]] = []
+    service = _service([_remote()], [course], schedules)
+    result = service.import_enrollments(
+        [_remote()], user_id="user", on_schedules_imported=snapshots.append
+    )
 
     assert result["updated"] == 1
+    assert snapshots[0]["ele028"] is schedules.states["ele028"]["meetings"]
     payload = schedules.saved[0][1]
     assert payload["meetings"] == [
         {

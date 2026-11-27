@@ -26,27 +26,42 @@ class TeachingPlanReconciliationRepository:
         self._courses = courses or CourseRepository(firestore)
         self._telemetry = telemetry
 
-    def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
+    def reconcile(
+        self,
+        course_id: str,
+        *,
+        apply: bool,
+        plan_data: dict[str, object] | None = None,
+        meetings_data: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
         identifier = validate_course_id(course_id)
         course = self._courses.get_course(identifier)
-        persisted = self._plans.load(identifier)
-        plan = cast(dict[str, object], persisted["plan"])
+        if plan_data is None:
+            persisted = self._plans.load(identifier)
+            plan = cast(dict[str, object], persisted["plan"])
+        else:
+            plan = plan_data
         sessions = [
             _decode_session(document)
             for document in self._firestore.list_user_documents("courses", identifier, "sessions")
         ]
-        meetings = [
-            _decode_meeting(document)
-            for document in self._firestore.list_user_documents("courses", identifier, "meetings")
-        ]
+        meetings = (
+            meetings_data
+            if meetings_data is not None
+            else [
+                _decode_meeting(document)
+                for document in self._firestore.list_user_documents(
+                    "courses", identifier, "meetings"
+                )
+            ]
+        )
         online = course.get("modality") == "online"
         preview = reconcile_teaching_plan_schedule(
             [] if online else plan.get("schedule"),
             [] if online else sessions,
             assessments=[] if online else plan.get("assessments"),
             meetings=[] if online else meetings,
-            workload=None if course["workload"] == 1 or online
-            else int(course["workload"]),
+            workload=None if course["workload"] == 1 or online else int(course["workload"]),
             now=self._now(),
         )
         applied = 0
@@ -67,14 +82,19 @@ class TeachingPlanReconciliationRepository:
             )
             applied = len(writes) + len(preview.delete_ids)
         if self._telemetry is not None:
-            self._telemetry("teaching_plan_course_policy_preserved", {
-                "course_id": identifier, "course_code": course["code"],
-                "modality": course.get("modality", "in_person"),
-                "attendance_policy": course.get("attendance_policy", "required"),
-                "existing_sessions": len(sessions), "applied": applied,
-                "mode": "apply" if apply else "preview",
-                "attendance_records_preserved": True,
-            })
+            self._telemetry(
+                "teaching_plan_course_policy_preserved",
+                {
+                    "course_id": identifier,
+                    "course_code": course["code"],
+                    "modality": course.get("modality", "in_person"),
+                    "attendance_policy": course.get("attendance_policy", "required"),
+                    "existing_sessions": len(sessions),
+                    "applied": applied,
+                    "mode": "apply" if apply else "preview",
+                    "attendance_records_preserved": True,
+                },
+            )
         return {
             "course_id": identifier,
             "mode": "applied" if apply else "preview",

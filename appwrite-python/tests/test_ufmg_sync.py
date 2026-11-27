@@ -64,12 +64,18 @@ class _ScheduleImporter:
         self.user_id: str | None = None
 
     def import_enrollments(
-        self, values: list[dict[str, object]], *, user_id: str
+        self,
+        values: list[dict[str, object]],
+        *,
+        user_id: str,
+        on_schedules_imported=None,
     ) -> dict[str, int]:
         assert self._courses.received is values
         assert user_id == "user"
         self.received = values
         self.user_id = user_id
+        if on_schedules_imported is not None:
+            on_schedules_imported({"ele028": [{"weekday": 1, "start_minutes": 450}]})
         return {
             "total": 1,
             "updated": 1,
@@ -77,7 +83,7 @@ class _ScheduleImporter:
             "conflicts": 0,
             "missing_courses": 0,
             "meetings_imported": 1,
-        "pendencies_created": 0,
+            "pendencies_created": 0,
         }
 
 
@@ -148,7 +154,7 @@ def test_sync_fetches_once_and_reuses_the_snapshot_for_every_stage() -> None:
             "conflicts": 0,
             "missing_courses": 0,
             "meetings_imported": 1,
-        "pendencies_created": 0,
+            "pendencies_created": 0,
         },
         "dates": {
             "total": 2,
@@ -180,7 +186,7 @@ def test_siga_sync_fetches_once_without_contacting_moodle() -> None:
             "conflicts": 0,
             "missing_courses": 0,
             "meetings_imported": 1,
-        "pendencies_created": 0,
+            "pendencies_created": 0,
         },
         "checked_at": "2026-08-10T12:00:00Z",
         "next_automatic_sync_at": "2026-08-11T12:00:00Z",
@@ -188,9 +194,7 @@ def test_siga_sync_fetches_once_without_contacting_moodle() -> None:
 
 
 def test_siga_notifies_after_course_import_and_before_schedule_import() -> None:
-    service, _, _, courses, schedules, _ = _service(
-        datetime(2026, 8, 10, 12, tzinfo=UTC)
-    )
+    service, _, _, courses, schedules, _ = _service(datetime(2026, 8, 10, 12, tzinfo=UTC))
     order: list[str] = []
     import_courses = courses.import_enrollments
     import_schedules = schedules.import_enrollments
@@ -200,18 +204,25 @@ def test_siga_notifies_after_course_import_and_before_schedule_import() -> None:
         order.append("courses")
         return result
 
-    def record_schedule_import(values, *, user_id):
+    def record_schedule_import(values, *, user_id, on_schedules_imported=None):
         order.append("schedule")
-        return import_schedules(values, user_id=user_id)
+        return import_schedules(
+            values, user_id=user_id, on_schedules_imported=on_schedules_imported
+        )
 
     courses.import_enrollments = record_course_import
     schedules.import_enrollments = record_schedule_import
 
+    snapshots: list[dict[str, list[dict[str, object]]]] = []
     service.sync_siga(
-        "user", now=10, on_courses_imported=lambda: order.append("callback")
+        "user",
+        now=10,
+        on_courses_imported=lambda: order.append("callback"),
+        on_schedules_imported=lambda value: (order.append("snapshot"), snapshots.append(value)),
     )
 
-    assert order == ["courses", "callback", "schedule"]
+    assert order == ["courses", "callback", "schedule", "snapshot"]
+    assert snapshots == [{"ele028": [{"weekday": 1, "start_minutes": 450}]}]
 
 
 def test_siga_sync_reports_the_duration_of_each_internal_stage() -> None:
@@ -261,9 +272,10 @@ def test_siga_sync_reports_the_duration_of_each_internal_stage() -> None:
     assert events[4][1]["endpoints"] == [
         "GET https://sistemas.ufmg.br/siga-ws/seam/resource/rest/WsMatriculas"
     ]
-    assert "listaObj[0].matriculas[].turma.atividadeAcademica.codigo" in events[4][1][
-        "response_fields_used"
-    ]
+    assert (
+        "listaObj[0].matriculas[].turma.atividadeAcademica.codigo"
+        in events[4][1]["response_fields_used"]
+    )
     assert any(
         destination["path"] == "courses/{course_id}/meetings/{meeting_id}"
         for destination in events[4][1]["destinations"]

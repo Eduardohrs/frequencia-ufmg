@@ -17,9 +17,7 @@ class _Sessions(Protocol):
 
 
 class _Client(Protocol):
-    def fetch_diario_url_targets(
-        self, *, webservice_token: str, term: str
-    ) -> dict[int, str]: ...
+    def fetch_diario_url_targets(self, *, webservice_token: str, term: str) -> dict[int, str]: ...
 
     def fetch_diario_plan(
         self,
@@ -87,6 +85,7 @@ class MoodleTeachingPlanImportService:
         term: str,
         source_id: int,
         now: int,
+        include_plan_data: bool = False,
     ) -> dict[str, object]:
         identifier = validate_course_id(course_id)
         context = {"course_id": identifier, "source_id": str(source_id)}
@@ -159,7 +158,7 @@ class MoodleTeachingPlanImportService:
             lambda: self._plans.save(identifier, source_id=str(source_id), plan=plan),
             context,
         )
-        return {
+        result: dict[str, object] = {
             "course_id": identifier,
             "term": term,
             "source_id": str(source_id),
@@ -174,10 +173,11 @@ class MoodleTeachingPlanImportService:
             "schedule_total": len(cast(list[object], plan["schedule"])),
             "confidence": "authoritative",
         }
+        if include_plan_data:
+            result["plan_data"] = plan
+        return result
 
-    def _diario_url(
-        self, user_id: str, *, now: int, term: str, source_id: int
-    ) -> str | None:
+    def _diario_url(self, user_id: str, *, now: int, term: str, source_id: int) -> str | None:
         if self._tokens is None:
             return None
         token_store = self._tokens

@@ -25,7 +25,11 @@ class _Importer(Protocol):
 
 class _ScheduleImporter(Protocol):
     def import_enrollments(
-        self, enrollments: list[dict[str, object]], *, user_id: str
+        self,
+        enrollments: list[dict[str, object]],
+        *,
+        user_id: str,
+        on_schedules_imported: Callable[[dict[str, list[dict[str, object]]]], None] | None = None,
     ) -> dict[str, int]: ...
 
 
@@ -68,6 +72,7 @@ class UFMGSyncService:
         *,
         now: int,
         on_courses_imported: Callable[[], None] | None = None,
+        on_schedules_imported: Callable[[dict[str, list[dict[str, object]]]], None] | None = None,
     ) -> dict[str, object]:
         """Synchronize disciplines and schedules from one SIGA snapshot."""
 
@@ -90,7 +95,9 @@ class UFMGSyncService:
             on_courses_imported()
         schedule_result = self._timed(
             "siga_schedule_import",
-            lambda: self._schedules.import_enrollments(enrollments, user_id=user_id),
+            lambda: self._schedules.import_enrollments(
+                enrollments, user_id=user_id, on_schedules_imported=on_schedules_imported
+            ),
         )
         _emit(
             self._telemetry,

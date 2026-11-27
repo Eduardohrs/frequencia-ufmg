@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import pytest
 
-from course_sync_policy import CourseSyncPolicy, SyncDeferred
+from course_sync_policy import AdaptiveTeachingPlanImporter, CourseSyncPolicy, SyncDeferred
 from firestore_rest import FirestoreNotFound
 
 
@@ -20,6 +20,48 @@ class Store:
         self.docs[path] = {"fields": deepcopy(fields)}
         self.writes += 1
         return self.docs[path]
+
+
+def test_internal_plan_data_is_transient_and_not_saved_in_sync_policy_state():
+    store = Store()
+
+    class Importer:
+        def import_plan(self, *_args, **_kwargs):
+            return {
+                "plan": "created",
+                "criteria_total": 1,
+                "schedule_total": 1,
+                "assessment_total": 1,
+                "undated_assessment_total": 0,
+                "plan_data": {"schedule": [{"date": "2026-08-01"}]},
+            }
+
+    importer = AdaptiveTeachingPlanImporter(Importer(), CourseSyncPolicy(store))
+    first = importer.import_plan(
+        "user",
+        course_id="course1",
+        term="2026-2",
+        source_id=701,
+        now=1000,
+        include_plan_data=True,
+    )
+
+    assert first["plan_data"] == {"schedule": [{"date": "2026-08-01"}]}
+    assert (
+        "plan_data"
+        not in store.docs[("courses", "course1", "syncState", "plan")]["fields"]["stateJson"][
+            "stringValue"
+        ]
+    )
+    cached = importer.import_plan(
+        "user",
+        course_id="course1",
+        term="2026-2",
+        source_id=701,
+        now=1001,
+        include_plan_data=True,
+    )
+    assert "plan_data" not in cached
 
 
 def test_repeat_sync_reuses_recent_activities_but_does_not_freeze_them_forever():

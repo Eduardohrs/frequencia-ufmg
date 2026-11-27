@@ -35,12 +35,14 @@ class _Siga:
         self.calls = 0
 
     def sync_siga(
-        self, user_id: str, *, now: int, on_courses_imported=None
+        self, user_id: str, *, now: int, on_courses_imported=None, on_schedules_imported=None
     ) -> dict[str, object]:
         assert (user_id, now) == ("user", 42)
         self.calls += 1
         if on_courses_imported is not None:
             on_courses_imported()
+        if on_schedules_imported is not None:
+            on_schedules_imported({})
         return {"courses": {"created": 1}, "schedules": {"updated": 1}}
 
 
@@ -81,20 +83,33 @@ class _Plans:
         term: str,
         source_id: int,
         now: int,
+        include_plan_data: bool = False,
     ) -> dict[str, object]:
         self.calls.append((user_id, course_id, term, source_id, now))
         if course_id in self.failures:
             raise self.failures[course_id]
-        return {"plan": "created"}
+        result: dict[str, object] = {"plan": "created"}
+        if include_plan_data:
+            result["plan_data"] = {"schedule": [], "assessments": []}
+        return result
 
 
 class _Reconciler:
     def __init__(self, previews: dict[str, dict[str, object]]) -> None:
         self.previews = previews
         self.calls: list[tuple[str, bool]] = []
+        self.inputs: list[tuple[str, dict[str, object] | None, list[dict[str, object]] | None]] = []
 
-    def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
+    def reconcile(
+        self,
+        course_id: str,
+        *,
+        apply: bool,
+        plan_data: dict[str, object] | None = None,
+        meetings_data: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
         self.calls.append((course_id, apply))
+        self.inputs.append((course_id, plan_data, meetings_data))
         preview = self.previews[course_id]
         return {**preview, "applied": len(preview["changes"]) if apply else 0}
 
@@ -308,7 +323,9 @@ def test_sync_reports_excluded_plan_rows_and_keeps_other_work_successful() -> No
 
 def test_apply_failure_merges_with_excluded_occurrence_for_same_course() -> None:
     class ApplyFails(_Reconciler):
-        def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
+        def reconcile(
+            self, course_id: str, *, apply: bool, plan_data=None, meetings_data=None
+        ) -> dict[str, object]:
             self.calls.append((course_id, apply))
             if apply:
                 raise ValueError("firestore failed")
@@ -452,7 +469,9 @@ def test_sync_logs_one_unavailable_plan_and_continues_the_other_courses() -> Non
 
 def test_sync_continues_after_an_isolated_reconciliation_failure() -> None:
     class Reconciler(_Reconciler):
-        def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
+        def reconcile(
+            self, course_id: str, *, apply: bool, plan_data=None, meetings_data=None
+        ) -> dict[str, object]:
             if course_id == "esa019":
                 raise ValueError("bad saved course state")
             return super().reconcile(course_id, apply=apply)
@@ -488,7 +507,9 @@ def test_sync_continues_after_an_isolated_reconciliation_failure() -> None:
 
 def test_sync_continues_when_apply_fails_and_telemetry_is_optional() -> None:
     class Reconciler(_Reconciler):
-        def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
+        def reconcile(
+            self, course_id: str, *, apply: bool, plan_data=None, meetings_data=None
+        ) -> dict[str, object]:
             if course_id == "esa019" and apply:
                 raise ValueError("apply failed")
             return super().reconcile(course_id, apply=apply)
@@ -521,7 +542,9 @@ def test_sync_does_not_hide_global_dependency_failures() -> None:
             super().__init__({"ele028": _preview(changes=[{"action": "create_session"}])})
             self.fail_on_apply = fail_on_apply
 
-        def reconcile(self, course_id: str, *, apply: bool) -> dict[str, object]:
+        def reconcile(
+            self, course_id: str, *, apply: bool, plan_data=None, meetings_data=None
+        ) -> dict[str, object]:
             if apply == self.fail_on_apply:
                 raise MoodleUnavailable("offline")
             return super().reconcile(course_id, apply=apply)
@@ -718,7 +741,7 @@ def test_plan_reconciliation_waits_for_siga_schedule_import() -> None:
     schedules_imported = Event()
 
     class Siga(_Siga):
-        def sync_siga(self, user_id, *, now, on_courses_imported=None):
+        def sync_siga(self, user_id, *, now, on_courses_imported=None, on_schedules_imported=None):
             assert on_courses_imported is not None
             on_courses_imported()
             # Let Moodle discover the plan and let the worker fetch it while
@@ -735,7 +758,7 @@ def test_plan_reconciliation_waits_for_siga_schedule_import() -> None:
             return result
 
     class Reconciler(_Reconciler):
-        def reconcile(self, course_id, *, apply):
+        def reconcile(self, course_id, *, apply, plan_data=None, meetings_data=None):
             assert schedules_imported.is_set()
             return super().reconcile(course_id, apply=apply)
 
@@ -752,13 +775,34 @@ def test_plan_reconciliation_waits_for_siga_schedule_import() -> None:
     assert result["teaching_plans"]["unchanged"] == 1
 
 
+def test_plan_reconciliation_reuses_the_imported_plan_and_siga_schedule_snapshot() -> None:
+    meetings = [{"id": "monday-1900", "weekday": 1, "start_minutes": 1140}]
+
+    class Siga(_Siga):
+        def sync_siga(self, user_id, *, now, on_courses_imported=None, on_schedules_imported=None):
+            if on_courses_imported is not None:
+                on_courses_imported()
+            assert on_schedules_imported is not None
+            on_schedules_imported({"ele028": meetings})
+            return {"courses": {}, "schedules": {}}
+
+    reconciler = _Reconciler({"ele028": _preview()})
+    UnifiedAcademicSyncService(Siga(), _Moodle([_course()]), _Plans(), reconciler).sync(
+        "user", now=42
+    )
+
+    _, plan_data, meetings_data = reconciler.inputs[0]
+    assert plan_data == {"schedule": [], "assessments": []}
+    assert meetings_data is meetings
+
+
 def test_plan_reconciliation_is_skipped_when_siga_schedule_import_fails() -> None:
     plan_import_finished = Event()
     telemetry: list[tuple[str, dict[str, object]]] = []
     reconciler = _Reconciler({"ele028": _preview()})
 
     class Siga(_Siga):
-        def sync_siga(self, user_id, *, now, on_courses_imported=None):
+        def sync_siga(self, user_id, *, now, on_courses_imported=None, on_schedules_imported=None):
             assert on_courses_imported is not None
             on_courses_imported()
             assert plan_import_finished.wait(timeout=2)
@@ -843,7 +887,7 @@ def test_sync_starts_moodle_after_course_import_without_waiting_for_full_siga_st
     moodle_started = Event()
 
     class Siga(_Siga):
-        def sync_siga(self, user_id, *, now, on_courses_imported=None):
+        def sync_siga(self, user_id, *, now, on_courses_imported=None, on_schedules_imported=None):
             assert on_courses_imported is not None
             on_courses_imported()
             assert moodle_started.wait(timeout=2)
@@ -864,7 +908,7 @@ def test_sync_starts_moodle_after_course_import_without_waiting_for_full_siga_st
 
 def test_siga_callback_can_be_repeated_without_starting_moodle_twice():
     class Siga(_Siga):
-        def sync_siga(self, user_id, *, now, on_courses_imported=None):
+        def sync_siga(self, user_id, *, now, on_courses_imported=None, on_schedules_imported=None):
             assert on_courses_imported is not None
             on_courses_imported()
             on_courses_imported()
@@ -878,14 +922,14 @@ def test_siga_callback_can_be_repeated_without_starting_moodle_twice():
 
 def test_sync_starts_moodle_after_siga_returns_without_course_callback():
     class Siga(_Siga):
-        def sync_siga(self, user_id, *, now, on_courses_imported=None):
+        def sync_siga(self, user_id, *, now, on_courses_imported=None, on_schedules_imported=None):
             assert on_courses_imported is not None
             return {"courses": {}, "schedules": {}}
 
     moodle = _Moodle([])
-    result = UnifiedAcademicSyncService(
-        Siga(), moodle, _Plans(), _Reconciler({})
-    ).sync("user", now=42)
+    result = UnifiedAcademicSyncService(Siga(), moodle, _Plans(), _Reconciler({})).sync(
+        "user", now=42
+    )
 
     assert moodle.calls == 1
     assert result["moodle"]["content"]["candidate_total"] == 3
