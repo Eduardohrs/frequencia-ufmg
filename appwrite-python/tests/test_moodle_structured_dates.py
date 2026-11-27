@@ -480,6 +480,67 @@ def test_fetch_diario_plan_returns_structured_bounded_facts() -> None:
     assert len(result["schedule"]) == 1
 
 
+def test_diario_report_retries_one_transient_jasper_server_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    telemetry: list[tuple[str, dict[str, object]]] = []
+    client = MoodleStructuredDatesClient(
+        opener=_Opener([]),
+        telemetry=lambda event, fields: telemetry.append((event, dict(fields))),
+    )
+    attempts: list[tuple[int, int]] = []
+
+    def open_bounded(
+        _request: Request, *, limit: int, attempt: int = 1, retry_count: int = 0
+    ) -> tuple[bytes, str, str]:
+        attempts.append((attempt, retry_count))
+        if len(attempts) == 1:
+            raise MoodleUnavailable("Moodle is unavailable", upstream_status=500)
+        return b"report", "https://sistemas.ufmg.br/diario/JasperServlet", "text/html"
+
+    monkeypatch.setattr(client, "_open_bounded", open_bounded)
+
+    result = client._open_diario_report(
+        Request("https://sistemas.ufmg.br/diario/JasperServlet"), limit=100
+    )
+
+    assert result[0] == b"report"
+    assert attempts == [(1, 0), (2, 1)]
+    assert telemetry == [
+        (
+            "moodle_diario_report_retry",
+            {
+                "path": "/diario/JasperServlet",
+                "method": "GET",
+                "failed_status": 500,
+                "retry_count": 1,
+                "reason": "transient_upstream_5xx",
+            },
+        )
+    ]
+
+
+def test_diario_report_does_not_retry_non_jasper_or_non_5xx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MoodleStructuredDatesClient(opener=_Opener([]))
+    calls: list[int] = []
+
+    def open_bounded(_request: Request, *, limit: int) -> tuple[bytes, str, str]:
+        calls.append(limit)
+        raise MoodleUnavailable("Moodle is unavailable", upstream_status=404)
+
+    monkeypatch.setattr(client, "_open_bounded", open_bounded)
+
+    with pytest.raises(MoodleUnavailable) as caught:
+        client._open_diario_report(
+            Request("https://sistemas.ufmg.br/diario/JasperServlet"), limit=100
+        )
+
+    assert caught.value.upstream_status == 404
+    assert calls == [100]
+
+
 @pytest.mark.parametrize(
     ("document", "expected_reason"),
     [
@@ -1769,14 +1830,22 @@ def test_activity_module_bulk_rejects_unsafe_shapes(
     assert caught.value.reason == reason
 
 
-def test_activity_module_bulk_covers_quiz_dates_and_optional_files() -> None:
+def test_activity_module_bulk_covers_quiz_dates_and_introfiles() -> None:
     payload = {
         "quizzes": [
             {
                 "coursemodule": 702,
                 "name": "Prova 1",
                 "intro": "<p>Questões</p>",
-                "introattachments": [],
+                "introfiles": [
+                    {
+                        "filename": "questoes.pdf",
+                        "fileurl": (
+                            "https://virtual.ufmg.br/20262/webservice/pluginfile.php/"
+                            "702/mod_quiz/intro/questoes.pdf"
+                        ),
+                    }
+                ],
                 "timeopen": 1_798_000_000,
                 "timeclose": 1_798_100_000,
             }
@@ -1789,6 +1858,55 @@ def test_activity_module_bulk_covers_quiz_dates_and_optional_files() -> None:
     assert result["702"]["description"] == "Questões"
     assert result["702"]["has_due_date"] is True
     assert result["702"]["_bulk_attachments_present"] is True
+    assert result["702"]["attachments"] == [
+        {
+            "name": "questoes.pdf",
+            "url": (
+                "https://virtual.ufmg.br/20262/pluginfile.php/"
+                "702/mod_quiz/intro/questoes.pdf"
+            ),
+        }
+    ]
+
+
+def test_assignment_bulk_accepts_ufmg_student_payload_without_optional_activity_fields() -> None:
+    payload = {
+        "courses": [
+            {
+                "id": 3701,
+                "assignments": [
+                    {
+                        "id": 9001,
+                        "cmid": 701,
+                        "name": "Lista 1",
+                        "intro": "Enunciado da lista",
+                        "introattachments": [
+                            {
+                                "filename": "lista.pdf",
+                                "fileurl": (
+                                    "https://virtual.ufmg.br/20262/webservice/pluginfile.php/"
+                                    "320072/mod_assign/introattachment/0/lista.pdf"
+                                ),
+                            }
+                        ],
+                        "introfiles": [],
+                        "submissionattachments": 1,
+                        "duedate": 1_798_000_000,
+                    }
+                ],
+            }
+        ],
+        "warnings": [],
+    }
+
+    result = _parse_activity_module_bulk(
+        json.dumps(payload).encode(), root="/20262", kind="assign"
+    )["701"]
+
+    assert result["description"] == "Enunciado da lista"
+    assert result["_bulk_description_present"] is True
+    assert result["_bulk_attachments_present"] is True
+    assert result["attachments"][0]["name"] == "lista.pdf"
 
 
 def test_activity_module_bulk_uses_quiz_introfiles_without_html_fallback() -> None:
