@@ -139,7 +139,7 @@ def test_incomplete_course_bulk_uses_module_bulk_before_html_fallback():
                     "attachments": [],
                     "_bulk_description_present": True,
                     "_bulk_attachments_present": True,
-                    "_bulk_submission_complete": False,
+                    "_bulk_submission_complete": True,
                 }
             }
 
@@ -299,8 +299,8 @@ def test_empty_module_bulk_fields_skip_html_n_plus_one_when_all_ids_are_present(
                     "submission_state": "unknown",
                     "submission_text": "",
                     "attachments": [],
-                    "_bulk_description_present": False,
-                    "_bulk_attachments_present": False,
+                    "_bulk_description_present": True,
+                    "_bulk_attachments_present": True,
                 }
                 for source_id in (1, 2)
             }
@@ -308,7 +308,7 @@ def test_empty_module_bulk_fields_skip_html_n_plus_one_when_all_ids_are_present(
     service, client, logs = _build(
         [_course("poo")],
         {"ELEpoo": [_entry(1, "quiz"), _entry(2, "quiz")]},
-        lambda *, source_id, kind: {"description": "should not be fetched", "attachments": []},
+        lambda *, source_id, kind: {"description": "unexpected HTML", "attachments": []},
         client_class=EmptyModuleBulkClient,
     )
     snapshots = _Snapshots()
@@ -325,6 +325,47 @@ def test_empty_module_bulk_fields_skip_html_n_plus_one_when_all_ids_are_present(
     assert len(gaps) == 2
     assert not any(event == "moodle_activity_html_fallback_started" for event, _ in logs)
     assert any(event == "moodle_activity_html_fallback_skipped" for event, _ in logs)
+
+
+def test_quiz_intro_does_not_hide_missing_attachment_list() -> None:
+    class PartialQuizClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "Instruções da prova",
+                    "attachments": [],
+                    "_bulk_description_present": True,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+    file = {
+        "name": "formula.png",
+        "url": "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_quiz/intro/formula.png",
+    }
+    service, client, _ = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1, "quiz")]},
+        lambda *, source_id, kind: {"description": "Instruções HTML", "attachments": [file]},
+        client_class=PartialQuizClient,
+    )
+    snapshots = _Snapshots()
+
+    assert service.sync_snapshots("owner", now=1, snapshots=snapshots)["failed"] == 0
+    assert client.fetch_calls == [1]
+    saved = snapshots.saved["poo"]["activities"][0]
+    assert saved["description"] == "Instruções HTML"
+    assert saved["attachments"] == [file]
 
 
 def test_empty_assignment_module_bulk_fields_skip_html_n_plus_one_when_all_ids_are_present():
@@ -364,8 +405,8 @@ def test_empty_assignment_module_bulk_fields_skip_html_n_plus_one_when_all_ids_a
                     "submission_state": "unknown",
                     "submission_text": "",
                     "attachments": [],
-                    "_bulk_description_present": False,
-                    "_bulk_attachments_present": False,
+                    "_bulk_description_present": True,
+                    "_bulk_attachments_present": True,
                     "_bulk_assignment_id": 10_000 + source_id,
                 }
                 for source_id in (1, 2)
@@ -387,6 +428,57 @@ def test_empty_assignment_module_bulk_fields_skip_html_n_plus_one_when_all_ids_a
     summary = [fields for event, fields in logs if event == "activity_snapshots_synced"][-1]
     assert summary["html_activities"] == 0
     assert summary["html_skipped_count"] == 2
+
+
+def test_assignment_status_does_not_hide_missing_attachments() -> None:
+    class PartialAssignmentClient(_IncrementalClient):
+        def fetch_course_activity_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                }
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "Enunciado disponível",
+                    "attachments": [],
+                    "_bulk_description_present": True,
+                    "_bulk_attachments_present": False,
+                    "_bulk_assignment_id": 10_001,
+                }
+            }
+
+        def fetch_assignment_submissions_bulk(self, **kwargs):
+            return {
+                "10001": {
+                    "submission_state": "submitted",
+                    "submission_text": "Entrega recebida",
+                    "_bulk_submission_complete": True,
+                }
+            }
+
+    file = {
+        "name": "enunciado.pdf",
+        "url": "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_assign/introattachment/0/enunciado.pdf",
+    }
+    service, client, _ = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1, "assign")]},
+        lambda *, source_id, kind: {"description": "Enunciado HTML", "attachments": [file]},
+        client_class=PartialAssignmentClient,
+    )
+    snapshots = _Snapshots()
+
+    assert service.sync_snapshots("owner", now=1, snapshots=snapshots)["failed"] == 0
+    assert client.fetch_calls == [1]
+    saved = snapshots.saved["poo"]["activities"][0]
+    assert saved["submission_state"] == "submitted"
+    assert saved["attachments"] == [file]
 
 
 def test_assignment_submission_bulk_keeps_html_for_missing_statuses() -> None:
@@ -456,7 +548,7 @@ def test_assignment_submission_bulk_keeps_html_for_missing_statuses() -> None:
     )
     summary = service.sync_snapshots("owner", now=1, snapshots=_Snapshots())
     assert summary["failed"] == 0
-    assert client.fetch_calls == [2]
+    assert client.fetch_calls == [1, 2]
     fields = [item for event, item in logs if event == "activity_snapshots_synced"][-1]
     assert fields["submission_bulk_calls"] == 1
     assert fields["submission_bulk_statuses"] == 1
@@ -706,8 +798,8 @@ def test_empty_module_bulk_payload_is_scoped_to_each_course():
                     "submission_state": "unknown",
                     "submission_text": "",
                     "attachments": [],
-                    "_bulk_description_present": False,
-                    "_bulk_attachments_present": False,
+                    "_bulk_description_present": True,
+                    "_bulk_attachments_present": True,
                 }
             }
 

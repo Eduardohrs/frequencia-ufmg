@@ -11,8 +11,10 @@ class AcademicSyncIssue {
     this.stage,
     this.reason, {
     this.changes = const [],
+    this.excluded = const [],
   });
   final List<PythonTeachingPlanChange> changes;
+  final List<PythonTeachingPlanChange> excluded;
   final String courseId, courseCode, stage, reason;
 }
 
@@ -49,6 +51,7 @@ List<AcademicSyncIssue> unifiedSyncIssues(
         'teaching_plan',
         issue.reason,
         changes: issue.changes,
+        excluded: issue.excluded,
       ),
   if (result.siga.schedules.conflicts > 0 ||
       result.siga.schedules.missingCourses > 0)

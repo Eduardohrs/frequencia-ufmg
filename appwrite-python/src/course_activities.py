@@ -211,26 +211,6 @@ def _clean_bulk_detail(detail: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in detail.items() if not key.startswith("_bulk_")}
 
 
-def _module_detail_is_empty(detail: dict[str, Any]) -> bool:
-    """Return whether a bulk detail has no useful HTML enrichment payload.
-
-    Calendar fields are intentionally excluded here.  The module bulk response
-    already owns due dates; requesting an HTML page only to rediscover those
-    dates is the N+1 path this service is trying to avoid.  UFMG's type-specific
-    endpoints can legitimately omit optional descriptions and attachments for
-    both assignments and quizzes.  In that case the structured fields already
-    represent the activity snapshot and an HTML request adds no information.
-    """
-
-    description = detail.get("description")
-    return not (
-        isinstance(description, str)
-        and description.strip()
-        or bool(detail.get("attachments"))
-        or bool(detail.get("files"))
-    )
-
-
 def _merge_activity_details(structured: dict[str, Any], html: dict[str, Any]) -> dict[str, Any]:
     """Fill structured bulk gaps from HTML without erasing known values."""
 
@@ -1152,44 +1132,20 @@ class CourseActivityService:
                         continue
                     module_bulk_successes = 0
                     module_bulk_fallback_reasons: list[str] = []
-                    module_bulk_partial_details: dict[int, dict[str, Any]] = {}
                     for position in positions:
                         entry = entries[position]
                         detail = module_details.get(str(entry["source_id"]))
-                        if (
-                            isinstance(detail, dict)
-                            and _bulk_detail_needs_html_fallback(detail)
-                            and (
-                                (kind == "quiz" and not _module_detail_is_empty(detail))
-                                or (
-                                    kind == "assign"
-                                    and detail.get("_bulk_submission_complete") is True
-                                )
-                            )
-                        ):
-                            # The student-status endpoint supplied the only
-                            # field missing from the type-specific response.
-                            # Preserve that status and avoid an HTML request.
-                            activities[position] = {
-                                **entry,
-                                **_clean_bulk_detail(detail),
-                                "files": [],
-                                "term": course["term"],
-                            }
-                            html_positions.discard(position)
-                            module_bulk_count += 1
-                            module_bulk_successes += 1
-                            html_skipped += 1
-                            bulk_submission_unknown += int(
-                                detail.get("submission_state") == "unknown"
-                            )
-                            continue
                         if not isinstance(detail, dict) or _bulk_detail_needs_html_fallback(detail):
                             reason = (
                                 "activity_missing_from_module_bulk_response"
                                 if not isinstance(detail, dict)
                                 else "missing_module_bulk_fields"
                             )
+                            # A type-specific response can reveal a missing
+                            # required field even when the generic bulk path
+                            # had marked that activity complete. Restore the
+                            # HTML fallback in that case.
+                            html_positions.add(position)
                             html_fallback_reasons[position] = reason
                             module_bulk_fallback_reasons.append(reason)
                             if isinstance(detail, dict):
@@ -1201,7 +1157,6 @@ class CourseActivityService:
                                     "files": [],
                                     "term": course["term"],
                                 }
-                                module_bulk_partial_details[position] = detail
                             _emit(
                                 self._telemetry,
                                 "moodle_activity_module_bulk_detail_fallback",
@@ -1226,47 +1181,8 @@ class CourseActivityService:
                         bulk_submission_unknown += int(
                             clean_detail.get("submission_state") == "unknown"
                         )
-                    # UFMG's type-specific endpoint can return a complete
-                    # activity map while omitting both optional fields for
-                    # every item.  In that case HTML is not an enrichment
-                    # source (the production run proved it returns the same
-                    # empty values), so avoid the N+1 page crawl.  Missing
-                    # module IDs and transport/shape failures still retain
-                    # the real HTML fallback below.
-                    if (
-                        module_bulk_successes == 0
-                        and len(module_bulk_fallback_reasons) == len(positions)
-                        and module_bulk_fallback_reasons
-                        and kind in {"assign", "quiz"}
-                        and (
-                            kind == "quiz"
-                            or all(
-                                module_bulk_partial_details[position].get(
-                                    "_bulk_submission_complete"
-                                )
-                                is True
-                                for position in positions
-                                if position in module_bulk_partial_details
-                            )
-                        )
-                        and all(
-                            reason == "missing_module_bulk_fields"
-                            for reason in module_bulk_fallback_reasons
-                        )
-                        and all(
-                            _module_detail_is_empty(module_bulk_partial_details[position])
-                            for position in positions
-                            if position in module_bulk_partial_details
-                        )
-                        and len(module_bulk_partial_details) == len(positions)
-                    ):
-                        for position in positions:
-                            # The structured response was already copied into
-                            # ``activities`` above. Keep it intact: quiz dates
-                            # remain useful when optional HTML enrichment is
-                            # empty, and must not be reset to index-only data.
-                            html_positions.discard(position)
-                        html_skipped += len(positions)
+                    if module_bulk_successes:
+                        html_skipped += module_bulk_successes
                         _emit(
                             self._telemetry,
                             "moodle_activity_html_fallback_skipped",
@@ -1274,8 +1190,8 @@ class CourseActivityService:
                                 **fields,
                                 "moodle_course_id": moodle_course_id,
                                 "kind": kind,
-                                "reason": "module_bulk_empty_optional_fields",
-                                "activity_count": len(positions),
+                                "reason": "module_bulk_fields_complete",
+                                "activity_count": module_bulk_successes,
                             },
                         )
                     # An empty optional payload is a valid response for this

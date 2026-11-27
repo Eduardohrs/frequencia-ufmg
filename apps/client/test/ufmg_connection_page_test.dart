@@ -987,7 +987,7 @@ void main() {
         connected: true,
         reauthenticationRequired: false,
       ),
-    );
+    )..showNonRepresentablePlanRow = true;
     final logger = _Logger();
     final schedule = UFMGSyncSchedule(now: () => DateTime.utc(2026, 10, 24));
     var calendarOpened = 0;
@@ -1031,6 +1031,17 @@ void main() {
       findsNothing,
     );
     expect(find.text('Não foi possível atualizar ESA019.'), findsWidgets);
+    expect(
+      find.text(
+        'Algumas aulas do plano não puderam ser incluídas automaticamente. Confira os itens abaixo.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Não importada · 22/11 · 19:00 · Reposição especial'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('3 unidades'), findsOneWidget);
     expect(logger.events, contains('academic_sync_succeeded'));
     expect(await schedule.isDue('user-1'), isFalse);
     await tester.tap(find.text('Entendi'));
@@ -4818,6 +4829,7 @@ final class _UnifiedGateway extends _Gateway
   int unifiedSyncCalls = 0;
   Object? unifiedSyncError;
   bool issueWithoutCourse = false;
+  bool showNonRepresentablePlanRow = false;
   List<PythonOfficialCalendarChange> officialCalendarChanges = const [];
   int officialCalendarApplyCalls = 0;
   Object? officialCalendarError;
@@ -4846,12 +4858,12 @@ final class _UnifiedGateway extends _Gateway
     return PythonUnifiedAcademicSyncResult(
       siga: await syncSiga(),
       moodle: await syncMoodle(),
-      teachingPlans: const PythonTeachingPlanSyncSummary(
-        available: 4,
+      teachingPlans: PythonTeachingPlanSyncSummary(
+        available: 4 + (showNonRepresentablePlanRow ? 1 : 0),
         imported: 1,
         applied: 0,
         unchanged: 0,
-        reviewRequired: 4,
+        reviewRequired: 4 + (showNonRepresentablePlanRow ? 1 : 0),
       ),
       exceptions: [
         if (issueWithoutCourse)
@@ -4908,6 +4920,27 @@ final class _UnifiedGateway extends _Gateway
           conflicting: 0,
           assessmentConflicts: 0,
         ),
+        if (showNonRepresentablePlanRow)
+          PythonAcademicSyncException(
+            courseId: 'ele065',
+            courseCode: 'ELE065',
+            reason: 'teaching_plan_occurrences_not_representable',
+            candidateCount: 1,
+            changes: const [],
+            conflicting: 0,
+            assessmentConflicts: 0,
+            excluded: [
+              PythonTeachingPlanChange(
+                action: 'excluded',
+                date: DateTime.utc(2026, 11, 22),
+                startsAt: '19:00',
+                endsAt: '20:40',
+                subject: 'Reposição especial',
+                reason: 'unsupported_lesson_count',
+                lessonCount: 3,
+              ),
+            ],
+          ),
       ],
     );
   }

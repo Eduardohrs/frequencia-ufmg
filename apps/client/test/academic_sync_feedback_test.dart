@@ -184,4 +184,45 @@ void main() {
       );
     },
   );
+
+  test(
+    'keeps non-representable plan rows visible as actionable sync issues',
+    () {
+      final original = syncResult();
+      final result = PythonUnifiedAcademicSyncResult(
+        siga: original.siga,
+        moodle: original.moodle,
+        teachingPlans: original.teachingPlans,
+        exceptions: [
+          PythonAcademicSyncException(
+            courseId: 'ele065',
+            courseCode: 'ELE065',
+            reason: 'teaching_plan_occurrences_not_representable',
+            candidateCount: 1,
+            changes: const [],
+            conflicting: 0,
+            assessmentConflicts: 0,
+            excluded: [
+              PythonTeachingPlanChange(
+                action: 'excluded',
+                date: DateTime.utc(2026, 11, 22),
+                startsAt: '19:00',
+                endsAt: '20:40',
+                subject: 'Reposição especial',
+                reason: 'unsupported_lesson_count',
+                lessonCount: 3,
+              ),
+            ],
+          ),
+        ],
+      );
+
+      final issue = unifiedSyncIssues(result).single;
+
+      expect(issue.stage, 'teaching_plan');
+      expect(issue.reason, 'teaching_plan_occurrences_not_representable');
+      expect(issue.excluded.single.subject, 'Reposição especial');
+      expect(issue.excluded.single.lessonCount, 3);
+    },
+  );
 }

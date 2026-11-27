@@ -489,6 +489,7 @@ final class PythonAcademicSyncException {
     required this.changes,
     required this.conflicting,
     required this.assessmentConflicts,
+    this.excluded = const [],
   });
 
   final String courseId;
@@ -498,6 +499,7 @@ final class PythonAcademicSyncException {
   final List<PythonTeachingPlanChange> changes;
   final int conflicting;
   final int assessmentConflicts;
+  final List<PythonTeachingPlanChange> excluded;
 }
 
 final class PythonUnifiedAcademicSyncResult {
@@ -665,6 +667,7 @@ final class PythonTeachingPlanChange {
     required this.endsAt,
     required this.subject,
     this.reason,
+    this.lessonCount,
   });
 
   factory PythonTeachingPlanChange.fromJson(Map<String, Object?> json) {
@@ -676,7 +679,7 @@ final class PythonTeachingPlanChange {
       'ends_at',
       'subject',
     };
-    final allowed = {...requiredKeys, 'reason'};
+    final allowed = {...requiredKeys, 'reason', 'lesson_count'};
     if (json.keys.toSet().difference(allowed).isNotEmpty ||
         requiredKeys.difference(json.keys.toSet()).isNotEmpty) {
       throw const FormatException();
@@ -687,6 +690,7 @@ final class PythonTeachingPlanChange {
     final endsAt = json['ends_at'];
     final subject = json['subject'];
     final reason = json['reason'];
+    final lessonCount = json['lesson_count'];
     if (action is! String ||
         !{
           'create_session',
@@ -699,7 +703,19 @@ final class PythonTeachingPlanChange {
         endsAt is! String ||
         subject is! String ||
         subject.isEmpty ||
-        reason != null && reason is! String) {
+        reason != null &&
+            (action != 'excluded' ||
+                reason is! String ||
+                !{
+                  'outside_weekly_schedule',
+                  'unsupported_lesson_count',
+                  'duration_does_not_match_lesson_count',
+                }.contains(reason)) ||
+        lessonCount != null &&
+            (action != 'excluded' ||
+                lessonCount is! int ||
+                lessonCount < 1 ||
+                lessonCount > 8)) {
       throw const FormatException();
     }
     return PythonTeachingPlanChange(
@@ -709,6 +725,7 @@ final class PythonTeachingPlanChange {
       endsAt: endsAt,
       subject: subject,
       reason: reason as String?,
+      lessonCount: lessonCount as int?,
     );
   }
 
@@ -718,6 +735,7 @@ final class PythonTeachingPlanChange {
   final String endsAt;
   final String subject;
   final String? reason;
+  final int? lessonCount;
 }
 
 final class PythonMoodleContentCandidate {
@@ -843,12 +861,20 @@ final class PythonMoodleMaterialFile {
 
 bool _isSafeMoodleDownloadUri(Uri uri) {
   final segments = uri.pathSegments;
+  final regularPluginFile = segments.length >= 8;
+  final shortQuizIntroFile =
+      segments.length == 7 &&
+      _moodleSourceId.hasMatch(segments[3]) &&
+      segments[4] == 'mod_quiz' &&
+      segments[5] == 'intro' &&
+      segments[6].isNotEmpty &&
+      segments[6] != '..';
   return uri.scheme == 'https' &&
       uri.host == 'virtual.ufmg.br' &&
       !uri.hasPort &&
       uri.userInfo.isEmpty &&
       !uri.hasFragment &&
-      segments.length >= 8 &&
+      (regularPluginFile || shortQuizIntroFile) &&
       _moodlePeriod.hasMatch(segments[0]) &&
       segments[1] == 'tokenpluginfile.php' &&
       RegExp(r'^[A-Za-z0-9]{16,256}$').hasMatch(segments[2]) &&
@@ -2655,7 +2681,10 @@ final class PythonBackendTransport
       final outsideChanges = decodedChanges
           .where((change) => change.action == 'remove_session')
           .length;
-      if (decodedExcluded.length + outsideChanges !=
+      final outOfWeeklyScheduleExclusions = decodedExcluded
+          .where((change) => change.reason == 'outside_weekly_schedule')
+          .length;
+      if (outOfWeeklyScheduleExclusions + outsideChanges !=
               count('outside_schedule') ||
           workloadValidation != null && workloadValidation is! Map) {
         throw const FormatException();
@@ -2845,7 +2874,7 @@ final class PythonBackendTransport
       final exceptions = rawExceptions
           .map((rawException) {
             final item = Map<String, Object?>.from(rawException as Map);
-            if (!_hasExactKeys(item, const {
+            const requiredExceptionKeys = {
               'course_id',
               'course_code',
               'reason',
@@ -2853,7 +2882,14 @@ final class PythonBackendTransport
               'changes',
               'conflicting',
               'assessment_conflicts',
-            })) {
+            };
+            if (item.keys.toSet().difference({
+                  ...requiredExceptionKeys,
+                  'excluded',
+                }).isNotEmpty ||
+                requiredExceptionKeys
+                    .difference(item.keys.toSet())
+                    .isNotEmpty) {
               throw const FormatException();
             }
             final courseId = item['course_id'];
@@ -2863,6 +2899,9 @@ final class PythonBackendTransport
             final conflicting = item['conflicting'];
             final assessmentConflicts = item['assessment_conflicts'];
             final rawChanges = item['changes'];
+            final rawExcluded = item.containsKey('excluded')
+                ? item['excluded']
+                : const <Object?>[];
             if (courseId is! String ||
                 courseId.isEmpty ||
                 courseCode is! String ||
@@ -2873,6 +2912,7 @@ final class PythonBackendTransport
                   'reconciliation_conflict',
                   'teaching_plan_unavailable',
                   'teaching_plan_not_published',
+                  'teaching_plan_occurrences_not_representable',
                 }.contains(reason) ||
                 candidateCount is! int ||
                 candidateCount < 1 ||
@@ -2884,10 +2924,19 @@ final class PythonBackendTransport
                 assessmentConflicts < 0 ||
                 assessmentConflicts > 500 ||
                 rawChanges is! List ||
-                rawChanges.length > 20) {
+                rawChanges.length > 20 ||
+                rawExcluded is! List ||
+                rawExcluded.length > 20) {
               throw const FormatException();
             }
             final changes = rawChanges
+                .map(
+                  (change) => PythonTeachingPlanChange.fromJson(
+                    Map<String, Object?>.from(change as Map),
+                  ),
+                )
+                .toList(growable: false);
+            final excluded = rawExcluded
                 .map(
                   (change) => PythonTeachingPlanChange.fromJson(
                     Map<String, Object?>.from(change as Map),
@@ -2907,7 +2956,14 @@ final class PythonBackendTransport
                     (candidateCount != 1 ||
                         conflicting != 0 ||
                         assessmentConflicts != 0 ||
-                        changes.isNotEmpty)) {
+                        changes.isNotEmpty ||
+                        excluded.isNotEmpty) ||
+                reason == 'teaching_plan_occurrences_not_representable' &&
+                    (candidateCount != 1 ||
+                        conflicting != 0 ||
+                        assessmentConflicts != 0 ||
+                        changes.isNotEmpty ||
+                        excluded.isEmpty)) {
               throw const FormatException();
             }
             return PythonAcademicSyncException(
@@ -2918,6 +2974,7 @@ final class PythonBackendTransport
               changes: changes,
               conflicting: conflicting,
               assessmentConflicts: assessmentConflicts,
+              excluded: excluded,
             );
           })
           .toList(growable: false);

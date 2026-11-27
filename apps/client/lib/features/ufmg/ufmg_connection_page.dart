@@ -1686,6 +1686,8 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       (issue.courseCode.isEmpty ? 'Dados acadêmicos' : issue.courseCode);
   String _syncIssueMessage(AcademicSyncIssue issue) => switch (issue.reason) {
     'ambiguous_teaching_plan' => 'Escolha o plano de ensino na disciplina.',
+    'teaching_plan_occurrences_not_representable' =>
+      'Algumas aulas do plano não puderam ser incluídas automaticamente. Confira os itens abaixo.',
     'schedule_review' => 'Confira os horários das disciplinas.',
     'unmatched_dates' => 'Algumas datas não têm uma disciplina correspondente.',
     _ => 'Não foi possível atualizar ${_syncCourseLabel(issue)}.',
@@ -1723,6 +1725,15 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                     '${change.date.month.toString().padLeft(2, '0')} · '
                     '${change.startsAt} · ${change.subject}',
                   ),
+                for (final occurrence in exception.excluded)
+                  Text(
+                    'Não importada · '
+                    '${occurrence.date.day.toString().padLeft(2, '0')}/'
+                    '${occurrence.date.month.toString().padLeft(2, '0')} · '
+                    '${occurrence.startsAt} · ${occurrence.subject}'
+                    '${occurrence.lessonCount == null ? '' : ' · ${occurrence.lessonCount} unidades'}'
+                    '${occurrence.reason == null ? '' : ' · ${_excludedOccurrenceReason(occurrence.reason!)}'}',
+                  ),
                 const SizedBox(height: 12),
               ],
             ],
@@ -1747,6 +1758,14 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       ],
     ),
   );
+
+  String _excludedOccurrenceReason(String reason) => switch (reason) {
+    'outside_weekly_schedule' => 'fora do horário semanal',
+    'unsupported_lesson_count' => 'quantidade de aulas não reconhecida',
+    'duration_does_not_match_lesson_count' =>
+      'duração diferente da quantidade de aulas',
+    _ => 'precisa de revisão',
+  };
 
   Future<void> _openSchedulePendencyReview() async {
     final gateway = widget.gateway;

@@ -2284,8 +2284,13 @@ def _private_file_url(value: object, root: str, private_token: str) -> str:
         raise ValueError("module_file_url")
     suffix = parsed.path.removeprefix(prefix)
     segments = suffix.split("/")
+    short_quiz_intro_file = (
+        len(segments) == 4
+        and segments[0].isdigit()
+        and segments[1:3] == ["mod_quiz", "intro"]
+    )
     if (
-        len(segments) < 5
+        (len(segments) < 5 and not short_quiz_intro_file)
         or any(not segment or segment in {".", ".."} for segment in segments)
         or any("\\" in segment for segment in segments)
     ):
