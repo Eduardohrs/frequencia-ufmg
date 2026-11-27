@@ -207,6 +207,17 @@ class UnifiedAcademicSyncService:
                 ),
                 course=course,
             )
+        except MoodleUnavailable as error:
+            # An HTTP 5xx for one Diário plan is a course-level failure, not
+            # proof that the already completed SIGA/Moodle work failed.
+            if error.upstream_status is None or error.upstream_status < 500:
+                raise
+            summary["review_required"] += 1
+            exceptions.append(_unavailable_exception(course))
+            self._record_course_failure(
+                course, source_id=source_id, stage="teaching_plan_import", error=error
+            )
+            return {"summary": summary, "exceptions": exceptions}
         except _FATAL_FAILURES:
             raise
         except Exception as error:
@@ -258,8 +269,23 @@ class UnifiedAcademicSyncService:
             summary["review_required"] += 1
             exceptions.append(_reconciliation_exception(course, preview))
             return {"summary": summary, "exceptions": exceptions}
+        excluded_occurrences = cast(list[object], preview.get("excluded", []))
+        if excluded_occurrences:
+            summary["review_required"] += 1
+            exceptions.append(_reconciliation_exclusion_exception(course, preview))
+            self._emit(
+                "academic_sync_plan_occurrences_excluded",
+                {
+                    "course_id": course_id,
+                    "course_code": course["course_code"],
+                    "excluded_count": len(excluded_occurrences),
+                    "excluded": excluded_occurrences[:20],
+                    "safe_changes_still_applied": True,
+                },
+            )
         if not cast(list[object], preview["changes"]):
-            summary["unchanged"] += 1
+            if not excluded_occurrences:
+                summary["unchanged"] += 1
             return {"summary": summary, "exceptions": exceptions}
         try:
             applied = self._timed(
@@ -348,6 +374,9 @@ class UnifiedAcademicSyncService:
         }
         if isinstance(error, InvalidMoodleResponse):
             fields.update(error.details)
+        if isinstance(error, MoodleUnavailable):
+            fields["upstream_status"] = error.upstream_status
+            fields["timed_out"] = error.timed_out
         self._emit("academic_sync_course_failed", fields)
 
     def _emit(self, event: str, fields: Mapping[str, object]) -> None:
@@ -399,6 +428,21 @@ def _reconciliation_exception(
         "changes": cast(list[object], preview["changes"])[:20],
         "conflicting": preview["conflicting"],
         "assessment_conflicts": preview["assessment_conflicts"],
+    }
+
+
+def _reconciliation_exclusion_exception(
+    course: dict[str, object], preview: dict[str, object]
+) -> dict[str, object]:
+    return {
+        "course_id": course["course_id"],
+        "course_code": course["course_code"],
+        "reason": "teaching_plan_occurrences_not_representable",
+        "candidate_count": 1,
+        "changes": cast(list[object], preview["changes"])[:20],
+        "excluded": cast(list[object], preview["excluded"])[:20],
+        "conflicting": 0,
+        "assessment_conflicts": 0,
     }
 
 

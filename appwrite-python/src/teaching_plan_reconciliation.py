@@ -52,7 +52,14 @@ def reconcile_teaching_plan_schedule(
         raise InvalidTeachingPlanReconciliation("invalid saved meeting") from None
     if workload is not None and (type(workload) is not int or workload <= 0):
         raise InvalidTeachingPlanReconciliation("invalid workload")
-    occurrences = [_occurrence(item, timestamp) for item in schedule]
+    excluded: list[dict[str, object]] = []
+    occurrences: list[dict[str, object]] = []
+    for item in schedule:
+        exclusion_reason = _source_occurrence_exclusion(item)
+        if exclusion_reason is not None:
+            excluded.append(_excluded_source_occurrence(item, exclusion_reason))
+            continue
+        occurrences.append(_occurrence(item, timestamp))
     assessment_titles = _assessment_titles(assessments or [], occurrences)
     keys = [str(item["occurrence_key"]) for item in occurrences]
     if len(set(keys)) != len(keys):
@@ -63,7 +70,6 @@ def reconcile_teaching_plan_schedule(
     delete_ids: list[str] = []
     conflicts: list[dict[str, object]] = []
     changes: list[dict[str, object]] = []
-    excluded: list[dict[str, object]] = []
     matched = 0
     assessments_linked = 0
     assessment_conflicts = 0
@@ -83,10 +89,12 @@ def reconcile_teaching_plan_schedule(
                 delete_ids.append(str(removable[0]["id"]))
                 changes.append(_change(occurrence, action="remove_session"))
                 continue
-            excluded.append({
-                **_change(occurrence, action="excluded"),
-                "reason": "outside_weekly_schedule",
-            })
+            excluded.append(
+                {
+                    **_change(occurrence, action="excluded"),
+                    "reason": "outside_weekly_schedule",
+                }
+            )
             continue
         title = assessment_titles.get(str(occurrence["occurrence_key"]))
         exact = [
@@ -110,11 +118,13 @@ def reconcile_teaching_plan_schedule(
                     assessments_linked += 1
                     changes.append(_change(occurrence, action="link_assessment"))
                 elif saved_title != title:
-                    conflicts.append({
-                        "occurrence_key": occurrence["occurrence_key"],
-                        "reason": "assessment_title_mismatch",
-                        "existing_session_ids": [str(exact[0]["id"])],
-                    })
+                    conflicts.append(
+                        {
+                            "occurrence_key": occurrence["occurrence_key"],
+                            "reason": "assessment_title_mismatch",
+                            "existing_session_ids": [str(exact[0]["id"])],
+                        }
+                    )
                     assessment_conflicts += 1
             continue
         overlaps = [item for item in sessions if _overlaps(item, occurrence)]
@@ -205,6 +215,51 @@ def _occurrence(value: object, now: datetime) -> dict[str, object]:
     }
 
 
+def _source_occurrence_exclusion(value: object) -> str | None:
+    """Skip only well-formed source rows that cannot become valid sessions."""
+
+    required = {
+        "sequence",
+        "occurrence_key",
+        "date",
+        "weekday",
+        "lesson_count",
+        "starts_at",
+        "ends_at",
+        "kind",
+        "subject",
+    }
+    if not isinstance(value, Mapping) or set(value) != required:
+        return None
+    lessons = value.get("lesson_count")
+    if type(lessons) is not int:
+        return None
+    if lessons not in {1, 2, 4}:
+        return "unsupported_lesson_count"
+    try:
+        starts_at = time.fromisoformat(str(value["starts_at"]))
+        ends_at = time.fromisoformat(str(value["ends_at"]))
+    except ValueError:
+        return None
+    duration = datetime.combine(date.min, ends_at) - datetime.combine(date.min, starts_at)
+    if duration <= timedelta(0) or duration != timedelta(minutes=lessons * 50):
+        return "duration_does_not_match_lesson_count"
+    return None
+
+
+def _excluded_source_occurrence(value: Mapping[str, object], reason: str) -> dict[str, object]:
+    return {
+        "action": "excluded",
+        "occurrence_key": value.get("occurrence_key"),
+        "date": value.get("date"),
+        "starts_at": value.get("starts_at"),
+        "ends_at": value.get("ends_at"),
+        "lesson_count": value.get("lesson_count"),
+        "subject": value.get("subject"),
+        "reason": reason,
+    }
+
+
 def _new_session(
     occurrence: Mapping[str, object],
     now: datetime,
@@ -261,9 +316,7 @@ def _change(occurrence: Mapping[str, object], *, action: str) -> dict[str, objec
     }
 
 
-def _is_unmodified_import(
-    session: Mapping[str, object], occurrence: Mapping[str, object]
-) -> bool:
+def _is_unmodified_import(session: Mapping[str, object], occurrence: Mapping[str, object]) -> bool:
     day, interval = str(occurrence["occurrence_key"]).split("T", 1)
     start, end = interval.split("-", 1)
     expected_id = f"{day}--diario-{start.replace(':', '')}-{end.replace(':', '')}"
@@ -292,11 +345,7 @@ def _validate_workload(
     actual = sum(int(item["lesson_count"]) for item in counted)
     difference = actual - expected
     status = (
-        "aligned"
-        if difference == 0
-        else "below_expected"
-        if difference < 0
-        else "above_expected"
+        "aligned" if difference == 0 else "below_expected" if difference < 0 else "above_expected"
     )
 
     def units(calendar_status: str) -> int:
@@ -320,9 +369,7 @@ def _validate_workload(
     }
 
 
-def _assessment_titles(
-    assessments: object, occurrences: list[dict[str, object]]
-) -> dict[str, str]:
+def _assessment_titles(assessments: object, occurrences: list[dict[str, object]]) -> dict[str, str]:
     if not isinstance(assessments, list) or len(assessments) > 100:
         raise InvalidTeachingPlanReconciliation("invalid teaching plan assessments")
     matches: dict[str, list[str]] = {}

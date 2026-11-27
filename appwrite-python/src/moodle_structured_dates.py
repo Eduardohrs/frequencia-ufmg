@@ -59,7 +59,9 @@ class MoodleUnavailable(Exception):
     """The structured Moodle source could not be reached."""
 
     def __init__(
-        self, message: str = "Moodle is unavailable", *,
+        self,
+        message: str = "Moodle is unavailable",
+        *,
         upstream_status: int | None = None,
         timed_out: bool = False,
     ) -> None:
@@ -161,6 +163,9 @@ class MoodleStructuredDatesClient:
         self._connections: dict[str, tuple[str, str, str]] = {}
         self._connection_count = 0
         self._connection_lock = Lock()
+        # UFMG's Jasper servlet selects reports through SSO session state.
+        # Keep the launch/request/retrieve sequence atomic across plan workers.
+        self._diario_report_lock = Lock()
         self._request_sequence = 0
         self._request_lock = Lock()
         # Per-sync memo tables keyed by (token digest, term[, course id]).  They
@@ -637,7 +642,23 @@ class MoodleStructuredDatesClient:
             )
         )
         _require_json_endpoint(final_url, content_type, path)
-        return _parse_activity_module_bulk(payload, root=root, kind=kind)
+        activities = _parse_activity_module_bulk(payload, root=root, kind=kind)
+        warnings = _activity_module_warning_summary(payload)
+        _emit(
+            self._telemetry,
+            "moodle_activity_module_response",
+            {
+                "term": term,
+                "moodle_course_id": course_id,
+                "kind": kind,
+                "endpoint": function,
+                "response_bytes": len(payload),
+                "returned_count": len(activities),
+                "warning_count": len(warnings),
+                "warnings": warnings,
+            },
+        )
+        return activities
 
     def fetch_assignment_submissions_bulk(
         self,
@@ -662,8 +683,7 @@ class MoodleStructuredDatesClient:
         if not assignment_ids or len(assignment_ids) > 500:
             raise InvalidMoodleResponse("assignment_submission_ids")
         if any(
-            type(value) is not int or not 1 <= value <= 2_147_483_647
-            for value in assignment_ids
+            type(value) is not int or not 1 <= value <= 2_147_483_647 for value in assignment_ids
         ):
             raise InvalidMoodleResponse("assignment_submission_id")
         root = _moodle_root(term)
@@ -964,6 +984,12 @@ class MoodleStructuredDatesClient:
         return result
 
     def _fetch_diario_document(
+        self, token: str, *, term: str, source_id: int
+    ) -> tuple[str, bytes, str]:
+        with self._diario_report_lock:
+            return self._fetch_diario_document_locked(token, term=term, source_id=source_id)
+
+    def _fetch_diario_document_locked(
         self, token: str, *, term: str, source_id: int
     ) -> tuple[str, bytes, str]:
         if type(source_id) is not int or not 1 <= source_id <= 2_147_483_647:
@@ -1272,11 +1298,7 @@ def _request_operation(request: Request) -> str:
     if parsed.path.endswith("/lib/ajax/service.php"):
         query_values = parse_qs(parsed.query).get("info", [])
         methods = re.findall(r"[a-z][a-z0-9_]{2,80}", ",".join(query_values))
-        return (
-            "moodle_ajax:" + ",".join(sorted(set(methods)))
-            if methods
-            else "moodle_ajax:unknown"
-        )
+        return "moodle_ajax:" + ",".join(sorted(set(methods))) if methods else "moodle_ajax:unknown"
     if parsed.path.endswith("/webservice/rest/server.php"):
         request_data = request.data
         raw_data = request_data if isinstance(request_data, (bytes, bytearray)) else b""
@@ -1715,6 +1737,7 @@ def _parse_course_states_full(
                     if previous is not None and previous != candidate:
                         raise ValueError("course_module_conflict")
                     activity_modules[str(source_id)] = candidate
+
             def sort_key(candidate: dict[str, object]) -> tuple[int, str]:
                 return int(str(candidate["source_id"])), str(candidate["title"])
 
@@ -1777,9 +1800,7 @@ def _parse_activity_updates(payload: bytes) -> set[int]:
         raise InvalidMoodleResponse(reason) from None
 
 
-def _parse_course_activity_contents(
-    payload: bytes, *, root: str
-) -> dict[str, dict[str, object]]:
+def _parse_course_activity_contents(payload: bytes, *, root: str) -> dict[str, dict[str, object]]:
     """Extract assignment/quiz details from Moodle's course-wide contents."""
 
     try:
@@ -1810,9 +1831,7 @@ def _parse_course_activity_contents(
                 ):
                     raise ValueError("course_activity_fields")
                 dates = _course_activity_dates(module.get("dates", []))
-                attachments = _course_activity_attachments(
-                    module.get("contents", []), root=root
-                )
+                attachments = _course_activity_attachments(module.get("contents", []), root=root)
                 candidate: dict[str, object] = {
                     "description": plain_activity_text(module.get("description")),
                     # Moodle's course-wide export may omit fields that the
@@ -1916,10 +1935,7 @@ def _parse_assignment_submissions_bulk(payload: bytes) -> dict[str, dict[str, st
             if not isinstance(raw_assignment, dict):
                 raise ValueError("assignment_submission_assignment")
             assignment_id = raw_assignment.get("assignmentid", raw_assignment.get("id"))
-            if (
-                type(assignment_id) is not int
-                or not 1 <= assignment_id <= 2_147_483_647
-            ):
+            if type(assignment_id) is not int or not 1 <= assignment_id <= 2_147_483_647:
                 raise ValueError("assignment_submission_id")
             submissions = raw_assignment.get("submissions", [])
             if not isinstance(submissions, list) or len(submissions) > 100:
@@ -1996,8 +2012,7 @@ def _parse_activity_module_bulk(
                     raise ValueError("activity_module_title")
                 assignment_id = raw.get("id") if kind == "assign" else None
                 if assignment_id is not None and (
-                    type(assignment_id) is not int
-                    or not 1 <= assignment_id <= 2_147_483_647
+                    type(assignment_id) is not int or not 1 <= assignment_id <= 2_147_483_647
                 ):
                     raise ValueError("activity_module_assignment_id")
                 attachments = _module_activity_attachments(raw, root=root)
@@ -2030,6 +2045,37 @@ def _parse_activity_module_bulk(
         raise InvalidMoodleResponse(reason) from None
 
 
+def _activity_module_warning_summary(payload: bytes) -> list[dict[str, object]]:
+    """Keep warning identity from Moodle without copying arbitrary messages."""
+
+    try:
+        decoded = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(decoded, dict):
+        return []
+    raw_warnings = decoded.get("warnings")
+    if not isinstance(raw_warnings, list):
+        return []
+    warnings: list[dict[str, object]] = []
+    for raw in raw_warnings[:100]:
+        if not isinstance(raw, dict):
+            continue
+        warning: dict[str, object] = {}
+        code = raw.get("warningcode")
+        item = raw.get("item")
+        item_id = raw.get("itemid")
+        if isinstance(code, (str, int)) and str(code).strip():
+            warning["warning_code"] = str(code)[:64]
+        if isinstance(item, str) and re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", item):
+            warning["item"] = item
+        if type(item_id) is int and 1 <= item_id <= 2_147_483_647:
+            warning["item_id"] = item_id
+        if warning:
+            warnings.append(warning)
+    return warnings
+
+
 def _module_activity_description(raw: dict[str, object], *, kind: str) -> str:
     """Keep both the assignment statement and its submission instructions."""
 
@@ -2049,14 +2095,12 @@ def _module_attachments_present(raw: dict[str, object], *, kind: str) -> bool:
     # The quiz mobile endpoint does not consistently expose file lists.  Keep
     # the HTML fallback when the installation omits them rather than silently
     # losing offline attachments.
-    return "introattachments" in raw or "contents" in raw
+    return "introattachments" in raw or "introfiles" in raw or "contents" in raw
 
 
-def _module_activity_attachments(
-    raw: dict[str, object], *, root: str
-) -> list[dict[str, str]]:
+def _module_activity_attachments(raw: dict[str, object], *, root: str) -> list[dict[str, str]]:
     values: list[object] = []
-    for key in ("introattachments", "activityattachments", "contents"):
+    for key in ("introattachments", "activityattachments", "introfiles", "contents"):
         value = raw.get(key)
         if value is None:
             continue
@@ -2083,10 +2127,12 @@ def _module_activity_attachments(
 
 def _module_activity_dates(raw: dict[str, object], *, kind: str) -> dict[str, object]:
     fields = (
-        (("allowsubmissionsfromdate", "Disponível a partir de"),
-         ("duedate", "Vencimento"),
-         ("cutoffdate", "Prazo final"),
-         ("gradingduedate", "Correção até"))
+        (
+            ("allowsubmissionsfromdate", "Disponível a partir de"),
+            ("duedate", "Vencimento"),
+            ("cutoffdate", "Prazo final"),
+            ("gradingduedate", "Correção até"),
+        )
         if kind == "assign"
         else (("timeopen", "Disponível a partir de"), ("timeclose", "Encerramento"))
     )
@@ -2279,8 +2325,13 @@ def _canonical_file_url(value: object, root: str) -> str:
             raise ValueError("module_file_url")
         suffix = "/".join(segments[1:])
         segments = suffix.split("/")
+    short_quiz_intro_file = (
+        len(segments) == 4
+        and segments[0].isdigit()
+        and segments[1:3] == ["mod_quiz", "intro"]
+    )
     if (
-        len(segments) < 5
+        (len(segments) < 5 and not short_quiz_intro_file)
         or any(not segment or segment in {".", ".."} for segment in segments)
         or any("\\" in segment for segment in segments)
     ):

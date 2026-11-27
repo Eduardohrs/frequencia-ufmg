@@ -1,7 +1,11 @@
 import json
+import time
 from base64 import b64decode, b64encode
+from concurrent.futures import ThreadPoolExecutor
 from email.message import Message
 from hashlib import md5
+from threading import Lock
+from types import MethodType
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
@@ -152,6 +156,37 @@ def test_client_reuses_one_authenticated_moodle_connection_per_term() -> None:
     assert client.connection_count == 1
 
 
+def test_diario_report_fetch_is_atomic_across_parallel_plan_workers() -> None:
+    client = MoodleStructuredDatesClient(opener=_Opener([]))
+    state_lock = Lock()
+    active = 0
+    maximum_active = 0
+
+    def fake_fetch(self: MoodleStructuredDatesClient, token: str, *, term: str, source_id: int):
+        nonlocal active, maximum_active
+        with state_lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        time.sleep(0.01)
+        with state_lock:
+            active -= 1
+        return "form", str(source_id).encode(), "html"
+
+    client._fetch_diario_document_locked = MethodType(fake_fetch, client)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        replies = list(
+            pool.map(
+                lambda source_id: client._fetch_diario_document(
+                    "token-safe", term="2026-2", source_id=source_id
+                ),
+                (1001, 1002, 1003, 1004),
+            )
+        )
+
+    assert maximum_active == 1
+    assert [body for _, body, _ in replies] == [b"1001", b"1002", b"1003", b"1004"]
+
+
 @pytest.mark.parametrize(
     ("response", "expected_outcome", "expected_reason"),
     [
@@ -204,21 +239,28 @@ def test_http_dependency_telemetry_keeps_distinct_sequences_for_repeated_failure
 
 
 def test_request_operation_names_allowlisted_moodle_endpoints_without_credentials() -> None:
-    assert module._request_operation(
-        Request(
-            "https://virtual.ufmg.br/20262/lib/ajax/service.php?info=core_calendar_get_calendar_monthly_view"
+    assert (
+        module._request_operation(
+            Request(
+                "https://virtual.ufmg.br/20262/lib/ajax/service.php?info=core_calendar_get_calendar_monthly_view"
+            )
         )
-    ) == "moodle_ajax:core_calendar_get_calendar_monthly_view"
-    assert module._request_operation(
-        Request(
-            "https://virtual.ufmg.br/20262/webservice/rest/server.php",
-            data=b"wsfunction=unexpected%20value&wstoken=secret",
-            method="POST",
+        == "moodle_ajax:core_calendar_get_calendar_monthly_view"
+    )
+    assert (
+        module._request_operation(
+            Request(
+                "https://virtual.ufmg.br/20262/webservice/rest/server.php",
+                data=b"wsfunction=unexpected%20value&wstoken=secret",
+                method="POST",
+            )
         )
-    ) == "moodle_webservice:unknown"
-    assert module._request_operation(
-        Request("https://virtual.ufmg.br/20262/mod/url/view.php?id=12")
-    ) == "moodle_diario_launch"
+        == "moodle_webservice:unknown"
+    )
+    assert (
+        module._request_operation(Request("https://virtual.ufmg.br/20262/mod/url/view.php?id=12"))
+        == "moodle_diario_launch"
+    )
 
 
 def test_diario_probe_accepts_a_direct_pdf_redirect_without_exposing_parameters() -> None:
@@ -1113,8 +1155,7 @@ def test_course_contents_bulk_parser_returns_token_free_activity_snapshot_detail
         {
             "name": "enunciado.pdf",
             "url": (
-                "https://virtual.ufmg.br/20262/pluginfile.php/"
-                "700/mod_assign/intro/0/enunciado.pdf"
+                "https://virtual.ufmg.br/20262/pluginfile.php/700/mod_assign/intro/0/enunciado.pdf"
             ),
         }
     ]
@@ -1228,11 +1269,7 @@ def test_course_contents_bulk_parser_rejects_conflicts_and_nested_limits() -> No
         with pytest.raises(InvalidMoodleResponse):
             _parse_course_activity_contents(json.dumps([section]).encode(), root="/20262")
 
-    non_mapping_date = {
-        "modules": [
-            {"id": 701, "name": "A", "modname": "assign", "dates": [None]}
-        ]
-    }
+    non_mapping_date = {"modules": [{"id": 701, "name": "A", "modname": "assign", "dates": [None]}]}
     with pytest.raises(InvalidMoodleResponse) as caught:
         _parse_course_activity_contents(json.dumps([non_mapping_date]).encode(), root="/20262")
     assert caught.value.reason == "course_activity_date"
@@ -1302,11 +1339,19 @@ def test_canonical_file_url_strips_tokenpluginfile_token_and_rejects_bad_paths()
     assert module._canonical_file_url(tokenized, "/20262").endswith(
         "/20262/pluginfile.php/1/mod_assign/content/1/a.pdf"
     )
+    short_quiz_intro = (
+        "https://virtual.ufmg.br/20262/pluginfile.php/"
+        "1/mod_quiz/intro/logo.png"
+    )
+    assert module._canonical_file_url(short_quiz_intro, "/20262").endswith(
+        "/20262/pluginfile.php/1/mod_quiz/intro/logo.png"
+    )
     for url in [
         None,
         "https://virtual.ufmg.br/20262/not-pluginfile/1/mod_assign/content/1/a.pdf",
         "https://virtual.ufmg.br/20262/tokenpluginfile.php/short/1/mod_assign/content/1/a.pdf",
         "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_assign/content/../a.pdf",
+        "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_assign/intro/a.pdf",
     ]:
         with pytest.raises(ValueError, match="module_file_url"):
             module._canonical_file_url(url, "/20262")
@@ -1329,9 +1374,7 @@ def test_activity_updates_parser_returns_changed_course_module_ids() -> None:
 
 def test_activity_updates_parser_accepts_moodle_inner_json_and_rejects_nested_shapes() -> None:
     inner = json.dumps({"instances": [{"id": 701, "updates": []}]})
-    assert _parse_activity_updates(
-        json.dumps([{"error": False, "data": inner}]).encode()
-    ) == set()
+    assert _parse_activity_updates(json.dumps([{"error": False, "data": inner}]).encode()) == set()
     malformed = [
         {"error": False, "data": "not-json"},
         {"error": False, "data": []},
@@ -1344,9 +1387,7 @@ def test_activity_updates_parser_accepts_moodle_inner_json_and_rejects_nested_sh
             _parse_activity_updates(json.dumps([item]).encode())
     oversized = "x" * (module.MAX_RESPONSE_BYTES + 1)
     with pytest.raises(InvalidMoodleResponse) as caught:
-        _parse_activity_updates(
-            json.dumps([{"error": False, "data": oversized}]).encode()
-        )
+        _parse_activity_updates(json.dumps([{"error": False, "data": oversized}]).encode())
     assert caught.value.reason == "activity_updates_data"
 
 
@@ -1458,7 +1499,14 @@ def test_activity_module_bulk_uses_the_official_assignment_service() -> None:
                 ],
             }
         ],
-        "warnings": [],
+        "warnings": [
+            {
+                "warningcode": "1",
+                "item": "module",
+                "itemid": 81003,
+                "warningstring": "omitted from module response",
+            }
+        ],
     }
 
     class Client(MoodleStructuredDatesClient):
@@ -1468,7 +1516,9 @@ def test_activity_module_bulk_uses_the_official_assignment_service() -> None:
             assert b"courseids%5B0%5D=3701" in request.data
             return json.dumps(payload).encode(), request.full_url, "application/json"
 
-    details = Client().fetch_course_activity_module_bulk(
+    logs = []
+    client = Client(telemetry=lambda event, fields: logs.append((event, dict(fields))))
+    details = client.fetch_course_activity_module_bulk(
         webservice_token="b" * 16,
         private_token="a" * 16,
         term="2026-2",
@@ -1480,6 +1530,30 @@ def test_activity_module_bulk_uses_the_official_assignment_service() -> None:
     assert details["701"]["_bulk_attachments_present"] is True
     assert details["701"]["_bulk_assignment_id"] == 9001
     assert details["701"]["attachments"][0]["name"] == "lista.pdf"
+    response = next(fields for event, fields in logs if event == "moodle_activity_module_response")
+    assert response["endpoint"] == "mod_assign_get_assignments"
+    assert response["returned_count"] == 1
+    assert response["warning_count"] == 1
+    assert response["warnings"] == [
+        {"warning_code": "1", "item": "module", "item_id": 81003}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (b"not json", []),
+        (b"[]", []),
+        (b'{"warnings":{}}', []),
+        (
+            b'{"warnings":[null,{"warningcode":"","item":"bad item","itemid":0},'
+            b'{"warningcode":12,"item":"module","itemid":1,"warningstring":"omit"}]}',
+            [{"warning_code": "12", "item": "module", "item_id": 1}],
+        ),
+    ],
+)
+def test_activity_module_warning_summary_keeps_only_allowlisted_fields(payload, expected):
+    assert module._activity_module_warning_summary(payload) == expected
 
 
 def test_assignment_submission_bulk_uses_student_status_requests_and_normalizes_states() -> None:
@@ -1717,6 +1791,49 @@ def test_activity_module_bulk_covers_quiz_dates_and_optional_files() -> None:
     assert result["702"]["_bulk_attachments_present"] is True
 
 
+def test_activity_module_bulk_uses_quiz_introfiles_without_html_fallback() -> None:
+    payload = {
+        "quizzes": [
+            {
+                "coursemodule": 704,
+                "name": "Questionário",
+                "intro": "",
+                "introfiles": [
+                    {
+                        "filename": "roteiro.png",
+                        "fileurl": (
+                            "https://virtual.ufmg.br/20262/pluginfile.php/"
+                            "1/mod_quiz/intro/roteiro.png"
+                        ),
+                    }
+                ],
+            },
+            {
+                "coursemodule": 705,
+                "name": "Questionário sem anexo",
+                "intro": "",
+                "introfiles": [],
+            },
+        ],
+        "warnings": [],
+    }
+
+    result = _parse_activity_module_bulk(json.dumps(payload).encode(), root="/20262", kind="quiz")
+
+    assert result["704"]["_bulk_attachments_present"] is True
+    assert result["704"]["attachments"] == [
+        {
+            "name": "roteiro.png",
+            "url": (
+                "https://virtual.ufmg.br/20262/pluginfile.php/"
+                "1/mod_quiz/intro/roteiro.png"
+            ),
+        }
+    ]
+    assert result["705"]["_bulk_attachments_present"] is True
+    assert result["705"]["attachments"] == []
+
+
 @pytest.mark.parametrize(
     ("payload", "reason"),
     [
@@ -1725,11 +1842,7 @@ def test_activity_module_bulk_covers_quiz_dates_and_optional_files() -> None:
         ({"courses": [{"assignments": [None]}]}, "activity_module_item"),
         ({"courses": [{"assignments": [{"cmid": 1}]}]}, "activity_module_title"),
         (
-            {
-                "courses": [
-                    {"assignments": [{"cmid": 1, "name": "A", "id": "bad"}]}
-                ]
-            },
+            {"courses": [{"assignments": [{"cmid": 1, "name": "A", "id": "bad"}]}]},
             "activity_module_assignment_id",
         ),
         (
@@ -1753,7 +1866,7 @@ def test_activity_module_bulk_covers_quiz_dates_and_optional_files() -> None:
                             {
                                 "cmid": 1,
                                 "name": "A",
-                                    "introattachments": "bad",
+                                "introattachments": "bad",
                                 "activityattachments": [],
                             }
                         ]
@@ -1828,15 +1941,7 @@ def test_activity_module_bulk_covers_quiz_dates_and_optional_files() -> None:
             "activity_module_attachment_conflict",
         ),
         (
-            {
-                "courses": [
-                    {
-                        "assignments": [
-                            {"cmid": 1, "name": "A", "duedate": "tomorrow"}
-                        ]
-                    }
-                ]
-            },
+            {"courses": [{"assignments": [{"cmid": 1, "name": "A", "duedate": "tomorrow"}]}]},
             "activity_module_date",
         ),
     ],
@@ -2965,11 +3070,14 @@ def test_client_can_fetch_calendar_batches_in_parallel() -> None:
         ]
     )
 
-    assert MoodleStructuredDatesClient(opener=opener, calendar_workers=2).fetch(
-        "private-ltpa-token",
-        term="2026-2",
-        months=[(2026, 1), (2026, 2), (2026, 3), (2026, 4)],
-    ) == []
+    assert (
+        MoodleStructuredDatesClient(opener=opener, calendar_workers=2).fetch(
+            "private-ltpa-token",
+            term="2026-2",
+            months=[(2026, 1), (2026, 2), (2026, 3), (2026, 4)],
+        )
+        == []
+    )
     assert len(opener.requests) == 4
     with pytest.raises(ValueError, match="invalid calendar concurrency"):
         MoodleStructuredDatesClient(opener=_Opener([]), calendar_workers=0)

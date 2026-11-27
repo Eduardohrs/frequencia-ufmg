@@ -331,7 +331,9 @@ def _schedule_entry(row: list[str]) -> dict[str, object]:
     sequence = int(row[0])
     lessons = int(row[3])
     times = _TIME_RANGE.fullmatch(row[4])
-    if not 1 <= sequence <= 1_000 or lessons not in {1, 2, 4} or times is None:
+    # Keep the source's stated units; reconciliation will explicitly exclude
+    # counts the attendance model cannot represent without guessing.
+    if not 1 <= sequence <= 1_000 or not 1 <= lessons <= 8 or times is None:
         raise ValueError("invalid teaching plan")
     day = datetime.strptime(row[1], "%d/%m/%Y").date().isoformat()
     return {

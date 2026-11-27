@@ -365,12 +365,19 @@ def test_delete_user_documents_commits_one_bounded_batch() -> None:
 
 def test_commit_user_documents_updates_and_deletes_atomically() -> None:
     calls: list[Any] = []
+    events: list[tuple[str, dict[str, object]]] = []
 
     def transport(request: Any, _timeout: float) -> tuple[int, bytes]:
         calls.append(request)
         return 200, b'{"writeResults":[]}'
 
-    client = FirestoreRestClient("project", "user", "token", transport=transport)
+    client = FirestoreRestClient(
+        "project",
+        "user",
+        "token",
+        transport=transport,
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    )
     client.commit_user_documents(
         updates=[
             (
@@ -402,6 +409,13 @@ def test_commit_user_documents_updates_and_deletes_atomically() -> None:
             },
         ]
     }
+    summary = events[0][1]
+    assert summary["target_count"] == 2
+    assert summary["target_paths"] == [
+        "/v1/projects/project/databases/(default)/documents/users/{user}/courses/{doc}/meetings/{doc}",
+        "/v1/projects/project/databases/(default)/documents/users/{user}/courses/{doc}/sessions/{doc}",
+    ]
+    assert "course-1" not in json.dumps(events)
 
 
 @pytest.mark.parametrize(
@@ -795,3 +809,43 @@ def test_telemetry_resource_redacts_document_ids_and_handles_non_document_urls()
         "https://firestore.googleapis.com/v1/projects/p/databases/(default)/documents/"
         "users/u/courses/c/teachingPlans/t"
     ).endswith("users/{user}/courses/{doc}/teachingPlans/{doc}")
+
+
+def test_telemetry_request_targets_summarizes_only_batch_documents() -> None:
+    from firestore_rest import _telemetry_request_targets
+
+    prefix = "projects/p/databases/(default)/documents/users/u/courses/c/"
+    batch_get = "https://firestore.googleapis.com/v1/projects/p/databases/(default)/documents:batchGet"
+    commit = "https://firestore.googleapis.com/v1/projects/p/databases/(default)/documents:commit"
+    assert _telemetry_request_targets(
+        batch_get,
+        json.dumps(
+            {"documents": [prefix + "syncState/activities", prefix + "syncState/activities"]}
+        ).encode(),
+    ) == [
+        "/v1/projects/p/databases/(default)/documents/users/{user}/courses/{doc}/syncState/{doc}"
+    ]
+    assert _telemetry_request_targets(
+        commit,
+        json.dumps(
+            {
+                "writes": [
+                    None,
+                    {"update": {"name": prefix + "meetings/m"}},
+                    {"delete": "other/path"},
+                ]
+            }
+        ).encode(),
+    ) == [
+        "/v1/projects/p/databases/(default)/documents/users/{user}/courses/{doc}/meetings/{doc}"
+    ]
+    assert _telemetry_request_targets("https://example.test/other", b"{}") == []
+    assert _telemetry_request_targets(commit, None) == []
+    assert _telemetry_request_targets(commit, b"bad json") == []
+    assert _telemetry_request_targets(commit, b"[]") == []
+    assert _telemetry_request_targets(commit, b'{"writes":null}') == []
+    assert _telemetry_request_targets(commit, b'{"writes":[{"update":{}}]}') == []
+    assert _telemetry_request_targets(
+        batch_get,
+        b'{"documents":false}',
+    ) == []

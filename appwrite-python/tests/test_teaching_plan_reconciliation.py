@@ -4,6 +4,8 @@ import pytest
 
 from teaching_plan_reconciliation import (
     InvalidTeachingPlanReconciliation,
+    _occurrence,
+    _source_occurrence_exclusion,
     reconcile_teaching_plan_schedule,
 )
 
@@ -144,19 +146,19 @@ def test_preview_describes_each_proposed_calendar_change() -> None:
         "created_at": "2026-08-01T12:00:00Z",
         "updated_at": "2026-08-01T12:00:00Z",
     }
-    result = reconcile_teaching_plan_schedule(
-        [_row("2026-08-10")], [], meetings=[monday], now=NOW
-    )
+    result = reconcile_teaching_plan_schedule([_row("2026-08-10")], [], meetings=[monday], now=NOW)
 
     assert result.creates[0]["call_count"] == 2
-    assert result.changes == ({
-        "action": "create_session",
-        "occurrence_key": "2026-08-10T19:00-20:40",
-        "date": "2026-08-10",
-        "starts_at": "19:00",
-        "ends_at": "20:40",
-        "subject": "Polimorfismo",
-    },)
+    assert result.changes == (
+        {
+            "action": "create_session",
+            "occurrence_key": "2026-08-10T19:00-20:40",
+            "date": "2026-08-10",
+            "starts_at": "19:00",
+            "ends_at": "20:40",
+            "subject": "Polimorfismo",
+        },
+    )
 
 
 def test_preview_reports_overlap_and_never_overwrites_attendance() -> None:
@@ -185,9 +187,7 @@ def test_preview_reports_overlap_and_never_overwrites_attendance() -> None:
 
 def test_preview_is_idempotent_after_applying_its_create() -> None:
     first = reconcile_teaching_plan_schedule([_row("2026-08-10")], [], now=NOW)
-    second = reconcile_teaching_plan_schedule(
-        [_row("2026-08-10")], list(first.creates), now=NOW
-    )
+    second = reconcile_teaching_plan_schedule([_row("2026-08-10")], list(first.creates), now=NOW)
 
     assert second.counts["matched"] == 1
     assert second.counts["missing"] == 0
@@ -200,15 +200,17 @@ def test_reconciliation_links_assessment_to_matching_existing_session() -> None:
     result = reconcile_teaching_plan_schedule(
         [_row("2026-08-10")],
         [existing],
-        assessments=[{
-            "code": "AV1",
-            "kind": "PROVA",
-            "title": "Primeira prova",
-            "scheduled_at": "2026-08-10T19:30:00-03:00",
-            "location": "Sala 1",
-            "value": "30.00",
-            "weight": "1.00",
-        }],
+        assessments=[
+            {
+                "code": "AV1",
+                "kind": "PROVA",
+                "title": "Primeira prova",
+                "scheduled_at": "2026-08-10T19:30:00-03:00",
+                "location": "Sala 1",
+                "value": "30.00",
+                "weight": "1.00",
+            }
+        ],
         now=NOW,
     )
 
@@ -224,15 +226,17 @@ def test_reconciliation_preserves_divergent_manual_assessment() -> None:
     result = reconcile_teaching_plan_schedule(
         [_row("2026-08-10")],
         [existing],
-        assessments=[{
-            "code": "AV1",
-            "kind": "PROVA",
-            "title": "Primeira prova",
-            "scheduled_at": "2026-08-10T19:30:00-03:00",
-            "location": "Sala 1",
-            "value": "30.00",
-            "weight": "1.00",
-        }],
+        assessments=[
+            {
+                "code": "AV1",
+                "kind": "PROVA",
+                "title": "Primeira prova",
+                "scheduled_at": "2026-08-10T19:30:00-03:00",
+                "location": "Sala 1",
+                "value": "30.00",
+                "weight": "1.00",
+            }
+        ],
         now=NOW,
     )
 
@@ -267,19 +271,19 @@ def test_reconciliation_keeps_equal_assessment_and_links_new_session() -> None:
 )
 def test_reconciliation_rejects_invalid_assessments(assessments: object) -> None:
     with pytest.raises(InvalidTeachingPlanReconciliation, match="assessment"):
-        reconcile_teaching_plan_schedule(
-            [_row("2026-08-10")], [], assessments=assessments, now=NOW
-        )
+        reconcile_teaching_plan_schedule([_row("2026-08-10")], [], assessments=assessments, now=NOW)
 
 
 def test_reconciliation_leaves_assessment_outside_class_as_standalone() -> None:
     result = reconcile_teaching_plan_schedule(
         [_row("2026-08-10")],
         [],
-        assessments=[{
-            "title": "Trabalho",
-            "scheduled_at": "2026-08-11T19:30:00-03:00",
-        }],
+        assessments=[
+            {
+                "title": "Trabalho",
+                "scheduled_at": "2026-08-11T19:30:00-03:00",
+            }
+        ],
         now=NOW,
     )
 
@@ -304,8 +308,6 @@ def test_reconciliation_rejects_invalid_saved_sessions_and_clock() -> None:
         "invalid",
         [_row("2026-08-10")] * 451,
         [{}],
-        [{**_row("2026-08-10"), "lesson_count": 3}],
-        [{**_row("2026-08-10"), "ends_at": "20:00", "occurrence_key": "2026-08-10T19:00-20:00"}],
         [{**_row("2026-08-10"), "occurrence_key": "wrong"}],
         [{**_row("2019-08-10"), "occurrence_key": "2019-08-10T19:00-20:40"}],
     ],
@@ -315,11 +317,45 @@ def test_reconciliation_rejects_invalid_occurrences(schedule: object) -> None:
         reconcile_teaching_plan_schedule(schedule, [], now=NOW)
 
 
+def test_reconciliation_skips_unrepresentable_source_rows_but_keeps_valid_dates() -> None:
+    valid = _row("2026-08-10")
+    unsupported = {**_row("2026-08-11"), "lesson_count": 3}
+    mismatched = {
+        **_row("2026-08-12", end="20:00"),
+        "occurrence_key": "2026-08-12T19:00-20:00",
+    }
+
+    result = reconcile_teaching_plan_schedule([valid, unsupported, mismatched], [], now=NOW)
+
+    assert [item["id"] for item in result.creates] == ["2026-08-10--diario-1900-2040"]
+    assert [item["reason"] for item in result.excluded] == [
+        "unsupported_lesson_count",
+        "duration_does_not_match_lesson_count",
+    ]
+    assert result.excluded[0]["lesson_count"] == 3
+
+
+def test_occurrence_validation_rejects_unsupported_count_and_duration() -> None:
+    unsupported = {**_row("2026-08-11"), "lesson_count": 3}
+    mismatched = {**_row("2026-08-12"), "lesson_count": 1}
+
+    with pytest.raises(InvalidTeachingPlanReconciliation, match="occurrence"):
+        _occurrence(unsupported, NOW)
+    with pytest.raises(InvalidTeachingPlanReconciliation, match="occurrence"):
+        _occurrence(mismatched, NOW)
+
+
+def test_source_exclusion_leaves_malformed_rows_to_strict_validation() -> None:
+    invalid_count = {**_row("2026-08-11"), "lesson_count": 2.0}
+    invalid_clock = {**_row("2026-08-12"), "starts_at": "not-a-time"}
+
+    assert _source_occurrence_exclusion(invalid_count) is None
+    assert _source_occurrence_exclusion(invalid_clock) is None
+
+
 def test_reconciliation_rejects_duplicate_occurrence_keys() -> None:
     with pytest.raises(InvalidTeachingPlanReconciliation, match="duplicate"):
-        reconcile_teaching_plan_schedule(
-            [_row("2026-08-10"), _row("2026-08-10")], [], now=NOW
-        )
+        reconcile_teaching_plan_schedule([_row("2026-08-10"), _row("2026-08-10")], [], now=NOW)
 
 
 def test_workload_validates_lesson_units_without_generating_sessions() -> None:
