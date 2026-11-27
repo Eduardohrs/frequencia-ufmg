@@ -292,6 +292,7 @@ class FirestoreRestClient:
         status: int | None = None
         response_body = b""
         outcome = "failed"
+        telemetry_targets = _telemetry_request_targets(url, body)
         headers = {"Authorization": f"Bearer {self._id_token}"}
         if body is not None:
             headers["Content-Type"] = "application/json"
@@ -362,6 +363,14 @@ class FirestoreRestClient:
                     # request body size is enough to spot oversized writes;
                     # response size helps separate a slow read from parsing.
                     "resource": _telemetry_resource(url),
+                    **(
+                        {
+                            "target_count": len(telemetry_targets),
+                            "target_paths": telemetry_targets,
+                        }
+                        if telemetry_targets
+                        else {}
+                    ),
                     "request_bytes": len(body or b""),
                     "response_bytes": len(response_body),
                     "attempt": 1,
@@ -467,6 +476,45 @@ def _telemetry_resource(url: str) -> str:
     for index in range(2, len(segments), 2):
         segments[index] = "{doc}"
     return prefix + marker + "/".join(segments)
+
+
+def _telemetry_request_targets(url: str, body: bytes | None) -> list[str]:
+    """Expose batch target collections while redacting user and document IDs."""
+
+    if body is None:
+        return []
+    path = urlsplit(url).path
+    if not path.endswith((":commit", ":batchGet")):
+        return []
+    try:
+        decoded = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(decoded, dict):
+        return []
+    names: list[str] = []
+    if path.endswith(":batchGet"):
+        documents = decoded.get("documents")
+        if isinstance(documents, list):
+            names = [name for name in documents if isinstance(name, str)]
+    else:
+        writes = decoded.get("writes")
+        if isinstance(writes, list):
+            for write in writes:
+                if not isinstance(write, dict):
+                    continue
+                update = write.get("update")
+                name = update.get("name") if isinstance(update, dict) else write.get("delete")
+                if isinstance(name, str):
+                    names.append(name)
+    marker = "/documents/users/"
+    return sorted(
+        {
+            _telemetry_resource("/v1/" + name)
+            for name in names
+            if marker in urlsplit(name).path
+        }
+    )
 
 
 def _segment(value: str, field: str) -> str:

@@ -1972,6 +1972,16 @@ void main() {
                 'subject': 'Atividade assíncrona',
                 'reason': 'outside_weekly_schedule',
               },
+              {
+                'action': 'excluded',
+                'occurrence_key': '2026-08-12T19:00-20:40',
+                'date': '2026-08-12',
+                'starts_at': '19:00',
+                'ends_at': '20:40',
+                'lesson_count': 3,
+                'subject': 'Reposição especial',
+                'reason': 'unsupported_lesson_count',
+              },
             ],
             'conflicts': [
               {
@@ -2006,7 +2016,9 @@ void main() {
     expect(preview.assessmentsLinked, 1);
     expect(preview.outsideSchedule, 1);
     expect(preview.changes.single.subject, 'Polimorfismo');
-    expect(preview.excluded.single.reason, 'outside_weekly_schedule');
+    expect(preview.excluded.first.reason, 'outside_weekly_schedule');
+    expect(preview.excluded.last.lessonCount, 3);
+    expect(preview.excluded.last.reason, 'unsupported_lesson_count');
     final workload = preview.workloadValidation!;
     expect(workload.status, 'below_expected');
     expect(workload.expectedLessonUnits, 60);
@@ -2110,6 +2122,40 @@ void main() {
       'course_id': 3701,
       'source_id': 701,
     });
+  });
+
+  test('accepts the short Moodle quiz intro file URL', () async {
+    final transport = PythonBackendTransport(
+      endpoint: Uri.parse('https://backend.example'),
+      tokens: _Tokens(),
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'files': [
+              {
+                'name': 'formula.png',
+                'url':
+                    'https://virtual.ufmg.br/20262/tokenpluginfile.php/'
+                    'aaaaaaaaaaaaaaaa/1/mod_quiz/intro/formula.png?forcedownload=1',
+                'size': 123,
+                'mime_type': 'image/png',
+              },
+            ],
+            'count': 1,
+          }),
+          200,
+        ),
+      ),
+    );
+
+    final files = await transport.listMoodleMaterialFiles(
+      term: '2026-2',
+      courseId: '3701',
+      sourceId: '701',
+    );
+
+    expect(files.single.name, 'formula.png');
+    expect(files.single.url.pathSegments.length, 7);
   });
 
   test(
@@ -2405,11 +2451,11 @@ void main() {
                 'capabilities': null,
               },
               'teaching_plans': {
-                'available': 3,
+                'available': 4,
                 'imported': 2,
                 'applied': 1,
                 'unchanged': 0,
-                'review_required': 3,
+                'review_required': 4,
               },
               'exceptions': [
                 {
@@ -2448,6 +2494,46 @@ void main() {
                   'conflicting': 0,
                   'assessment_conflicts': 0,
                 },
+                {
+                  'course_id': 'course-d',
+                  'course_code': 'ELE065',
+                  'reason': 'teaching_plan_occurrences_not_representable',
+                  'candidate_count': 1,
+                  'changes': [
+                    {
+                      'action': 'create_session',
+                      'occurrence_key': '2026-11-23T19:00-20:40',
+                      'date': '2026-11-23',
+                      'starts_at': '19:00',
+                      'ends_at': '20:40',
+                      'subject': 'Aula válida',
+                    },
+                  ],
+                  'conflicting': 0,
+                  'assessment_conflicts': 0,
+                  'apply_error': 'ValueError',
+                  'excluded': [
+                    {
+                      'action': 'excluded',
+                      'occurrence_key': '2026-11-22T19:00-20:40',
+                      'date': '2026-11-22',
+                      'starts_at': '19:00',
+                      'ends_at': '20:40',
+                      'lesson_count': 3,
+                      'subject': 'Reposição especial',
+                      'reason': 'unsupported_lesson_count',
+                    },
+                    {
+                      'action': 'excluded',
+                      'occurrence_key': '2026-11-23T19:00-20:40',
+                      'date': '2026-11-23',
+                      'starts_at': '19:00',
+                      'ends_at': '20:40',
+                      'subject': 'Atividade nova',
+                      'reason': 'new_server_reason',
+                    },
+                  ],
+                },
               ],
             }),
             200,
@@ -2465,8 +2551,17 @@ void main() {
       expect(result.exceptions.first.courseCode, 'ELE028');
       expect(result.exceptions.first.changes.single.subject, 'Circuitos');
       expect(result.exceptions[1].courseCode, 'MAT001');
-      expect(result.exceptions.last.courseCode, 'ESA019');
-      expect(result.exceptions.last.reason, 'teaching_plan_unavailable');
+      expect(result.exceptions[2].courseCode, 'ESA019');
+      expect(result.exceptions[2].reason, 'teaching_plan_unavailable');
+      expect(result.exceptions[2].excluded, isEmpty);
+      expect(result.exceptions[3].excluded.first.lessonCount, 3);
+      expect(result.exceptions[3].excluded[1].reason, 'new_server_reason');
+      expect(result.exceptions[3].changes.single.subject, 'Aula válida');
+      expect(result.exceptions[3].applyError, 'ValueError');
+      expect(
+        result.exceptions[3].reason,
+        'teaching_plan_occurrences_not_representable',
+      );
       expect(captured.method, 'POST');
       expect(captured.url.path, '/v1/ufmg/sync/all');
       expect(jsonDecode(captured.body), {'progress_id': 'sync-test123'});

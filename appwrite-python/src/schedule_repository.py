@@ -1,6 +1,7 @@
 """Atomic schedule persistence over the user's existing Firestore tree."""
 
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 
@@ -66,19 +67,26 @@ class ScheduleRepository:
     def load_import_schedules(self, courses: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         """Load every current meeting collection once for a bulk import."""
 
-        schedules: dict[str, dict[str, Any]] = {}
-        for course in courses:
-            identifier = validate_course_id(course.get("id"))
-            if identifier in schedules:
-                raise InvalidSchedule("invalid schedule")
-            meetings = [
+        identifiers = [validate_course_id(course.get("id")) for course in courses]
+        if len(set(identifiers)) != len(identifiers):
+            raise InvalidSchedule("invalid schedule")
+
+        def load_meetings(identifier: str) -> list[dict[str, Any]]:
+            return [
                 _decode_meeting(document)
                 for document in self._firestore.list_user_documents(
                     "courses", identifier, "meetings"
                 )
             ]
-            schedules[identifier] = {"course": course, "meetings": meetings}
-        return schedules
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            meetings_by_course = list(pool.map(load_meetings, identifiers))
+        return {
+            identifier: {"course": course, "meetings": meetings}
+            for identifier, course, meetings in zip(
+                identifiers, courses, meetings_by_course, strict=True
+            )
+        }
 
     def save_import_schedule(
         self,

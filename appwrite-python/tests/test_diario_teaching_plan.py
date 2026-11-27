@@ -143,6 +143,50 @@ def test_parses_sanitized_real_diario_tables() -> None:
     }
 
 
+def test_keeps_undated_assessments_and_unusual_schedule_hours_without_failing_plan() -> None:
+    html = """
+      <table>
+        <tr>
+          <td>Período:</td><td>2026/2</td><td>Atividade:</td>
+          <td>ELE065 Análise de Circuitos II</td>
+        </tr>
+        <tr><td>Turma:</td><td>TTEC</td></tr>
+      </table>
+      <table>
+        <tr><th>Cód.</th><th>Tipo</th><th>Nome</th><th>Data/Hora</th><th>Local</th><th>Valor</th><th>Peso</th></tr>
+        <tr><td>Cód:</td><td>AV1</td><td>Tipo:</td><td>PROVA</td><td>Nome:</td><td>Prova 1</td></tr>
+        <tr>
+          <td>Data/Hora:</td><td>Local:</td><td>Sala</td><td>Valor:</td>
+          <td>35,00</td><td>Peso:</td><td>1,00</td>
+        </tr>
+      </table>
+      <table>
+        <tr><th>Descrição</th><th>Valor Parcial</th></tr>
+        <tr><td>Total</td><td>100,00</td></tr>
+      </table>
+      <table>
+        <tr>
+          <th>Aula</th><th>Data</th><th>Dia</th><th>Horas Aula</th>
+          <th>Horário</th><th>Tipo</th><th>Assunto</th>
+        </tr>
+        <tr>
+          <td>1</td><td>27/11/2026</td><td>Sex</td><td>3</td>
+          <td>19:00 - 20:40</td><td>Teórica</td><td>Fechamento</td>
+        </tr>
+        <tr>
+          <td>2</td><td>28/11/2026</td><td>Sáb</td><td>3</td>
+          <td>15:00 - 18:00</td><td>Teórica</td><td>Prova</td>
+        </tr>
+      </table>
+    """
+
+    result = parse_teaching_plan_html(html)
+
+    assert result["undated_assessment_total"] == 1
+    assert result["assessments"] == []
+    assert [row["lesson_count"] for row in result["schedule"]] == [3, 3]
+
+
 def test_rejects_a_document_without_all_required_sections() -> None:
     try:
         parse_teaching_plan_html("<h2>Avaliações</h2><table></table>")
@@ -444,7 +488,8 @@ def test_labeled_record_and_optional_values_remain_bounded() -> None:
     "row",
     [
         ["0", "05/08/2026", "Qua", "2", "20:55 - 22:35", "Teórica", "X"],
-        ["1", "05/08/2026", "Qua", "3", "20:55 - 22:35", "Teórica", "X"],
+        ["1", "05/08/2026", "Qua", "0", "20:55 - 22:35", "Teórica", "X"],
+        ["1", "05/08/2026", "Qua", "9", "20:55 - 22:35", "Teórica", "X"],
         ["1", "05/08/2026", "Qua", "2", "inválido", "Teórica", "X"],
     ],
 )

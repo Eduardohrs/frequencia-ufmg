@@ -211,38 +211,14 @@ def _clean_bulk_detail(detail: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in detail.items() if not key.startswith("_bulk_")}
 
 
-def _module_detail_is_empty(detail: dict[str, Any]) -> bool:
-    """Return whether a bulk detail has no useful HTML enrichment payload.
-
-    Calendar fields are intentionally excluded here.  The module bulk response
-    already owns due dates; requesting an HTML page only to rediscover those
-    dates is the N+1 path this service is trying to avoid.  UFMG's type-specific
-    endpoints can legitimately omit optional descriptions and attachments for
-    both assignments and quizzes.  In that case the structured fields already
-    represent the activity snapshot and an HTML request adds no information.
-    """
-
-    description = detail.get("description")
-    return not (
-        isinstance(description, str)
-        and description.strip()
-        or bool(detail.get("attachments"))
-        or bool(detail.get("files"))
-    )
-
-
-def _merge_activity_details(
-    structured: dict[str, Any], html: dict[str, Any]
-) -> dict[str, Any]:
+def _merge_activity_details(structured: dict[str, Any], html: dict[str, Any]) -> dict[str, Any]:
     """Fill structured bulk gaps from HTML without erasing known values."""
 
     merged = {**structured, **html}
     for key in ("description", "dates_text", "attachments"):
         if not html.get(key) and structured.get(key):
             merged[key] = structured[key]
-    merged["has_due_date"] = bool(structured.get("has_due_date")) or bool(
-        html.get("has_due_date")
-    )
+    merged["has_due_date"] = bool(structured.get("has_due_date")) or bool(html.get("has_due_date"))
     return merged
 
 
@@ -326,11 +302,7 @@ def _metric_map(result: dict[str, object], key: str) -> dict[str, int]:
     value = result.get(key)
     if not isinstance(value, dict):
         return {}
-    return {
-        str(name): count
-        for name, count in value.items()
-        if type(count) is int and count >= 0
-    }
+    return {str(name): count for name, count in value.items() if type(count) is int and count >= 0}
 
 
 def _merge_metric_map(target: dict[str, int], result: dict[str, object], key: str) -> None:
@@ -372,6 +344,7 @@ class CourseActivityService:
             raise ValueError("invalid activity update concurrency")
         self._update_workers = update_workers
         self._catalog_reads = 0
+
     def _source(
         self,
         user_id: str,
@@ -417,6 +390,7 @@ class CourseActivityService:
         reused_activities = 0
         bulk_activities = 0
         bulk_submission_unknown = 0
+        bulk_detail_gaps = 0
         bulk_fallbacks = 0
         html_activities = 0
         module_bulk_activities = 0
@@ -458,6 +432,23 @@ class CourseActivityService:
                 "moodle_activity_bulk_unavailable",
                 {"reason": type(error).__name__, "stage": "token_load"},
             )
+        prefetched_snapshots: dict[str, Any] = {}
+        prefetched_states: dict[str, Any] = {}
+        if self._force and courses:
+            # Independent reads overlap; consume each future inside the existing
+            # per-course error boundary so a bad document stays best-effort.
+            with ThreadPoolExecutor(max_workers=8) as read_pool:
+                prefetched_snapshots = {
+                    course["id"]: read_pool.submit(snapshots.load, course["id"])
+                    for course in courses
+                }
+                if self._policy is not None:
+                    prefetched_states = {
+                        course["id"]: read_pool.submit(
+                            self._policy.state, course["id"], "activities"
+                        )
+                        for course in courses
+                    }
         for course in courses:
             course_id = course["id"]
             fields = {
@@ -472,11 +463,18 @@ class CourseActivityService:
                 # course: both are reused by the capture step below instead of
                 # being loaded again per consumer.
                 try:
-                    raw_previous = snapshots.load(course_id)
+                    raw_previous = (
+                        prefetched_snapshots[course_id].result()
+                        if course_id in prefetched_snapshots
+                        else snapshots.load(course_id)
+                    )
                 except (ActivitySnapshotMissing, InvalidActivitySnapshot):
                     raw_previous = None
                 policy_state: dict[str, Any] | None = None
-                if self._policy is not None and raw_previous is None:
+                if course_id in prefetched_states:
+                    policy_state = prefetched_states[course_id].result()
+                    policy_state_reads += 1
+                elif self._policy is not None and raw_previous is None:
                     policy_state = self._policy.state(course_id, "activities")
                     policy_state_reads += 1
                 previous_snapshot = _validate_previous(raw_previous, course["term"])
@@ -525,6 +523,7 @@ class CourseActivityService:
                         bulk_submission_unknown += _metric(
                             capture_result, "bulk_submission_unknown"
                         )
+                        bulk_detail_gaps += _metric(capture_result, "bulk_detail_gaps")
                         bulk_fallbacks += _metric(capture_result, "bulk_fallbacks")
                         html_activities += _metric(capture_result, "html_count")
                         html_skipped += _metric(capture_result, "html_skipped_count")
@@ -566,9 +565,7 @@ class CourseActivityService:
                 if isinstance(error, ActivitySnapshotCaptureFailed):
                     reason = error.first_reason
                     failed_activities += error.failed_count
-                    _merge_metric_map(
-                        html_quality_counts, error.metrics, "html_quality_counts"
-                    )
+                    _merge_metric_map(html_quality_counts, error.metrics, "html_quality_counts")
                     _merge_metric_map(
                         html_empty_field_counts, error.metrics, "html_empty_field_counts"
                     )
@@ -677,6 +674,7 @@ class CourseActivityService:
                 "reused_activities": reused_activities,
                 "bulk_activities": bulk_activities,
                 "bulk_submission_unknown": bulk_submission_unknown,
+                "bulk_detail_gaps": bulk_detail_gaps,
                 "bulk_fallbacks": bulk_fallbacks,
                 "html_activities": html_activities,
                 "html_skipped_count": html_skipped,
@@ -837,6 +835,7 @@ class CourseActivityService:
 
         bulk_count = 0
         bulk_submission_unknown = 0
+        bulk_detail_gaps = 0
         bulk_fallbacks = 0
         module_bulk_count = 0
         module_bulk_calls = 0
@@ -897,31 +896,26 @@ class CourseActivityService:
                             entry = entries[position]
                             detail = bulk_details.get(str(entry["source_id"]))
                             if not isinstance(detail, dict):
-                                bulk_fallbacks += 1
+                                bulk_detail_gaps += 1
                                 reason = "activity_missing_from_bulk_response"
                                 html_fallback_reasons[position] = reason
-                                _count_fallback(
-                                    fallback_by_kind, fallback_reasons, str(entry["kind"]), reason
-                                )
                                 _emit(
                                     self._telemetry,
-                                    "moodle_activity_bulk_detail_fallback",
+                                    "moodle_activity_bulk_detail_gap",
                                     {
                                         **fields,
                                         "source_id": entry["source_id"],
                                         "kind": entry["kind"],
                                         "reason": reason,
                                         "missing_fields": ["activity"],
+                                        "resolution_stage": "pending",
                                     },
                                 )
                                 continue
                             if _bulk_detail_needs_html_fallback(detail):
-                                bulk_fallbacks += 1
+                                bulk_detail_gaps += 1
                                 reason = "missing_bulk_fields"
                                 html_fallback_reasons[position] = reason
-                                _count_fallback(
-                                    fallback_by_kind, fallback_reasons, str(entry["kind"]), reason
-                                )
                                 missing_fields = [
                                     field
                                     for field, flag in (
@@ -932,13 +926,14 @@ class CourseActivityService:
                                 ]
                                 _emit(
                                     self._telemetry,
-                                    "moodle_activity_bulk_detail_fallback",
+                                    "moodle_activity_bulk_detail_gap",
                                     {
                                         **fields,
                                         "source_id": entry["source_id"],
                                         "kind": entry["kind"],
                                         "reason": reason,
                                         "missing_fields": missing_fields,
+                                        "resolution_stage": "pending",
                                     },
                                 )
                                 continue
@@ -1053,7 +1048,6 @@ class CourseActivityService:
                                 if (
                                     isinstance(detail, dict)
                                     and type(detail.get("_bulk_assignment_id")) is int
-                                    and _module_detail_is_empty(detail)
                                 ):
                                     assignment_ids.append(int(detail["_bulk_assignment_id"]))
                             assignment_ids = sorted(set(assignment_ids))
@@ -1076,9 +1070,7 @@ class CourseActivityService:
                                         },
                                     )
                                     if not isinstance(submission_details, dict):
-                                        raise InvalidMoodleResponse(
-                                            "assignment_submission_shape"
-                                        )
+                                        raise InvalidMoodleResponse("assignment_submission_shape")
                                     failed_assignment_ids = submission_details.get(
                                         "_bulk_failed_assignment_ids", []
                                     )
@@ -1104,8 +1096,7 @@ class CourseActivityService:
                                             **fields,
                                             "moodle_course_id": moodle_course_id,
                                             "assignment_count": len(assignment_ids),
-                                            "status_count": len(submission_details)
-                                            - 1,
+                                            "status_count": len(submission_details) - 1,
                                             "failed_count": len(failed_assignment_ids),
                                         },
                                     )
@@ -1141,40 +1132,20 @@ class CourseActivityService:
                         continue
                     module_bulk_successes = 0
                     module_bulk_fallback_reasons: list[str] = []
-                    module_bulk_partial_details: dict[int, dict[str, Any]] = {}
                     for position in positions:
                         entry = entries[position]
                         detail = module_details.get(str(entry["source_id"]))
-                        if (
-                            isinstance(detail, dict)
-                            and _bulk_detail_needs_html_fallback(detail)
-                            and kind == "assign"
-                            and detail.get("_bulk_submission_complete") is True
-                            and _module_detail_is_empty(detail)
-                        ):
-                            # The student-status endpoint supplied the only
-                            # field missing from the type-specific response.
-                            # Preserve that status and avoid an HTML request.
-                            activities[position] = {
-                                **entry,
-                                **_clean_bulk_detail(detail),
-                                "files": [],
-                                "term": course["term"],
-                            }
-                            html_positions.discard(position)
-                            module_bulk_count += 1
-                            module_bulk_successes += 1
-                            html_skipped += 1
-                            bulk_submission_unknown += int(
-                                detail.get("submission_state") == "unknown"
-                            )
-                            continue
                         if not isinstance(detail, dict) or _bulk_detail_needs_html_fallback(detail):
                             reason = (
                                 "activity_missing_from_module_bulk_response"
                                 if not isinstance(detail, dict)
                                 else "missing_module_bulk_fields"
                             )
+                            # A type-specific response can reveal a missing
+                            # required field even when the generic bulk path
+                            # had marked that activity complete. Restore the
+                            # HTML fallback in that case.
+                            html_positions.add(position)
                             html_fallback_reasons[position] = reason
                             module_bulk_fallback_reasons.append(reason)
                             if isinstance(detail, dict):
@@ -1186,8 +1157,6 @@ class CourseActivityService:
                                     "files": [],
                                     "term": course["term"],
                                 }
-                                module_bulk_partial_details[position] = detail
-                            _count_fallback(fallback_by_kind, fallback_reasons, str(kind), reason)
                             _emit(
                                 self._telemetry,
                                 "moodle_activity_module_bulk_detail_fallback",
@@ -1212,47 +1181,8 @@ class CourseActivityService:
                         bulk_submission_unknown += int(
                             clean_detail.get("submission_state") == "unknown"
                         )
-                    # UFMG's type-specific endpoint can return a complete
-                    # activity map while omitting both optional fields for
-                    # every item.  In that case HTML is not an enrichment
-                    # source (the production run proved it returns the same
-                    # empty values), so avoid the N+1 page crawl.  Missing
-                    # module IDs and transport/shape failures still retain
-                    # the real HTML fallback below.
-                    if (
-                        module_bulk_successes == 0
-                        and len(module_bulk_fallback_reasons) == len(positions)
-                        and module_bulk_fallback_reasons
-                        and kind in {"assign", "quiz"}
-                        and (
-                            kind == "quiz"
-                            or all(
-                                module_bulk_partial_details[position].get(
-                                    "_bulk_submission_complete"
-                                )
-                                is True
-                                for position in positions
-                                if position in module_bulk_partial_details
-                            )
-                        )
-                        and all(
-                            reason == "missing_module_bulk_fields"
-                            for reason in module_bulk_fallback_reasons
-                        )
-                        and all(
-                            _module_detail_is_empty(module_bulk_partial_details[position])
-                            for position in positions
-                            if position in module_bulk_partial_details
-                        )
-                        and len(module_bulk_partial_details) == len(positions)
-                    ):
-                        for position in positions:
-                            # The structured response was already copied into
-                            # ``activities`` above. Keep it intact: quiz dates
-                            # remain useful when optional HTML enrichment is
-                            # empty, and must not be reset to index-only data.
-                            html_positions.discard(position)
-                        html_skipped += len(positions)
+                    if module_bulk_successes:
+                        html_skipped += module_bulk_successes
                         _emit(
                             self._telemetry,
                             "moodle_activity_html_fallback_skipped",
@@ -1260,8 +1190,8 @@ class CourseActivityService:
                                 **fields,
                                 "moodle_course_id": moodle_course_id,
                                 "kind": kind,
-                                "reason": "module_bulk_empty_optional_fields",
-                                "activity_count": len(positions),
+                                "reason": "module_bulk_fields_complete",
+                                "activity_count": module_bulk_successes,
                             },
                         )
                     # An empty optional payload is a valid response for this
@@ -1354,9 +1284,7 @@ class CourseActivityService:
                 if upstream_status is not None:
                     failure["upstream_status"] = upstream_status
                 _emit(self._telemetry, "activity_snapshot_activity_failed", failure)
-                response_details = (
-                    error.details if isinstance(error, InvalidMoodleResponse) else {}
-                )
+                response_details = error.details if isinstance(error, InvalidMoodleResponse) else {}
                 response_status = response_details.get("response_status")
                 if type(response_status) is not int or not 100 <= response_status <= 599:
                     response_status = upstream_status
@@ -1383,6 +1311,28 @@ class CourseActivityService:
                 return failure, quality
 
         outcomes: list[tuple[dict[str, object] | None, dict[str, object]]] = []
+        bulk_fallbacks = len(html_positions)
+        html_fallback_groups: dict[tuple[str, str], int] = {}
+        for position in html_positions:
+            fallback_key = (
+                str(entries[position]["kind"]),
+                html_fallback_reasons.get(position, "unknown"),
+            )
+            html_fallback_groups[fallback_key] = html_fallback_groups.get(fallback_key, 0) + 1
+            _count_fallback(
+                fallback_by_kind, fallback_reasons, fallback_key[0], fallback_key[1]
+            )
+        for (kind, reason), activity_count in sorted(html_fallback_groups.items()):
+            _emit(
+                self._telemetry,
+                "moodle_activity_html_fallback_started",
+                {
+                    **fields,
+                    "kind": kind,
+                    "reason": reason,
+                    "activity_count": activity_count,
+                },
+            )
         if html_positions:
             # Bounded pool: every unresolved activity is attempted even when
             # another one fails, while the final snapshot remains index-ordered.
@@ -1416,6 +1366,7 @@ class CourseActivityService:
         payload_bytes = len(
             json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         )
+
         def persist() -> None:
             if pending_saves is None:
                 snapshots.save(course_id, snapshot)
@@ -1436,6 +1387,7 @@ class CourseActivityService:
                 "reused_count": reused_count,
                 "bulk_count": bulk_count,
                 "bulk_submission_unknown": bulk_submission_unknown,
+                "bulk_detail_gaps": bulk_detail_gaps,
                 "bulk_fallbacks": bulk_fallbacks,
                 "html_count": len(html_positions),
                 "html_skipped_count": html_skipped,
@@ -1452,6 +1404,7 @@ class CourseActivityService:
             "reused_count": reused_count,
             "bulk_count": bulk_count,
             "bulk_submission_unknown": bulk_submission_unknown,
+            "bulk_detail_gaps": bulk_detail_gaps,
             "bulk_fallbacks": bulk_fallbacks,
             "html_count": len(html_positions),
             "html_skipped_count": html_skipped,

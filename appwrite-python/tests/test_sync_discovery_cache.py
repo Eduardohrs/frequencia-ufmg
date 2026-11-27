@@ -575,8 +575,9 @@ def test_sync_snapshots_shares_discovery_snapshot_and_policy_reads_per_course():
     synced = next(f for e, f in logs if e == "activity_snapshots_synced")
     assert synced["activity_entries_seen"] == 1
     assert synced["html_activities"] == 1
-    assert synced["fallback_by_kind"] == {}
-    assert synced["fallback_reasons"] == {}
+    assert synced["bulk_fallbacks"] == 1
+    assert synced["fallback_by_kind"] == {"assign": 1}
+    assert synced["fallback_reasons"] == {"no_structured_detail": 1}
 
 
 def test_persist_success_writes_one_document():

@@ -987,7 +987,7 @@ void main() {
         connected: true,
         reauthenticationRequired: false,
       ),
-    );
+    )..showNonRepresentablePlanRow = true;
     final logger = _Logger();
     final schedule = UFMGSyncSchedule(now: () => DateTime.utc(2026, 10, 24));
     var calendarOpened = 0;
@@ -1031,6 +1031,18 @@ void main() {
       findsNothing,
     );
     expect(find.text('Não foi possível atualizar ESA019.'), findsWidgets);
+    expect(
+      find.text(
+        'As alterações seguras não foram salvas. Confira os itens abaixo e tente sincronizar novamente.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Não importada · 22/11 · 19:00 · Reposição especial'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('3 unidades'), findsOneWidget);
+    expect(find.textContaining('precisa de revisão'), findsOneWidget);
     expect(logger.events, contains('academic_sync_succeeded'));
     expect(await schedule.isDue('user-1'), isFalse);
     await tester.tap(find.text('Entendi'));
@@ -2008,6 +2020,17 @@ void main() {
           ..reconciliationConflicting = 1
           ..reconciliationAssessmentsLinked = 1
           ..reconciliationOutsideSchedule = 1
+          ..reconciliationExcluded = [
+            PythonTeachingPlanChange(
+              action: 'excluded',
+              date: DateTime.utc(2026, 8, 12),
+              startsAt: '19:00',
+              endsAt: '20:40',
+              subject: 'Reposição especial',
+              reason: 'unsupported_lesson_count',
+              lessonCount: 3,
+            ),
+          ]
           ..materialCatalog = PythonMoodleContentDiscovery(
             candidateTotal: 1,
             metaturmaCandidateTotal: 0,
@@ -2059,6 +2082,11 @@ void main() {
     expect(find.textContaining('Adicionar aula'), findsWidgets);
     expect(find.textContaining('Aula 1'), findsOneWidget);
     expect(find.textContaining('Aula 2'), findsOneWidget);
+    expect(find.textContaining('Reposição especial'), findsOneWidget);
+    expect(
+      find.textContaining('quantidade de aulas não reconhecida'),
+      findsOneWidget,
+    );
     expect(
       find.textContaining('58 de 60 horas-aula de 50 minutos'),
       findsOneWidget,
@@ -2123,6 +2151,17 @@ void main() {
             )
             ..reconciliationOutsideSchedule = 18
             ..reconciliationConflicting = 1
+            ..reconciliationExcluded = [
+              PythonTeachingPlanChange(
+                action: 'excluded',
+                date: DateTime.utc(2026, 8, 12),
+                startsAt: '19:00',
+                endsAt: '20:40',
+                subject: 'Reposição especial',
+                reason: 'unsupported_lesson_count',
+                lessonCount: 3,
+              ),
+            ]
             ..materialCatalog = PythonMoodleContentDiscovery(
               candidateTotal: 1,
               metaturmaCandidateTotal: 0,
@@ -2185,6 +2224,11 @@ void main() {
       );
       expect(
         find.textContaining('1 conflito precisa de revisão manual'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Reposição especial'), findsOneWidget);
+      expect(
+        find.textContaining('quantidade de aulas não reconhecida'),
         findsOneWidget,
       );
       expect(gateway.reconciliationRequests, [('dcc203', false)]);
@@ -4432,6 +4476,7 @@ class _Gateway
   int reconciliationConflicting = 0;
   int reconciliationAssessmentsLinked = 0;
   int reconciliationOutsideSchedule = 0;
+  List<PythonTeachingPlanChange> reconciliationExcluded = const [];
   String reconciliationWorkloadStatus = 'below_expected';
   PythonMoodleContentDiscovery materialCatalog =
       const PythonMoodleContentDiscovery(
@@ -4562,7 +4607,7 @@ class _Gateway
           subject: 'Aula ${index + 1}',
         ),
       ),
-      excluded: const [],
+      excluded: reconciliationExcluded,
       workloadValidation: PythonWorkloadValidation(
         status: reconciliationWorkloadStatus,
         expectedLessonUnits: 60,
@@ -4818,6 +4863,7 @@ final class _UnifiedGateway extends _Gateway
   int unifiedSyncCalls = 0;
   Object? unifiedSyncError;
   bool issueWithoutCourse = false;
+  bool showNonRepresentablePlanRow = false;
   List<PythonOfficialCalendarChange> officialCalendarChanges = const [];
   int officialCalendarApplyCalls = 0;
   Object? officialCalendarError;
@@ -4846,12 +4892,12 @@ final class _UnifiedGateway extends _Gateway
     return PythonUnifiedAcademicSyncResult(
       siga: await syncSiga(),
       moodle: await syncMoodle(),
-      teachingPlans: const PythonTeachingPlanSyncSummary(
-        available: 4,
+      teachingPlans: PythonTeachingPlanSyncSummary(
+        available: 4 + (showNonRepresentablePlanRow ? 1 : 0),
         imported: 1,
         applied: 0,
         unchanged: 0,
-        reviewRequired: 4,
+        reviewRequired: 4 + (showNonRepresentablePlanRow ? 1 : 0),
       ),
       exceptions: [
         if (issueWithoutCourse)
@@ -4908,6 +4954,36 @@ final class _UnifiedGateway extends _Gateway
           conflicting: 0,
           assessmentConflicts: 0,
         ),
+        if (showNonRepresentablePlanRow)
+          PythonAcademicSyncException(
+            courseId: 'ele065',
+            courseCode: 'ELE065',
+            reason: 'teaching_plan_occurrences_not_representable',
+            candidateCount: 1,
+            changes: const [],
+            conflicting: 0,
+            assessmentConflicts: 0,
+            applyError: 'ValueError',
+            excluded: [
+              PythonTeachingPlanChange(
+                action: 'excluded',
+                date: DateTime.utc(2026, 11, 22),
+                startsAt: '19:00',
+                endsAt: '20:40',
+                subject: 'Reposição especial',
+                reason: 'unsupported_lesson_count',
+                lessonCount: 3,
+              ),
+              PythonTeachingPlanChange(
+                action: 'excluded',
+                date: DateTime.utc(2026, 11, 23),
+                startsAt: '19:00',
+                endsAt: '20:40',
+                subject: 'Atividade nova',
+                reason: 'new_server_reason',
+              ),
+            ],
+          ),
       ],
     );
   }

@@ -70,6 +70,37 @@ def test_attachment_credentials_are_delivered_only_for_download_not_persisted_co
     assert service.authorize_saved("user", "poo", saved, now=123)["files"] == []
 
 
+def test_short_quiz_intro_file_is_authorized_for_download(activities):
+    service, *_ = activities
+    saved = {
+        "source_id": "20",
+        "description": "Quiz",
+        "term": "2026-2",
+        "attachments": [
+            {
+                "name": "formula.png",
+                "url": "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_quiz/intro/formula.png",
+            }
+        ],
+        "files": [],
+    }
+
+    result = service.authorize_saved("user", "poo", saved, now=123)
+
+    assert result["files"] == [
+        {
+            "name": "formula.png",
+            "url": (
+                "https://virtual.ufmg.br/20262/tokenpluginfile.php/"
+                + "p" * 32
+                + "/1/mod_quiz/intro/formula.png?forcedownload=1"
+            ),
+            "size": 0,
+            "mime_type": "image/png",
+        }
+    ]
+
+
 def test_unlinked_ambiguous_or_expired_sources_are_explicit(activities):
     service, catalog, sessions, *_ = activities
     for value in [

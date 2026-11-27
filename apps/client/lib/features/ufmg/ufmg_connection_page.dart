@@ -725,6 +725,18 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                           ],
                         ),
                       ),
+                    if (reconciliation.excluded.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Aulas que não serão importadas automaticamente:',
+                      ),
+                      const SizedBox(height: 6),
+                      for (final occurrence in reconciliation.excluded)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(_excludedOccurrenceLabel(occurrence)),
+                        ),
+                    ],
                     if (reconciliation.conflicting > 0)
                       Text(
                         '${reconciliation.conflicting} conflitos não serão alterados automaticamente.',
@@ -818,11 +830,15 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
 
   bool _hasTeachingPlanNotice(PythonTeachingPlanReconciliation reconciliation) {
     final hasOutsideSchedule = reconciliation.outsideSchedule > 0;
+    final hasExcludedOccurrences = reconciliation.excluded.isNotEmpty;
     final hasConflicts = reconciliation.conflicting > 0;
     final workloadStatus = reconciliation.workloadValidation?.status;
     final hasWorkloadDifference =
         workloadStatus != null && workloadStatus != 'aligned';
-    return hasOutsideSchedule || hasConflicts || hasWorkloadDifference;
+    return hasOutsideSchedule ||
+        hasExcludedOccurrences ||
+        hasConflicts ||
+        hasWorkloadDifference;
   }
 
   String _teachingPlanNotice(PythonTeachingPlanReconciliation reconciliation) {
@@ -834,6 +850,12 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         'fora da grade e não '
         '${reconciliation.outsideSchedule == 1 ? 'virou' : 'viraram'} '
         'aula de frequência.',
+      );
+    }
+    if (reconciliation.excluded.isNotEmpty) {
+      details.add(
+        'Aulas não importadas automaticamente: '
+        '${reconciliation.excluded.map(_excludedOccurrenceLabel).join('; ')}.',
       );
     }
     if (reconciliation.conflicting > 0) {
@@ -852,6 +874,20 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
     }
     return '${reconciliation.matched} aulas já conferem com o plano. '
         'Nenhuma mudança foi aplicada automaticamente. ${details.join(' ')}';
+  }
+
+  String _excludedOccurrenceLabel(PythonTeachingPlanChange occurrence) {
+    final date = MaterialLocalizations.of(
+      context,
+    ).formatMediumDate(occurrence.date);
+    final lessonCount = occurrence.lessonCount == null
+        ? ''
+        : ' · ${occurrence.lessonCount} unidades';
+    final reason = occurrence.reason == null
+        ? 'precisa de revisão'
+        : _excludedOccurrenceReason(occurrence.reason!);
+    return '$date · ${occurrence.startsAt}–${occurrence.endsAt} · '
+        '${occurrence.subject}$lessonCount · $reason';
   }
 
   String _materialOperationId(
@@ -1684,12 +1720,21 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
         context,
       )?.course(id: issue.courseId, code: issue.courseCode)?.displayName ??
       (issue.courseCode.isEmpty ? 'Dados acadêmicos' : issue.courseCode);
-  String _syncIssueMessage(AcademicSyncIssue issue) => switch (issue.reason) {
-    'ambiguous_teaching_plan' => 'Escolha o plano de ensino na disciplina.',
-    'schedule_review' => 'Confira os horários das disciplinas.',
-    'unmatched_dates' => 'Algumas datas não têm uma disciplina correspondente.',
-    _ => 'Não foi possível atualizar ${_syncCourseLabel(issue)}.',
-  };
+  String _syncIssueMessage(AcademicSyncIssue issue) {
+    if (issue.applyError != null) {
+      return 'As alterações seguras não foram salvas. Confira os itens abaixo e tente sincronizar novamente.';
+    }
+    return switch (issue.reason) {
+      'ambiguous_teaching_plan' => 'Escolha o plano de ensino na disciplina.',
+      'teaching_plan_occurrences_not_representable' =>
+        'Algumas aulas do plano não puderam ser incluídas automaticamente. Confira os itens abaixo.',
+      'schedule_review' => 'Confira os horários das disciplinas.',
+      'unmatched_dates' =>
+        'Algumas datas não têm uma disciplina correspondente.',
+      _ => 'Não foi possível atualizar ${_syncCourseLabel(issue)}.',
+    };
+  }
+
   String? _syncIssueSummary(List<AcademicSyncIssue> issues) {
     final messages = issues.map(_syncIssueMessage).toSet().toList();
     if (messages.isEmpty) return null;
@@ -1723,6 +1768,15 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
                     '${change.date.month.toString().padLeft(2, '0')} · '
                     '${change.startsAt} · ${change.subject}',
                   ),
+                for (final occurrence in exception.excluded)
+                  Text(
+                    'Não importada · '
+                    '${occurrence.date.day.toString().padLeft(2, '0')}/'
+                    '${occurrence.date.month.toString().padLeft(2, '0')} · '
+                    '${occurrence.startsAt} · ${occurrence.subject}'
+                    '${occurrence.lessonCount == null ? '' : ' · ${occurrence.lessonCount} unidades'}'
+                    '${occurrence.reason == null ? '' : ' · ${_excludedOccurrenceReason(occurrence.reason!)}'}',
+                  ),
                 const SizedBox(height: 12),
               ],
             ],
@@ -1747,6 +1801,14 @@ class _UFMGConnectionPageState extends State<UFMGConnectionPage> {
       ],
     ),
   );
+
+  String _excludedOccurrenceReason(String reason) => switch (reason) {
+    'outside_weekly_schedule' => 'fora do horário semanal',
+    'unsupported_lesson_count' => 'quantidade de aulas não reconhecida',
+    'duration_does_not_match_lesson_count' =>
+      'duração diferente da quantidade de aulas',
+    _ => 'precisa de revisão',
+  };
 
   Future<void> _openSchedulePendencyReview() async {
     final gateway = widget.gateway;
