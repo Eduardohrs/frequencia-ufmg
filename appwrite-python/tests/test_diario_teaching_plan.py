@@ -504,6 +504,14 @@ def test_schedule_entry_exposes_a_stable_occurrence_key() -> None:
     assert entry["occurrence_key"] == "2026-09-14T19:00-20:40"
 
 
+def test_schedule_entry_preserves_supported_source_count_for_reconciliation() -> None:
+    entry = _schedule_entry(
+        ["7", "14/09/2026", "Seg", "3", "19:00 - 20:40", "Teórica", "Herança"]
+    )
+
+    assert entry["lesson_count"] == 3
+
+
 @pytest.mark.parametrize("value", ["não-numérico", "-1", "100001"])
 def test_decimal_rejects_invalid_or_unbounded_values(value: str) -> None:
     with pytest.raises(ValueError):

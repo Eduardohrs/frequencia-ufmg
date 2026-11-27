@@ -65,7 +65,7 @@ class ScheduleRepository:
         return self._save_loaded(course_id, payload, confirm, course, meetings, sessions, others)
 
     def load_import_schedules(self, courses: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        """Load every current meeting collection once for a bulk import."""
+        """Load every meeting collection concurrently for a bulk import.
 
         identifiers = [validate_course_id(course.get("id")) for course in courses]
         if len(set(identifiers)) != len(identifiers):

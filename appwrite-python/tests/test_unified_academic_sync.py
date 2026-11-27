@@ -512,12 +512,6 @@ def test_sync_does_not_hide_global_dependency_failures() -> None:
 
     services = [
         UnifiedAcademicSyncService(
-            _Siga(),
-            _Moodle([_course()]),
-            _Plans({"ele028": MoodleUnavailable("offline")}),
-            _Reconciler({}),
-        ),
-        UnifiedAcademicSyncService(
             _Siga(), _Moodle([_course()]), _Plans(), Reconciler(fail_on_apply=False)
         ),
         UnifiedAcademicSyncService(

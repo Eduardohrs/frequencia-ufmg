@@ -10,6 +10,7 @@ from academic_sync_lineage import DIARIO_TEACHING_PLAN
 from firestore_rest import FirestoreAccessDenied, FirestoreUnavailable
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
 from moodle_token_store import MoodleTokenStoreUnavailable
+from teaching_plan_reconciliation import InvalidTeachingPlanReconciliation
 from ufmg_session_store import (
     UFMGReauthenticationRequired,
     UFMGSessionStoreUnavailable,
@@ -387,9 +388,18 @@ class UnifiedAcademicSyncService:
             fields.update(course_id=course["course_id"], course_code=course["course_code"])
         if error is not None:
             fields["reason"] = (
-                error.reason if isinstance(error, InvalidMoodleResponse) else type(error).__name__
+                error.reason
+                if isinstance(error, (InvalidMoodleResponse, InvalidTeachingPlanReconciliation))
+                else type(error).__name__
             )
             fields["exception_type"] = type(error).__name__
+            if isinstance(error, InvalidTeachingPlanReconciliation):
+                fields.update(error.details)
+            if isinstance(error, MoodleUnavailable):
+                fields.update(
+                    upstream_status=error.upstream_status,
+                    timed_out=error.timed_out,
+                )
         self._emit(event, fields)
 
     def _record_course_failure(
@@ -409,11 +419,11 @@ class UnifiedAcademicSyncService:
             "source_id": source_id,
             "stage": stage,
             "reason": error.reason
-            if isinstance(error, InvalidMoodleResponse)
+            if isinstance(error, (InvalidMoodleResponse, InvalidTeachingPlanReconciliation))
             else type(error).__name__,
             "exception_type": type(error).__name__,
         }
-        if isinstance(error, InvalidMoodleResponse):
+        if isinstance(error, (InvalidMoodleResponse, InvalidTeachingPlanReconciliation)):
             fields.update(error.details)
         if isinstance(error, MoodleUnavailable):
             fields["upstream_status"] = error.upstream_status

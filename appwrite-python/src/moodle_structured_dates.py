@@ -1039,7 +1039,7 @@ class MoodleStructuredDatesClient:
             )
             if _is_diario_request_url(final_url) and content_type == "text/html":
                 transition_target = _diario_transition_target(body, final_url)
-                body, final_url, content_type = self._open_bounded(
+                body, final_url, content_type = self._open_diario_report(
                     Request(
                         transition_target,
                         headers={
@@ -1051,6 +1051,46 @@ class MoodleStructuredDatesClient:
                 )
         document_format = _require_diario_document(final_url, content_type, body)
         return delivery, body, document_format
+
+    def _open_diario_report(
+        self, request: Request, *, limit: int
+    ) -> tuple[bytes, str, str]:
+        """Retry a transient 5xx once for the idempotent Jasper GET only."""
+
+        parsed = urlsplit(request.full_url)
+        is_report_get = (
+            request.get_method() == "GET"
+            and parsed.scheme == "https"
+            and parsed.hostname == "sistemas.ufmg.br"
+            and parsed.path == "/diario/JasperServlet"
+            and parsed.port is None
+            and parsed.username is None
+            and parsed.password is None
+        )
+        if not is_report_get:
+            return self._open_bounded(request, limit=limit)
+        try:
+            return self._open_bounded(request, limit=limit)
+        except MoodleUnavailable as error:
+            if error.upstream_status is None or not 500 <= error.upstream_status <= 599:
+                raise
+            _emit(
+                self._telemetry,
+                "moodle_diario_report_retry",
+                {
+                    "path": parsed.path,
+                    "method": "GET",
+                    "failed_status": error.upstream_status,
+                    "retry_count": 1,
+                    "reason": "transient_upstream_5xx",
+                },
+            )
+            return self._open_bounded(
+                request,
+                limit=limit,
+                attempt=2,
+                retry_count=1,
+            )
 
     def _mobile_launch(self, root: str, passport: str) -> str:
         launch_url = f"{MOODLE_ORIGIN}{root}/admin/tool/mobile/launch.php?" + urlencode(
@@ -1220,7 +1260,14 @@ class MoodleStructuredDatesClient:
             self._request_sequence += 1
             return self._request_sequence
 
-    def _open_bounded(self, request: Request, *, limit: int) -> tuple[bytes, str, str]:
+    def _open_bounded(
+        self,
+        request: Request,
+        *,
+        limit: int,
+        attempt: int = 1,
+        retry_count: int = 0,
+    ) -> tuple[bytes, str, str]:
         started = perf_counter()
         status: int | None = None
         response_body = b""
@@ -1281,8 +1328,8 @@ class MoodleStructuredDatesClient:
                     "response_bytes": len(response_body),
                     "response_content_type": response_content_type or "",
                     "request_sequence": request_sequence,
-                    "retry_count": 0,
-                    "attempt": 1,
+                    "retry_count": retry_count,
+                    "attempt": attempt,
                 },
             )
 
@@ -2085,13 +2132,30 @@ def _module_activity_description(raw: dict[str, object], *, kind: str) -> str:
 
 
 def _module_description_present(raw: dict[str, object], *, kind: str) -> bool:
-    keys = ("intro", "activity") if kind == "assign" else ("intro",)
-    return all(key in raw for key in keys)
+    # UFMG's mod_assign_get_assignments response includes ``intro`` but omits
+    # Moodle's optional ``activity`` field. The HTML page only repeats the
+    # intro and appends attachment names; requiring ``activity`` caused one
+    # unnecessary HTML request for every assignment.
+    return "intro" in raw
 
 
 def _module_attachments_present(raw: dict[str, object], *, kind: str) -> bool:
     if kind == "assign":
-        return "introattachments" in raw and "activityattachments" in raw
+        # Student-facing assignment responses expose the actual task files in
+        # introattachments/introfiles. ``submissionattachments`` is a setting
+        # for files students may upload, not downloadable task material.
+        return any(
+            key in raw
+            and isinstance(raw[key], list)
+            and (
+                not raw[key]
+                or any(
+                    isinstance(item, dict) and item.get("type", "file") == "file"
+                    for item in raw[key]
+                )
+            )
+            for key in ("introattachments", "introfiles")
+        )
     # The quiz mobile endpoint does not consistently expose file lists.  Keep
     # the HTML fallback when the installation omits them rather than silently
     # losing offline attachments.

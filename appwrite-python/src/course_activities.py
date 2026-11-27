@@ -457,6 +457,21 @@ class CourseActivityService:
                 "term": course["term"],
             }
             course_started = monotonic()
+            course_pending_snapshots: list[tuple[str, dict[str, Any]]] = []
+            course_pending_policy_updates: list[tuple[str, str, dict[str, Any]]] = []
+            course_policy_state_reads = 0
+            outcome: dict[str, Any] = {
+                "reused": False,
+                "completed": False,
+                "capture_result": None,
+                "failed": [],
+                "failed_activities": 0,
+                "html_quality_counts": {},
+                "html_empty_field_counts": {},
+                "pending_snapshots": course_pending_snapshots,
+                "pending_policy_updates": course_pending_policy_updates,
+                "policy_state_reads": 0,
+            }
 
             try:
                 # One snapshot read and at most one policy-state read per
@@ -476,7 +491,7 @@ class CourseActivityService:
                     policy_state_reads += 1
                 elif self._policy is not None and raw_previous is None:
                     policy_state = self._policy.state(course_id, "activities")
-                    policy_state_reads += 1
+                    course_policy_state_reads += 1
                 previous_snapshot = _validate_previous(raw_previous, course["term"])
                 capture = partial(
                     self._capture_snapshot,
@@ -486,7 +501,7 @@ class CourseActivityService:
                     snapshots,
                     mobile_tokens=mobile_tokens,
                     module_bulk_capabilities=module_bulk_capabilities,
-                    pending_saves=pending_snapshots,
+                    pending_saves=course_pending_snapshots,
                     previous_snapshot=previous_snapshot,
                     discovered=discovered_map,
                 )
@@ -505,8 +520,8 @@ class CourseActivityService:
                         now=now,
                         fetch=capture,
                         force=force,
-                        defer_success=lambda course, source, state: pending_policy_updates.append(
-                            (course, source, state)
+                        defer_success=lambda course, source, state: (
+                            course_pending_policy_updates.append((course, source, state))
                         ),
                         state=policy_state,
                     )
@@ -578,7 +593,15 @@ class CourseActivityService:
                     "reason": reason,
                     "retained_previous": True,
                 }
-                failed.append(issue)
+                outcome["failed"].append(issue)
+                if isinstance(error, ActivitySnapshotCaptureFailed):
+                    outcome["failed_activities"] = error.failed_count
+                    outcome["html_quality_counts"] = error.metrics.get(
+                        "html_quality_counts", {}
+                    )
+                    outcome["html_empty_field_counts"] = error.metrics.get(
+                        "html_empty_field_counts", {}
+                    )
                 _emit(self._telemetry, "activity_snapshot_sync_failed", issue)
                 _emit(
                     self._telemetry,
@@ -592,6 +615,54 @@ class CourseActivityService:
                         "consumer": "discipline_activity_view_and_offline_snapshot",
                     },
                 )
+            outcome["policy_state_reads"] = course_policy_state_reads
+            return outcome
+
+        if len(courses) <= 1:
+            course_outcomes = [sync_course(course) for course in courses]
+        else:
+            with ThreadPoolExecutor(
+                max_workers=min(self._max_workers, len(courses)),
+                thread_name_prefix="activity-snapshot-course",
+            ) as pool:
+                course_outcomes = list(pool.map(sync_course, courses))
+
+        for outcome in course_outcomes:
+            failed.extend(outcome["failed"])
+            failed_activities += outcome["failed_activities"]
+            reused_total += int(outcome["reused"])
+            policy_state_reads += outcome["policy_state_reads"]
+            pending_snapshots.extend(outcome["pending_snapshots"])
+            pending_policy_updates.extend(outcome["pending_policy_updates"])
+            _merge_metric_map(html_quality_counts, outcome, "html_quality_counts")
+            _merge_metric_map(html_empty_field_counts, outcome, "html_empty_field_counts")
+            capture_result = outcome["capture_result"]
+            if outcome["reused"] or not outcome["completed"]:
+                continue
+            updated += 1
+            if capture_result is None:
+                continue
+            activity_entries_seen += _metric(capture_result, "activity_count")
+            reused_activities += _metric(capture_result, "reused_count")
+            bulk_activities += _metric(capture_result, "bulk_count")
+            bulk_submission_unknown += _metric(capture_result, "bulk_submission_unknown")
+            bulk_fallbacks += _metric(capture_result, "bulk_fallbacks")
+            html_activities += _metric(capture_result, "html_count")
+            html_skipped += _metric(capture_result, "html_skipped_count")
+            module_bulk_activities += _metric(capture_result, "module_bulk_count")
+            module_bulk_calls += _metric(capture_result, "module_bulk_calls")
+            module_bulk_failures += _metric(capture_result, "module_bulk_failures")
+            submission_bulk_calls += _metric(capture_result, "submission_bulk_calls")
+            submission_bulk_failures += _metric(capture_result, "submission_bulk_failures")
+            submission_bulk_statuses += _metric(capture_result, "submission_bulk_statuses")
+            updates_checked += _metric(capture_result, "updates_checked")
+            updates_changed += _metric(capture_result, "updates_changed")
+            _merge_metric_map(fallback_by_kind, capture_result, "fallback_by_kind")
+            _merge_metric_map(fallback_reasons, capture_result, "fallback_reasons")
+            _merge_metric_map(html_quality_counts, capture_result, "html_quality_counts")
+            _merge_metric_map(
+                html_empty_field_counts, capture_result, "html_empty_field_counts"
+            )
         if pending_snapshots:
             payload_bytes = sum(
                 len(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode())
@@ -1124,7 +1195,11 @@ class CourseActivityService:
                                 **fields,
                                 "moodle_course_id": moodle_course_id,
                                 "kind": kind,
-                                "reason": type(error).__name__,
+                                "reason": (
+                                    error.reason
+                                    if isinstance(error, InvalidMoodleResponse)
+                                    else type(error).__name__
+                                ),
                                 "upstream_class": _classify_upstream(error)[0],
                                 "activity_count": len(positions),
                             },
