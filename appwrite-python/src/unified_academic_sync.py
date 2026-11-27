@@ -3,6 +3,7 @@
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
+from threading import Event
 from time import monotonic
 from typing import Protocol, cast
 
@@ -99,6 +100,8 @@ class UnifiedAcademicSyncService:
         plan_futures: list[Future[dict[str, object]]] = []
         plans_started = False
         moodle_future: Future[dict[str, object]] | None = None
+        siga_sync_finished = Event()
+        siga_schedules_succeeded = Event()
 
         def start_plans(content: dict[str, object], pool: ThreadPoolExecutor) -> None:
             nonlocal plans_started
@@ -128,11 +131,20 @@ class UnifiedAcademicSyncService:
                     "ambiguous_count": summary["review_required"],
                     "dependency": "moodle_content_discovery",
                     "parallel_with": ["moodle_date_import", "moodle_activity_snapshots"],
+                    "reconciliation_waits_for": "siga_schedule_import",
                     "workers": self._plan_workers,
                 },
             )
             plan_futures.extend(
-                pool.submit(self._sync_one_plan, user_id, course, source_id, now)
+                pool.submit(
+                    self._sync_one_plan,
+                    user_id,
+                    course,
+                    source_id,
+                    now,
+                    siga_sync_finished,
+                    siga_schedules_succeeded,
+                )
                 for course, source_id in pending
             )
 
@@ -164,12 +176,18 @@ class UnifiedAcademicSyncService:
                         ),
                     )
 
-                siga = self._timed(
-                    "siga",
-                    lambda: self._siga.sync_siga(
-                        user_id, now=now, on_courses_imported=start_moodle
-                    ),
-                )
+                try:
+                    siga = self._timed(
+                        "siga",
+                        lambda: self._siga.sync_siga(
+                            user_id, now=now, on_courses_imported=start_moodle
+                        ),
+                    )
+                    siga_schedules_succeeded.set()
+                finally:
+                    # Plan workers may already be waiting after fetching and
+                    # saving their plan. Always release them if SIGA fails.
+                    siga_sync_finished.set()
                 if moodle_future is None:
                     start_moodle()
                 assert moodle_future is not None
@@ -248,7 +266,10 @@ class UnifiedAcademicSyncService:
                         },
                         {
                             "name": "teaching_plan_reconciliation",
-                            "depends_on": ["teaching_plan_import"],
+                            "depends_on": [
+                                "teaching_plan_import",
+                                "siga_schedule_import",
+                            ],
                             "parallel_group": "teaching_plans",
                         },
                         {
@@ -282,6 +303,8 @@ class UnifiedAcademicSyncService:
         course: dict[str, object],
         source_id: int,
         now: int,
+        siga_sync_finished: Event,
+        siga_schedules_succeeded: Event,
     ) -> dict[str, object]:
         summary = {
             "available": 0,
@@ -349,6 +372,29 @@ class UnifiedAcademicSyncService:
             )
             return {"summary": summary, "exceptions": exceptions}
         summary["imported"] += 1
+        wait_started = self._monotonic()
+        siga_sync_finished.wait()
+        self._emit(
+            "academic_sync_plan_schedule_dependency_released",
+            {
+                "course_id": course_id,
+                "course_code": course["course_code"],
+                "wait_duration_ms": round((self._monotonic() - wait_started) * 1000),
+                "siga_schedules_succeeded": siga_schedules_succeeded.is_set(),
+            },
+        )
+        if not siga_schedules_succeeded.is_set():
+            summary["review_required"] += 1
+            exceptions.append(_unavailable_exception(course))
+            self._emit(
+                "academic_sync_plan_reconciliation_skipped",
+                {
+                    "course_id": course_id,
+                    "course_code": course["course_code"],
+                    "reason": "siga_schedule_import_failed",
+                },
+            )
+            return {"summary": summary, "exceptions": exceptions}
         try:
             preview = self._timed(
                 "teaching_plan_reconciliation",

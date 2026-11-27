@@ -713,6 +713,88 @@ def test_plan_import_starts_as_soon_as_content_discovery_completes() -> None:
     assert result["teaching_plans"]["unchanged"] == 1
 
 
+def test_plan_reconciliation_waits_for_siga_schedule_import() -> None:
+    plan_import_finished = Event()
+    schedules_imported = Event()
+
+    class Siga(_Siga):
+        def sync_siga(self, user_id, *, now, on_courses_imported=None):
+            assert on_courses_imported is not None
+            on_courses_imported()
+            # Let Moodle discover the plan and let the worker fetch it while
+            # this thread is still importing the SIGA schedule.
+            assert plan_import_finished.wait(timeout=2)
+            assert not schedules_imported.is_set()
+            schedules_imported.set()
+            return {"courses": {"created": 1}, "schedules": {"updated": 1}}
+
+    class Plans(_Plans):
+        def import_plan(self, *args, **kwargs):
+            result = super().import_plan(*args, **kwargs)
+            plan_import_finished.set()
+            return result
+
+    class Reconciler(_Reconciler):
+        def reconcile(self, course_id, *, apply):
+            assert schedules_imported.is_set()
+            return super().reconcile(course_id, apply=apply)
+
+    result = UnifiedAcademicSyncService(
+        Siga(),
+        _Moodle([_course()]),
+        Plans(),
+        Reconciler({"ele028": _preview()}),
+        plan_workers=2,
+    ).sync("user", now=42)
+
+    assert plan_import_finished.is_set()
+    assert result["teaching_plans"]["imported"] == 1
+    assert result["teaching_plans"]["unchanged"] == 1
+
+
+def test_plan_reconciliation_is_skipped_when_siga_schedule_import_fails() -> None:
+    plan_import_finished = Event()
+    telemetry: list[tuple[str, dict[str, object]]] = []
+    reconciler = _Reconciler({"ele028": _preview()})
+
+    class Siga(_Siga):
+        def sync_siga(self, user_id, *, now, on_courses_imported=None):
+            assert on_courses_imported is not None
+            on_courses_imported()
+            assert plan_import_finished.wait(timeout=2)
+            raise RuntimeError("SIGA schedule import failed")
+
+    class Plans(_Plans):
+        def import_plan(self, *args, **kwargs):
+            result = super().import_plan(*args, **kwargs)
+            plan_import_finished.set()
+            return result
+
+    with pytest.raises(RuntimeError, match="SIGA schedule import failed"):
+        UnifiedAcademicSyncService(
+            Siga(),
+            _Moodle([_course()]),
+            Plans(),
+            reconciler,
+            telemetry=lambda event, fields: telemetry.append((event, dict(fields))),
+            plan_workers=2,
+        ).sync("user", now=42)
+
+    assert reconciler.calls == []
+    skipped = [
+        fields
+        for event, fields in telemetry
+        if event == "academic_sync_plan_reconciliation_skipped"
+    ]
+    assert skipped == [
+        {
+            "course_id": "ele028",
+            "course_code": "ELE028",
+            "reason": "siga_schedule_import_failed",
+        }
+    ]
+
+
 def test_plan_dispatch_ignores_repeated_content_notifications() -> None:
     class Moodle(_Moodle):
         def sync(self, user_id, *, now, on_content_discovered=None):
