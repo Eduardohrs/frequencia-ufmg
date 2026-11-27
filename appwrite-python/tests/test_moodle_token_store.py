@@ -9,11 +9,13 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from moodle_token_store import (
+    TOKEN_LIFETIME_SECONDS,
     AppwriteMoodleTokenStore,
     InvalidMoodleTokens,
     MoodleAuthorizationRequired,
     MoodleTokenCipher,
     MoodleTokenStoreUnavailable,
+    RequestCachedMoodleTokenStore,
 )
 
 
@@ -60,6 +62,54 @@ def _store(tables: Any) -> AppwriteMoodleTokenStore:
         ),
         index_key=b"i" * 32,
     )
+
+
+def test_request_cached_tokens_share_load_save_and_delete_within_one_request() -> None:
+    tables = _Tables()
+    cached = RequestCachedMoodleTokenStore(_store(tables))
+
+    cached.save(
+        "owner",
+        webservice_token="A" * 20,
+        private_token="B" * 20,
+        term="2026-2",
+        now=10,
+    )
+    loaded = cached.load("owner", now=11)
+
+    assert loaded is not None
+    assert (loaded.webservice_token, loaded.private_token, loaded.term) == (
+        "A" * 20,
+        "B" * 20,
+        "2026-2",
+    )
+    assert [call[0] for call in tables.calls] == ["upsert"]
+
+    cached.delete("owner")
+    assert [call[0] for call in tables.calls] == ["upsert", "delete"]
+
+
+def test_request_cached_tokens_reuse_loaded_rows_and_cached_absence() -> None:
+    tables = _Tables()
+    store = _store(tables)
+    store.save(
+        "owner",
+        webservice_token="A" * 20,
+        private_token="B" * 20,
+        term="2026-2",
+        now=10,
+    )
+    cached = RequestCachedMoodleTokenStore(store)
+
+    assert cached.load("owner", now=11) == cached.load("owner", now=12)
+    assert [call[0] for call in tables.calls].count("get") == 1
+
+    assert cached.load("missing", now=11) is None
+    assert cached.load("missing", now=12) is None
+    assert [call[0] for call in tables.calls].count("get") == 2
+
+    with pytest.raises(MoodleAuthorizationRequired):
+        cached.load("owner", now=10 + TOKEN_LIFETIME_SECONDS)
 
 
 def test_tokens_are_encrypted_user_bound_and_retained_for_at_most_180_days() -> None:

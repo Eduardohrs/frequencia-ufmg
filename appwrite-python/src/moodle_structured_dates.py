@@ -14,7 +14,7 @@ from hashlib import md5, sha256
 from html.parser import HTMLParser
 from http.cookiejar import Cookie, CookieJar
 from secrets import token_hex
-from threading import Lock
+from threading import Lock, current_thread, local
 from time import perf_counter
 from typing import Any, Final, Protocol, cast
 from urllib.error import HTTPError, URLError
@@ -168,6 +168,7 @@ class MoodleStructuredDatesClient:
         self._diario_report_lock = Lock()
         self._request_sequence = 0
         self._request_lock = Lock()
+        self._request_context = local()
         # Per-sync memo tables keyed by (token digest, term[, course id]).  They
         # let the material catalog and the activity index share one enrolled
         # course list and one course-state batch inside a single sync run.
@@ -175,6 +176,8 @@ class MoodleStructuredDatesClient:
         self._enrolled_cache: dict[tuple[bytes, str], list[dict[str, object]]] = {}
         self._state_cache: dict[tuple[bytes, str, int], dict[str, list[dict[str, object]]]] = {}
         self._activity_page_cache: dict[tuple[bytes, str, int, str], dict[str, object]] = {}
+        self._diario_url_lock = Lock()
+        self._diario_url_cache: dict[tuple[bytes, str], dict[int, str]] = {}
 
     @property
     def connection_count(self) -> int:
@@ -595,6 +598,81 @@ class MoodleStructuredDatesClient:
             },
         )
 
+    def fetch_diario_url_targets(
+        self, *, webservice_token: str, term: str
+    ) -> dict[int, str]:
+        """Get visible Diário report links in one Moodle request, memoized per sync."""
+
+        _validate_mobile_service_token(webservice_token)
+        key = (_token_digest(webservice_token), term)
+        with self._diario_url_lock:
+            cached = self._diario_url_cache.get(key)
+            if cached is not None:
+                _emit(
+                    self._telemetry,
+                    "moodle_diario_url_catalog_cache",
+                    {"term": term, "outcome": "hit", "candidate_count": len(cached)},
+                )
+                return dict(cached)
+            root = _moodle_root(term)
+            path = f"{root}/webservice/rest/server.php"
+            try:
+                payload, final_url, content_type = self._open(
+                    Request(
+                        f"{MOODLE_ORIGIN}{path}",
+                        data=urlencode(
+                            {
+                                "moodlewsrestformat": "json",
+                                "wsfunction": "mod_url_get_urls_by_courses",
+                                "wstoken": webservice_token,
+                            }
+                        ).encode(),
+                        headers={
+                            "Content-Type": "application/x-www-form-urlencoded",
+                            "Accept": "application/json",
+                        },
+                        method="POST",
+                    )
+                )
+                _require_json_endpoint(final_url, content_type, path)
+                result, url_count, warning_count = timed_stage(
+                    "moodle_diario_url_catalog_parse",
+                    lambda: _parse_diario_url_targets(payload),
+                    telemetry=self._telemetry,
+                    fields={
+                        "term": term,
+                        "response_bytes": len(payload),
+                        "consumer": "teaching_plan_import",
+                    },
+                )
+                _emit(
+                    self._telemetry,
+                    "moodle_diario_url_catalog_completed",
+                    {
+                        "term": term,
+                        "url_count": url_count,
+                        "warning_count": warning_count,
+                        "candidate_count": len(result),
+                        "consumer": "teaching_plan_import",
+                    },
+                )
+            except (InvalidMoodleResponse, MoodleUnavailable) as error:
+                # The existing authenticated Moodle page flow remains a valid fallback.
+                result = {}
+                _emit(
+                    self._telemetry,
+                    "moodle_diario_url_catalog_unavailable",
+                    {
+                        "term": term,
+                        "reason": error.reason
+                        if isinstance(error, InvalidMoodleResponse)
+                        else type(error).__name__,
+                        "consumer": "teaching_plan_import_fallback",
+                    },
+                )
+            self._diario_url_cache[key] = result
+            return dict(result)
+
     def fetch_course_activity_module_bulk(
         self,
         *,
@@ -614,6 +692,35 @@ class MoodleStructuredDatesClient:
         """
 
         _validate_mobile_tokens(webservice_token, private_token, course_id)
+        response = self.fetch_activity_modules_bulk(
+            webservice_token=webservice_token,
+            private_token=private_token,
+            term=term,
+            course_ids=[course_id],
+            kind=kind,
+        )
+        prefix = f"{course_id}:"
+        return {
+            key[len(prefix) :]: value for key, value in response.items() if key.startswith(prefix)
+        }
+
+    def fetch_activity_modules_bulk(
+        self,
+        *,
+        webservice_token: str,
+        private_token: str,
+        term: str,
+        course_ids: list[int],
+        kind: str,
+    ) -> dict[str, dict[str, object]]:
+        """Fetch one module type for several courses and retain each owner id."""
+
+        if not course_ids or len(course_ids) > 100:
+            raise InvalidMoodleResponse("activity_module_course_ids")
+        if any(type(value) is not int or not 1 <= value <= 2_147_483_647 for value in course_ids):
+            raise InvalidMoodleResponse("activity_module_course_id")
+        course_ids = sorted(set(course_ids))
+        _validate_mobile_tokens(webservice_token, private_token, course_ids[0])
         if kind not in {"assign", "quiz"}:
             raise InvalidMoodleResponse("activity_module_kind")
         root = _moodle_root(term)
@@ -628,8 +735,10 @@ class MoodleStructuredDatesClient:
             "moodlewssettingfilter": "1",
             "wsfunction": function,
             "wstoken": webservice_token,
-            "courseids[0]": str(course_id),
         }
+        parameters.update(
+            {f"courseids[{index}]": str(value) for index, value in enumerate(course_ids)}
+        )
         payload, final_url, content_type = self._open(
             Request(
                 f"{MOODLE_ORIGIN}{path}",
@@ -642,14 +751,17 @@ class MoodleStructuredDatesClient:
             )
         )
         _require_json_endpoint(final_url, content_type, path)
-        activities = _parse_activity_module_bulk(payload, root=root, kind=kind)
+        activities = _parse_activity_module_bulk(
+            payload, root=root, kind=kind, course_ids=set(course_ids)
+        )
         warnings = _activity_module_warning_summary(payload)
         _emit(
             self._telemetry,
             "moodle_activity_module_response",
             {
                 "term": term,
-                "moodle_course_id": course_id,
+                "moodle_course_ids": course_ids,
+                "course_count": len(course_ids),
                 "kind": kind,
                 "endpoint": function,
                 "response_bytes": len(payload),
@@ -953,57 +1065,91 @@ class MoodleStructuredDatesClient:
             format=document_format,
         )
 
-    def fetch_diario_plan(self, token: str, *, term: str, source_id: int) -> dict[str, object]:
+    def fetch_diario_plan(
+        self,
+        token: str,
+        *,
+        term: str,
+        source_id: int,
+        course_id: str | None = None,
+        course_code: str | None = None,
+        external_url: str | None = None,
+    ) -> dict[str, object]:
         """Fetch and structure one official HTML teaching plan in memory."""
 
-        _, body, document_format = self._fetch_diario_document(
-            token, term=term, source_id=source_id
-        )
-        if document_format != "html":
-            raise InvalidMoodleResponse("diario_plan_pdf_unstructured")
+        previous_context = getattr(self._request_context, "fields", {})
+        self._request_context.fields = {
+            "plan_term": term,
+            "plan_source_id": str(source_id),
+            **({"plan_course_id": course_id} if course_id is not None else {}),
+            **({"plan_course_code": course_code} if course_code is not None else {}),
+            **({"plan_link_source": "mod_url_get_urls_by_courses"} if external_url else {}),
+        }
         try:
-            result = timed_stage(
-                "teaching_plan_parse",
-                lambda: parse_teaching_plan_html(
-                    _decode_diario_html(body, reason="diario_response_encoding")
-                ),
-                telemetry=self._telemetry,
-                fields={
-                    "term": term,
-                    "source_id": source_id,
-                    "response_bytes": len(body),
-                    "consumer": "teaching_plan_and_assessment_dates",
-                },
+            _, body, document_format = self._fetch_diario_document(
+                token, term=term, source_id=source_id, external_url=external_url
             )
-        except TeachingPlanParseError as error:
-            raise InvalidMoodleResponse(
-                "diario_plan_structure", details=error.diagnostics
-            ) from None
-        if result["term"] != term:
-            raise InvalidMoodleResponse("diario_plan_term")
-        return result
+            if document_format != "html":
+                raise InvalidMoodleResponse("diario_plan_pdf_unstructured")
+            try:
+                result = timed_stage(
+                    "teaching_plan_parse",
+                    lambda: parse_teaching_plan_html(
+                        _decode_diario_html(body, reason="diario_response_encoding")
+                    ),
+                    telemetry=self._telemetry,
+                    fields={
+                        "term": term,
+                        "source_id": source_id,
+                        "course_id": course_id or "",
+                        "course_code": course_code or "",
+                        "response_bytes": len(body),
+                        "consumer": "teaching_plan_and_assessment_dates",
+                        "worker_thread": current_thread().name,
+                    },
+                )
+            except TeachingPlanParseError as error:
+                raise InvalidMoodleResponse(
+                    "diario_plan_structure", details=error.diagnostics
+                ) from None
+            if result["term"] != term:
+                raise InvalidMoodleResponse("diario_plan_term")
+            return result
+        finally:
+            self._request_context.fields = previous_context
 
     def _fetch_diario_document(
-        self, token: str, *, term: str, source_id: int
+        self, token: str, *, term: str, source_id: int, external_url: str | None = None
     ) -> tuple[str, bytes, str]:
         with self._diario_report_lock:
-            return self._fetch_diario_document_locked(token, term=term, source_id=source_id)
+            return self._fetch_diario_document_locked(
+                token, term=term, source_id=source_id, external_url=external_url
+            )
 
     def _fetch_diario_document_locked(
-        self, token: str, *, term: str, source_id: int
+        self, token: str, *, term: str, source_id: int, external_url: str | None = None
     ) -> tuple[str, bytes, str]:
         if type(source_id) is not int or not 1 <= source_id <= 2_147_483_647:
             raise ValueError("invalid Diario source")
         root, _, _ = self._connect(token, term)
         launch_path = f"{root}/mod/url/view.php"
-        body, final_url, content_type = self._open_bounded(
-            Request(
-                f"{MOODLE_ORIGIN}{launch_path}?{urlencode({'id': source_id})}",
-                headers={"Accept": "text/html,application/pdf"},
-            ),
-            limit=MAX_DIARIO_BYTES,
-        )
-        delivery = "redirect"
+        if external_url is not None and not _is_diario_request_url(external_url):
+            raise InvalidMoodleResponse("diario_external_url")
+        if external_url is None:
+            body, final_url, content_type = self._open_bounded(
+                Request(
+                    f"{MOODLE_ORIGIN}{launch_path}?{urlencode({'id': source_id})}",
+                    headers={"Accept": "text/html,application/pdf"},
+                ),
+                limit=MAX_DIARIO_BYTES,
+            )
+            delivery = "redirect"
+        else:
+            body, final_url, content_type = self._open_bounded(
+                Request(external_url, headers={"Accept": "text/html,application/pdf"}),
+                limit=MAX_DIARIO_BYTES,
+            )
+            delivery = "bulk_link"
         if _is_moodle_module(final_url, launch_path):
             form = _DiarioFormParser()
             try:
@@ -1037,18 +1183,22 @@ class MoodleStructuredDatesClient:
                 request,
                 limit=MAX_DIARIO_BYTES,
             )
-            if _is_diario_request_url(final_url) and content_type == "text/html":
-                transition_target = _diario_transition_target(body, final_url)
-                body, final_url, content_type = self._open_diario_report(
-                    Request(
-                        transition_target,
-                        headers={
-                            "Accept": "text/html,application/pdf",
-                            "Referer": final_url,
-                        },
-                    ),
-                    limit=MAX_DIARIO_BYTES,
-                )
+        # Both the normal Moodle module view and the direct URL from Moodle's
+        # bulk catalog can land on the same UFMG report launcher. Follow its
+        # SSO transition once, without fetching view.php first when we already
+        # have the external URL.
+        if _is_diario_request_url(final_url) and content_type == "text/html":
+            transition_target = _diario_transition_target(body, final_url)
+            body, final_url, content_type = self._open_diario_report(
+                Request(
+                    transition_target,
+                    headers={
+                        "Accept": "text/html,application/pdf",
+                        "Referer": final_url,
+                    },
+                ),
+                limit=MAX_DIARIO_BYTES,
+            )
         document_format = _require_diario_document(final_url, content_type, body)
         return delivery, body, document_format
 
@@ -1154,7 +1304,13 @@ class MoodleStructuredDatesClient:
                 _emit(
                     self._telemetry,
                     "moodle_session_connection_reused",
-                    {"term": term, "outcome": "reused", "connection_count": self._connection_count},
+                    {
+                        "term": term,
+                        "outcome": "reused",
+                        "connection_count": self._connection_count,
+                        "worker_thread": current_thread().name,
+                        **getattr(self._request_context, "fields", {}),
+                    },
                 )
                 return cached
         with self._connection_lock:
@@ -1169,7 +1325,13 @@ class MoodleStructuredDatesClient:
                 _emit(
                     self._telemetry,
                     "moodle_session_connection_reused",
-                    {"term": term, "outcome": "reused", "connection_count": self._connection_count},
+                    {
+                        "term": term,
+                        "outcome": "reused",
+                        "connection_count": self._connection_count,
+                        "worker_thread": current_thread().name,
+                        **getattr(self._request_context, "fields", {}),
+                    },
                 )
                 return cached
             root = _moodle_root(term)
@@ -1210,7 +1372,13 @@ class MoodleStructuredDatesClient:
             _emit(
                 self._telemetry,
                 "moodle_session_connection_created",
-                {"term": term, "outcome": "created", "connection_count": self._connection_count},
+                {
+                    "term": term,
+                    "outcome": "created",
+                    "connection_count": self._connection_count,
+                    "worker_thread": current_thread().name,
+                    **getattr(self._request_context, "fields", {}),
+                },
             )
             return connection
 
@@ -1328,6 +1496,8 @@ class MoodleStructuredDatesClient:
                     "response_bytes": len(response_body),
                     "response_content_type": response_content_type or "",
                     "request_sequence": request_sequence,
+                    "worker_thread": current_thread().name,
+                    **getattr(self._request_context, "fields", {}),
                     "retry_count": retry_count,
                     "attempt": attempt,
                 },
@@ -2025,7 +2195,7 @@ def _parse_assignment_submissions_bulk(payload: bytes) -> dict[str, dict[str, st
 
 
 def _parse_activity_module_bulk(
-    payload: bytes, *, root: str, kind: str
+    payload: bytes, *, root: str, kind: str, course_ids: set[int] | None = None
 ) -> dict[str, dict[str, object]]:
     """Normalize Moodle's assignment/quiz bulk response to snapshot details."""
 
@@ -2054,6 +2224,16 @@ def _parse_activity_module_bulk(
                 source_id = raw.get("cmid" if kind == "assign" else "coursemodule")
                 if type(source_id) is not int or not 1 <= source_id <= 2_147_483_647:
                     raise ValueError("activity_module_id")
+                if course_ids is None:
+                    owner_id = None
+                elif kind == "assign":
+                    owner_id = course.get("id")
+                else:
+                    owner_id = raw.get("course")
+                if course_ids is not None and (
+                    type(owner_id) is not int or owner_id not in course_ids
+                ):
+                    raise ValueError("activity_module_course")
                 title = raw.get("name")
                 if not isinstance(title, str) or not title.strip() or len(title) > 1_024:
                     raise ValueError("activity_module_title")
@@ -2077,7 +2257,9 @@ def _parse_activity_module_bulk(
                 }
                 if assignment_id is not None:
                     candidate["_bulk_assignment_id"] = assignment_id
-                identifier = str(source_id)
+                if owner_id is not None:
+                    candidate["_bulk_course_id"] = owner_id
+                identifier = f"{owner_id}:{source_id}" if owner_id is not None else str(source_id)
                 previous = activities.get(identifier)
                 if previous is not None and previous != candidate:
                     raise ValueError("activity_module_conflict")
@@ -2349,9 +2531,7 @@ def _private_file_url(value: object, root: str, private_token: str) -> str:
     suffix = parsed.path.removeprefix(prefix)
     segments = suffix.split("/")
     short_quiz_intro_file = (
-        len(segments) == 4
-        and segments[0].isdigit()
-        and segments[1:3] == ["mod_quiz", "intro"]
+        len(segments) == 4 and segments[0].isdigit() and segments[1:3] == ["mod_quiz", "intro"]
     )
     if (
         (len(segments) < 5 and not short_quiz_intro_file)
@@ -2395,9 +2575,7 @@ def _canonical_file_url(value: object, root: str) -> str:
         suffix = "/".join(segments[1:])
         segments = suffix.split("/")
     short_quiz_intro_file = (
-        len(segments) == 4
-        and segments[0].isdigit()
-        and segments[1:3] == ["mod_quiz", "intro"]
+        len(segments) == 4 and segments[0].isdigit() and segments[1:3] == ["mod_quiz", "intro"]
     )
     if (
         (len(segments) < 5 and not short_quiz_intro_file)
@@ -2555,6 +2733,45 @@ def _is_diario_launch_url(value: object) -> bool:
     if _is_diario_url(value):
         return True
     return _is_diario_request_url(value)
+
+
+def _parse_diario_url_targets(payload: bytes) -> tuple[dict[int, str], int, int]:
+    """Return Moodle URL-module links that point to official Diário plans."""
+
+    if not payload or len(payload) > MAX_RESPONSE_BYTES:
+        raise InvalidMoodleResponse("diario_url_response_size")
+    try:
+        decoded = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise InvalidMoodleResponse("diario_url_json") from None
+    if not isinstance(decoded, dict) or "exception" in decoded or "error" in decoded:
+        raise InvalidMoodleResponse("diario_url_response_shape")
+    urls = decoded.get("urls")
+    warnings = decoded.get("warnings", [])
+    if not isinstance(urls, list) or len(urls) > MAX_CANDIDATES:
+        raise InvalidMoodleResponse("diario_url_list_shape")
+    if not isinstance(warnings, list) or len(warnings) > MAX_CANDIDATES:
+        raise InvalidMoodleResponse("diario_url_warnings_shape")
+
+    targets: dict[int, str] = {}
+    conflicts: set[int] = set()
+    for item in urls:
+        if not isinstance(item, dict):
+            raise InvalidMoodleResponse("diario_url_item_shape")
+        module_id = item.get("coursemodule")
+        external_url = item.get("externalurl")
+        if type(module_id) is not int or not 1 <= module_id <= 2_147_483_647:
+            continue
+        if not _is_diario_request_url(external_url):
+            continue
+        previous = targets.get(module_id)
+        if previous is not None and previous != external_url:
+            conflicts.add(module_id)
+        else:
+            targets[module_id] = external_url
+    for module_id in conflicts:
+        targets.pop(module_id, None)
+    return targets, len(urls), len(warnings)
 
 
 def _is_diario_request_url(value: object) -> bool:

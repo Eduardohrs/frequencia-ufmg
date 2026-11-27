@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 

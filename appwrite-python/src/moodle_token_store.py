@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from hmac import new as hmac_new
 from os import urandom
+from threading import Lock
 from typing import Any
 
 from appwrite.exception import AppwriteException
@@ -279,6 +280,56 @@ class AppwriteMoodleTokenStore:
             sha256,
         ).hexdigest()
         return f"m_{digest[:32]}"
+
+
+class RequestCachedMoodleTokenStore:
+    """Reuse one decrypted token snapshot inside a single function request."""
+
+    def __init__(self, store: AppwriteMoodleTokenStore) -> None:
+        self._store = store
+        self._lock = Lock()
+        self._cache: dict[str, MoodleTokens | None] = {}
+
+    def load(self, user_id: str, *, now: int) -> MoodleTokens | None:
+        with self._lock:
+            if user_id in self._cache:
+                cached = self._cache[user_id]
+                if cached is None or cached.expires_at > now:
+                    return cached
+            loaded = self._store.load(user_id, now=now)
+            self._cache[user_id] = loaded
+            return loaded
+
+    def save(
+        self,
+        user_id: str,
+        *,
+        webservice_token: str,
+        private_token: str,
+        term: str,
+        now: int,
+    ) -> MoodleTokenMetadata:
+        with self._lock:
+            metadata = self._store.save(
+                user_id,
+                webservice_token=webservice_token,
+                private_token=private_token,
+                term=term,
+                now=now,
+            )
+            self._cache[user_id] = MoodleTokens(
+                webservice_token=webservice_token,
+                private_token=private_token,
+                term=term,
+                created_at=metadata.created_at,
+                expires_at=metadata.expires_at,
+            )
+            return metadata
+
+    def delete(self, user_id: str) -> None:
+        with self._lock:
+            self._store.delete(user_id)
+            self._cache.pop(user_id, None)
 
 
 def _validate(

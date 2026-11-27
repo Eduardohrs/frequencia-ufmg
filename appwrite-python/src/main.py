@@ -94,6 +94,7 @@ from moodle_token_store import (  # noqa: E402
     MoodleAuthorizationRequired,
     MoodleTokenCipher,
     MoodleTokenStoreUnavailable,
+    RequestCachedMoodleTokenStore,
 )
 from official_calendar_repository import OfficialCalendarSessionRepository  # noqa: E402
 from official_calendar_service import (  # noqa: E402
@@ -2582,6 +2583,7 @@ def _moodle_sync_service(
     client = MoodleStructuredDatesClient(
         telemetry=telemetry, calendar_workers=_moodle_calendar_workers()
     )
+    moodle_tokens = RequestCachedMoodleTokenStore(_moodle_token_store(headers))
     # Build all Firestore-backed snapshot dependencies on the request thread.
     # ContextVars do not propagate into ThreadPoolExecutor workers, so creating
     # them inside snapshot_sync would silently drop request-level dependency
@@ -2622,7 +2624,7 @@ def _moodle_sync_service(
         MoodleMobileCapabilityService(
             sessions,
             client,
-            _moodle_token_store(headers),
+            moodle_tokens,
         ),
         snapshot_sync=lambda uid, now, content=None: activity_service.sync_snapshots(
             uid,
@@ -2648,6 +2650,7 @@ def _unified_academic_sync_service(
     client = MoodleStructuredDatesClient(
         telemetry=telemetry, calendar_workers=_moodle_calendar_workers()
     )
+    moodle_tokens = RequestCachedMoodleTokenStore(_moodle_token_store(headers))
     firestore = _firestore(headers, user_id)
     courses = CourseRepository(firestore)
     activity_catalog = MoodleMaterialCatalogRepository(firestore)
@@ -2707,7 +2710,7 @@ def _unified_academic_sync_service(
         MoodleMobileCapabilityService(
             sessions,
             client,
-            _moodle_token_store(headers),
+            moodle_tokens,
         ),
         snapshot_sync=lambda uid, now, content=None: activity_service.sync_snapshots(
             uid,
@@ -2725,6 +2728,7 @@ def _unified_academic_sync_service(
         courses,
         TeachingPlanRepository(firestore),
         dates,
+        tokens=moodle_tokens,
         telemetry=telemetry,
     )
     return UnifiedAcademicSyncService(
@@ -2738,7 +2742,7 @@ def _unified_academic_sync_service(
         ),
         TeachingPlanReconciliationRepository(firestore, courses=courses, telemetry=telemetry),
         telemetry=telemetry,
-        plan_workers=4,
+        plan_workers=6,
     )
 
 

@@ -184,3 +184,19 @@ def test_parallel_sync_runs_independent_stages_and_emits_dependency_graph() -> N
         parallel_stages=True,
     ).sync("owner", now=42)
     assert "activities" not in no_snapshot
+
+
+@pytest.mark.parametrize("parallel_stages", [False, True])
+def test_sync_notifies_plan_importer_when_content_is_discovered(parallel_stages: bool) -> None:
+    discovered: list[dict[str, object]] = []
+    content = {"courses": []}
+
+    result = MoodleSyncService(
+        _Stage({"created": 0}),
+        _Stage(content),
+        _Stage({"direct_download_supported": True}),
+        parallel_stages=parallel_stages,
+    ).sync("user-1", now=42, on_content_discovered=discovered.append)
+
+    assert result["content"] is content
+    assert discovered == [content]

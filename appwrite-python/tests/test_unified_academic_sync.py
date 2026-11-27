@@ -1,7 +1,10 @@
+from threading import Event
+
 import pytest
 
 from firestore_rest import FirestoreUnavailable
 from moodle_structured_dates import InvalidMoodleResponse, MoodleUnavailable
+from teaching_plan_reconciliation import InvalidTeachingPlanReconciliation
 from unified_academic_sync import UnifiedAcademicSyncService
 
 
@@ -31,9 +34,13 @@ class _Siga:
     def __init__(self) -> None:
         self.calls = 0
 
-    def sync_siga(self, user_id: str, *, now: int) -> dict[str, object]:
+    def sync_siga(
+        self, user_id: str, *, now: int, on_courses_imported=None
+    ) -> dict[str, object]:
         assert (user_id, now) == ("user", 42)
         self.calls += 1
+        if on_courses_imported is not None:
+            on_courses_imported()
         return {"courses": {"created": 1}, "schedules": {"updated": 1}}
 
 
@@ -42,14 +49,23 @@ class _Moodle:
         self.courses = courses
         self.calls = 0
 
-    def sync(self, user_id: str, *, now: int) -> dict[str, object]:
+    def sync(
+        self,
+        user_id: str,
+        *,
+        now: int,
+        on_content_discovered=None,
+    ) -> dict[str, object]:
         assert (user_id, now) == ("user", 42)
         self.calls += 1
-        return {
+        result = {
             "dates": {"created": 2},
             "content": {"courses": self.courses, "candidate_total": 3},
             "capabilities": {"direct_download_supported": True},
         }
+        if on_content_discovered is not None:
+            on_content_discovered(result["content"])
+        return result
 
 
 class _Plans:
@@ -541,6 +557,40 @@ def test_single_plan_http_500_is_reported_without_failing_other_courses() -> Non
     assert failure["timed_out"] is False
 
 
+@pytest.mark.parametrize("status", [None, 404])
+def test_single_plan_non_server_http_failure_remains_fatal(status: int | None) -> None:
+    service = UnifiedAcademicSyncService(
+        _Siga(),
+        _Moodle([_course()]),
+        _Plans({"ele028": MoodleUnavailable(upstream_status=status)}),
+        _Reconciler({}),
+    )
+    with pytest.raises(MoodleUnavailable):
+        service.sync("user", now=42)
+
+
+def test_plan_reconciliation_failure_details_are_logged() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    error = InvalidTeachingPlanReconciliation(
+        "lesson_duration_mismatch", course_id="ele028", duration_minutes=60
+    )
+    service = UnifiedAcademicSyncService(
+        _Siga(),
+        _Moodle([_course()]),
+        _Plans({"ele028": error}),
+        _Reconciler({}),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    )
+
+    result = service.sync("user", now=42)
+
+    assert result["teaching_plans"]["review_required"] == 1
+    failure = next(fields for event, fields in events if event == "academic_sync_course_failed")
+    assert failure["reason"] == "lesson_duration_mismatch"
+    assert failure["course_id"] == "ele028"
+    assert failure["duration_minutes"] == 60
+
+
 def test_plan_firestore_unavailable_remains_fatal() -> None:
     service = UnifiedAcademicSyncService(
         _Siga(), _Moodle([_course()]), _Plans({"ele028": FirestoreUnavailable()}), _Reconciler({})
@@ -577,7 +627,6 @@ def test_teaching_plan_worker_count_is_bounded() -> None:
 
 
 def test_sync_reports_duration_and_progress_for_each_slow_stage() -> None:
-    ticks = iter([0.0, 0.4, 0.4, 1.1, 1.1, 2.0, 2.0, 2.3])
     telemetry: list[tuple[str, dict[str, object]]] = []
     service = UnifiedAcademicSyncService(
         _Siga(),
@@ -585,34 +634,35 @@ def test_sync_reports_duration_and_progress_for_each_slow_stage() -> None:
         _Plans(),
         _Reconciler({"ele028": _preview()}),
         telemetry=lambda event, fields: telemetry.append((event, dict(fields))),
-        monotonic=lambda: next(ticks),
     )
 
     service.sync("user", now=42)
 
-    assert telemetry[:4] == [
-        ("academic_sync_stage_completed", {"stage": "siga", "duration_ms": 400.0}),
-        ("academic_sync_stage_completed", {"stage": "moodle", "duration_ms": 700.0}),
-        (
-            "academic_sync_stage_completed",
-            {
-                "stage": "teaching_plan_import",
-                "course_id": "ele028",
-                "course_code": "ELE028",
-                "duration_ms": 900.0,
-            },
-        ),
-        (
-            "academic_sync_stage_completed",
-            {
-                "stage": "teaching_plan_reconciliation",
-                "course_id": "ele028",
-                "course_code": "ELE028",
-                "duration_ms": 300.0,
-            },
-        ),
-    ]
-    assert telemetry[4][0] == "academic_sync_lineage"
+    completed = {
+        fields["stage"]: fields
+        for event, fields in telemetry
+        if event == "academic_sync_stage_completed"
+    }
+    assert {"siga", "moodle", "teaching_plan_import", "teaching_plan_reconciliation"} <= set(
+        completed
+    )
+    assert all(
+        isinstance(completed[stage]["duration_ms"], (int, float))
+        and completed[stage]["duration_ms"] >= 0
+        for stage in ("siga", "moodle", "teaching_plan_import", "teaching_plan_reconciliation")
+    )
+    dispatch_index = next(
+        index
+        for index, (event, _) in enumerate(telemetry)
+        if event == "academic_sync_plans_dispatched"
+    )
+    moodle_index = next(
+        index
+        for index, (event, fields) in enumerate(telemetry)
+        if event == "academic_sync_stage_completed" and fields.get("stage") == "moodle"
+    )
+    assert dispatch_index < moodle_index
+    lineage = next(fields for event, fields in telemetry if event == "academic_sync_lineage")
     expected = {
         "source": "teaching_plan",
         "dataset": "assessments_and_schedule",
@@ -624,16 +674,139 @@ def test_sync_reports_duration_and_progress_for_each_slow_stage() -> None:
         "review_required": 0,
         "overlap_policy": "plan_assessments_reconcile_into_course_dates",
     }
-    assert {key: telemetry[4][1][key] for key in expected} == expected
+    assert {key: lineage[key] for key in expected} == expected
     diario_endpoint = (
         "GET/POST https://sistemas.ufmg.br/diario/JasperServlet "
         "(official Diário document/transition)"
     )
-    assert diario_endpoint in telemetry[4][1]["endpoints"]
+    assert diario_endpoint in lineage["endpoints"]
     assert any(
         destination["path"] == "courses/{course_id}/sessions/{session_id}"
-        for destination in telemetry[4][1]["destinations"]
+        for destination in lineage["destinations"]
     )
+
+
+def test_plan_import_starts_as_soon_as_content_discovery_completes() -> None:
+    plan_started = Event()
+
+    class Plans(_Plans):
+        def import_plan(self, *args, **kwargs):
+            plan_started.set()
+            return {"plan": "deferred"}
+
+    class Moodle(_Moodle):
+        def sync(self, user_id, *, now, on_content_discovered=None):
+            assert on_content_discovered is not None
+            on_content_discovered({"courses": self.courses})
+            assert plan_started.wait(timeout=2)
+            return super().sync(user_id, now=now)
+
+    result = UnifiedAcademicSyncService(
+        _Siga(),
+        Moodle([_course()]),
+        Plans(),
+        _Reconciler({"ele028": _preview()}),
+        plan_workers=2,
+    ).sync("user", now=42)
+
+    assert plan_started.is_set()
+    assert result["teaching_plans"]["unchanged"] == 1
+
+
+def test_plan_dispatch_ignores_repeated_content_notifications() -> None:
+    class Moodle(_Moodle):
+        def sync(self, user_id, *, now, on_content_discovered=None):
+            assert on_content_discovered is not None
+            content = {"courses": self.courses}
+            on_content_discovered(content)
+            on_content_discovered(content)
+            return {"dates": {}, "content": content, "capabilities": {}}
+
+    result = UnifiedAcademicSyncService(
+        _Siga(), Moodle([_course()]), _Plans(), _Reconciler({"ele028": _preview()}), plan_workers=2
+    ).sync("user", now=42)
+
+    assert result["teaching_plans"]["available"] == 1
+    assert result["teaching_plans"]["unchanged"] == 1
+
+
+@pytest.mark.parametrize("courses", ["not-a-list", [None]])
+def test_plan_dispatch_rejects_invalid_discovered_course_list(courses) -> None:
+    class Moodle(_Moodle):
+        def sync(self, user_id, *, now, on_content_discovered=None):
+            assert on_content_discovered is not None
+            on_content_discovered({"courses": courses})
+            raise AssertionError("invalid discovery must stop the sync")
+
+    with pytest.raises(ValueError, match="invalid discovered teaching plan courses"):
+        UnifiedAcademicSyncService(
+            _Siga(), Moodle([]), _Plans(), _Reconciler({}), plan_workers=2
+        ).sync("user", now=42)
+
+
+def test_plan_dispatch_falls_back_to_returned_content_when_callback_is_not_called():
+    class Moodle(_Moodle):
+        def sync(self, user_id, *, now, on_content_discovered=None):
+            return {"dates": {}, "content": {"courses": self.courses}, "capabilities": {}}
+
+    result = UnifiedAcademicSyncService(
+        _Siga(), Moodle([_course()]), _Plans(), _Reconciler({"ele028": _preview()}), plan_workers=2
+    ).sync("user", now=42)
+
+    assert result["teaching_plans"]["available"] == 1
+    assert result["teaching_plans"]["unchanged"] == 1
+
+
+def test_sync_starts_moodle_after_course_import_without_waiting_for_full_siga_stage():
+    moodle_started = Event()
+
+    class Siga(_Siga):
+        def sync_siga(self, user_id, *, now, on_courses_imported=None):
+            assert on_courses_imported is not None
+            on_courses_imported()
+            assert moodle_started.wait(timeout=2)
+            return {"courses": {"created": 1}, "schedules": {"updated": 1}}
+
+    class Moodle(_Moodle):
+        def sync(self, user_id, *, now, on_content_discovered=None):
+            moodle_started.set()
+            return super().sync(user_id, now=now, on_content_discovered=on_content_discovered)
+
+    result = UnifiedAcademicSyncService(
+        Siga(), Moodle([]), _Plans(), _Reconciler({}), plan_workers=1
+    ).sync("user", now=42)
+
+    assert moodle_started.is_set()
+    assert result["moodle"]["content"]["candidate_total"] == 3
+
+
+def test_siga_callback_can_be_repeated_without_starting_moodle_twice():
+    class Siga(_Siga):
+        def sync_siga(self, user_id, *, now, on_courses_imported=None):
+            assert on_courses_imported is not None
+            on_courses_imported()
+            on_courses_imported()
+            return {"courses": {}, "schedules": {}}
+
+    moodle = _Moodle([])
+    UnifiedAcademicSyncService(Siga(), moodle, _Plans(), _Reconciler({})).sync("user", now=42)
+
+    assert moodle.calls == 1
+
+
+def test_sync_starts_moodle_after_siga_returns_without_course_callback():
+    class Siga(_Siga):
+        def sync_siga(self, user_id, *, now, on_courses_imported=None):
+            assert on_courses_imported is not None
+            return {"courses": {}, "schedules": {}}
+
+    moodle = _Moodle([])
+    result = UnifiedAcademicSyncService(
+        Siga(), moodle, _Plans(), _Reconciler({})
+    ).sync("user", now=42)
+
+    assert moodle.calls == 1
+    assert result["moodle"]["content"]["candidate_total"] == 3
 
 
 def test_deferred_plan_does_not_repeat_reconciliation_or_create_false_review_errors():

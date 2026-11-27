@@ -62,7 +62,13 @@ class UFMGSyncService:
         result["dates"] = self._dates.import_dates(user_id, now=now)
         return result
 
-    def sync_siga(self, user_id: str, *, now: int) -> dict[str, object]:
+    def sync_siga(
+        self,
+        user_id: str,
+        *,
+        now: int,
+        on_courses_imported: Callable[[], None] | None = None,
+    ) -> dict[str, object]:
         """Synchronize disciplines and schedules from one SIGA snapshot."""
 
         session = self._timed("ufmg_session_load", lambda: self._sessions.load(user_id, now=now))
@@ -80,6 +86,8 @@ class UFMGSyncService:
         course_result = self._timed(
             "siga_course_import", lambda: self._courses.import_enrollments(enrollments)
         )
+        if on_courses_imported is not None:
+            on_courses_imported()
         schedule_result = self._timed(
             "siga_schedule_import",
             lambda: self._schedules.import_enrollments(enrollments, user_id=user_id),

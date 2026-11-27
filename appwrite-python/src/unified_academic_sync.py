@@ -1,7 +1,7 @@
 """Orchestrate one bounded academic sync and surface only reviewable exceptions."""
 
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from time import monotonic
 from typing import Protocol, cast
@@ -28,11 +28,23 @@ _FATAL_FAILURES = (
 
 
 class _SigaSync(Protocol):
-    def sync_siga(self, user_id: str, *, now: int) -> dict[str, object]: ...
+    def sync_siga(
+        self,
+        user_id: str,
+        *,
+        now: int,
+        on_courses_imported: Callable[[], None] | None = None,
+    ) -> dict[str, object]: ...
 
 
 class _MoodleSync(Protocol):
-    def sync(self, user_id: str, *, now: int) -> dict[str, object]: ...
+    def sync(
+        self,
+        user_id: str,
+        *,
+        now: int,
+        on_content_discovered: Callable[[dict[str, object]], None] | None = None,
+    ) -> dict[str, object]: ...
 
 
 class _PlanImporter(Protocol):
@@ -76,11 +88,6 @@ class UnifiedAcademicSyncService:
         self._plan_workers = plan_workers
 
     def sync(self, user_id: str, *, now: int) -> dict[str, object]:
-        siga = self._timed("siga", lambda: self._siga.sync_siga(user_id, now=now))
-        moodle = self._timed("moodle", lambda: self._moodle.sync(user_id, now=now))
-        content = cast(dict[str, object], moodle["content"])
-        courses = cast(list[dict[str, object]], content["courses"])
-
         summary = {
             "available": 0,
             "imported": 0,
@@ -89,29 +96,88 @@ class UnifiedAcademicSyncService:
             "review_required": 0,
         }
         exceptions: list[dict[str, object]] = []
-        pending: list[tuple[dict[str, object], int]] = []
-        for course in courses:
-            candidates = _canonical_teaching_plans(course)
-            if not candidates:
-                continue
-            summary["available"] += 1
-            if len(candidates) != 1:
-                summary["review_required"] += 1
-                exceptions.append(_exception(course, "ambiguous_teaching_plan", len(candidates)))
-                continue
-            pending.append((course, int(cast(str, candidates[0]["source_id"]))))
+        plan_futures: list[Future[dict[str, object]]] = []
+        plans_started = False
+        moodle_future: Future[dict[str, object]] | None = None
 
-        # Plans are independent after content discovery.  Keep the default
-        # serial mode for embedders/tests, while production opts into a small
-        # bounded pool so one slow Diário report cannot hold every other plan.
+        def start_plans(content: dict[str, object], pool: ThreadPoolExecutor) -> None:
+            nonlocal plans_started
+            if plans_started:
+                return
+            plans_started = True
+            courses = content.get("courses")
+            if not isinstance(courses, list) or any(not isinstance(item, dict) for item in courses):
+                raise ValueError("invalid discovered teaching plan courses")
+            pending: list[tuple[dict[str, object], int]] = []
+            for course in cast(list[dict[str, object]], courses):
+                candidates = _canonical_teaching_plans(course)
+                if not candidates:
+                    continue
+                summary["available"] += 1
+                if len(candidates) != 1:
+                    summary["review_required"] += 1
+                    exceptions.append(
+                        _exception(course, "ambiguous_teaching_plan", len(candidates))
+                    )
+                    continue
+                pending.append((course, int(cast(str, candidates[0]["source_id"]))))
+            self._emit(
+                "academic_sync_plans_dispatched",
+                {
+                    "plan_count": len(pending),
+                    "ambiguous_count": summary["review_required"],
+                    "dependency": "moodle_content_discovery",
+                    "parallel_with": ["moodle_date_import", "moodle_activity_snapshots"],
+                    "workers": self._plan_workers,
+                },
+            )
+            plan_futures.extend(
+                pool.submit(self._sync_one_plan, user_id, course, source_id, now)
+                for course, source_id in pending
+            )
+
         with ThreadPoolExecutor(
             max_workers=self._plan_workers, thread_name_prefix="plan-sync"
         ) as pool:
-            futures = [
-                pool.submit(self._sync_one_plan, user_id, course, source_id, now)
-                for course, source_id in pending
-            ]
-            for future in futures:
+            with ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="moodle-sync-root"
+            ) as moodle_pool:
+                def start_moodle() -> None:
+                    nonlocal moodle_future
+                    if moodle_future is not None:
+                        return
+                    self._emit(
+                        "academic_sync_moodle_dispatched",
+                        {
+                            "dependency": "siga_course_import",
+                            "parallel_with": ["siga_schedule_import"],
+                        },
+                    )
+                    moodle_future = moodle_pool.submit(
+                        self._timed,
+                        "moodle",
+                        partial(
+                            self._moodle.sync,
+                            user_id,
+                            now=now,
+                            on_content_discovered=lambda content: start_plans(content, pool),
+                        ),
+                    )
+
+                siga = self._timed(
+                    "siga",
+                    lambda: self._siga.sync_siga(
+                        user_id, now=now, on_courses_imported=start_moodle
+                    ),
+                )
+                if moodle_future is None:
+                    start_moodle()
+                assert moodle_future is not None
+                moodle = moodle_future.result()
+            content = cast(dict[str, object], moodle["content"])
+            if not plans_started:
+                start_plans(content, pool)
+            for future in plan_futures:
                 outcome = future.result()
                 outcome_summary = cast(dict[str, int], outcome["summary"])
                 for key in ("available", "imported", "applied", "unchanged", "review_required"):
@@ -141,11 +207,43 @@ class UnifiedAcademicSyncService:
                 {
                     "root": "academic_sync",
                     "nodes": [
-                        {"name": "siga", "depends_on": [], "parallel_group": None},
-                        {"name": "moodle", "depends_on": ["siga"], "parallel_group": None},
+                        {"name": "siga_enrollment_fetch", "depends_on": [], "parallel_group": None},
+                        {
+                            "name": "siga_course_import",
+                            "depends_on": ["siga_enrollment_fetch"],
+                            "parallel_group": None,
+                        },
+                        {
+                            "name": "siga_schedule_import",
+                            "depends_on": ["siga_course_import"],
+                            "parallel_group": "after_course_import",
+                        },
+                        {
+                            "name": "moodle_date_import",
+                            "depends_on": ["siga_course_import"],
+                            "parallel_group": "moodle_stages",
+                        },
+                        {
+                            "name": "moodle_content_discovery",
+                            "depends_on": ["siga_course_import"],
+                            "parallel_group": "moodle_stages",
+                        },
+                        {
+                            "name": "moodle_capability_probe",
+                            "depends_on": ["siga_course_import"],
+                            "parallel_group": "moodle_stages",
+                        },
+                        {
+                            "name": "moodle_activity_snapshots",
+                            "depends_on": [
+                                "moodle_content_discovery",
+                                "moodle_capability_probe",
+                            ],
+                            "parallel_group": "after_content_discovery",
+                        },
                         {
                             "name": "teaching_plan_import",
-                            "depends_on": ["moodle"],
+                            "depends_on": ["moodle_content_discovery"],
                             "parallel_group": "teaching_plans",
                         },
                         {
@@ -159,7 +257,7 @@ class UnifiedAcademicSyncService:
                             "parallel_group": "teaching_plans",
                         },
                     ],
-                    "join": "academic_sync_result",
+                    "join": "siga_schedule_import_moodle_stages_and_teaching_plans",
                 },
             )
         return {
