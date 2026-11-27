@@ -187,6 +187,33 @@ def test_siga_sync_fetches_once_without_contacting_moodle() -> None:
     }
 
 
+def test_siga_notifies_after_course_import_and_before_schedule_import() -> None:
+    service, _, _, courses, schedules, _ = _service(
+        datetime(2026, 8, 10, 12, tzinfo=UTC)
+    )
+    order: list[str] = []
+    import_courses = courses.import_enrollments
+    import_schedules = schedules.import_enrollments
+
+    def record_course_import(values):
+        result = import_courses(values)
+        order.append("courses")
+        return result
+
+    def record_schedule_import(values, *, user_id):
+        order.append("schedule")
+        return import_schedules(values, user_id=user_id)
+
+    courses.import_enrollments = record_course_import
+    schedules.import_enrollments = record_schedule_import
+
+    service.sync_siga(
+        "user", now=10, on_courses_imported=lambda: order.append("callback")
+    )
+
+    assert order == ["courses", "callback", "schedule"]
+
+
 def test_siga_sync_reports_the_duration_of_each_internal_stage() -> None:
     events: list[tuple[str, dict[str, object]]] = []
     ticks = iter([0.0, 0.1, 0.1, 0.7, 0.7, 0.9, 0.9, 1.2])

@@ -339,10 +339,15 @@ def test_occurrence_validation_rejects_unsupported_count_and_duration() -> None:
     unsupported = {**_row("2026-08-11"), "lesson_count": 3}
     mismatched = {**_row("2026-08-12"), "lesson_count": 1}
 
-    with pytest.raises(InvalidTeachingPlanReconciliation, match="occurrence"):
+    with pytest.raises(InvalidTeachingPlanReconciliation, match="unsupported_lesson_count"):
         _occurrence(unsupported, NOW)
-    with pytest.raises(InvalidTeachingPlanReconciliation, match="occurrence"):
+    with pytest.raises(InvalidTeachingPlanReconciliation, match="lesson_duration_mismatch"):
         _occurrence(mismatched, NOW)
+
+    unsupported_type = {**_row("2026-08-13"), "lesson_count": 2.0}
+    with pytest.raises(InvalidTeachingPlanReconciliation) as error:
+        _occurrence(unsupported_type, NOW)
+    assert error.value.details["lesson_count"] is None
 
 
 def test_source_exclusion_leaves_malformed_rows_to_strict_validation() -> None:

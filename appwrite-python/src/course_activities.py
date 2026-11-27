@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from functools import partial
 from mimetypes import guess_type
+from threading import BoundedSemaphore, Lock
 from time import monotonic
 from typing import Any, Protocol, cast
 
@@ -205,6 +206,32 @@ def _bulk_detail_needs_html_fallback(detail: dict[str, Any]) -> bool:
     )
 
 
+def _module_prefetch_covers_activities(
+    entries: list[dict[str, Any]],
+    positions: set[int],
+    *,
+    default_course_id: object,
+    details: dict[tuple[int, str], dict[str, dict[str, object]]],
+    kinds: set[str],
+) -> bool:
+    """Use the type-specific batch as the sole detail source when complete."""
+    if not positions:
+        return False
+    for position in positions:
+        entry = entries[position]
+        kind = entry.get("kind")
+        if not isinstance(kind, str) or kind not in kinds:
+            return False
+        try:
+            owner = _entry_moodle_course_id(entry, default_course_id)
+        except InvalidMoodleResponse:
+            return False
+        detail = details.get((owner, kind), {}).get(str(entry.get("source_id")))
+        if not isinstance(detail, dict) or _bulk_detail_needs_html_fallback(detail):
+            return False
+    return True
+
+
 def _clean_bulk_detail(detail: dict[str, Any]) -> dict[str, Any]:
     """Remove parser-only provenance flags before persisting a snapshot."""
 
@@ -344,6 +371,10 @@ class CourseActivityService:
             raise ValueError("invalid activity update concurrency")
         self._update_workers = update_workers
         self._catalog_reads = 0
+        self._catalog_reads_lock = Lock()
+        # Course workers each own a small activity pool. Share this limiter so
+        # their HTML fallbacks cannot multiply the Moodle request budget.
+        self._html_fallback_slots = BoundedSemaphore(self._max_workers)
 
     def _source(
         self,
@@ -361,7 +392,8 @@ class CourseActivityService:
         if entry is None:
             # Only reached outside a full sync or for courses the shared
             # discovery result did not cover; counted for read telemetry.
-            self._catalog_reads += 1
+            with self._catalog_reads_lock:
+                self._catalog_reads += 1
             catalogs = self._catalog.list_catalog([course])
             entry = catalogs[0] if catalogs else None
         if (
@@ -449,7 +481,114 @@ class CourseActivityService:
                         )
                         for course in courses
                     }
-        for course in courses:
+        summary_lock = Lock()
+        course_workers = min(4, self._max_workers, len(courses))
+        module_bulk_prefetched: dict[tuple[int, str], dict[str, dict[str, object]]] = {}
+        module_bulk_prefetched_kinds: set[str] = set()
+        batch_module_method = getattr(self._client, "fetch_activity_modules_bulk", None)
+        if (
+            self._force
+            and callable(batch_module_method)
+            and mobile_tokens is not None
+            and discovered_map is not None
+        ):
+            course_ids_by_kind: dict[str, set[int]] = {"assign": set(), "quiz": set()}
+            for item in discovered_map.values():
+                if item.get("term") != getattr(mobile_tokens, "term", None):
+                    continue
+                candidates = item.get("activity_candidates")
+                if not isinstance(candidates, list):
+                    continue
+                try:
+                    default_course_id = int(str(item.get("moodle_course_id")))
+                except (TypeError, ValueError):
+                    continue
+                for candidate in candidates:
+                    if not isinstance(candidate, dict):
+                        continue
+                    kind = candidate.get("kind")
+                    if kind not in course_ids_by_kind:
+                        continue
+                    try:
+                        course_ids_by_kind[kind].add(
+                            _entry_moodle_course_id(candidate, default_course_id)
+                        )
+                    except InvalidMoodleResponse:
+                        continue
+
+            webservice_token = getattr(mobile_tokens, "webservice_token", None)
+            private_token = getattr(mobile_tokens, "private_token", None)
+            if (
+                isinstance(webservice_token, str)
+                and isinstance(private_token, str)
+                and any(course_ids_by_kind.values())
+            ):
+
+                def fetch_module_kind(kind: str) -> tuple[str, dict[str, dict[str, object]]]:
+                    ids = sorted(course_ids_by_kind[kind])
+                    result = timed_stage(
+                        "activity_snapshot_module_bulk_prefetch",
+                        partial(
+                            batch_module_method,
+                            webservice_token=webservice_token,
+                            private_token=private_token,
+                            term=str(mobile_tokens.term),
+                            course_ids=ids,
+                            kind=kind,
+                        ),
+                        telemetry=self._telemetry,
+                        fields={"kind": kind, "course_count": len(ids), "batch": True},
+                    )
+                    if not isinstance(result, dict) or any(
+                        not isinstance(key, str) or not isinstance(value, dict)
+                        for key, value in result.items()
+                    ):
+                        raise InvalidMoodleResponse("activity_module_batch_shape")
+                    return kind, cast(dict[str, dict[str, object]], result)
+
+                available_kinds = [kind for kind, ids in course_ids_by_kind.items() if ids]
+                with ThreadPoolExecutor(
+                    max_workers=min(len(available_kinds), 2),
+                    thread_name_prefix="moodle-module-bulk",
+                ) as pool:
+                    futures = [pool.submit(fetch_module_kind, kind) for kind in available_kinds]
+                    for kind, future in zip(available_kinds, futures, strict=True):
+                        try:
+                            kind, result = future.result()
+                        except Exception as error:
+                            _emit(
+                                self._telemetry,
+                                "moodle_activity_module_bulk_prefetch_unavailable",
+                                {
+                                    "kind": kind,
+                                    "reason": type(error).__name__,
+                                    "upstream_class": _classify_upstream(error)[0],
+                                    "fallback": "per_course_bulk",
+                                },
+                            )
+                            continue
+                        module_bulk_prefetched_kinds.add(kind)
+                        for key, detail in result.items():
+                            owner, separator, source_id = key.partition(":")
+                            if not separator or not owner.isdecimal() or not source_id.isdecimal():
+                                _emit(
+                                    self._telemetry,
+                                    "moodle_activity_module_bulk_prefetch_item_rejected",
+                                    {"kind": kind, "reason": "invalid_owner_key"},
+                                )
+                                continue
+                            course_key = (int(owner), kind)
+                            module_bulk_prefetched.setdefault(course_key, {})[source_id] = detail
+                module_bulk_calls = len(module_bulk_prefetched_kinds)
+
+        def sync_course(course: dict[str, Any]) -> None:
+            nonlocal updated, reused_total, failed_activities, policy_state_reads
+            nonlocal activity_entries_seen, reused_activities, bulk_activities
+            nonlocal bulk_submission_unknown, bulk_detail_gaps, bulk_fallbacks
+            nonlocal html_activities, html_skipped, module_bulk_activities
+            nonlocal module_bulk_calls, module_bulk_failures, submission_bulk_calls
+            nonlocal submission_bulk_failures, submission_bulk_statuses
+            nonlocal updates_checked, updates_changed
             course_id = course["id"]
             fields = {
                 "course_id": course_id,
@@ -457,6 +596,8 @@ class CourseActivityService:
                 "term": course["term"],
             }
             course_started = monotonic()
+            course_pending_snapshots: list[tuple[str, dict[str, Any]]] = []
+            course_policy_updates: list[tuple[str, str, dict[str, Any]]] = []
 
             try:
                 # One snapshot read and at most one policy-state read per
@@ -473,10 +614,12 @@ class CourseActivityService:
                 policy_state: dict[str, Any] | None = None
                 if course_id in prefetched_states:
                     policy_state = prefetched_states[course_id].result()
-                    policy_state_reads += 1
+                    with summary_lock:
+                        policy_state_reads += 1
                 elif self._policy is not None and raw_previous is None:
                     policy_state = self._policy.state(course_id, "activities")
-                    policy_state_reads += 1
+                    with summary_lock:
+                        policy_state_reads += 1
                 previous_snapshot = _validate_previous(raw_previous, course["term"])
                 capture = partial(
                     self._capture_snapshot,
@@ -486,7 +629,10 @@ class CourseActivityService:
                     snapshots,
                     mobile_tokens=mobile_tokens,
                     module_bulk_capabilities=module_bulk_capabilities,
-                    pending_saves=pending_snapshots,
+                    module_bulk_prefetched=module_bulk_prefetched,
+                    module_bulk_prefetched_kinds=module_bulk_prefetched_kinds,
+                    html_fallback_slots=self._html_fallback_slots,
+                    pending_saves=course_pending_snapshots,
                     previous_snapshot=previous_snapshot,
                     discovered=discovered_map,
                 )
@@ -505,48 +651,51 @@ class CourseActivityService:
                         now=now,
                         fetch=capture,
                         force=force,
-                        defer_success=lambda course, source, state: pending_policy_updates.append(
+                        defer_success=lambda course, source, state: course_policy_updates.append(
                             (course, source, state)
                         ),
                         state=policy_state,
                     )
                 else:
                     capture_result = capture()
-                if reused:
-                    reused_total += 1
-                else:
-                    updated += 1
-                    if capture_result is not None:
-                        activity_entries_seen += _metric(capture_result, "activity_count")
-                        reused_activities += _metric(capture_result, "reused_count")
-                        bulk_activities += _metric(capture_result, "bulk_count")
-                        bulk_submission_unknown += _metric(
-                            capture_result, "bulk_submission_unknown"
-                        )
-                        bulk_detail_gaps += _metric(capture_result, "bulk_detail_gaps")
-                        bulk_fallbacks += _metric(capture_result, "bulk_fallbacks")
-                        html_activities += _metric(capture_result, "html_count")
-                        html_skipped += _metric(capture_result, "html_skipped_count")
-                        module_bulk_activities += _metric(capture_result, "module_bulk_count")
-                        module_bulk_calls += _metric(capture_result, "module_bulk_calls")
-                        module_bulk_failures += _metric(capture_result, "module_bulk_failures")
-                        submission_bulk_calls += _metric(capture_result, "submission_bulk_calls")
-                        submission_bulk_failures += _metric(
-                            capture_result, "submission_bulk_failures"
-                        )
-                        submission_bulk_statuses += _metric(
-                            capture_result, "submission_bulk_statuses"
-                        )
-                        updates_checked += _metric(capture_result, "updates_checked")
-                        updates_changed += _metric(capture_result, "updates_changed")
-                        _merge_metric_map(fallback_by_kind, capture_result, "fallback_by_kind")
-                        _merge_metric_map(fallback_reasons, capture_result, "fallback_reasons")
-                        _merge_metric_map(
-                            html_quality_counts, capture_result, "html_quality_counts"
-                        )
-                        _merge_metric_map(
-                            html_empty_field_counts, capture_result, "html_empty_field_counts"
-                        )
+                with summary_lock:
+                    if reused:
+                        reused_total += 1
+                    else:
+                        updated += 1
+                        if capture_result is not None:
+                            activity_entries_seen += _metric(capture_result, "activity_count")
+                            reused_activities += _metric(capture_result, "reused_count")
+                            bulk_activities += _metric(capture_result, "bulk_count")
+                            bulk_submission_unknown += _metric(
+                                capture_result, "bulk_submission_unknown"
+                            )
+                            bulk_detail_gaps += _metric(capture_result, "bulk_detail_gaps")
+                            bulk_fallbacks += _metric(capture_result, "bulk_fallbacks")
+                            html_activities += _metric(capture_result, "html_count")
+                            html_skipped += _metric(capture_result, "html_skipped_count")
+                            module_bulk_activities += _metric(capture_result, "module_bulk_count")
+                            module_bulk_calls += _metric(capture_result, "module_bulk_calls")
+                            module_bulk_failures += _metric(capture_result, "module_bulk_failures")
+                            submission_bulk_calls += _metric(
+                                capture_result, "submission_bulk_calls"
+                            )
+                            submission_bulk_failures += _metric(
+                                capture_result, "submission_bulk_failures"
+                            )
+                            submission_bulk_statuses += _metric(
+                                capture_result, "submission_bulk_statuses"
+                            )
+                            updates_checked += _metric(capture_result, "updates_checked")
+                            updates_changed += _metric(capture_result, "updates_changed")
+                            _merge_metric_map(fallback_by_kind, capture_result, "fallback_by_kind")
+                            _merge_metric_map(fallback_reasons, capture_result, "fallback_reasons")
+                            _merge_metric_map(
+                                html_quality_counts, capture_result, "html_quality_counts"
+                            )
+                            _merge_metric_map(
+                                html_empty_field_counts, capture_result, "html_empty_field_counts"
+                            )
                 _emit(
                     self._telemetry,
                     "activity_snapshot_course_decision",
@@ -562,23 +711,24 @@ class CourseActivityService:
                     },
                 )
             except Exception as error:
-                if isinstance(error, ActivitySnapshotCaptureFailed):
-                    reason = error.first_reason
-                    failed_activities += error.failed_count
-                    _merge_metric_map(html_quality_counts, error.metrics, "html_quality_counts")
-                    _merge_metric_map(
-                        html_empty_field_counts, error.metrics, "html_empty_field_counts"
-                    )
-                elif isinstance(error, InvalidMoodleResponse):
-                    reason = error.reason
-                else:
-                    reason = type(error).__name__
-                issue = {
-                    **fields,
-                    "reason": reason,
-                    "retained_previous": True,
-                }
-                failed.append(issue)
+                with summary_lock:
+                    if isinstance(error, ActivitySnapshotCaptureFailed):
+                        reason = error.first_reason
+                        failed_activities += error.failed_count
+                        _merge_metric_map(html_quality_counts, error.metrics, "html_quality_counts")
+                        _merge_metric_map(
+                            html_empty_field_counts, error.metrics, "html_empty_field_counts"
+                        )
+                    elif isinstance(error, InvalidMoodleResponse):
+                        reason = error.reason
+                    else:
+                        reason = type(error).__name__
+                    issue = {
+                        **fields,
+                        "reason": reason,
+                        "retained_previous": True,
+                    }
+                    failed.append(issue)
                 _emit(self._telemetry, "activity_snapshot_sync_failed", issue)
                 _emit(
                     self._telemetry,
@@ -592,6 +742,15 @@ class CourseActivityService:
                         "consumer": "discipline_activity_view_and_offline_snapshot",
                     },
                 )
+            with summary_lock:
+                pending_snapshots.extend(course_pending_snapshots)
+                pending_policy_updates.extend(course_policy_updates)
+
+        if courses:
+            with ThreadPoolExecutor(
+                max_workers=course_workers, thread_name_prefix="moodle-course-snapshot"
+            ) as pool:
+                list(pool.map(sync_course, courses))
         if pending_snapshots:
             payload_bytes = sum(
                 len(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode())
@@ -680,6 +839,7 @@ class CourseActivityService:
                 "html_skipped_count": html_skipped,
                 "module_bulk_activities": module_bulk_activities,
                 "module_bulk_calls": module_bulk_calls,
+                "module_bulk_batched_calls": len(module_bulk_prefetched_kinds),
                 "module_bulk_failures": module_bulk_failures,
                 "submission_bulk_calls": submission_bulk_calls,
                 "submission_bulk_failures": submission_bulk_failures,
@@ -692,6 +852,7 @@ class CourseActivityService:
                 "html_quality_counts": html_quality_counts,
                 "html_empty_field_counts": html_empty_field_counts,
                 "concurrency": self._max_workers,
+                "course_concurrency": course_workers,
                 "duration_ms": round((monotonic() - started) * 1000),
             },
         )
@@ -714,6 +875,9 @@ class CourseActivityService:
         pending_saves: list[tuple[str, dict[str, Any]]] | None = None,
         previous_snapshot: Any = _PREVIOUS_UNSET,
         discovered: dict[str, dict[str, object]] | None = None,
+        module_bulk_prefetched: dict[tuple[int, str], dict[str, dict[str, object]]] | None = None,
+        module_bulk_prefetched_kinds: set[str] | None = None,
+        html_fallback_slots: BoundedSemaphore | None = None,
     ) -> dict[str, object]:
         course_id = course["id"]
         fields = {"course_id": course_id, "course_code": course["code"], "term": course["term"]}
@@ -848,12 +1012,36 @@ class CourseActivityService:
         html_fallback_reasons: dict[int, str] = {
             position: "no_structured_detail" for position in changed_positions
         }
+        bulk_gap_fields: dict[int, list[str]] = {}
         html_quality_counts: dict[str, int] = {}
         html_empty_field_counts: dict[str, int] = {}
         bulk_method = getattr(self._client, "fetch_course_activity_bulk", None)
         bulk_details_complete = getattr(self._client, "bulk_activity_details_complete", True)
+        module_batch_complete = _module_prefetch_covers_activities(
+            entries,
+            changed_positions,
+            default_course_id=index["moodle_course_id"],
+            details=module_bulk_prefetched or {},
+            kinds=module_bulk_prefetched_kinds or set(),
+        )
+        if module_batch_complete:
+            kinds_count: dict[str, int] = {}
+            for position in changed_positions:
+                kind = str(entries[position].get("kind", "unknown"))
+                kinds_count[kind] = kinds_count.get(kind, 0) + 1
+            _emit(
+                self._telemetry,
+                "moodle_activity_course_bulk_skipped",
+                {
+                    **fields,
+                    "reason": "module_bulk_prefetch_complete",
+                    "activity_count": len(changed_positions),
+                    "kind_counts": kinds_count,
+                },
+            )
         if (
             changed_positions
+            and not module_batch_complete
             and callable(bulk_method)
             and bulk_details_complete is True
             and mobile_tokens is not None
@@ -899,6 +1087,7 @@ class CourseActivityService:
                                 bulk_detail_gaps += 1
                                 reason = "activity_missing_from_bulk_response"
                                 html_fallback_reasons[position] = reason
+                                bulk_gap_fields[position] = ["activity"]
                                 _emit(
                                     self._telemetry,
                                     "moodle_activity_bulk_detail_gap",
@@ -908,7 +1097,7 @@ class CourseActivityService:
                                         "kind": entry["kind"],
                                         "reason": reason,
                                         "missing_fields": ["activity"],
-                                        "resolution_stage": "pending",
+                                        "resolution_stage": "awaiting_module_bulk_or_html",
                                     },
                                 )
                                 continue
@@ -924,6 +1113,7 @@ class CourseActivityService:
                                     )
                                     if detail.get(flag) is False
                                 ]
+                                bulk_gap_fields[position] = missing_fields
                                 _emit(
                                     self._telemetry,
                                     "moodle_activity_bulk_detail_gap",
@@ -933,7 +1123,7 @@ class CourseActivityService:
                                         "kind": entry["kind"],
                                         "reason": reason,
                                         "missing_fields": missing_fields,
-                                        "resolution_stage": "pending",
+                                        "resolution_stage": "awaiting_module_bulk_or_html",
                                     },
                                 )
                                 continue
@@ -1015,25 +1205,34 @@ class CourseActivityService:
                             },
                         )
                         continue
-                    module_bulk_calls += 1
+                    prefetched_kind = (
+                        module_bulk_prefetched_kinds is not None
+                        and kind in module_bulk_prefetched_kinds
+                    )
+                    if not prefetched_kind:
+                        module_bulk_calls += 1
                     try:
-                        module_details = timed_stage(
-                            "activity_snapshot_module_bulk_capture",
-                            partial(
-                                module_bulk_method,
-                                webservice_token=webservice_token,
-                                private_token=private_token,
-                                term=course["term"],
-                                course_id=moodle_course_id,
-                                kind=kind,
-                            ),
-                            telemetry=self._telemetry,
-                            fields={
-                                **fields,
-                                "moodle_course_id": moodle_course_id,
-                                "kind": kind,
-                                "activity_count": len(positions),
-                            },
+                        module_details = (
+                            (module_bulk_prefetched or {}).get((moodle_course_id, kind), {})
+                            if prefetched_kind
+                            else timed_stage(
+                                "activity_snapshot_module_bulk_capture",
+                                partial(
+                                    module_bulk_method,
+                                    webservice_token=webservice_token,
+                                    private_token=private_token,
+                                    term=course["term"],
+                                    course_id=moodle_course_id,
+                                    kind=kind,
+                                ),
+                                telemetry=self._telemetry,
+                                fields={
+                                    **fields,
+                                    "moodle_course_id": moodle_course_id,
+                                    "kind": kind,
+                                    "activity_count": len(positions),
+                                },
+                            )
                         )
                         if not isinstance(module_details, dict):
                             raise InvalidMoodleResponse("activity_module_bulk_shape")
@@ -1124,7 +1323,11 @@ class CourseActivityService:
                                 **fields,
                                 "moodle_course_id": moodle_course_id,
                                 "kind": kind,
-                                "reason": type(error).__name__,
+                                "reason": (
+                                    error.reason
+                                    if isinstance(error, InvalidMoodleResponse)
+                                    else type(error).__name__
+                                ),
                                 "upstream_class": _classify_upstream(error)[0],
                                 "activity_count": len(positions),
                             },
@@ -1178,6 +1381,32 @@ class CourseActivityService:
                         html_positions.discard(position)
                         module_bulk_count += 1
                         module_bulk_successes += 1
+                        unresolved_fields = bulk_gap_fields.pop(position, None)
+                        if unresolved_fields:
+                            _emit(
+                                self._telemetry,
+                                "moodle_activity_bulk_detail_resolved",
+                                {
+                                    **fields,
+                                    "source_id": entry["source_id"],
+                                    "kind": kind,
+                                    "missing_fields": unresolved_fields,
+                                    "resolved_by": "module_bulk",
+                                    "endpoint": (
+                                        "mod_assign_get_assignments"
+                                        if kind == "assign"
+                                        else "mod_quiz_get_quizzes_by_courses"
+                                    ),
+                                    "description_present": (
+                                        detail.get("_bulk_description_present") is True
+                                    ),
+                                    "attachment_count": len(
+                                        clean_detail.get("attachments", [])
+                                        if isinstance(clean_detail.get("attachments"), list)
+                                        else []
+                                    ),
+                                },
+                            )
                         bulk_submission_unknown += int(
                             clean_detail.get("submission_state") == "unknown"
                         )
@@ -1221,34 +1450,66 @@ class CourseActivityService:
             started = monotonic()
             fallback_reason = html_fallback_reasons.get(position, "no_structured_detail")
             try:
-                detail = timed_stage(
+                def fetch_html_detail() -> tuple[dict[str, Any], int]:
+                    slots = html_fallback_slots or self._html_fallback_slots
+                    wait_started = monotonic()
+                    slots.acquire()
+                    wait_ms = round((monotonic() - wait_started) * 1000)
+                    try:
+                        result = self._client.fetch_activity(
+                            session.token,
+                            term=course["term"],
+                            source_id=int(entry["source_id"]),
+                            kind=str(entry["kind"]),
+                        )
+                    finally:
+                        slots.release()
+                    if not isinstance(result, dict):
+                        raise InvalidMoodleResponse("activity_page_shape")
+                    return result, wait_ms
+
+                detail, concurrency_wait_ms = timed_stage(
                     "activity_snapshot_capture",
-                    partial(
-                        self._client.fetch_activity,
-                        session.token,
-                        term=course["term"],
-                        source_id=int(entry["source_id"]),
-                        kind=str(entry["kind"]),
-                    ),
+                    fetch_html_detail,
                     telemetry=self._telemetry,
                     fields={
                         **fields,
                         "source_id": entry["source_id"],
                         "kind": entry["kind"],
                         "title": entry["title"],
+                        "html_fallback_concurrency_limit": self._max_workers,
                     },
                 )
-                if not isinstance(detail, dict):
-                    raise InvalidMoodleResponse("activity_page_shape")
                 quality = _html_detail_quality(detail)
                 quality.update(
                     {
                         "source_id": entry["source_id"],
                         "kind": entry["kind"],
                         "fallback_reason": fallback_reason,
+                        "concurrency_wait_ms": concurrency_wait_ms,
                         "duration_ms": round((monotonic() - started) * 1000),
                     }
                 )
+                unresolved_fields = bulk_gap_fields.pop(position, None)
+                if unresolved_fields:
+                    _emit(
+                        self._telemetry,
+                        "moodle_activity_bulk_detail_resolved",
+                        {
+                            **fields,
+                            "source_id": entry["source_id"],
+                            "kind": entry["kind"],
+                            "missing_fields": unresolved_fields,
+                            "resolved_by": "html_detail",
+                            "outcome": "succeeded",
+                            "description_present": bool(str(detail.get("description", "")).strip()),
+                            "attachment_count": len(
+                                detail.get("attachments", [])
+                                if isinstance(detail.get("attachments"), list)
+                                else []
+                            ),
+                        },
+                    )
                 _emit(
                     self._telemetry,
                     "moodle_activity_html_detail_result",
@@ -1307,6 +1568,21 @@ class CourseActivityService:
                     "error_reason": reason,
                     "upstream_class": upstream_class,
                 }
+                unresolved_fields = bulk_gap_fields.pop(position, None)
+                if unresolved_fields:
+                    _emit(
+                        self._telemetry,
+                        "moodle_activity_bulk_detail_resolved",
+                        {
+                            **fields,
+                            "source_id": entry["source_id"],
+                            "kind": entry["kind"],
+                            "missing_fields": unresolved_fields,
+                            "resolved_by": "html_detail",
+                            "outcome": "failed",
+                            "reason": reason,
+                        },
+                    )
                 _emit(self._telemetry, "moodle_activity_html_detail_result", quality)
                 return failure, quality
 
@@ -1319,9 +1595,7 @@ class CourseActivityService:
                 html_fallback_reasons.get(position, "unknown"),
             )
             html_fallback_groups[fallback_key] = html_fallback_groups.get(fallback_key, 0) + 1
-            _count_fallback(
-                fallback_by_kind, fallback_reasons, fallback_key[0], fallback_key[1]
-            )
+            _count_fallback(fallback_by_kind, fallback_reasons, fallback_key[0], fallback_key[1])
         for (kind, reason), activity_count in sorted(html_fallback_groups.items()):
             _emit(
                 self._telemetry,

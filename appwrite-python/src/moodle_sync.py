@@ -56,7 +56,13 @@ class MoodleSyncService:
         self._monotonic = monotonic
         self._parallel_stages = parallel_stages
 
-    def sync(self, user_id: str, *, now: int) -> dict[str, object]:
+    def sync(
+        self,
+        user_id: str,
+        *,
+        now: int,
+        on_content_discovered: Callable[[dict[str, object]], None] | None = None,
+    ) -> dict[str, object]:
         if self._parallel_stages:
             snapshot_sync = self._snapshot_sync
             with ThreadPoolExecutor(max_workers=4, thread_name_prefix="moodle-sync") as pool:
@@ -76,6 +82,8 @@ class MoodleSyncService:
                     now,
                 )
                 content = content_future.result()
+                if on_content_discovered is not None:
+                    on_content_discovered(content)
                 # Credential probing may provision the current-term mobile
                 # token.  Snapshots must start only after that write is done;
                 # calendar/content discovery can remain concurrent.
@@ -96,6 +104,8 @@ class MoodleSyncService:
             content = self._timed(
                 "moodle_content_discovery", lambda: self._content.discover(user_id, now=now)
             )
+            if on_content_discovered is not None:
+                on_content_discovered(content)
             capabilities = self._probe_capabilities(user_id, now)
             snapshots = self._snapshot_result(None, user_id=user_id, now=now, content=content)
         _emit(

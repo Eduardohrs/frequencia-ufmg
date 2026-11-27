@@ -161,6 +161,53 @@ def test_incomplete_course_bulk_uses_module_bulk_before_html_fallback():
     assert summary["module_bulk_activities"] == 1
     assert summary["module_bulk_calls"] == 1
     assert summary["html_activities"] == 0
+    resolved = next(
+        fields for event, fields in logs if event == "moodle_activity_bulk_detail_resolved"
+    )
+    assert resolved["source_id"] == "1"
+    assert resolved["resolved_by"] == "module_bulk"
+    assert resolved["endpoint"] == "mod_assign_get_assignments"
+
+
+def test_module_bulk_can_resolve_without_a_generic_bulk_gap():
+    class ModuleOnlyClient(_IncrementalClient):
+        bulk_activity_details_complete = False
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "Structured description",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": True,
+                    "_bulk_attachments_present": True,
+                }
+            }
+
+    service, _client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda *, source_id, kind: {"description": "HTML", "attachments": []},
+        client_class=ModuleOnlyClient,
+    )
+
+    assert service.sync_snapshots("owner", now=1, snapshots=_Snapshots())["failed"] == 0
+    assert not any(event == "moodle_activity_bulk_detail_resolved" for event, _ in logs)
+
+
+def test_empty_course_list_skips_course_worker_pool():
+    service, _client, logs = _build([], {}, lambda **_kwargs: {})
+
+    assert service.sync_snapshots("owner", now=1, snapshots=_Snapshots()) == {
+        "updated": 0,
+        "failed": 0,
+        "failed_courses": [],
+    }
+    summary = next(fields for event, fields in logs if event == "activity_snapshots_synced")
+    assert summary["course_concurrency"] == 0
 
 
 def test_snapshot_reuses_activity_index_shared_by_content_discovery():
@@ -886,6 +933,8 @@ def _build(
     update_workers=1,
     logs=None,
     client_class=_Client,
+    force=False,
+    mobile_tokens=True,
 ):
     logs = [] if logs is None else logs
     client = client_class(index, fetch)
@@ -901,15 +950,315 @@ def _build(
         SimpleNamespace(load=lambda user_id, *, now: SimpleNamespace(token="token-safe")),
         client,
         SimpleNamespace(
-            load=lambda *args, **kwargs: SimpleNamespace(
-                term="2026-2", webservice_token="w" * 32, private_token="p" * 32
+            load=lambda *args, **kwargs: (
+                SimpleNamespace(term="2026-2", webservice_token="w" * 32, private_token="p" * 32)
+                if mobile_tokens
+                else None
             )
         ),
         telemetry=lambda event, fields: logs.append((event, dict(fields))),
+        force=force,
         max_workers=max_workers,
         update_workers=update_workers,
     )
     return service, client, logs
+
+
+def test_force_sync_batches_module_details_across_courses_by_owner():
+    class BatchClient(_IncrementalClient):
+        def __init__(self, index, fetch):
+            super().__init__(index, fetch)
+            self.module_batches = []
+            self.per_course_module_calls = []
+            self.course_bulk_calls = []
+
+        def fetch_activity_modules_bulk(self, **kwargs):
+            self.module_batches.append((kwargs["kind"], tuple(kwargs["course_ids"])))
+            return {
+                "77:1": {
+                    "description": "Assignment description",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": True,
+                    "_bulk_attachments_present": True,
+                    "_bulk_assignment_id": 9001,
+                },
+                "88:2": {
+                    "description": "Quiz description",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": True,
+                    "_bulk_attachments_present": True,
+                },
+                "malformed": {},
+            }
+
+        def fetch_course_activity_bulk(self, **kwargs):
+            self.course_bulk_calls.append(kwargs["course_id"])
+            return {
+                "1": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                },
+                "2": {
+                    "description": "",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": False,
+                    "_bulk_attachments_present": False,
+                },
+            }
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            self.per_course_module_calls.append(kwargs)
+            raise AssertionError("successful cross-course batches should be reused")
+
+        def fetch_assignment_submissions_bulk(self, **kwargs):
+            return {
+                "9001": {
+                    "submission_state": "not_submitted",
+                    "submission_text": "Nenhum envio",
+                    "_bulk_submission_complete": True,
+                }
+            }
+
+    courses = [_course("poo"), _course("calc")]
+    index = {"ELEpoo": [_entry(1)], "ELEcalc": [_entry(2, kind="quiz")]}
+    service, client, logs = _build(
+        courses,
+        index,
+        lambda **_kwargs: {"description": "HTML", "attachments": []},
+        client_class=BatchClient,
+        force=True,
+    )
+    discovered = [
+        {
+            "course_id": "poo",
+            "status": "found",
+            "moodle_course_id": "77",
+            "term": "2026-2",
+            "activity_candidates": [_entry(1)],
+        },
+        {
+            "course_id": "calc",
+            "status": "found",
+            "moodle_course_id": "88",
+            "term": "2026-2",
+            "activity_candidates": [_entry(2, kind="quiz")],
+        },
+        {
+            "course_id": "wrong-term",
+            "status": "found",
+            "moodle_course_id": "99",
+            "term": "2025-1",
+            "activity_candidates": [_entry(3)],
+        },
+        {
+            "course_id": "no-index",
+            "status": "found",
+            "moodle_course_id": "100",
+            "term": "2026-2",
+            "activity_candidates": None,
+        },
+        {
+            "course_id": "unsupported-index",
+            "status": "found",
+            "moodle_course_id": "101",
+            "term": "2026-2",
+            "activity_candidates": [
+                "not an activity",
+                _entry(4, kind="unsupported"),
+                {**_entry(5), "moodle_course_id": "not-a-course-id"},
+            ],
+        },
+        {
+            "course_id": "invalid-course-id",
+            "status": "found",
+            "moodle_course_id": "not-a-course-id",
+            "term": "2026-2",
+            "activity_candidates": [_entry(6)],
+        },
+    ]
+
+    result = service.sync_snapshots("owner", now=1, snapshots=_Snapshots(), discovered=discovered)
+
+    assert result["failed"] == 0
+    assert client.module_batches == [("assign", (77,)), ("quiz", (88,))]
+    assert client.per_course_module_calls == []
+    assert client.course_bulk_calls == []
+    summary = next(fields for event, fields in logs if event == "activity_snapshots_synced")
+    assert summary["module_bulk_calls"] == 2
+    assert summary["module_bulk_batched_calls"] == 2
+    skipped = [fields for event, fields in logs if event == "moodle_activity_course_bulk_skipped"]
+    assert len(skipped) == 2
+    assert all(fields["reason"] == "module_bulk_prefetch_complete" for fields in skipped)
+    assert any(event == "moodle_activity_module_bulk_prefetch_item_rejected" for event, _ in logs)
+
+
+def test_module_bulk_prefetch_coverage_requires_every_indexed_detail():
+    entry = _entry(1)
+    complete = {
+        (77, "assign"): {
+            "1": {"_bulk_description_present": True, "_bulk_attachments_present": True}
+        }
+    }
+    assert activities_module._module_prefetch_covers_activities(
+        [entry], {0}, default_course_id="77", details=complete, kinds={"assign"}
+    )
+    assert not activities_module._module_prefetch_covers_activities(
+        [entry], set(), default_course_id="77", details=complete, kinds={"assign"}
+    )
+    assert not activities_module._module_prefetch_covers_activities(
+        [{**entry, "kind": None}], {0}, default_course_id="77", details=complete, kinds={"assign"}
+    )
+    assert not activities_module._module_prefetch_covers_activities(
+        [{**entry, "kind": "resource"}],
+        {0},
+        default_course_id="77",
+        details=complete,
+        kinds={"assign"},
+    )
+    assert not activities_module._module_prefetch_covers_activities(
+        [{**entry, "moodle_course_id": "invalid"}],
+        {0},
+        default_course_id="77",
+        details=complete,
+        kinds={"assign"},
+    )
+    assert not activities_module._module_prefetch_covers_activities(
+        [entry], {0}, default_course_id="77", details={}, kinds={"assign"}
+    )
+    incomplete = {
+        (77, "assign"): {
+            "1": {"_bulk_description_present": False, "_bulk_attachments_present": True}
+        }
+    }
+    assert not activities_module._module_prefetch_covers_activities(
+        [entry], {0}, default_course_id="77", details=incomplete, kinds={"assign"}
+    )
+def test_force_sync_falls_back_to_course_batch_when_multi_course_batch_fails():
+    class FailedBatchClient(_IncrementalClient):
+        def fetch_activity_modules_bulk(self, **_kwargs):
+            return []
+
+        def fetch_course_activity_module_bulk(self, **kwargs):
+            return {
+                "1": {
+                    "description": "Structured description",
+                    "dates_text": "",
+                    "has_due_date": False,
+                    "submission_state": "unknown",
+                    "submission_text": "",
+                    "attachments": [],
+                    "_bulk_description_present": True,
+                    "_bulk_attachments_present": True,
+                }
+            }
+
+    service, _client, logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda **_kwargs: {"description": "HTML", "attachments": []},
+        client_class=FailedBatchClient,
+        force=True,
+    )
+    result = service.sync_snapshots(
+        "owner",
+        now=1,
+        snapshots=_Snapshots(),
+        discovered=[
+            {
+                "course_id": "poo",
+                "status": "found",
+                "moodle_course_id": "77",
+                "term": "2026-2",
+                "activity_candidates": [_entry(1)],
+            }
+        ],
+    )
+
+    assert result["failed"] == 0
+    unavailable = next(
+        fields
+        for event, fields in logs
+        if event == "moodle_activity_module_bulk_prefetch_unavailable"
+    )
+    assert unavailable["kind"] == "assign"
+    assert unavailable["fallback"] == "per_course_bulk"
+
+
+def test_force_sync_skips_module_prefetch_without_saved_moodle_tokens():
+    service, client, _logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1)]},
+        lambda **_kwargs: {"description": "HTML", "attachments": []},
+        client_class=_IncrementalClient,
+        force=True,
+        mobile_tokens=False,
+    )
+    result = service.sync_snapshots(
+        "owner",
+        now=1,
+        snapshots=_Snapshots(),
+        discovered=[
+            {
+                "course_id": "poo",
+                "status": "found",
+                "moodle_course_id": "77",
+                "term": "2026-2",
+                "activity_candidates": [_entry(1)],
+            }
+        ],
+    )
+
+    assert result["failed"] == 0
+    assert client.fetch_calls == [1]
+
+
+def test_force_sync_skips_batch_prefetch_when_index_has_no_supported_modules():
+    class NoSupportedModulesClient(_IncrementalClient):
+        def fetch_activity_modules_bulk(self, **_kwargs):
+            raise AssertionError("there are no assignment or quiz modules to fetch")
+
+    service, client, _logs = _build(
+        [_course("poo")],
+        {"ELEpoo": [_entry(1, kind="unsupported")]},
+        lambda **_kwargs: {"description": "HTML", "attachments": []},
+        client_class=NoSupportedModulesClient,
+        force=True,
+    )
+    result = service.sync_snapshots(
+        "owner",
+        now=1,
+        snapshots=_Snapshots(),
+        discovered=[
+            {
+                "course_id": "poo",
+                "status": "found",
+                "moodle_course_id": "77",
+                "term": "2026-2",
+                "activity_candidates": [_entry(1, kind="unsupported")],
+            }
+        ],
+    )
+
+    assert result["failed"] == 0
+    assert client.bulk_calls == [77]
 
 
 def _bare_service(max_workers=None, update_workers=None) -> CourseActivityService:
@@ -1145,12 +1494,10 @@ def test_bulk_omissions_fall_back_to_html_without_persisting_private_flags():
     assert summary["bulk_fallbacks"] == 1
     assert summary["bulk_detail_gaps"] == 1
     assert summary["html_activities"] == 1
-    fallback = next(
-        fields for event, fields in logs if event == "moodle_activity_bulk_detail_gap"
-    )
+    fallback = next(fields for event, fields in logs if event == "moodle_activity_bulk_detail_gap")
     assert fallback["source_id"] == "1"
     assert fallback["missing_fields"] == ["description", "attachments"]
-    assert fallback["resolution_stage"] == "pending"
+    assert fallback["resolution_stage"] == "awaiting_module_bulk_or_html"
     html_started = next(
         fields for event, fields in logs if event == "moodle_activity_html_fallback_started"
     )
@@ -1162,6 +1509,12 @@ def test_bulk_omissions_fall_back_to_html_without_persisting_private_flags():
     assert html_result["fallback_reason"] == "missing_bulk_fields"
     assert html_result["description_chars"] == len("HTML instructions")
     assert html_result["attachment_count"] == 1
+    resolved = next(
+        fields for event, fields in logs if event == "moodle_activity_bulk_detail_resolved"
+    )
+    assert resolved["resolved_by"] == "html_detail"
+    assert resolved["outcome"] == "succeeded"
+    assert resolved["attachment_count"] == 1
     assert snapshots.saved["poo"]["activities"][0].get("_html_response_bytes") is None
 
 
@@ -1401,9 +1754,7 @@ def test_bulk_miss_falls_back_only_for_the_missing_changed_activity():
     assert summary["bulk_fallbacks"] == 1
     assert summary["bulk_detail_gaps"] == 1
     assert summary["html_activities"] == 1
-    fallback = next(
-        fields for event, fields in logs if event == "moodle_activity_bulk_detail_gap"
-    )
+    fallback = next(fields for event, fields in logs if event == "moodle_activity_bulk_detail_gap")
     assert fallback["reason"] == "activity_missing_from_bulk_response"
 
 
@@ -1822,6 +2173,45 @@ def test_pool_never_exceeds_the_configured_max_workers(workers):
     assert peak == workers
     summary = next(f for e, f in logs if e == "activity_snapshots_synced")
     assert summary["concurrency"] == workers
+
+
+def test_html_fallback_budget_is_shared_across_parallel_course_workers():
+    courses = [_course(f"c{i}") for i in range(4)]
+    index = {course["code"]: [_entry(i) for i in range(1, 4)] for course in courses}
+    in_flight = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def fetch(*, source_id, kind):
+        nonlocal in_flight, peak
+        with lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+        time.sleep(0.02)
+        with lock:
+            in_flight -= 1
+        return {"description": f"detail {source_id}", "attachments": []}
+
+    service, client, logs = _build(
+        courses,
+        index,
+        fetch,
+        max_workers=2,
+        mobile_tokens=False,
+    )
+    result = service.sync_snapshots("owner", now=1, snapshots=_Snapshots())
+
+    assert result["updated"] == len(courses) and result["failed"] == 0
+    assert len(client.fetch_calls) == 12
+    assert peak == 2
+    captures = [
+        fields
+        for event, fields in logs
+        if event == "academic_sync_stage_completed"
+        and fields.get("stage") == "activity_snapshot_capture"
+    ]
+    assert len(captures) == 12
+    assert {fields["html_fallback_concurrency_limit"] for fields in captures} == {2}
 
 
 @pytest.mark.parametrize(

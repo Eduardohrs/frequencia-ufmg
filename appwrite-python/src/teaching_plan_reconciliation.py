@@ -15,6 +15,13 @@ MAX_OCCURRENCES = 450
 class InvalidTeachingPlanReconciliation(ValueError):
     """The plan or persisted sessions cannot be reconciled safely."""
 
+    def __init__(
+        self, reason: str = "invalid teaching plan reconciliation", **details: object
+    ) -> None:
+        self.reason = reason
+        self.details = details
+        super().__init__(reason)
+
 
 @dataclass(frozen=True)
 class TeachingPlanReconciliation:
@@ -193,14 +200,28 @@ def _occurrence(value: object, now: datetime) -> dict[str, object]:
         end_clock = time.fromisoformat(str(value["ends_at"]))
         lessons = value["lesson_count"]
         if type(lessons) is not int or lessons not in {1, 2, 4}:
-            raise ValueError
+            raise InvalidTeachingPlanReconciliation(
+                "unsupported_lesson_count",
+                occurrence_key=str(value.get("occurrence_key", "")),
+                lesson_count=lessons if type(lessons) is int else None,
+            )
         local_start = datetime.combine(day, start_clock, SAO_PAULO)
         local_end = datetime.combine(day, end_clock, SAO_PAULO)
-        if local_end - local_start != timedelta(minutes=lessons * 50):
-            raise ValueError
+        duration_minutes = int((local_end - local_start).total_seconds() // 60)
+        expected_minutes = lessons * 50
+        if duration_minutes != expected_minutes:
+            raise InvalidTeachingPlanReconciliation(
+                "lesson_duration_mismatch",
+                occurrence_key=str(value.get("occurrence_key", "")),
+                lesson_count=lessons,
+                duration_minutes=duration_minutes,
+                expected_duration_minutes=expected_minutes,
+            )
         key = f"{day.isoformat()}T{start_clock.strftime('%H:%M')}-{end_clock.strftime('%H:%M')}"
         if value["occurrence_key"] != key or day.year < 2020 or day.year > now.year + 2:
             raise ValueError
+    except InvalidTeachingPlanReconciliation:
+        raise
     except (TypeError, ValueError):
         raise InvalidTeachingPlanReconciliation("invalid teaching plan occurrence") from None
     return {

@@ -1,9 +1,11 @@
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from moodle_teaching_plan_import import MoodleTeachingPlanImportService
+from moodle_token_store import MoodleAuthorizationRequired, MoodleTokenStoreUnavailable
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
 
@@ -21,8 +23,20 @@ class _Sessions:
 
 
 class _Client:
-    def fetch_diario_plan(self, token: str, *, term: str, source_id: int) -> dict[str, object]:
+    def fetch_diario_plan(
+        self,
+        token: str,
+        *,
+        term: str,
+        source_id: int,
+        course_id: str | None = None,
+        course_code: str | None = None,
+        external_url: str | None = None,
+    ) -> dict[str, object]:
         assert (token, term, source_id) == ("private", "2026-2", 701)
+        assert course_id in {None, "course-a"}
+        assert course_code in {None, "ELE631"}
+        assert external_url is None
         return {
             "term": "2026-2",
             "course_code": "ELE631",
@@ -112,6 +126,142 @@ def test_import_matches_course_and_persists_plan_and_assessments() -> None:
     }
 
 
+def test_import_uses_moodle_bulk_link_when_cached_token_is_available() -> None:
+    target = (
+        "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+        "solicitarRelatorioPlanoEnsino.do?"
+        "plt=20262&oft=1000057&tac=DIG&aac=ELE631&trm=TAPO"
+    )
+
+    class Tokens:
+        calls = 0
+
+        def load(self, _user_id: str, *, now: int) -> Any:
+            self.calls += 1
+            assert now == 123
+            return SimpleNamespace(term="2026-2", webservice_token="A" * 20)
+
+    class Client(_Client):
+        def fetch_diario_url_targets(self, *, webservice_token: str, term: str) -> dict[int, str]:
+            assert (webservice_token, term) == ("A" * 20, "2026-2")
+            return {701: target}
+
+        def fetch_diario_plan(self, token: str, **kwargs: Any) -> dict[str, object]:
+            assert kwargs["external_url"] == target
+            kwargs.pop("external_url")
+            return super().fetch_diario_plan(token, **kwargs)
+
+    tokens = Tokens()
+    service = MoodleTeachingPlanImportService(
+        _Sessions(UFMGSession("private", 1, 999), []),
+        Client(),
+        _Courses(),
+        _Plans(),
+        _Dates(),
+        tokens=tokens,
+    )
+    result = service.import_plan(
+        "user-1", course_id="course-a", term="2026-2", source_id=701, now=123
+    )
+    service.import_plan("user-1", course_id="course-a", term="2026-2", source_id=701, now=123)
+
+    assert result["plan"] == "created"
+    assert tokens.calls == 1
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [MoodleAuthorizationRequired, MoodleTokenStoreUnavailable],
+)
+def test_missing_moodle_tokens_fall_back_to_existing_plan_link_flow(
+    failure: type[Exception],
+) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+
+    class Tokens:
+        def load(self, _user_id: str, *, now: int) -> None:
+            raise failure
+
+    result = MoodleTeachingPlanImportService(
+        _Sessions(UFMGSession("private", 1, 999), []),
+        _Client(),
+        _Courses(),
+        _Plans(),
+        _Dates(),
+        tokens=Tokens(),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    ).import_plan("user-1", course_id="course-a", term="2026-2", source_id=701, now=123)
+
+    assert result["plan"] == "created"
+    assert (
+        "teaching_plan_bulk_url_fallback",
+        {"term": "2026-2", "reason": failure.__name__},
+    ) in events
+
+
+def test_missing_bulk_target_and_legacy_client_keep_old_plan_flow() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+
+    class Tokens:
+        def load(self, _user_id: str, *, now: int) -> Any:
+            return SimpleNamespace(term="2026-2", webservice_token="A" * 20)
+
+    class Client(_Client):
+        def fetch_diario_url_targets(self, *, webservice_token: str, term: str) -> dict[int, str]:
+            return {}
+
+    result = MoodleTeachingPlanImportService(
+        _Sessions(UFMGSession("private", 1, 999), []),
+        Client(),
+        _Courses(),
+        _Plans(),
+        _Dates(),
+        tokens=Tokens(),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    ).import_plan("user-1", course_id="course-a", term="2026-2", source_id=701, now=123)
+
+    assert result["plan"] == "created"
+    assert any(event == "teaching_plan_bulk_url_fallback" for event, _ in events)
+
+
+def test_client_without_bulk_lookup_keeps_legacy_plan_flow() -> None:
+    class Tokens:
+        def load(self, _user_id: str, *, now: int) -> Any:
+            return SimpleNamespace(term="2026-2", webservice_token="A" * 20)
+
+    result = MoodleTeachingPlanImportService(
+        _Sessions(UFMGSession("private", 1, 999), []),
+        _Client(),
+        _Courses(),
+        _Plans(),
+        _Dates(),
+        tokens=Tokens(),
+    ).import_plan("user-1", course_id="course-a", term="2026-2", source_id=701, now=123)
+
+    assert result["plan"] == "created"
+
+
+def test_cached_moodle_token_for_another_term_skips_bulk_lookup() -> None:
+    class Tokens:
+        def load(self, _user_id: str, *, now: int) -> Any:
+            return SimpleNamespace(term="2026-1", webservice_token="A" * 20)
+
+    class Client(_Client):
+        def fetch_diario_url_targets(self, **_kwargs: Any) -> dict[int, str]:
+            pytest.fail("wrong-term token must not be used")
+
+    result = MoodleTeachingPlanImportService(
+        _Sessions(UFMGSession("private", 1, 999), []),
+        Client(),
+        _Courses(),
+        _Plans(),
+        _Dates(),
+        tokens=Tokens(),
+    ).import_plan("user-1", course_id="course-a", term="2026-2", source_id=701, now=123)
+
+    assert result["plan"] == "created"
+
+
 def test_import_reports_where_each_teaching_plan_millisecond_was_spent() -> None:
     events: list[tuple[str, dict[str, object]]] = []
     ticks = iter([0.0, 0.1, 0.1, 0.3, 0.3, 1.1, 1.1, 1.5, 1.5, 1.7])
@@ -135,6 +285,7 @@ def test_import_reports_where_each_teaching_plan_millisecond_was_spent() -> None
                 "duration_ms": 100,
                 "course_id": "course-a",
                 "source_id": "701",
+                "worker_thread": "MainThread",
             },
         ),
         (
@@ -144,6 +295,7 @@ def test_import_reports_where_each_teaching_plan_millisecond_was_spent() -> None
                 "duration_ms": 200,
                 "course_id": "course-a",
                 "source_id": "701",
+                "worker_thread": "MainThread",
             },
         ),
         (
@@ -153,6 +305,7 @@ def test_import_reports_where_each_teaching_plan_millisecond_was_spent() -> None
                 "duration_ms": 800,
                 "course_id": "course-a",
                 "source_id": "701",
+                "worker_thread": "MainThread",
             },
         ),
         (
@@ -162,6 +315,7 @@ def test_import_reports_where_each_teaching_plan_millisecond_was_spent() -> None
                 "duration_ms": 400,
                 "course_id": "course-a",
                 "source_id": "701",
+                "worker_thread": "MainThread",
             },
         ),
         (
@@ -171,6 +325,7 @@ def test_import_reports_where_each_teaching_plan_millisecond_was_spent() -> None
                 "duration_ms": 200,
                 "course_id": "course-a",
                 "source_id": "701",
+                "worker_thread": "MainThread",
             },
         ),
     ]
@@ -178,8 +333,8 @@ def test_import_reports_where_each_teaching_plan_millisecond_was_spent() -> None
 
 def test_import_rejects_cross_course_plan_without_writes() -> None:
     class WrongCourse(_Client):
-        def fetch_diario_plan(self, token: str, *, term: str, source_id: int) -> dict[str, object]:
-            result = super().fetch_diario_plan(token, term=term, source_id=source_id)
+        def fetch_diario_plan(self, token: str, **kwargs: Any) -> dict[str, object]:
+            result = super().fetch_diario_plan(token, **kwargs)
             result["course_code"] = "MAT002"
             return result
 
@@ -217,7 +372,7 @@ def test_import_rejects_missing_or_cross_term_course() -> None:
 
 def test_import_deletes_expired_session_reported_by_moodle() -> None:
     class Expired(_Client):
-        def fetch_diario_plan(self, token: str, *, term: str, source_id: int) -> dict[str, object]:
+        def fetch_diario_plan(self, token: str, **kwargs: Any) -> dict[str, object]:
             raise UFMGReauthenticationRequired("expired")
 
     sessions = _Sessions(UFMGSession("private", 1, 999), [])

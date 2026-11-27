@@ -38,6 +38,7 @@ from moodle_structured_dates import (
     _parse_course_activity_contents,
     _parse_course_list,
     _parse_course_states,
+    _parse_diario_url_targets,
     _parse_module_files,
     _require_ajax,
     _require_diario_document,
@@ -162,7 +163,15 @@ def test_diario_report_fetch_is_atomic_across_parallel_plan_workers() -> None:
     active = 0
     maximum_active = 0
 
-    def fake_fetch(self: MoodleStructuredDatesClient, token: str, *, term: str, source_id: int):
+    def fake_fetch(
+        self: MoodleStructuredDatesClient,
+        token: str,
+        *,
+        term: str,
+        source_id: int,
+        external_url: str | None = None,
+    ):
+        assert external_url is None
         nonlocal active, maximum_active
         with state_lock:
             active += 1
@@ -446,6 +455,7 @@ def test_diario_probe_accepts_real_legacy_encoded_transition_and_report() -> Non
 
 
 def test_fetch_diario_plan_returns_structured_bounded_facts() -> None:
+    telemetry: list[tuple[str, dict[str, object]]] = []
     launch_url = (
         "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
         "solicitarRelatorioPlanoEnsino.do?"
@@ -470,14 +480,150 @@ def test_fetch_diario_plan_returns_structured_bounded_facts() -> None:
         ]
     )
 
-    result = MoodleStructuredDatesClient(opener=opener).fetch_diario_plan(
-        "token-safe", term="2026-2", source_id=99
+    result = MoodleStructuredDatesClient(
+        opener=opener,
+        telemetry=lambda event, fields: telemetry.append((event, dict(fields))),
+    ).fetch_diario_plan(
+        "token-safe",
+        term="2026-2",
+        source_id=99,
+        course_id="course-a",
+        course_code="ELE631",
     )
 
     assert result["course_code"] == "ELE631"
     assert result["confidence"] == "authoritative"
     assert len(result["assessments"]) == 1
     assert len(result["schedule"]) == 1
+    requests = [fields for event, fields in telemetry if event == "moodle_http_request_completed"]
+    assert len(requests) == 5
+    assert all(fields["plan_course_id"] == "course-a" for fields in requests)
+    assert all(fields["plan_course_code"] == "ELE631" for fields in requests)
+    assert all(fields["plan_source_id"] == "99" for fields in requests)
+    assert all(fields["plan_term"] == "2026-2" for fields in requests)
+
+
+def test_fetch_diario_plan_uses_bulk_external_url_and_follows_diario_transition() -> None:
+    external_url = (
+        "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+        "solicitarRelatorioPlanoEnsino.do?"
+        "plt=20262&oft=1000057&tac=DIG&aac=ELE631&trm=T1"
+    )
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+            _Response(
+                b"<script>location='/diario/JasperServlet'</script>",
+                external_url,
+            ),
+            _Response(_structured_diario_html(), "https://sistemas.ufmg.br/diario/JasperServlet"),
+        ]
+    )
+
+    result = MoodleStructuredDatesClient(opener=opener).fetch_diario_plan(
+        "token-safe",
+        term="2026-2",
+        source_id=99,
+        course_id="course-a",
+        course_code="ELE631",
+        external_url=external_url,
+    )
+
+    assert result["course_code"] == "ELE631"
+    requests = [request for request, _timeout in opener.requests]
+    assert [request.full_url for request in requests[2:]] == [
+        external_url,
+        "https://sistemas.ufmg.br/diario/JasperServlet",
+    ]
+
+
+def test_diario_plan_rejects_external_link_outside_official_allowlist() -> None:
+    opener = _Opener(
+        [
+            _Response(_saml_page(), "https://sistemas.ufmg.br/idp/profile/SAML2/Redirect/SSO"),
+            _Response(_dashboard(), "https://virtual.ufmg.br/20262/my/"),
+        ]
+    )
+    client = MoodleStructuredDatesClient(opener=opener)
+
+    with pytest.raises(InvalidMoodleResponse, match="invalid Moodle response") as caught:
+        client._fetch_diario_document(
+            "token-safe",
+            term="2026-2",
+            source_id=701,
+            external_url="https://attacker.example/collect",
+        )
+
+    assert caught.value.reason == "diario_external_url"
+
+
+def test_diario_report_retries_one_transient_jasper_server_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    telemetry: list[tuple[str, dict[str, object]]] = []
+    client = MoodleStructuredDatesClient(
+        opener=_Opener([]),
+        telemetry=lambda event, fields: telemetry.append((event, dict(fields))),
+    )
+    attempts: list[tuple[int, int]] = []
+
+    def open_bounded(
+        _request: Request, *, limit: int, attempt: int = 1, retry_count: int = 0
+    ) -> tuple[bytes, str, str]:
+        attempts.append((attempt, retry_count))
+        if len(attempts) == 1:
+            raise MoodleUnavailable("Moodle is unavailable", upstream_status=500)
+        return b"report", "https://sistemas.ufmg.br/diario/JasperServlet", "text/html"
+
+    monkeypatch.setattr(client, "_open_bounded", open_bounded)
+
+    result = client._open_diario_report(
+        Request("https://sistemas.ufmg.br/diario/JasperServlet"), limit=100
+    )
+
+    assert result[0] == b"report"
+    assert attempts == [(1, 0), (2, 1)]
+    assert telemetry == [
+        (
+            "moodle_diario_report_retry",
+            {
+                "path": "/diario/JasperServlet",
+                "method": "GET",
+                "failed_status": 500,
+                "retry_count": 1,
+                "reason": "transient_upstream_5xx",
+            },
+        )
+    ]
+
+
+def test_diario_report_does_not_retry_non_jasper_or_non_5xx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = MoodleStructuredDatesClient(opener=_Opener([]))
+    calls: list[int] = []
+
+    def open_bounded(_request: Request, *, limit: int) -> tuple[bytes, str, str]:
+        calls.append(limit)
+        raise MoodleUnavailable("Moodle is unavailable", upstream_status=404)
+
+    monkeypatch.setattr(client, "_open_bounded", open_bounded)
+
+    with pytest.raises(MoodleUnavailable) as caught:
+        client._open_diario_report(
+            Request("https://sistemas.ufmg.br/diario/JasperServlet"), limit=100
+        )
+
+    assert caught.value.upstream_status == 404
+    assert calls == [100]
+
+    with pytest.raises(MoodleUnavailable) as caught:
+        client._open_diario_report(
+            Request("https://virtual.ufmg.br/20262/diario/JasperServlet"), limit=100
+        )
+    assert caught.value.upstream_status == 404
+    assert calls == [100, 100]
 
 
 @pytest.mark.parametrize(
@@ -766,6 +912,125 @@ def test_diario_url_and_moodle_module_guards_reject_unsafe_shapes() -> None:
         "https://virtual.ufmg.br:444/20262/mod/url/view.php?id=1",
         "/20262/mod/url/view.php",
     )
+
+
+def test_diario_url_catalog_maps_only_valid_course_module_targets_and_counts_warnings() -> None:
+    valid = (
+        "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+        "solicitarRelatorioPlanoEnsino.do?"
+        "plt=20262&oft=1000057&tac=DIG&aac=ELE631&trm=TAPO"
+    )
+    payload = json.dumps(
+        {
+            "urls": [
+                {"coursemodule": 701, "externalurl": valid},
+                {"coursemodule": 702, "externalurl": "https://example.org/"},
+                {"coursemodule": 703, "externalurl": valid + "&extra=1"},
+            ],
+            "warnings": [{"warningcode": "ignored"}],
+        }
+    ).encode()
+
+    targets, url_count, warning_count = _parse_diario_url_targets(payload)
+
+    assert targets == {701: valid}
+    assert url_count == 3
+    assert warning_count == 1
+
+
+def test_diario_url_catalog_makes_one_request_and_reuses_same_term_result() -> None:
+    target = (
+        "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+        "solicitarRelatorioPlanoEnsino.do?"
+        "plt=20262&oft=1000057&tac=DIG&aac=ELE631&trm=TAPO"
+    )
+    payload = json.dumps(
+        {"urls": [{"coursemodule": 701, "externalurl": target}], "warnings": []}
+    ).encode()
+    opener = _Opener(
+        [
+            _Response(
+                payload,
+                "https://virtual.ufmg.br/20262/webservice/rest/server.php",
+                content_type="application/json",
+            )
+        ]
+    )
+    client = MoodleStructuredDatesClient(opener=opener)
+
+    first = client.fetch_diario_url_targets(webservice_token="T" * 20, term="2026-2")
+    second = client.fetch_diario_url_targets(webservice_token="T" * 20, term="2026-2")
+
+    assert first == second == {701: target}
+    assert len(opener.requests) == 1
+    request = opener.requests[0][0]
+    assert request.get_method() == "POST"
+    assert b"wsfunction=mod_url_get_urls_by_courses" in request.data
+
+
+def test_diario_url_catalog_failure_is_cached_and_reported_as_fallback() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    client = MoodleStructuredDatesClient(
+        opener=_Opener([]),
+        telemetry=lambda event, fields: events.append((event, dict(fields))),
+    )
+
+    def unavailable(_request: Request) -> tuple[bytes, str, str]:
+        raise MoodleUnavailable("offline")
+
+    client._open = unavailable  # type: ignore[method-assign]
+
+    assert client.fetch_diario_url_targets(webservice_token="T" * 20, term="2026-2") == {}
+    assert client.fetch_diario_url_targets(webservice_token="T" * 20, term="2026-2") == {}
+    assert any(event == "moodle_diario_url_catalog_unavailable" for event, _ in events)
+    assert any(event == "moodle_diario_url_catalog_cache" for event, _ in events)
+
+
+def test_diario_url_catalog_drops_duplicate_conflicting_module_links() -> None:
+    prefix = (
+        "https://sistemas.ufmg.br/diario/planoAula/relatorio/solicitar/"
+        "solicitarRelatorioPlanoEnsino.do?"
+    )
+    first = prefix + "plt=20262&oft=1000057&tac=DIG&aac=ELE631&trm=TAPO"
+    second = prefix + "plt=20262&oft=1000058&tac=DIG&aac=MAT002&trm=TAPO"
+    payload = json.dumps(
+        {"urls": [{"coursemodule": 701, "externalurl": first},
+                  {"coursemodule": 701, "externalurl": second}]}
+    ).encode()
+
+    targets, url_count, warning_count = _parse_diario_url_targets(payload)
+
+    assert targets == {}
+    assert url_count == 2
+    assert warning_count == 0
+
+
+@pytest.mark.parametrize(
+    "payload,reason",
+    [
+        (b"not-json", "diario_url_json"),
+        (b"[]", "diario_url_response_shape"),
+        (b'{"urls":{}}', "diario_url_list_shape"),
+        (b'{"urls":[],"warnings":{}}', "diario_url_warnings_shape"),
+        (b'{"urls":[null]}', "diario_url_item_shape"),
+    ],
+)
+def test_diario_url_catalog_rejects_malformed_response_shapes(payload: bytes, reason: str) -> None:
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_diario_url_targets(payload)
+    assert caught.value.reason == reason
+
+
+def test_diario_url_catalog_rejects_empty_or_oversized_payloads() -> None:
+    for payload in (b"", b"x" * (module.MAX_RESPONSE_BYTES + 1)):
+        with pytest.raises(InvalidMoodleResponse) as caught:
+            _parse_diario_url_targets(payload)
+        assert caught.value.reason == "diario_url_response_size"
+
+
+def test_diario_url_catalog_skips_invalid_course_module_ids() -> None:
+    payload = json.dumps({"urls": [{"coursemodule": True, "externalurl": "https://example.org"}]}).encode()
+    assert _parse_diario_url_targets(payload) == ({}, 1, 0)
 
 
 @pytest.mark.parametrize("source_id", [0, True, 2_147_483_648])
@@ -1339,13 +1604,13 @@ def test_canonical_file_url_strips_tokenpluginfile_token_and_rejects_bad_paths()
     assert module._canonical_file_url(tokenized, "/20262").endswith(
         "/20262/pluginfile.php/1/mod_assign/content/1/a.pdf"
     )
-    short_quiz_intro = (
-        "https://virtual.ufmg.br/20262/pluginfile.php/"
-        "1/mod_quiz/intro/logo.png"
-    )
+    short_quiz_intro = "https://virtual.ufmg.br/20262/pluginfile.php/1/mod_quiz/intro/logo.png"
     assert module._canonical_file_url(short_quiz_intro, "/20262").endswith(
         "/20262/pluginfile.php/1/mod_quiz/intro/logo.png"
     )
+    assert module._private_file_url(
+        short_quiz_intro, "/20262", "a" * 16
+    ).endswith("/tokenpluginfile.php/" + "a" * 16 + "/1/mod_quiz/intro/logo.png?forcedownload=1")
     for url in [
         None,
         "https://virtual.ufmg.br/20262/not-pluginfile/1/mod_assign/content/1/a.pdf",
@@ -1534,9 +1799,7 @@ def test_activity_module_bulk_uses_the_official_assignment_service() -> None:
     assert response["endpoint"] == "mod_assign_get_assignments"
     assert response["returned_count"] == 1
     assert response["warning_count"] == 1
-    assert response["warnings"] == [
-        {"warning_code": "1", "item": "module", "item_id": 81003}
-    ]
+    assert response["warnings"] == [{"warning_code": "1", "item": "module", "item_id": 81003}]
 
 
 @pytest.mark.parametrize(
@@ -1769,14 +2032,22 @@ def test_activity_module_bulk_rejects_unsafe_shapes(
     assert caught.value.reason == reason
 
 
-def test_activity_module_bulk_covers_quiz_dates_and_optional_files() -> None:
+def test_activity_module_bulk_covers_quiz_dates_and_introfiles() -> None:
     payload = {
         "quizzes": [
             {
                 "coursemodule": 702,
                 "name": "Prova 1",
                 "intro": "<p>Questões</p>",
-                "introattachments": [],
+                "introfiles": [
+                    {
+                        "filename": "questoes.pdf",
+                        "fileurl": (
+                            "https://virtual.ufmg.br/20262/webservice/pluginfile.php/"
+                            "702/mod_quiz/intro/questoes.pdf"
+                        ),
+                    }
+                ],
                 "timeopen": 1_798_000_000,
                 "timeclose": 1_798_100_000,
             }
@@ -1789,6 +2060,204 @@ def test_activity_module_bulk_covers_quiz_dates_and_optional_files() -> None:
     assert result["702"]["description"] == "Questões"
     assert result["702"]["has_due_date"] is True
     assert result["702"]["_bulk_attachments_present"] is True
+    assert result["702"]["attachments"] == [
+        {
+            "name": "questoes.pdf",
+            "url": ("https://virtual.ufmg.br/20262/pluginfile.php/702/mod_quiz/intro/questoes.pdf"),
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload", "expected_key"),
+    [
+        (
+            "assign",
+            {
+                "courses": [
+                    {
+                        "id": 3701,
+                        "assignments": [
+                            {
+                                "id": 9001,
+                                "cmid": 701,
+                                "name": "Lista",
+                                "intro": "A",
+                                "introfiles": [],
+                            }
+                        ],
+                    },
+                    {
+                        "id": 4953,
+                        "assignments": [
+                            {
+                                "id": 9002,
+                                "cmid": 702,
+                                "name": "Exercício",
+                                "intro": "B",
+                                "introfiles": [],
+                            }
+                        ],
+                    },
+                ]
+            },
+            "4953:702",
+        ),
+        (
+            "quiz",
+            {
+                "quizzes": [
+                    {
+                        "course": 3701,
+                        "coursemodule": 701,
+                        "name": "Prova",
+                        "intro": "A",
+                        "introfiles": [],
+                    },
+                    {
+                        "course": 4953,
+                        "coursemodule": 702,
+                        "name": "Questionário",
+                        "intro": "B",
+                        "introfiles": [],
+                    },
+                ]
+            },
+            "4953:702",
+        ),
+    ],
+)
+def test_activity_module_bulk_maps_each_item_to_its_course(kind, payload, expected_key):
+    result = _parse_activity_module_bulk(
+        json.dumps(payload).encode(),
+        root="/20262",
+        kind=kind,
+        course_ids={3701, 4953},
+    )
+
+    assert set(result) == {"3701:701", expected_key}
+    assert result[expected_key]["_bulk_course_id"] == 4953
+
+
+def test_activity_module_bulk_batch_rejects_items_outside_requested_courses():
+    payload = {
+        "quizzes": [
+            {
+                "course": 9999,
+                "coursemodule": 702,
+                "name": "Questionário",
+                "intro": "",
+                "introfiles": [],
+            }
+        ]
+    }
+
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        _parse_activity_module_bulk(
+            json.dumps(payload).encode(), root="/20262", kind="quiz", course_ids={3701}
+        )
+
+    assert caught.value.reason == "activity_module_course"
+
+
+@pytest.mark.parametrize(
+    ("course_ids", "kind", "reason"),
+    [
+        ([], "assign", "activity_module_course_ids"),
+        ([0], "assign", "activity_module_course_id"),
+        ([1], "unsupported", "activity_module_kind"),
+    ],
+)
+def test_activity_module_bulk_batch_validates_request(course_ids, kind, reason):
+    with pytest.raises(InvalidMoodleResponse) as caught:
+        MoodleStructuredDatesClient().fetch_activity_modules_bulk(
+            webservice_token="b" * 16,
+            private_token="a" * 16,
+            term="2026-2",
+            course_ids=course_ids,
+            kind=kind,
+        )
+
+    assert caught.value.reason == reason
+
+
+def test_activity_module_bulk_batch_sends_all_course_ids_in_one_request():
+    payload = {
+        "quizzes": [
+            {
+                "course": 3701,
+                "coursemodule": 701,
+                "name": "Prova",
+                "intro": "",
+                "introfiles": [],
+            },
+            {
+                "course": 4953,
+                "coursemodule": 702,
+                "name": "Questionário",
+                "intro": "",
+                "introfiles": [],
+            },
+        ],
+        "warnings": [],
+    }
+
+    class Client(MoodleStructuredDatesClient):
+        def _open(self, request):
+            params = parse_qs(request.data.decode())
+            assert params["courseids[0]"] == ["3701"]
+            assert params["courseids[1]"] == ["4953"]
+            return json.dumps(payload).encode(), request.full_url, "application/json"
+
+    result = Client().fetch_activity_modules_bulk(
+        webservice_token="b" * 16,
+        private_token="a" * 16,
+        term="2026-2",
+        course_ids=[4953, 3701, 4953],
+        kind="quiz",
+    )
+
+    assert set(result) == {"3701:701", "4953:702"}
+
+
+def test_assignment_bulk_accepts_ufmg_student_payload_without_optional_activity_fields() -> None:
+    payload = {
+        "courses": [
+            {
+                "id": 3701,
+                "assignments": [
+                    {
+                        "id": 9001,
+                        "cmid": 701,
+                        "name": "Lista 1",
+                        "intro": "Enunciado da lista",
+                        "introattachments": [
+                            {
+                                "filename": "lista.pdf",
+                                "fileurl": (
+                                    "https://virtual.ufmg.br/20262/webservice/pluginfile.php/"
+                                    "320072/mod_assign/introattachment/0/lista.pdf"
+                                ),
+                            }
+                        ],
+                        "introfiles": [],
+                        "submissionattachments": 1,
+                        "duedate": 1_798_000_000,
+                    }
+                ],
+            }
+        ],
+        "warnings": [],
+    }
+
+    result = _parse_activity_module_bulk(
+        json.dumps(payload).encode(), root="/20262", kind="assign"
+    )["701"]
+
+    assert result["description"] == "Enunciado da lista"
+    assert result["_bulk_description_present"] is True
+    assert result["_bulk_attachments_present"] is True
+    assert result["attachments"][0]["name"] == "lista.pdf"
 
 
 def test_activity_module_bulk_uses_quiz_introfiles_without_html_fallback() -> None:
@@ -1824,10 +2293,7 @@ def test_activity_module_bulk_uses_quiz_introfiles_without_html_fallback() -> No
     assert result["704"]["attachments"] == [
         {
             "name": "roteiro.png",
-            "url": (
-                "https://virtual.ufmg.br/20262/pluginfile.php/"
-                "1/mod_quiz/intro/roteiro.png"
-            ),
+            "url": ("https://virtual.ufmg.br/20262/pluginfile.php/1/mod_quiz/intro/roteiro.png"),
         }
     ]
     assert result["705"]["_bulk_attachments_present"] is True

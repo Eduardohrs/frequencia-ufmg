@@ -1,10 +1,12 @@
 """Import one official Diário teaching plan into its matching local course."""
 
 from collections.abc import Callable, Mapping
+from threading import Lock, current_thread
 from typing import Any, Protocol, cast
 
 from course_repository import validate_course_id
-from sync_timing import Telemetry, timed_stage
+from moodle_token_store import MoodleAuthorizationRequired, MoodleTokenStoreUnavailable
+from sync_timing import Telemetry, _emit, timed_stage
 from ufmg_session_store import UFMGReauthenticationRequired, UFMGSession
 
 
@@ -15,7 +17,24 @@ class _Sessions(Protocol):
 
 
 class _Client(Protocol):
-    def fetch_diario_plan(self, token: str, *, term: str, source_id: int) -> dict[str, object]: ...
+    def fetch_diario_url_targets(
+        self, *, webservice_token: str, term: str
+    ) -> dict[int, str]: ...
+
+    def fetch_diario_plan(
+        self,
+        token: str,
+        *,
+        term: str,
+        source_id: int,
+        course_id: str | None = None,
+        course_code: str | None = None,
+        external_url: str | None = None,
+    ) -> dict[str, object]: ...
+
+
+class _Tokens(Protocol):
+    def load(self, user_id: str, *, now: int) -> Any | None: ...
 
 
 class _Courses(Protocol):
@@ -45,6 +64,7 @@ class MoodleTeachingPlanImportService:
         plans: _Plans,
         dates: _Dates,
         *,
+        tokens: _Tokens | None = None,
         telemetry: Telemetry | None = None,
         monotonic: Callable[[], float] | None = None,
     ) -> None:
@@ -53,8 +73,11 @@ class MoodleTeachingPlanImportService:
         self._courses = courses
         self._plans = plans
         self._dates = dates
+        self._tokens = tokens
         self._telemetry = telemetry
         self._monotonic = monotonic
+        self._token_lock = Lock()
+        self._token_cache: dict[tuple[str, str], Any | None] = {}
 
     def import_plan(
         self,
@@ -83,11 +106,17 @@ class MoodleTeachingPlanImportService:
         )
         if len(courses) != 1 or courses[0].get("term") != term:
             raise ValueError("teaching plan does not match course")
+        external_url = self._diario_url(user_id, now=now, term=term, source_id=source_id)
         try:
             plan = self._timed(
                 "teaching_plan_fetch",
                 lambda: self._client.fetch_diario_plan(
-                    session.token, term=term, source_id=source_id
+                    session.token,
+                    term=term,
+                    source_id=source_id,
+                    course_id=identifier,
+                    course_code=str(courses[0]["code"]),
+                    external_url=external_url,
                 ),
                 context,
             )
@@ -146,6 +175,52 @@ class MoodleTeachingPlanImportService:
             "confidence": "authoritative",
         }
 
+    def _diario_url(
+        self, user_id: str, *, now: int, term: str, source_id: int
+    ) -> str | None:
+        if self._tokens is None:
+            return None
+        token_store = self._tokens
+        cache_key = (user_id, term)
+        with self._token_lock:
+            if cache_key not in self._token_cache:
+                try:
+                    tokens = self._timed(
+                        "teaching_plan_moodle_token_load",
+                        lambda: token_store.load(user_id, now=now),
+                        {"term": term},
+                    )
+                except (MoodleAuthorizationRequired, MoodleTokenStoreUnavailable) as error:
+                    tokens = None
+                    _emit(
+                        self._telemetry,
+                        "teaching_plan_bulk_url_fallback",
+                        {"term": term, "reason": type(error).__name__},
+                    )
+                self._token_cache[cache_key] = (
+                    tokens if getattr(tokens, "term", None) == term else None
+                )
+            tokens = self._token_cache[cache_key]
+        if tokens is None:
+            return None
+        get_targets = getattr(self._client, "fetch_diario_url_targets", None)
+        if not callable(get_targets):
+            return None
+        get_targets = cast(Callable[..., dict[int, str]], get_targets)
+        targets = self._timed(
+            "teaching_plan_bulk_url_lookup",
+            lambda: get_targets(webservice_token=tokens.webservice_token, term=term),
+            {"term": term},
+        )
+        target = targets.get(source_id)
+        if target is None:
+            _emit(
+                self._telemetry,
+                "teaching_plan_bulk_url_fallback",
+                {"term": term, "source_id": str(source_id), "reason": "source_id_not_found"},
+            )
+        return target
+
     def _timed[T](
         self,
         stage: str,
@@ -154,7 +229,7 @@ class MoodleTeachingPlanImportService:
     ) -> T:
         options: dict[str, object] = {
             "telemetry": self._telemetry,
-            "fields": fields,
+            "fields": {**fields, "worker_thread": current_thread().name},
         }
         if self._monotonic is not None:
             options["clock"] = self._monotonic

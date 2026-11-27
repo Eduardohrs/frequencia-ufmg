@@ -350,7 +350,7 @@ def test_moodle_sync_factory_shares_one_client_across_all_remote_stages(
     assert service._content._catalog is catalog
     assert service._capabilities._sessions is shared_sessions
     assert service._capabilities._client is client
-    assert service._capabilities._tokens is tokens
+    assert service._capabilities._tokens._store is tokens
 
 
 def test_moodle_sync_route_rejects_authentication_and_nonempty_payload(
