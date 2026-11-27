@@ -180,13 +180,14 @@ class MoodleTeachingPlanImportService:
     ) -> str | None:
         if self._tokens is None:
             return None
+        token_store = self._tokens
         cache_key = (user_id, term)
         with self._token_lock:
             if cache_key not in self._token_cache:
                 try:
                     tokens = self._timed(
                         "teaching_plan_moodle_token_load",
-                        lambda: self._tokens.load(user_id, now=now),
+                        lambda: token_store.load(user_id, now=now),
                         {"term": term},
                     )
                 except (MoodleAuthorizationRequired, MoodleTokenStoreUnavailable) as error:
@@ -205,6 +206,7 @@ class MoodleTeachingPlanImportService:
         get_targets = getattr(self._client, "fetch_diario_url_targets", None)
         if not callable(get_targets):
             return None
+        get_targets = cast(Callable[..., dict[int, str]], get_targets)
         targets = self._timed(
             "teaching_plan_bulk_url_lookup",
             lambda: get_targets(webservice_token=tokens.webservice_token, term=term),

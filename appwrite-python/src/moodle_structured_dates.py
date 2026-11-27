@@ -2326,18 +2326,17 @@ def _module_attachments_present(raw: dict[str, object], *, kind: str) -> bool:
         # Student-facing assignment responses expose the actual task files in
         # introattachments/introfiles. ``submissionattachments`` is a setting
         # for files students may upload, not downloadable task material.
-        return any(
-            key in raw
-            and isinstance(raw[key], list)
-            and (
-                not raw[key]
+        for key in ("introattachments", "introfiles"):
+            attachments = raw.get(key)
+            if isinstance(attachments, list) and (
+                not attachments
                 or any(
                     isinstance(item, dict) and item.get("type", "file") == "file"
-                    for item in raw[key]
+                    for item in attachments
                 )
-            )
-            for key in ("introattachments", "introfiles")
-        )
+            ):
+                return True
+        return False
     # The quiz mobile endpoint does not consistently expose file lists.  Keep
     # the HTML fallback when the installation omits them rather than silently
     # losing offline attachments.
@@ -2762,7 +2761,7 @@ def _parse_diario_url_targets(payload: bytes) -> tuple[dict[int, str], int, int]
         external_url = item.get("externalurl")
         if type(module_id) is not int or not 1 <= module_id <= 2_147_483_647:
             continue
-        if not _is_diario_request_url(external_url):
+        if not isinstance(external_url, str) or not _is_diario_request_url(external_url):
             continue
         previous = targets.get(module_id)
         if previous is not None and previous != external_url:

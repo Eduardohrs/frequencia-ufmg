@@ -1608,6 +1608,9 @@ def test_canonical_file_url_strips_tokenpluginfile_token_and_rejects_bad_paths()
     assert module._canonical_file_url(short_quiz_intro, "/20262").endswith(
         "/20262/pluginfile.php/1/mod_quiz/intro/logo.png"
     )
+    assert module._private_file_url(
+        short_quiz_intro, "/20262", "a" * 16
+    ).endswith("/tokenpluginfile.php/" + "a" * 16 + "/1/mod_quiz/intro/logo.png?forcedownload=1")
     for url in [
         None,
         "https://virtual.ufmg.br/20262/not-pluginfile/1/mod_assign/content/1/a.pdf",
